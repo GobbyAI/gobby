@@ -1,0 +1,214 @@
+header:
+  plan_id: native-ws-transport
+  plan_hash: 529bbf1bc61de241412aa5d11729e6a3a8058ba8e9aa04069d693a04296db60c
+  root_task_ref: '21558'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-09T12:59:40Z'
+  task_tree_source: db
+  task_tree_source_hash: 10b8657f3ab02e3bf45d118cb7fde5e46ac97b762f94ba330d3e8dab78214b73
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: A1
+  item_id: A1.1
+  plan_node_hash: a8e9188beb1694de5b9053269cb04b8139141df4d1cb3ee977e7f9e6343d97a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23878'
+    validation_criteria_snippet: 'A1.1: Every declared corpus case replays through
+      the existing Python implementation with the documented single acknowledgement-set
+      normalization. test: `tests/...'
+    matched_artifact_ref: tests/servers/test_ws_envelope_golden.py::test_python_replays_envelope_case
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.2
+  plan_node_hash: ddebd2e23b75c9c58bcab7ecdfcd9c5b536f25e4721e988740c308b5e401a80c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23878'
+    validation_criteria_snippet: 'A1.1: Every declared corpus case replays through
+      the existing Python implementation with the documented single acknowledgement-set
+      normalization. test: `tests/...'
+    matched_artifact_ref: tests/fixtures/ws_envelope_golden/cases.json
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.3
+  plan_node_hash: 49bc44921dfb8e52342873ef6f169239e19a82b445f13163a63aa11f610a9ac2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23878'
+    validation_criteria_snippet: 'A1.1: Every declared corpus case replays through
+      the existing Python implementation with the documented single acknowledgement-set
+      normalization. test: `tests/...'
+    matched_artifact_ref: tests/servers/test_ws_envelope_golden.py::test_frame_bytes_and_direct_delivery
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.4
+  plan_node_hash: d882dde5411d310974c68b316987ca4698ebf44f8a2dfc9c1fed5dd56f80d9ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23878'
+    validation_criteria_snippet: 'A1.1: Every declared corpus case replays through
+      the existing Python implementation with the documented single acknowledgement-set
+      normalization. test: `tests/...'
+    matched_artifact_ref: tests/servers/test_ws_envelope_golden.py::test_manifest_is_complete
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.1
+  plan_node_hash: 9d7bbe84686499bb4bdcff473fe6cdddd3f1d81766b90edbce23eb6b3baf13ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23879'
+    validation_criteria_snippet: 'A2.1: Rust replays every A1 case with identical
+      transition, recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envel...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envelope_corpus
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.2
+  plan_node_hash: c7b317a3c88de3dcc8582aab3395757ea90517e72bb6525c53ae44b293de9c11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23879'
+    validation_criteria_snippet: 'A2.1: Rust replays every A1 case with identical
+      transition, recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envel...'
+    matched_artifact_ref: SubscriptionState
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.3
+  plan_node_hash: c7064df068dd78094df312dbabcc6138024c1bced7756dd4b2a58e23f22d7c01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23879'
+    validation_criteria_snippet: 'A2.1: Rust replays every A1 case with identical
+      transition, recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envel...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_envelope_golden.rs::malformed_control_does_not_mutate_state
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.4
+  plan_node_hash: 5e5025f00f323d320a9f98f9e4441f193d40477be2790ed219dd4cddfac8f126
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23879'
+    validation_criteria_snippet: 'A2.1: Rust replays every A1 case with identical
+      transition, recipient and output results. test: `crates/gdaemon/tests/ws_envelope_golden.rs::rust_replays_envel...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_envelope_golden.rs::application_frames_are_opaque
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.1
+  plan_node_hash: 749d9057a422be68ce9b3073e1ac7ff9447ea596150a5a0f37436f9a84a76fdd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23880'
+    validation_criteria_snippet: 'A3.1: Only matching registered clients receive a
+      batch; fragment bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_pres...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_broker.rs::fanout_preserves_selection_and_frame_order
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.2
+  plan_node_hash: 3435fa9530e238bb2d7dd05da137564e9b66427b34eef0248e6d284ea591803b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23880'
+    validation_criteria_snippet: 'A3.1: Only matching registered clients receive a
+      batch; fragment bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_pres...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_broker.rs::acknowledgement_precedes_newly_selected_events
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.3
+  plan_node_hash: 70008500cc52684246d50c2f170492589bb07cad95a92efa12be1b36e10ab267
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23880'
+    validation_criteria_snippet: 'A3.1: Only matching registered clients receive a
+      batch; fragment bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_pres...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_broker.rs::slow_client_isolated_and_bounded
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.4
+  plan_node_hash: bb652ab287650fe1111330771582e5c4c43ec91da02f143aa1cc695c91944fe3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23880'
+    validation_criteria_snippet: 'A3.1: Only matching registered clients receive a
+      batch; fragment bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_pres...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_broker.rs::retirement_is_once_and_reconnect_is_fresh
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.5
+  plan_node_hash: 0340cdfb3bd565fb44d1135a45148588292c255ec4336e75015f477ca7e19e34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23880'
+    validation_criteria_snippet: 'A3.1: Only matching registered clients receive a
+      batch; fragment bytes and per-client order remain exact. test: `crates/gdaemon/tests/ws_broker.rs::fanout_pres...'
+    matched_artifact_ref: crates/gdaemon/tests/ws_broker.rs::direct_reply_bypasses_event_filter
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.2
+  plan_node_hash: 9099a07e8e523c9823309f7d63765d8e810a09b6c5b2c1eccc65fbe6427f567f
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.3
+  plan_node_hash: 93ea7538f85a2b590833021b8d44119fcd375d0c70bd1b256e5932406c475c75
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.4
+  plan_node_hash: f91846ae06af20e71d15390236bff7d157e8f8dab3afa9de4a3e3c6fbfa84346
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.5
+  plan_node_hash: 5fee887775f04a195c8d018e3243564d25da810f15973740ae4ca0c208728260
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.6
+  plan_node_hash: f6100d58a482d4dcdfb8cf15255ff1c5679870c6757f6ddc92503a2e00b66b1c
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.7
+  plan_node_hash: dfc88dd9ca2768e90339f08f0ff624c65598840b98d1a847bcc18b0e3954c120
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.8
+  plan_node_hash: edd3faaab44d57c7666592516b198b28201ede0ef28abc29bdd9f166b590d0eb
+  status: deferred
+  leaves: []
+  deferral_target: '#23881'
+  detail: deferral is valid

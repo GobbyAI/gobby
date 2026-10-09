@@ -106,14 +106,6 @@ def _daemon_text_generation_adapter_factories(
         "grok": lambda: _adapters._GrokCLITextGenerateAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
         ),
-        "qwen": lambda: _adapters._QwenCLITextGenerateAdapter(
-            timeout_seconds=config.ai.generation.timeout_seconds,
-            openai_endpoints={
-                name: endpoint
-                for name, endpoint in config.ai.generation.endpoints.items()
-                if endpoint.wire_api == "chat-completions"
-            },
-        ),
         "droid": _adapters.DroidCLITextGenerateAdapter,
     }
     for endpoint_name, endpoint in config.ai.generation.endpoints.items():

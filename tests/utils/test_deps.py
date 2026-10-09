@@ -237,13 +237,6 @@ def test_get_codex_cli_version() -> None:
         assert deps.get_codex_cli_version() is None
 
 
-def test_get_qwen_cli_version() -> None:
-    with patch("gobby.utils.deps._run_cmd", return_value="0.15.3"):
-        assert deps.get_qwen_cli_version() == "0.15.3"
-    with patch("gobby.utils.deps._run_cmd", return_value=None):
-        assert deps.get_qwen_cli_version() is None
-
-
 def test_get_droid_cli_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="droid 0.106.0"):
         assert deps.get_droid_cli_version() == "0.106.0"
@@ -258,17 +251,14 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
-        qwen = tmp_path / ".qwen" / "settings.json"
         droid = tmp_path / ".factory" / "hooks.json"
         agy = tmp_path / ".gemini" / "config" / "hooks.json"
 
         claude.parent.mkdir()
-        qwen.parent.mkdir()
         droid.parent.mkdir(parents=True)
         agy.parent.mkdir(parents=True)
 
         claude.write_text("ghook --gobby-owned --cli=claude")
-        qwen.write_text("ghook --gobby-owned --cli=qwen")
         droid.write_text("ghook --gobby-owned --cli=droid")
         agy.write_text(
             '{"gobby": {"PreInvocation": [{"command": "ghook --gobby-owned --cli=agy"}]}}'
@@ -277,7 +267,6 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         result = deps.get_coding_cli_hooks_status()
         assert result["claude"] is True
         assert result["codex"] is False
-        assert result["qwen"] is True
         assert result["droid"] is True
         assert result["agy"] is True
 
@@ -324,7 +313,6 @@ def test_coding_cli_hook_drift_reports_template_events_without_gobby_owned(
 
     assert "claude" not in drift
     assert "codex" not in drift
-    assert "qwen" not in drift
     assert "droid" not in drift
     assert "agy" not in drift
     missing = drift["grok"]
@@ -1053,7 +1041,6 @@ def test_collect_all_deps(
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
         patch("gobby.utils.deps.get_droid_cli_version", return_value="6.5"),
-        patch("gobby.utils.deps.get_qwen_cli_version", return_value="6.7"),
         patch("gobby.utils.deps.get_coding_cli_hooks_status", return_value={}),
         patch(
             "gobby.utils.deps.collect_dependency_report",
@@ -1076,7 +1063,6 @@ def test_collect_all_deps(
         assert res["gobby"]["gclient"] == "0.1.0"
         assert res["gobby"]["impeccable"] == "3.5.0"
         assert res["coding_clis"]["droid"] == "6.5"
-        assert res["coding_clis"]["qwen"] == "6.7"
         assert res["services"]["docker_running"] is True
         assert res["dependencies"]["required"]["git"]["state"] == "healthy"
         assert res["integrations"]["embeddings_provider"] == "lmstudio"
@@ -1163,7 +1149,6 @@ def test_collect_all_deps_reports_slow_probes_as_timed_out_at_the_deadline(
         "get_grok_cli_version",
         "get_codex_cli_version",
         "get_droid_cli_version",
-        "get_qwen_cli_version",
         "get_agy_cli_version",
     ):
         monkeypatch.setattr(deps, name, lambda: "1.0")

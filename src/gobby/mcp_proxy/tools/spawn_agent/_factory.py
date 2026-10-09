@@ -415,8 +415,9 @@ def create_spawn_agent_registry(
                 {"tab": {"workspace": REF, "title": TEXT}} or
                 {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
                 Split axis 'balanced' keeps panes at least 80 columns by 12 rows
-                using viewport 'columns' (default 80) and required 'rows'.
-                Insufficient capacity refuses placement without changing the tab.
+                when viewport 'columns' (default 80) and required 'rows' fit them,
+                else tiles the tab evenly across the viewport. A viewport too
+                small for either refuses placement without changing the tab.
                 Refusals carry ``placement_error``.
 
         Returns:

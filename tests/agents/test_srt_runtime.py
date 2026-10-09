@@ -28,7 +28,6 @@ from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     GrokSandboxResolver,
-    QwenSandboxResolver,
     SandboxResolver,
 )
 from gobby.agents.srt_runtime import (
@@ -695,7 +694,6 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     [
         ("codex", CodexSandboxResolver()),
         ("droid", None),
-        ("qwen", QwenSandboxResolver()),
         ("grok", GrokSandboxResolver()),
     ],
 )

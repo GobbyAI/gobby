@@ -257,7 +257,7 @@ fails.
 
 | Component | `gobby install` | `gobby uninstall` |
 | --- | --- | --- |
-| `claude`, `codex`, `grok`, `qwen`, `droid`, `agy` | Install that CLI's global hooks. | Remove that CLI's global hooks. |
+| `claude`, `codex`, `grok`, `droid`, `agy` | Install that CLI's global hooks. | Remove that CLI's global hooks. |
 | `git-hooks` | Install repository Git hooks (verification, JSONL export, code indexing) in the `-C` repository. | Remove them from the `-C` repository. Explicit only; bare uninstall never touches repositories. |
 | `rtk` | Reconcile the RTK binary and the `rtk-command-rewrite` rule (details below). | Disable the rule and remove the managed fallback binary. |
 | `impeccable` | Provision the Impeccable design runtime. | Remove the Impeccable runtime. |
@@ -337,7 +337,7 @@ for the web UI, or re-running daemon setup.
 
 When enabled, `ghook` remains every CLI's installed hook. Gobby calls
 `rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
-rewrites on Claude Code, Codex, Qwen, Grok, and Droid. Antigravity is skipped:
+rewrites on Claude Code, Codex, Grok, and Droid. Antigravity is skipped:
 the only input overwrite it is recorded honoring also approves the call, and
 Gobby leaves approval to the host. `rewrite` is the
 same contract stock RTK host hooks use, so RTK's heredoc, command-substitution,
@@ -399,13 +399,12 @@ is promoted and nothing is stopped.
 ### `gobby auth`
 
 Reset the sole installed user's browser password, enroll a node with its hub,
-and manage the install-scoped daemon API token.
+and show which hub API key the node is enrolled with.
 
 ```bash
 gobby auth credentials
 gobby auth login [--hub URL] [--email EMAIL] [--fingerprint sha256:...] [--label LABEL] [--insecure]
 gobby auth key --show
-gobby auth token [--show] [--rotate]
 ```
 
 | Command or option | Purpose |
@@ -417,9 +416,6 @@ gobby auth token [--show] [--rotate]
 | `login --label LABEL` | Label the minted key (default: this hostname). |
 | `login --insecure` | Allow plain `http://` to a non-loopback hub. Plain HTTP never pins a certificate. |
 | `key --show` | Print the enrolled key's hint and id, never the key. |
-| `token` | Show token path, file presence, stored hash prefix, and file/DB agreement. |
-| `token --show` | Print the plaintext token for deliberate client provisioning. |
-| `token --rotate` | Replace the token file and stored hash; recopy the file to other machines. |
 
 `login` refuses a `datastore_mode: local` bootstrap; set the node up first as
 [Client setup](shared-stack.md#client-setup) describes. Over HTTPS it prints the
@@ -432,10 +428,14 @@ A failure after the hub mints the key, but before `bootstrap.yaml` names it,
 restores the prior files and revokes the new key. A re-login keeps the prior
 key live on the hub.
 
-The token command reads `$GOBBY_HOME/local_cli_token` (default
-`~/.gobby/local_cli_token`). The daemon refreshes its credential cache on a
-request after the five-second refresh interval. Clients holding the old token
-must reread or receive the replacement token; rotation does not distribute it.
+The operator credential is a hub-issued API key stored as `api_key` in the
+owner-only `$GOBBY_HOME/bootstrap.yaml` (default `~/.gobby/bootstrap.yaml`).
+A local `gobby install` provisions it from the hub database. A remote node
+(`datastore_mode: remote` with `hub_daemon_url`) enrolls with `gobby auth login`,
+which stores that machine's own key. Prefer an HTTPS hub URL; an intentional
+non-loopback HTTP URL needs `--insecure`. Never copy another machine's key.
+`gclient` uses the bootstrap `api_key` by default; `--token-file` reads an
+explicitly supplied plaintext key file.
 
 ### `gobby mcp-server`
 
@@ -1225,7 +1225,7 @@ steps to repeat for every profile update:
   Provision the root first. A configured existing files home can be reused;
   interactive install prompts when it is missing, while noninteractive install
   requires it. Remote install refuses `--files-home` and uses the hub's existing
-  local CLI token and configured owner origin.
+  files home and configured owner origin, reached with the node's enrolled API key.
 - Legacy files: `gobby files migrate` runs only on the local hub with the daemon
   stopped, under its maintenance claim. Stop or upgrade remote writers and
   collect their leftover profile/personal/attachment files at the hub first.

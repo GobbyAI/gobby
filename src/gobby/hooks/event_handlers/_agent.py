@@ -184,15 +184,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
             elif self._session_manager:
                 self._ensure_bound_grok_native_subagent(event, session_id)
 
-            try:
-                from gobby.hooks.event_handlers._session_start.transcripts import (
-                    ensure_qwen_transcript_tracking,
-                )
-
-                ensure_qwen_transcript_tracking(self, event, session_id)
-            except Exception as e:
-                self.logger.warning("Failed to register deferred Qwen transcript: %s", e)
-
             # Start a fresh lifecycle generation (unless /clear or /exit).
             prompt_lower = stripped_prompt.lower()
             if prompt_lower not in ("/clear", "/exit"):

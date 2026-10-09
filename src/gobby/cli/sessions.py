@@ -227,7 +227,7 @@ def terminate_terminal(reference: str, json_format: bool) -> None:
 )
 @click.option(
     "--source",
-    type=click.Choice(["claude", "grok", "qwen", "codex", "droid", "agy"]),
+    type=click.Choice(["claude", "grok", "codex", "droid", "agy"]),
     help="Filter by source",
 )
 @click.option("--machine-id", help="Filter by client machine id")

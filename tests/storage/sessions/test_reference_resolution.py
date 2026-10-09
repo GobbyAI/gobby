@@ -57,7 +57,7 @@ class TestSessionManagerReferenceResolution:
         session = session_manager.register(
             external_id="parent-any",
             machine_id=LOCAL_MACHINE_ID,
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         session_manager.update_status(session.id, "awaiting_handoff")

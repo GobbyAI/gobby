@@ -31,7 +31,7 @@ from gobby.providers.capabilities.resolve import CapabilityResolver
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("provider", ["agy", "claude", "codex", "droid", "grok", "qwen"])
+@pytest.mark.parametrize("provider", ["agy", "claude", "codex", "droid", "grok"])
 def test_inherit_uses_spawn_capable_default_provider(provider: str) -> None:
     resolved: str | None
     try:
@@ -45,7 +45,7 @@ def test_inherit_uses_spawn_capable_default_provider(provider: str) -> None:
     assert resolved == provider
 
 
-@pytest.mark.parametrize("provider", [None, "", "inherit", "pipeline", "unknown"])
+@pytest.mark.parametrize("provider", [None, "", "inherit", "pipeline", "unknown", "qwen"])
 def test_inherit_fails_for_unsupported_default_provider(provider: str | None) -> None:
     with pytest.raises(ValueError, match="Set the provider argument"):
         resolve_spawn_provider(

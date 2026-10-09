@@ -38,7 +38,6 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
 )
 from gobby.adapters.droid import DroidAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -77,7 +76,6 @@ def _load_live_codex_command_events() -> list[dict[str, Any]]:
     [
         pytest.param("codex", CodexHooksAdapter(), "SessionStart", id="codex"),
         pytest.param("claude", ClaudeCodeAdapter(), "session-start", id="claude"),
-        pytest.param("qwen", QwenAdapter(), "SessionStart", id="qwen"),
         pytest.param("droid", DroidAdapter(), "SessionStart", id="droid"),
     ],
 )

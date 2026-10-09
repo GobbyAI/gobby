@@ -462,16 +462,16 @@ def test_user_interruption_requires_explicit_disposition(
     sessions = SessionManager(temp_db)
     session_id = _session(sessions, sample_project["id"], external_id="interrupt")
     lifecycle = TurnLifecycleReducer(sessions)
-    lifecycle.begin_turn(session_id, TurnEvidence(source="qwen"))
+    lifecycle.begin_turn(session_id, TurnEvidence(source="agy"))
 
     interrupted = lifecycle.end_turn(
         session_id,
         "user_interrupted",
-        TurnEvidence(source="qwen", generation=1),
+        TurnEvidence(source="agy", generation=1),
     )
     assert interrupted.status == "interrupted"
 
-    replacement = lifecycle.begin_turn(session_id, TurnEvidence(source="qwen"))
+    replacement = lifecycle.begin_turn(session_id, TurnEvidence(source="agy"))
     assert replacement.status == "active"
 
 

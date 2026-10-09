@@ -30,7 +30,7 @@ from gobby.servers.websocket.chat.runtime_manager import (
 
 pytestmark = pytest.mark.unit
 
-_PROVIDERS = ("claude", "codex", "droid", "grok", "qwen")
+_PROVIDERS = ("claude", "codex", "droid", "grok")
 
 
 def _srt_launch(*, executable: str = "/bin/provider") -> SandboxLaunch:
@@ -99,7 +99,6 @@ class TestCreateSessionLaunchGate:
         assert isinstance(session.sandbox_policy_hash, str)
         assert len(session.sandbox_policy_hash) == 64
         assert manager._grok_backend._client.is_started is False
-        assert manager._qwen_backend._client.is_started is False
         client = manager._codex_backend.client
         assert client is None or client.is_connected is False
 
@@ -235,7 +234,6 @@ class TestRuntimeManagerDoesNotWarmStart:
         await manager.start()
 
         assert manager._grok_backend._client.is_started is False
-        assert manager._qwen_backend._client.is_started is False
         client = manager._codex_backend.client
         assert client is None or client.is_connected is False
 
@@ -516,12 +514,12 @@ async def _seam_start(owner: Any, session: Any, context: Any) -> Any:
         session,
         context,
         session_key=session.conversation_id,
-        effective_model="qwen3-coder",
+        effective_model="grok-4",
         persona_selected=False,
         pending_agent=None,
         pending_mode="plan",
-        agent_name="qwen",
-        provider_name="qwen",
+        agent_name="grok",
+        provider_name="grok",
         session_manager=None,
         existing_db_session=None,
         project_context_changed=False,
@@ -535,7 +533,7 @@ class TestAcpSubprocessesAreSessionOwned:
         from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 
         manager = WebChatRuntimeManager(daemon_config=DaemonConfig())
-        backend = manager._qwen_backend
+        backend = manager._grok_backend
         clients: list[_SeamACPClient] = []
         failures: list[bool] = []
 
@@ -544,7 +542,7 @@ class TestAcpSubprocessesAreSessionOwned:
             return _SeamACPClient(clients, fail_start=fail, **kwargs)
 
         monkeypatch.setattr(backend, "acp_client_cls", factory)
-        backend._health = ProviderBackendHealth(provider="qwen", available=True)
+        backend._health = ProviderBackendHealth(provider="grok", available=True)
         return SimpleNamespace(manager=manager, backend=backend, clients=clients, failures=failures)
 
     @pytest.fixture(autouse=True)
@@ -563,7 +561,7 @@ class TestAcpSubprocessesAreSessionOwned:
         self, acp: Any, tmp_path: Path
     ) -> None:
         session = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-first", model="qwen3-coder"
+            provider="grok", conversation_id="conv-first", model="grok-4"
         )
         assert acp.clients == []
         owner = _seam_owner()
@@ -585,7 +583,7 @@ class TestAcpSubprocessesAreSessionOwned:
     @pytest.mark.asyncio
     async def test_resume_reuses_persisted_identity(self, acp: Any, tmp_path: Path) -> None:
         session = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-resume", model="qwen3-coder"
+            provider="grok", conversation_id="conv-resume", model="grok-4"
         )
         session.resume_session_id = "acp-old"
 
@@ -598,7 +596,7 @@ class TestAcpSubprocessesAreSessionOwned:
     @pytest.mark.asyncio
     async def test_failed_resume_falls_back_to_fresh_launch(self, acp: Any, tmp_path: Path) -> None:
         session = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-fallback", model="qwen3-coder"
+            provider="grok", conversation_id="conv-fallback", model="grok-4"
         )
         session.resume_session_id = "acp-old"
         acp.failures.extend([True, False])
@@ -617,7 +615,7 @@ class TestAcpSubprocessesAreSessionOwned:
         self, acp: Any, tmp_path: Path
     ) -> None:
         session = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-fail", model="qwen3-coder"
+            provider="grok", conversation_id="conv-fail", model="grok-4"
         )
         acp.failures.append(True)
         owner = _seam_owner()
@@ -634,7 +632,7 @@ class TestAcpSubprocessesAreSessionOwned:
     @pytest.mark.asyncio
     async def test_teardown_stops_the_session_owned_client(self, acp: Any, tmp_path: Path) -> None:
         session = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-teardown", model="qwen3-coder"
+            provider="grok", conversation_id="conv-teardown", model="grok-4"
         )
         await _seam_start(_seam_owner(), session, _seam_context(tmp_path, "a.test"))
         client = acp.clients[0]
@@ -653,10 +651,10 @@ class TestAcpSubprocessesAreSessionOwned:
         import asyncio
 
         session_a = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-a", model="qwen3-coder"
+            provider="grok", conversation_id="conv-a", model="grok-4"
         )
         session_b = await acp.manager.create_session(
-            provider="qwen", conversation_id="conv-b", model="qwen3-coder"
+            provider="grok", conversation_id="conv-b", model="grok-4"
         )
         worktree_a = tmp_path / "project-a" / "wt"
         worktree_b = tmp_path / "project-b" / "wt"

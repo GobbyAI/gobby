@@ -123,7 +123,7 @@ describe("sessionPersistence", () => {
         codex: "high",
         claude: null,
         droid: ["medium"],
-        qwen: 4,
+        grok: 4,
       }),
     );
 

@@ -38,7 +38,8 @@ class TestSessionSource:
     def test_parse_session_source_covers_all_input_shapes(self) -> None:
         assert parse_session_source("claude") is SessionSource.CLAUDE
         assert parse_session_source(" CLAUDE ") is SessionSource.CLAUDE
-        assert parse_session_source(SessionSource.QWEN) is SessionSource.QWEN
+        assert parse_session_source(SessionSource.GROK) is SessionSource.GROK
+        assert parse_session_source("qwen") is SessionSource.UNKNOWN
         assert parse_session_source("unsupported") is SessionSource.UNKNOWN
         assert parse_session_source("future-cli") is SessionSource.UNKNOWN
         assert parse_session_source(None) is SessionSource.UNKNOWN

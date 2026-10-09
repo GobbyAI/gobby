@@ -269,7 +269,7 @@ def _client(sm: _SM, rm: _RM | None) -> TestClient:
     return TestClient(app)
 
 
-def _acp_row(source: str = "qwen") -> _Session:
+def _acp_row(source: str = "grok") -> _Session:
     return _Session(id="sess-1", external_id="acp-xyz", source=source)
 
 
@@ -286,7 +286,7 @@ def test_discovery_route_is_absent_and_listing_does_not_start_provider() -> None
             {"sessions": [{"sessionId": "s1", "cwd": "/repo", "title": "One"}], "nextCursor": None}
         ],
     )
-    client = _client(sm, _RM({"qwen": backend}))
+    client = _client(sm, _RM({"grok": backend}))
 
     assert client.post("/api/sessions/acp/discover", json={}).status_code == 404
     assert client.get("/api/sessions").status_code == 200
@@ -302,7 +302,7 @@ def test_discovery_route_is_absent_and_listing_does_not_start_provider() -> None
 def test_close_returns_session_and_single_broadcast() -> None:
     sm = _SM([_acp_row()])
     backend = _Backend(capabilities={"close": True})
-    client = _client(sm, _RM({"qwen": backend}))
+    client = _client(sm, _RM({"grok": backend}))
 
     resp = client.post("/api/sessions/sess-1/acp/close")
 
@@ -318,7 +318,7 @@ def test_close_returns_session_and_single_broadcast() -> None:
 def test_delete_returns_session_and_single_broadcast() -> None:
     sm = _SM([_acp_row()])
     backend = _Backend(capabilities={"delete": True})
-    client = _client(sm, _RM({"qwen": backend}))
+    client = _client(sm, _RM({"grok": backend}))
 
     resp = client.post("/api/sessions/sess-1/acp/delete")
 
@@ -331,7 +331,7 @@ def test_delete_returns_session_and_single_broadcast() -> None:
 
 def test_close_unsupported_capability_returns_409() -> None:
     sm = _SM([_acp_row()])
-    client = _client(sm, _RM({"qwen": _Backend(capabilities={})}))
+    client = _client(sm, _RM({"grok": _Backend(capabilities={})}))
 
     resp = client.post("/api/sessions/sess-1/acp/close")
 
@@ -341,7 +341,7 @@ def test_close_unsupported_capability_returns_409() -> None:
 def test_close_provider_unavailable_returns_503() -> None:
     sm = _SM([_acp_row()])
     backend = _Backend(available=False, capabilities={"close": True})
-    client = _client(sm, _RM({"qwen": backend}))
+    client = _client(sm, _RM({"grok": backend}))
 
     resp = client.post("/api/sessions/sess-1/acp/close")
 
@@ -349,7 +349,7 @@ def test_close_provider_unavailable_returns_503() -> None:
 
 
 def test_close_unknown_session_returns_404() -> None:
-    client = _client(_SM(), _RM({"qwen": _Backend(capabilities={"close": True})}))
+    client = _client(_SM(), _RM({"grok": _Backend(capabilities={"close": True})}))
 
     resp = client.post("/api/sessions/ghost/acp/close")
 
@@ -358,7 +358,7 @@ def test_close_unknown_session_returns_404() -> None:
 
 def test_close_non_acp_target_returns_400() -> None:
     sm = _SM([_acp_row(source="claude")])  # claude web_chat is not ACP-routed
-    client = _client(sm, _RM({"qwen": _Backend(capabilities={"close": True})}))
+    client = _client(sm, _RM({"grok": _Backend(capabilities={"close": True})}))
 
     resp = client.post("/api/sessions/sess-1/acp/close")
 
@@ -367,7 +367,7 @@ def test_close_non_acp_target_returns_400() -> None:
 
 def test_delete_unsupported_capability_returns_409() -> None:
     sm = _SM([_acp_row()])
-    client = _client(sm, _RM({"qwen": _Backend(capabilities={})}))
+    client = _client(sm, _RM({"grok": _Backend(capabilities={})}))
 
     resp = client.post("/api/sessions/sess-1/acp/delete")
 
@@ -380,18 +380,18 @@ def test_delete_unsupported_capability_returns_409() -> None:
 
 
 def test_list_sessions_attaches_acp_block_only_for_acp_rows() -> None:
-    qwen_row = _Session(id="s-qwen", external_id="acp-1", source="qwen")
+    grok_row = _Session(id="s-grok", external_id="acp-1", source="grok")
     claude_row = _Session(id="s-claude", external_id="ext-2", source="claude")
     tmux_row = _Session(id="s-tmux", external_id="ext-3", source="claude", session_type="terminal")
-    sm = _SM([qwen_row, claude_row, tmux_row])
+    sm = _SM([grok_row, claude_row, tmux_row])
     backend = _Backend(capabilities={"resume": True, "close": True})
-    client = _client(sm, _RM({"qwen": backend}))
+    client = _client(sm, _RM({"grok": backend}))
 
     resp = client.get("/api/sessions")
 
     assert resp.status_code == 200
     by_id = {s["id"]: s for s in resp.json()["sessions"]}
-    assert by_id["s-qwen"]["acp"] == {
+    assert by_id["s-grok"]["acp"] == {
         "capabilities": {"resume": True, "close": True, "delete": False},
         "additional_directories": [],
     }
@@ -400,13 +400,13 @@ def test_list_sessions_attaches_acp_block_only_for_acp_rows() -> None:
 
 
 def test_list_sessions_acp_block_present_with_empty_caps_without_runtime_manager() -> None:
-    sm = _SM([_Session(id="s-qwen", external_id="acp-1", source="qwen")])
+    sm = _SM([_Session(id="s-grok", external_id="acp-1", source="grok")])
     client = _client(sm, None)
 
     resp = client.get("/api/sessions")
 
     assert resp.status_code == 200
-    # No runtime manager → qwen still classifies as ACP via the fallback set, so
+    # No runtime manager → grok still classifies as ACP via the fallback set, so
     # the chip stays stable; capabilities degrade to all-false (zero buttons).
     assert resp.json()["sessions"][0]["acp"] == {
         "capabilities": {"resume": False, "close": False, "delete": False},
@@ -415,12 +415,12 @@ def test_list_sessions_acp_block_present_with_empty_caps_without_runtime_manager
 
 
 def test_list_sessions_acp_block_includes_additional_directories() -> None:
-    row = _Session(id="s-qwen", external_id="acp-1", source="qwen")
+    row = _Session(id="s-grok", external_id="acp-1", source="grok")
     sm = _SM([row])
     backend = _Backend(capabilities={"resume": True})
-    rm = _RM({"qwen": backend})
+    rm = _RM({"grok": backend})
     rm.cache_acp_session_info(
-        "qwen", "acp-1", {"sessionId": "acp-1", "additionalDirectories": ["/extra"]}
+        "grok", "acp-1", {"sessionId": "acp-1", "additionalDirectories": ["/extra"]}
     )
     client = _client(sm, rm)
 

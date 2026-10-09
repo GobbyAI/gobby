@@ -8,14 +8,12 @@ start using them.
 
 Each CLI has a different trust mechanism:
 - Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
-- Qwen CLI: ~/.qwen/trustedFolders.json + projects.json
 - Codex CLI: ~/.codex/config.toml [projects."<path>"] trust_level = "trusted"
 - Droid CLI: --auto high handles spawned-agent permissions, no trust database needed
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -37,9 +35,6 @@ from gobby.paths import get_gobby_home
 logger = logging.getLogger(__name__)
 
 _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
-_JSON_FOLDER_TRUST_CLIS = frozenset({"qwen"})
-_MODEL_DISCOVERY_TRUST_LOCKS: dict[str, asyncio.Lock] = {}
-_LOCK_DICT_LOCK = asyncio.Lock()
 _TRUST_STORE_LOCKS: dict[str, threading.Lock] = {}
 _TRUST_STORE_LOCKS_LOCK = threading.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -124,7 +119,7 @@ def pre_approve_directory(cli: str, directory: PathValue) -> None:
     and resolved paths to cover all cases.
 
     Args:
-        cli: CLI name (claude, qwen, codex, droid)
+        cli: CLI name (claude, codex, droid)
         directory: Absolute path to the workspace directory
     """
     seed_cli_trust(cli, directory)
@@ -138,65 +133,19 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
     they differ.
     """
     home = gobby_home if gobby_home is not None else get_gobby_home()
-    return seed_cli_trust(cli, home, respect_folder_trust_setting=True).as_dict()
+    return seed_cli_trust(cli, home).as_dict()
 
 
-async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
-    """Authorize provider-owned ACP model discovery paths.
-
-    Model discovery only needs provider-owned JSON folder-trust stores. Runtime workspace
-    trust stays on ``pre_approve_directory`` so these authorization paths remain
-    separate.
-    """
-    if cli not in _JSON_FOLDER_TRUST_CLIS:
-        result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
-        result.skipped = True
-        supported = ", ".join(sorted(_JSON_FOLDER_TRUST_CLIS))
-        result.reason = (
-            f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: {supported}"
-        )
-        return result
-
-    async with _LOCK_DICT_LOCK:
-        lock = _MODEL_DISCOVERY_TRUST_LOCKS.setdefault(cli, asyncio.Lock())
-
-    await lock.acquire()
-
-    try:
-        return await asyncio.to_thread(
-            seed_cli_trust,
-            cli,
-            directory,
-            respect_folder_trust_setting=True,
-        )
-    finally:
-        lock.release()
-
-
-def seed_cli_trust(
-    cli: str,
-    directory: PathValue,
-    *,
-    respect_folder_trust_setting: bool = False,
-) -> TrustSeedResult:
+def seed_cli_trust(cli: str, directory: PathValue) -> TrustSeedResult:
     """Seed trust for a CLI and return structured details about the writes."""
     with _TRUST_STORE_LOCKS_LOCK:
         lock = _TRUST_STORE_LOCKS.setdefault(cli, threading.Lock())
 
     with lock:
-        return _seed_cli_trust_unlocked(
-            cli,
-            directory,
-            respect_folder_trust_setting=respect_folder_trust_setting,
-        )
+        return _seed_cli_trust_unlocked(cli, directory)
 
 
-def _seed_cli_trust_unlocked(
-    cli: str,
-    directory: PathValue,
-    *,
-    respect_folder_trust_setting: bool = False,
-) -> TrustSeedResult:
+def _seed_cli_trust_unlocked(cli: str, directory: PathValue) -> TrustSeedResult:
     """Seed trust for a CLI. Caller must hold the per-CLI trust-store lock."""
     paths = _trust_path_strings(directory)
     result = TrustSeedResult(cli=cli, paths=paths)
@@ -204,13 +153,6 @@ def _seed_cli_trust_unlocked(
     try:
         if cli in _CLAUDE_COMPATIBLE_CLIS:
             _seed_claude_trust(paths, result)
-        elif cli in _JSON_FOLDER_TRUST_CLIS:
-            _seed_json_folder_trust(
-                cli,
-                paths,
-                result,
-                respect_folder_trust_setting=respect_folder_trust_setting,
-            )
         elif cli == "codex":
             _seed_codex_trust(paths, result)
         elif cli == "droid":
@@ -259,14 +201,6 @@ def _is_windows_absolute_path(path: str) -> bool:
     return bool(_WINDOWS_ABSOLUTE_RE.match(path)) or path.startswith("\\\\")
 
 
-def _path_name(path: str) -> str:
-    """Return a final path component for POSIX and Windows-style strings."""
-    trimmed = path.rstrip("/\\")
-    if not trimmed:
-        return path
-    return re.split(r"[/\\]", trimmed)[-1]
-
-
 def _seed_claude_trust(paths: list[str], result: TrustSeedResult) -> None:
     """Seed Claude Code project-directory trust for all paths."""
     for path in paths:
@@ -313,118 +247,6 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
                 message=str(exc),
             )
         logger.warning(message, exc_info=True)
-
-
-def _seed_json_folder_trust(
-    cli: str,
-    paths: list[str],
-    result: TrustSeedResult,
-    *,
-    respect_folder_trust_setting: bool = False,
-) -> None:
-    """Pre-approve paths for a CLI with projects/trustedFolders JSON stores."""
-    cli_home = Path.home() / f".{cli}"
-    cli_home.mkdir(parents=True, exist_ok=True)
-
-    try:
-        _seed_cli_projects(cli, cli_home, paths, result)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        message = f"Failed to update {cli.title()} projects.json for {', '.join(paths)}: {exc}"
-        result.add_error(message)
-        logger.warning(message, exc_info=True)
-
-    if respect_folder_trust_setting and not _folder_trust_enabled(cli_home / "settings.json"):
-        for path in paths:
-            result.add_entry(
-                store="trusted_folders",
-                target=path,
-                status="skipped",
-                message="security.folderTrust is disabled",
-            )
-        return
-
-    try:
-        _seed_trusted_folders(cli, cli_home, paths, result)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        message = (
-            f"Failed to update {cli.title()} trustedFolders.json for {', '.join(paths)}: {exc}"
-        )
-        result.add_error(message)
-        logger.warning(message, exc_info=True)
-
-
-def _seed_cli_projects(
-    cli: str,
-    cli_home: Path,
-    paths: list[str],
-    result: TrustSeedResult,
-) -> None:
-    """Register provider project paths in projects.json."""
-    projects_file = cli_home / "projects.json"
-    data = _load_json_object(projects_file, reset_label=f"{cli.title()} projects.json")
-
-    projects_raw = data.get("projects")
-    if isinstance(projects_raw, dict):
-        projects = projects_raw
-    else:
-        if projects_raw is not None:
-            logger.warning("%s projects field is not a dict, resetting", cli.title())
-        projects = {}
-        data["projects"] = projects
-
-    changed = False
-    for path in paths:
-        if path in projects:
-            result.add_entry(store="projects_json", target=path, status="existing")
-            continue
-
-        projects[path] = _path_name(path)
-        result.add_entry(store="projects_json", target=path, status="created")
-        changed = True
-
-    if changed:
-        _atomic_write_json(projects_file, data)
-        result.add_file_written(projects_file)
-
-
-def _seed_trusted_folders(
-    cli: str,
-    cli_home: Path,
-    paths: list[str],
-    result: TrustSeedResult,
-) -> None:
-    """Register provider TRUST_PARENT paths in trustedFolders.json."""
-    trust_file = cli_home / "trustedFolders.json"
-    trusted = _load_json_object(trust_file, reset_label=f"{cli.title()} trustedFolders.json")
-
-    changed = False
-    for path in paths:
-        current = trusted.get(path)
-        if current == "TRUST_PARENT":
-            result.add_entry(store="trusted_folders", target=path, status="existing")
-            continue
-
-        status: TrustEntryStatus = "created" if current is None else "updated"
-        trusted[path] = "TRUST_PARENT"
-        result.add_entry(store="trusted_folders", target=path, status=status)
-        changed = True
-        logger.info("Pre-approved %s folder trust for %s", cli.title(), path)
-
-    if changed:
-        _atomic_write_json(trust_file, trusted)
-        result.add_file_written(trust_file)
-
-
-def _folder_trust_enabled(settings_file: Path) -> bool:
-    """Return whether folder trust is active in settings."""
-    if not settings_file.exists():
-        return True
-
-    settings = _load_json_object(settings_file, reset_label=settings_file.name)
-    security = settings.get("security")
-    if isinstance(security, dict) and security.get("folderTrust") is False:
-        return False
-    return True
 
 
 def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
@@ -549,24 +371,6 @@ def _load_toml_config(content: str) -> TOMLDocument:
         return tomlkit.document()
     parsed = tomlkit.parse(content)
     return parsed
-
-
-def _load_json_object(path: Path, *, reset_label: str) -> dict[str, Any]:
-    """Load a JSON object, resetting non-object roots to an empty object."""
-    if not path.exists():
-        return {}
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, dict):
-        return data
-
-    logger.warning("%s root is not a dict, resetting: %s", reset_label, path)
-    return {}
-
-
-def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    """Write JSON atomically with fsync and same-directory rename."""
-    _atomic_write_text(path, json.dumps(data, indent=2) + "\n")
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

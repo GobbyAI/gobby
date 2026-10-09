@@ -54,28 +54,6 @@ class SessionStartMixin(EventHandlersBase):
             stored_path=stored_path,
         )
 
-    def _find_qwen_transcript(
-        self,
-        input_data: dict[str, Any],
-        external_id: str,
-    ) -> str | None:
-        """Locate a Qwen CLI JSON session transcript for the hook event."""
-        from .transcripts import find_qwen_transcript
-
-        return find_qwen_transcript(self, input_data, external_id)
-
-    def _find_json_session_transcript(
-        self,
-        cli_name: str,
-        cli_label: str,
-        input_data: dict[str, Any],
-        external_id: str,
-    ) -> str | None:
-        """Find a JSON session transcript for supported CLIs."""
-        from .transcripts import find_json_session_transcript
-
-        return find_json_session_transcript(self, cli_name, cli_label, input_data, external_id)
-
     def handle_session_start(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_START event."""
         from .flow import handle_session_start

@@ -79,7 +79,7 @@ class TestSession:
         session = session_manager.register(
             external_id="dict-test",
             machine_id="20000000-0000-4000-8000-000000000002",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
             title="Test Session",
         )
@@ -88,7 +88,7 @@ class TestSession:
         assert d["id"] == session.id
         assert d["external_id"] == "dict-test"
         assert d["machine_id"] == "20000000-0000-4000-8000-000000000002"
-        assert d["source"] == "qwen"
+        assert d["source"] == "codex"
         assert d["title"] == "Test Session"
         assert d["title_source"] == "manual"
         assert d["status"] == "active"
@@ -98,7 +98,7 @@ class TestSession:
             id="sess-title-source",
             external_id="ext-title-source",
             machine_id="20000000-0000-4000-8000-000000000002",
-            source="qwen",
+            source="codex",
             project_id="proj-1",
             title="Titled Session",
             title_source="manual",
@@ -151,7 +151,7 @@ class TestSession:
             id="sess-live-tmux",
             external_id="ext-live-tmux",
             machine_id="20000000-0000-4000-8000-000000000002",
-            source="qwen",
+            source="codex",
             project_id="proj-1",
             title="Live tmux session",
             status=status,
@@ -175,7 +175,7 @@ class TestSession:
             id="sess-stale-tmux",
             external_id="ext-stale-tmux",
             machine_id="20000000-0000-4000-8000-000000000002",
-            source="qwen",
+            source="codex",
             project_id="proj-1",
             title="Historical tmux session",
             status=status,
@@ -199,7 +199,7 @@ class TestSession:
             id="sess-parent-pid-only",
             external_id="ext-parent-pid-only",
             machine_id="20000000-0000-4000-8000-000000000002",
-            source="qwen",
+            source="codex",
             project_id="proj-1",
             title="Stale pid session",
             status="paused",

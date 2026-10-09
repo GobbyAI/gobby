@@ -545,7 +545,6 @@ def test_supported_sources_match_v1_adapter_matrix() -> None:
     supported = {
         SessionSource.CLAUDE,
         SessionSource.CODEX,
-        SessionSource.QWEN,
         SessionSource.GROK,
         SessionSource.DROID,
     }

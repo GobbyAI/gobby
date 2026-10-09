@@ -135,13 +135,12 @@ async def copy_project_json_to_worktree(
 _PROVIDER_INSTALLERS: dict[str, tuple[str, str, bool]] = {
     "claude": ("gobby.cli.installers.claude", "install_claude", True),
     "codex": ("gobby.cli.installers.codex", "install_codex_project_hooks", False),
-    "qwen": ("gobby.cli.installers.qwen", "install_qwen", True),
     "droid": ("gobby.cli.installers.droid", "install_droid", True),
 }
 
 
 def install_provider_hooks(
-    provider: Literal["claude", "qwen", "codex", "droid"] | None,
+    provider: Literal["claude", "codex", "droid"] | None,
     worktree_path: str | Path,
 ) -> bool:
     """Install CLI hooks for the specified provider in the worktree.

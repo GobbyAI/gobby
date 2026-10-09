@@ -88,7 +88,6 @@ TERMINAL_SOURCES = [
     SessionSource.CLAUDE,
     SessionSource.CODEX,
     SessionSource.GROK,
-    SessionSource.QWEN,
     SessionSource.DROID,
 ]
 

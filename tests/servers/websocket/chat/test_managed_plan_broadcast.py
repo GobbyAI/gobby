@@ -1,6 +1,6 @@
 """Codex + Droid plan-capture broadcast parity (#15629).
 
-The ACP path (Grok/Qwen) already surfaces a plan presented as a normal
+The ACP path (Grok) already surfaces a plan presented as a normal
 assistant turn — ``test_acp_plan_broadcast.py`` covers it. Codex (app-server
 JSON-RPC) and Droid (stream-jsonrpc) share the same
 ``ManagedWebChatPermissionsMixin`` plan pipeline, but their session

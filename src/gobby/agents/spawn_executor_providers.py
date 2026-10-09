@@ -315,57 +315,6 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     )
 
 
-async def prepare_qwen_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
-    if validation_error := _session_manager_validation_error(request, "Qwen"):
-        return validation_error
-    spawn_context = request.prepared_spawn
-    gobby_session_id = spawn_context.session_id
-    if preflight_error := await _prepare_managed_code_index(request, spawn_context):
-        return preflight_error
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-    if request.api_base:
-        env["QWEN_API_BASE"] = request.api_base
-    if request.api_token:
-        env["QWEN_API_KEY"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-    sandbox_result = await _prepare_provider_sandbox(request, spawn_context, "qwen", env)
-    if isinstance(sandbox_result, SpawnResult):
-        return sandbox_result
-    launch = sandbox_result
-    post_sandbox_started = start_spawn_phase()
-    cmd, _cmd_env = build_cli_command(
-        cli="qwen",
-        resume_session_id=request.resume_session_id,
-        prompt=request.prompt,
-        auto_approve=True,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=launch.provider_args or None,
-    )
-    await asyncio.to_thread(
-        _record_resume_launch_details,
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=launch.provider_args,
-        sandbox_env=launch.provider_env,
-        env=env,
-        sandbox_launch=launch,
-    )
-    await asyncio.to_thread(pre_approve_directory, "qwen", request.cwd)
-    finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
-    return ProviderSpawnPlan(
-        command=cmd,
-        env=env,
-        launch=launch,
-        auth_cli="qwen",
-        child_session_id=gobby_session_id,
-        agent_run_id=spawn_context.agent_run_id,
-        title=f"gobby-qwen-d{request.agent_depth}",
-    )
-
-
 async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Grok"):
         return validation_error

@@ -58,7 +58,7 @@ def parse_provider_list(provider_string: str | None) -> list[str]:
         provider strings. Kept for backward compatibility.
 
     Args:
-        provider_string: e.g. "qwen,claude" or "claude"
+        provider_string: e.g. "grok,claude" or "claude"
 
     Returns:
         List of provider names, stripped and lowercased.

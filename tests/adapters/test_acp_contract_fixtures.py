@@ -3,91 +3,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.grok_acp_client import GrokACPClient
-from gobby.adapters.qwen_acp_client import QwenACPClient
-from gobby.llm.claude_models import DoneEvent, ToolCallEvent
-from gobby.servers.websocket.chat.backends.qwen import QwenManagedChatSession
 from gobby.utils.child_supervisor import supervised_argv
 
 pytestmark = pytest.mark.unit
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "acp_contract"
 PROMPT_TEXT = "contract ping"
-
-
-@dataclass(frozen=True)
-class ACPFixtureCase:
-    client_class: type[ACPClient]
-    cli_name: str
-    version: str
-    new_fixture: str
-    load_fixture: str
-    new_session_id: str
-    load_session_id: str
-
-
-@dataclass(frozen=True)
-class ACPToolCallFixtureCase:
-    client_class: type[ACPClient]
-    session_class: type[QwenManagedChatSession]
-    fixture: str
-    expected_call_id: str
-    expected_tool_name: str
-    expected_lifecycle_tool_name: str
-    expected_tool_input: dict[str, Any]
-
-
-ACP_FIXTURE_CASES = [
-    pytest.param(
-        ACPFixtureCase(
-            client_class=QwenACPClient,
-            cli_name="qwen",
-            version="0.15.6",
-            new_fixture="qwen-0.15.6-session-new-prompt.stdout.jsonl",
-            load_fixture="qwen-0.15.6-session-load-prompt.stdout.jsonl",
-            new_session_id="qwen-new-session",
-            load_session_id="qwen-existing-session",
-        ),
-        id="qwen-0.15.6",
-    ),
-]
-
-ACP_TOOL_CALL_FIXTURE_CASES = [
-    pytest.param(
-        ACPToolCallFixtureCase(
-            client_class=QwenACPClient,
-            session_class=QwenManagedChatSession,
-            fixture="qwen-0.15.6-session-tool-call.stdout.jsonl",
-            expected_call_id="call-qwen-tool-1",
-            expected_tool_name="run_shell_command",
-            expected_lifecycle_tool_name="Bash",
-            expected_tool_input={"command": "pwd", "description": "Show current directory"},
-        ),
-        id="qwen-0.15.6",
-    ),
-]
-
-
-class FixtureBackend:
-    def __init__(self, events: list[StreamEvent]) -> None:
-        self.events = events
-
-    async def attach_session(self, session: Any, *, model: str | None = None) -> None:
-        del model
-        session._connected = True
-
-    async def send_message(self, session: Any, prompt: str) -> Any:
-        del session, prompt
-        for event in self.events:
-            yield event
 
 
 class FakeStdin:
@@ -145,14 +73,6 @@ def _fixture_lines(name: str) -> list[str]:
     return (FIXTURE_DIR / name).read_text().splitlines()
 
 
-def _fixture_payloads(name: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in _fixture_lines(name) if line.strip()]
-
-
-def _notification_payloads(name: str) -> list[dict[str, Any]]:
-    return [payload for payload in _fixture_payloads(name) if "method" in payload]
-
-
 def _written_requests(process: FakeACPProcess) -> list[dict[str, Any]]:
     return [json.loads(write.decode()) for write in process.stdin.writes]
 
@@ -198,146 +118,6 @@ def _assert_prompt_request(request: dict[str, Any], *, session_id: str) -> None:
     assert request["jsonrpc"] == "2.0"
     assert request["params"]["sessionId"] == session_id
     assert request["params"]["prompt"] == [{"type": "text", "text": PROMPT_TEXT}]
-
-
-async def _drive_fixture(
-    case: ACPFixtureCase,
-    fixture_name: str,
-    *,
-    session_id: str | None,
-) -> tuple[FakeACPProcess, list[StreamEvent], AsyncMock]:
-    assert fixture_name.startswith(f"{case.cli_name}-{case.version}-")
-    process = FakeACPProcess(_fixture_lines(fixture_name))
-
-    with patch("gobby.adapters.acp_client.shutil.which", return_value=f"/usr/bin/{case.cli_name}"):
-        with patch(
-            "gobby.utils.spawn.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=process,
-        ) as create_process:
-            client = case.client_class()
-            await client.start(session_id=session_id)
-            events = [event async for event in client.send(PROMPT_TEXT)]
-
-    return process, events, create_process
-
-
-@pytest.mark.parametrize("case", ACP_FIXTURE_CASES)
-@pytest.mark.parametrize(
-    ("fixture_attr", "session_method"),
-    [
-        ("new_fixture", "session/new"),
-        ("load_fixture", "session/load"),
-    ],
-)
-async def test_recorded_acp_fixture_stream_drives_client_flow(
-    case: ACPFixtureCase,
-    fixture_attr: str,
-    session_method: str,
-) -> None:
-    fixture_name = getattr(case, fixture_attr)
-    is_load = session_method == "session/load"
-    expected_session_id = case.load_session_id if is_load else case.new_session_id
-    requested_session_id = expected_session_id if is_load else None
-
-    process, events, create_process = await _drive_fixture(
-        case,
-        fixture_name,
-        session_id=requested_session_id,
-    )
-
-    expected = supervised_argv([f"/usr/bin/{case.cli_name}", "--acp"])
-    assert create_process.call_args.args[: len(expected)] == tuple(expected)
-    requests = _written_requests(process)
-    assert [request["method"] for request in requests] == [
-        "initialize",
-        session_method,
-        "session/prompt",
-    ]
-    _assert_initialize_request(requests[0])
-    _assert_session_request(
-        requests[1],
-        method=session_method,
-        session_id=requested_session_id,
-    )
-    _assert_prompt_request(requests[2], session_id=expected_session_id)
-
-    assert any(event.event_type == "thinking_delta" for event in events)
-    assert any(event.event_type == "content_delta" for event in events)
-    assert events[-1].event_type == "result"
-
-
-@pytest.mark.parametrize("case", ACP_FIXTURE_CASES)
-def test_normalize_notification_handles_recorded_provider_payloads(
-    case: ACPFixtureCase,
-) -> None:
-    notifications = [
-        *_notification_payloads(case.new_fixture),
-        *_notification_payloads(case.load_fixture),
-    ]
-
-    normalized = [case.client_class._normalize_notification(payload) for payload in notifications]
-    content_deltas = [event for event in normalized if event.event_type == "content_delta"]
-    thinking_deltas = [event for event in normalized if event.event_type == "thinking_delta"]
-
-    assert len(content_deltas) == 2
-    assert len(thinking_deltas) == 2
-    assert all(event.data["content"] for event in content_deltas)
-    assert all(event.data["content"] for event in thinking_deltas)
-
-
-@pytest.mark.parametrize("case", ACP_TOOL_CALL_FIXTURE_CASES)
-def test_normalize_notification_maps_tool_call_updates(
-    case: ACPToolCallFixtureCase,
-) -> None:
-    notifications = _notification_payloads(case.fixture)
-
-    normalized = [case.client_class._normalize_notification(payload) for payload in notifications]
-
-    assert len(normalized) == 1
-    tool_call = normalized[0]
-    assert tool_call.event_type == "tool_call"
-    assert tool_call.data == {
-        "call_id": case.expected_call_id,
-        "tool_name": case.expected_tool_name,
-        "tool_input": case.expected_tool_input,
-    }
-
-
-@pytest.mark.parametrize("case", ACP_TOOL_CALL_FIXTURE_CASES)
-async def test_tool_call_updates_reach_pre_tool_lifecycle(
-    case: ACPToolCallFixtureCase,
-) -> None:
-    events = [
-        case.client_class._normalize_notification(payload)
-        for payload in _notification_payloads(case.fixture)
-    ]
-    pre_tool_payloads: list[dict[str, Any]] = []
-
-    async def on_pre_tool(payload: dict[str, Any]) -> None:
-        pre_tool_payloads.append(payload)
-
-    session = case.session_class(
-        conversation_id=f"{case.expected_call_id}-conversation",
-        _backend=FixtureBackend(events),
-        project_path=".",
-        _on_pre_tool=on_pre_tool,
-    )
-
-    chat_events = [event async for event in session.send_message("ping")]
-
-    tool_call_events = [event for event in chat_events if isinstance(event, ToolCallEvent)]
-    assert len(tool_call_events) == 1
-    assert tool_call_events[0].tool_call_id == case.expected_call_id
-    assert tool_call_events[0].tool_name == case.expected_lifecycle_tool_name
-    assert tool_call_events[0].arguments == case.expected_tool_input
-    assert pre_tool_payloads == [
-        {
-            "tool_name": case.expected_lifecycle_tool_name,
-            "tool_input": case.expected_tool_input,
-        }
-    ]
-    assert isinstance(chat_events[-1], DoneEvent)
 
 
 async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -> None:
@@ -410,69 +190,3 @@ async def test_grok_load_fixture_handles_terminal_client_request() -> None:
     responses = [request for request in requests if request.get("id") == 0 and "result" in request]
     assert responses
     assert responses[0]["result"] == {"terminalId": "term-fixture"}
-
-
-async def _start_qwen_lifecycle_fixture(
-    fixture_name: str,
-) -> tuple[QwenACPClient, FakeACPProcess]:
-    """Start a Qwen client from a capability-advertising lifecycle fixture.
-
-    ``auto_session=False`` keeps the only pre-lifecycle request the ``initialize``
-    handshake, so the lifecycle call is request id ``2``.
-    """
-    process = FakeACPProcess(_fixture_lines(fixture_name))
-    with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/qwen"):
-        with patch(
-            "gobby.utils.spawn.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=process,
-        ):
-            client = QwenACPClient()
-            await client.start(auto_session=False)
-    return client, process
-
-
-async def test_qwen_session_list_fixture_drives_gated_list() -> None:
-    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-list.stdout.jsonl")
-
-    assert client.session_capabilities["list"] is True
-    result = await client.list_sessions(cwd="/repo")
-
-    requests = _written_requests(process)
-    assert [request["method"] for request in requests] == ["initialize", "session/list"]
-    assert requests[1]["params"] == {"cwd": "/repo"}
-    assert [session["sessionId"] for session in result["sessions"]] == [
-        "qwen-session-1",
-        "qwen-session-2",
-    ]
-    assert result["nextCursor"] == "qwen-cursor-2"
-
-    await client.stop()
-
-
-async def test_qwen_session_close_fixture_drives_gated_close() -> None:
-    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-close.stdout.jsonl")
-
-    assert client.session_capabilities["close"] is True
-    result = await client.close_session("qwen-session-1")
-
-    requests = _written_requests(process)
-    assert [request["method"] for request in requests] == ["initialize", "session/close"]
-    assert requests[1]["params"] == {"sessionId": "qwen-session-1"}
-    assert result == {}
-
-    await client.stop()
-
-
-async def test_qwen_session_delete_fixture_drives_gated_delete() -> None:
-    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-delete.stdout.jsonl")
-
-    assert client.session_capabilities["delete"] is True
-    result = await client.delete_session("qwen-session-1")
-
-    requests = _written_requests(process)
-    assert [request["method"] for request in requests] == ["initialize", "session/delete"]
-    assert requests[1]["params"] == {"sessionId": "qwen-session-1"}
-    assert result == {}
-
-    await client.stop()

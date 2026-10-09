@@ -427,7 +427,7 @@ class TestAgyCamelCasePayload:
         class _BareACP(ACPHookAdapter):
             @property
             def source(self) -> SessionSource:
-                return SessionSource.QWEN
+                return SessionSource.GROK
 
         event = _BareACP().translate_to_hook_event(_agy_pre_invocation_event())
         source = inspect.getsource(ACPHookAdapter.translate_to_hook_event)

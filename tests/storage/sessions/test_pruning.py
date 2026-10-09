@@ -849,7 +849,7 @@ class TestSessionManagerPruning:
         session = session_manager.register(
             external_id="old-audit-ref",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         session_manager.update_status(session.id, "expired")

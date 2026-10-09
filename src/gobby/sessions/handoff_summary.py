@@ -221,7 +221,7 @@ async def _load_transcript_commit_shas(session: Any) -> tuple[str, ...]:
         source=source or "",
         max_records=SUMMARY_ANALYZER_MAX_RECORDS,
     )
-    parser_source = _parser_source(source, window.turns)
+    parser_source = _parser_source(source)
     parser = get_parser(
         parser_source,
         session_id=getattr(session, "id", None),
@@ -274,14 +274,7 @@ def _decode_commit_shas(raw: Any) -> tuple[str, ...]:
     )
 
 
-def _parser_source(source: str | None, turns: list[dict[str, Any]]) -> str:
-    if source == "unknown" and any(
-        isinstance(turn.get("content"), (str, list))
-        and isinstance(turn.get("type"), str)
-        and "message" not in turn
-        for turn in turns
-    ):
-        return "qwen"
+def _parser_source(source: str | None) -> str:
     if not source:
         raise ValueError("unsupported transcript source")
     return source

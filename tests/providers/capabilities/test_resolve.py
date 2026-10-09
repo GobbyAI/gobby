@@ -201,7 +201,7 @@ def test_local_context_never_uses_remote_metadata() -> None:
 
     for observation in unusable_observations:
         result = resolver.resolve_context(
-            "qwen",
+            "codex",
             "model",
             caller_override=16_384,
             route_override=8_192,
@@ -217,7 +217,7 @@ def test_local_context_caps_preserve_winning_source() -> None:
     observation = _local_observation()
 
     observed = resolver.resolve_context(
-        "qwen",
+        "codex",
         "model",
         caller_override=65_536,
         route_override=48_000,
@@ -225,7 +225,7 @@ def test_local_context_caps_preserve_winning_source() -> None:
         local_observation=observation,
     )
     caller = resolver.resolve_context(
-        "qwen",
+        "codex",
         "model",
         caller_override=16_384,
         route_override=24_000,
@@ -233,7 +233,7 @@ def test_local_context_caps_preserve_winning_source() -> None:
         local_observation=observation,
     )
     route_cap = resolver.resolve_context(
-        "qwen",
+        "codex",
         "model",
         route_override=8_192,
         local_route=route,

@@ -12,7 +12,6 @@ from gobby.adapters import (
     DroidAdapter,
     GrokAdapter,
 )
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
@@ -30,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize(
     "source",
-    [SessionSource(value) for value in ("claude", "codex", "droid", "grok", "qwen", "agy")],
+    [SessionSource(value) for value in ("claude", "codex", "droid", "grok", "agy")],
 )
 @pytest.mark.parametrize("suffix", ["", " help"])
 def test_first_and_repeated_help_defer_work(source: SessionSource, suffix: str) -> None:
@@ -86,18 +85,12 @@ def test_first_and_repeated_help_defer_work(source: SessionSource, suffix: str) 
             assert ("/gobby" if prefix == "$gobby" else "$gobby") not in content
             adapters: dict[
                 SessionSource,
-                ClaudeCodeAdapter
-                | CodexHooksAdapter
-                | DroidAdapter
-                | GrokAdapter
-                | QwenAdapter
-                | AgyAdapter,
+                ClaudeCodeAdapter | CodexHooksAdapter | DroidAdapter | GrokAdapter | AgyAdapter,
             ] = {
                 SessionSource.CLAUDE: ClaudeCodeAdapter(),
                 SessionSource.CODEX: CodexHooksAdapter(),
                 SessionSource.DROID: DroidAdapter(),
                 SessionSource.GROK: GrokAdapter(),
-                SessionSource.QWEN: QwenAdapter(),
                 SessionSource.AGY: AgyAdapter(),
             }
             native = adapters[source].translate_from_hook_response(

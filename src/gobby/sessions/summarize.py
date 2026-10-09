@@ -202,7 +202,7 @@ async def build_summary_source_context(
         return None
     path, window = records
     source = getattr(session, "source", None)
-    parser_source = _summary_parser_source(source, window.turns)
+    parser_source = _summary_parser_source(source)
     parser = get_parser(
         parser_source,
         session_id=getattr(session, "id", None),
@@ -260,14 +260,7 @@ async def build_summary_source_context(
     )
 
 
-def _summary_parser_source(source: str | None, turns: list[dict[str, Any]]) -> str:
-    if source == "unknown" and any(
-        isinstance(turn.get("content"), (str, list))
-        and isinstance(turn.get("type"), str)
-        and "message" not in turn
-        for turn in turns
-    ):
-        return "qwen"
+def _summary_parser_source(source: str | None) -> str:
     if not source:
         raise ValueError("Unsupported transcript source: '<empty>'")
     return source

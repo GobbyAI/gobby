@@ -161,8 +161,8 @@ class TestSingleUnderscoreNormalization:
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "create_task"
 
-    def test_full_pipeline_qwen_single_underscore(self) -> None:
-        """End-to-end: Qwen-style single underscore through normalize_tool_fields."""
+    def test_full_pipeline_function_name_single_underscore(self) -> None:
+        """End-to-end: function_name single underscore through normalize_tool_fields."""
         data: dict[str, Any] = {
             "function_name": "mcp_gobby_call_tool",
             "parameters": {"server_name": "gobby-memory", "tool_name": "create_memory"},
@@ -174,7 +174,7 @@ class TestSingleUnderscoreNormalization:
 
 
 class TestDoubleUnderscoreNormalization:
-    """Tests for Grok/Qwen <server>__<tool> MCP normalization."""
+    """Tests for Grok <server>__<tool> MCP normalization."""
 
     def test_double_underscore_sets_canonical_tool_name(self) -> None:
         data: dict[str, Any] = {"tool_name": "gobby__get_tool_schema"}
@@ -645,7 +645,7 @@ class TestFieldAliases:
     """Tests for CLI-specific field alias normalization (Phase 1)."""
 
     def test_function_name_to_tool_name(self) -> None:
-        """Qwen sends function_name instead of tool_name."""
+        """function_name is accepted instead of tool_name."""
         data: dict[str, Any] = {"function_name": "write_file"}
         normalize_tool_fields(data)
         assert data["tool_name"] == "write_file"
@@ -691,13 +691,13 @@ class TestFieldAliases:
         assert data["tool_input"] == {"b": 2}
 
     def test_parameters_to_tool_input(self) -> None:
-        """Qwen sends parameters instead of tool_input."""
+        """parameters is accepted instead of tool_input."""
         data: dict[str, Any] = {"parameters": {"file": "test.py"}}
         normalize_tool_fields(data)
         assert data["tool_input"] == {"file": "test.py"}
 
     def test_args_to_tool_input(self) -> None:
-        """Qwen fallback: args → tool_input."""
+        """Fallback: args → tool_input."""
         data: dict[str, Any] = {"args": {"cmd": "ls"}}
         normalize_tool_fields(data)
         assert data["tool_input"] == {"cmd": "ls", "command": "ls"}
@@ -741,7 +741,7 @@ class TestFieldAliases:
 
 
 class TestMcpContextFlattening:
-    """Tests for mcp_context {} → mcp_server / mcp_tool (Qwen MCP)."""
+    """Tests for mcp_context {} → mcp_server / mcp_tool."""
 
     def test_mcp_context_flattened(self) -> None:
         data: dict[str, Any] = {
@@ -2435,8 +2435,8 @@ class TestEndToEndRuleMatch:
         assert data.get("mcp_server") == "gobby-tasks"
         assert data.get("mcp_tool") == "escalate_task"
 
-    def test_qwen_create_memory_rule_match(self) -> None:
-        """Same rule match with Qwen-style fields."""
+    def test_function_name_create_memory_rule_match(self) -> None:
+        """Same rule match with function_name/parameters fields."""
         data: dict[str, Any] = {
             "function_name": "call_tool",
             "parameters": {
@@ -3220,7 +3220,7 @@ def test_compound_comparison_around_command_substitution_is_not_a_redirect(
             {"cmd": "ls"},
             {"command": "rtk ls"},
             {"cmd": "rtk ls"},
-            id="qwen-cmd",
+            id="cmd-alias",
         ),
         pytest.param(
             {"TargetFile": "/repo/a.py"},

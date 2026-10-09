@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from gobby.adapters.grok_acp_client import GrokACPClient
-from gobby.agents.trust import authorize_model_discovery_trust
 from gobby.paths import get_gobby_home
 from gobby.providers.capabilities.collectors.base import SourceSpec
 from gobby.providers.capabilities.models import (
@@ -63,16 +62,10 @@ class GrokSourceError(ValueError):
         super().__init__(f"Grok source {_SOURCE_KEY!r} failed: {detail}")
 
 
-async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
+async def _model_discovery_cwd(provider: str) -> Path:
     cwd = get_gobby_home() / _MODEL_DISCOVERY_CWD_NAME / provider
-    created = False
-    try:
-        await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=False)
-        created = True
-    except FileExistsError:
-        if not await asyncio.to_thread(cwd.is_dir):
-            raise
-    return cwd.resolve(), created
+    await asyncio.to_thread(cwd.mkdir, parents=True, exist_ok=True)
+    return cwd.resolve()
 
 
 async def _discover_grok_models() -> Sequence[RawModel]:
@@ -80,8 +73,6 @@ async def _discover_grok_models() -> Sequence[RawModel]:
         client_cls=GrokACPClient,
         which=shutil.which,
         model_discovery_cwd=_model_discovery_cwd,
-        authorize_trust=authorize_model_discovery_trust,
-        cleanup_tree=shutil.rmtree,
         logger=logger,
     )
 

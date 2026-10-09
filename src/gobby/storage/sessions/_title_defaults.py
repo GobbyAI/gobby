@@ -16,7 +16,6 @@ _PROVIDER_TITLE_LABELS = {
     "droid": "Droid",
     "grok": "Grok",
     "pipeline": "Pipeline",
-    "qwen": "Qwen",
     "system": "System",
     "unknown": "Unknown",
 }

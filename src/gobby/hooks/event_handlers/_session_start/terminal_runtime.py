@@ -17,7 +17,6 @@ TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
 EXACT_PANE_OWNER_COMMAND_SOURCES = {
     "droid": "droid",
     "grok": "grok",
-    "qwen": "qwen",
     "agy": "agy",
     "claude": "claude",
 }

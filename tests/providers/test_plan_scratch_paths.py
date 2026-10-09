@@ -16,7 +16,6 @@ PROVIDER_DIRECTORIES = {
     "codex": ".codex",
     "droid": ".factory",
     "grok": ".grok",
-    "qwen": ".qwen",
     "agy": ".gemini",
 }
 

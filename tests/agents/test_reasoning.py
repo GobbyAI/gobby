@@ -143,12 +143,12 @@ def test_transport_without_reasoning_flag_is_rejected(
     monkeypatch.setattr(
         reasoning,
         "_get_capability_resolver",
-        lambda: _resolver("qwen", "qwen3-coder"),
+        lambda: _resolver("custom-cli", "custom-model"),
     )
 
     result = resolve_spawn_reasoning(
-        provider="qwen",
-        model="qwen3-coder",
+        provider="custom-cli",
+        model="custom-model",
         requested_effort="high",
         reasoning_required=False,
     )
@@ -240,12 +240,12 @@ def test_spawn_auto_is_applied_on_provider_without_reasoning_flag(
     monkeypatch.setattr(
         reasoning,
         "_get_capability_resolver",
-        lambda: _resolver("qwen", "qwen3-coder"),
+        lambda: _resolver("custom-cli", "custom-model"),
     )
 
     result = resolve_spawn_reasoning(
-        provider="qwen",
-        model="qwen3-coder",
+        provider="custom-cli",
+        model="custom-model",
         requested_effort="auto",
         reasoning_required=False,
     )

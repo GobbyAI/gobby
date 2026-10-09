@@ -526,7 +526,7 @@ turn). The probe reads a styled snapshot, so faint text (Claude Code's prompt
 suggestion, the Codex and Droid placeholders) reads as an empty composer.
 `priority="urgent"` bypasses the probe. A later mailbox
 receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
-Qwen and Antigravity cannot be protected without positive provider or Gobby-mediated key/output
+Antigravity cannot be protected without positive provider or Gobby-mediated key/output
 evidence, so unconfirmed sessions remain active.
 
 For daemon restart coordination, queue the outage notice and explicitly wake after the

@@ -267,16 +267,6 @@ def _grok(digit: str) -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
 
 
-def _qwen(digit: str) -> PlanKeystrokeSequence:
-    """Expected Qwen Code approval-menu selection: the digit activates with no Enter."""
-    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
-
-
-def _qwen_escape() -> PlanKeystrokeSequence:
-    """Expected Qwen Code reject: the shape-independent Escape ('(esc)') shortcut."""
-    return PlanKeystrokeSequence((PlanKeystroke("Escape"),))
-
-
 def _agy_approve() -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence(
         strokes=(PlanKeystroke("C-r"), PlanKeystroke("y", literal=True)),
@@ -578,90 +568,6 @@ class TestGrokPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("grok", "approve_bogus") is None
 
 
-# Verbatim capture from Qwen Code (Qwen CLI TUI, v0.17.0) driven on a pty in
-# `--approval-mode default` against a working local LM Studio backend: the
-# WriteFile tool-approval menu. Qwen uses RadioButtonSelect (› marks the
-# default-highlighted
-# item). A `run_shell_command` echo auto-approved in default mode, so only the
-# write/edit menu shape was observed.
-_QWEN_EDIT_MENU_PANE = """\
- ?  WriteFile Writing to cap_probe.txt
-
- 1 hello
-
- Apply this change?
-
- › 1. Yes, allow once
-   2. Yes, allow always
-   3. No, suggest changes (esc)
-"""
-
-
-class TestQwenPlanMenu:
-    """Qwen Code's (Qwen CLI TUI) per-action approval menu -- a static (non-pane)
-    map. Qwen's confirmation menu uses digit 1 for "Yes, allow once" (single
-    approval), digit 2 for "Yes,
-    allow always" (bypass), and Escape rejects (the menu's "(esc)" shortcut)."""
-
-    def test_qwen_is_registered_static(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.has_source("qwen") is True
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("qwen") is True
-
-    def test_registered_options(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.registered_options("qwen") == frozenset(
-            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
-        )
-
-    @pytest.mark.parametrize(
-        ("option_id", "expected"),
-        [
-            # 1 = "Yes, allow once" (single approval) -> approve_act; 2 = "Yes,
-            # allow always" (bypass) -> approve_yolo; Escape = "No, suggest
-            # changes (esc)" -> reject.
-            ("approve_act", _qwen("1")),
-            ("approve_yolo", _qwen("2")),
-            (REQUEST_CHANGES_OPTION_ID, _qwen_escape()),
-        ],
-    )
-    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.resolve("qwen", option_id) == expected
-
-    @pytest.mark.parametrize(
-        ("option_id", "digit"),
-        [("approve_act", "1"), ("approve_yolo", "2")],
-    )
-    def test_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
-        # Verified live: the item number selects AND activates with no trailing
-        # Enter (digit "1" and digit "2" each approved and wrote the probe file).
-        seq = DEFAULT_PLAN_KEYSTROKES.resolve("qwen", option_id)
-        assert seq is not None
-        assert [s.keys for s in seq.strokes] == [digit]
-        assert all(s.literal for s in seq.strokes)
-
-    def test_reject_uses_escape(self) -> None:
-        # Qwen's reject is the shape-
-        # independent Escape -- verified live: Esc on the write menu cancelled
-        # the write and the probe file was never created. Escape is a key NAME
-        # (literal=False), not a typed character.
-        seq = DEFAULT_PLAN_KEYSTROKES.resolve("qwen", REQUEST_CHANGES_OPTION_ID)
-        assert seq is not None
-        assert [s.keys for s in seq.strokes] == ["Escape"]
-        assert all(not s.literal for s in seq.strokes)
-
-    def test_static_resolution_requires_matching_pane_text(self) -> None:
-        assert (
-            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("qwen", "approve_act", _QWEN_EDIT_MENU_PANE)
-            == DEFAULT_PLAN_KEYSTROKES.resolve("qwen", "approve_act")
-            == _qwen("1")
-        )
-        assert (
-            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("qwen", REQUEST_CHANGES_OPTION_ID, "") is None
-        )
-
-    def test_unknown_option_returns_none(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.resolve("qwen", "approve_bogus") is None
-
-
 class TestNativeNumberedPlanOptions:
     @pytest.mark.parametrize(
         ("source", "option", "pane_text", "expected"),
@@ -674,9 +580,6 @@ class TestNativeNumberedPlanOptions:
             ("droid", 2, _DROID_PLAN_MENU_PANE, _droid("2")),
             ("droid", 3, _DROID_PLAN_MENU_PANE, _droid("3")),
             ("grok", 2, _GROK_EDIT_MENU_PANE, _grok("2")),
-            ("qwen", 1, _QWEN_EDIT_MENU_PANE, _qwen("1")),
-            ("qwen", 2, _QWEN_EDIT_MENU_PANE, _qwen("2")),
-            ("qwen", 3, _QWEN_EDIT_MENU_PANE, _qwen_escape()),
         ],
     )
     def test_resolves_exact_live_provider_choice(
@@ -701,7 +604,7 @@ class TestNativeNumberedPlanOptions:
             ("agy", 1, _CODEX_PLAN_MENU_PANE),
             ("codex", 4, _CODEX_PLAN_MENU_PANE),
             ("codex", 1, "ordinary prompt"),
-            ("qwen", 0, _QWEN_EDIT_MENU_PANE),
+            ("grok", 0, _GROK_EDIT_MENU_PANE),
         ],
     )
     def test_rejects_unregistered_stale_or_out_of_range_choice(
@@ -775,7 +678,7 @@ class TestAgyPlanMenu:
 class TestDefaultRegistry:
     def test_all_clis_registered(self) -> None:
         # Every managed CLI now has a captured native plan-menu mapping: claude
-        # (#15727), codex (#15728), droid (#15729), grok (#15731), qwen
-        # (#15732), and agy (#20755). No per-CLI source remains pending.
-        for source in ("claude", "codex", "droid", "grok", "qwen", "agy"):
+        # (#15727), codex (#15728), droid (#15729), grok (#15731), and agy
+        # (#20755). No per-CLI source remains pending.
+        for source in ("claude", "codex", "droid", "grok", "agy"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True

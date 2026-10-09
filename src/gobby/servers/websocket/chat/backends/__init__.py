@@ -17,10 +17,6 @@ from gobby.servers.websocket.chat.backends.grok import (
     GrokManagedChatSession,
     GrokWebChatBackend,
 )
-from gobby.servers.websocket.chat.backends.qwen import (
-    QwenManagedChatSession,
-    QwenWebChatBackend,
-)
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.chat.backends.agy import (
@@ -70,6 +66,4 @@ __all__ = [
     "GrokWebChatBackend",
     "ManagedChatSessionBase",
     "ProviderBackendHealth",
-    "QwenManagedChatSession",
-    "QwenWebChatBackend",
 ]

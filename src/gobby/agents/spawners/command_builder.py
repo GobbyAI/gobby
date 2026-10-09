@@ -1,7 +1,7 @@
 """CLI command building for agent spawning.
 
-    Provides functions to construct CLI commands for Claude, Grok, Qwen,
-Codex, and Droid with proper flags for prompts, permissions, and session management.
+    Provides functions to construct CLI commands for Claude, Grok, Codex,
+Droid, and AGY with proper flags for prompts, permissions, and session management.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def build_cli_command(
       [--reasoning-effort <level>] --auto <low|high> [PROMPT]
 
     Args:
-        cli: CLI name (claude, grok, qwen, codex, droid)
+        cli: CLI name (claude, grok, codex, droid, agy)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
@@ -96,19 +96,6 @@ def build_cli_command(
         if mode == "interactive":
             fmt = output_format or "stream-json"
             command.extend(["--output-format", fmt, "--verbose", "--input-format", fmt])
-
-    elif cli == "qwen":
-        # Qwen CLI flags
-        if model:
-            command.extend(["--model", model])
-        if auto_approve:
-            command.extend(["--approval-mode", "yolo"])
-        if resume_session_id:
-            command.extend(["--resume", resume_session_id])
-        if mode == "interactive":
-            command.append("--acp")
-            if session_id and not resume_session_id:
-                command.extend(["--resume", session_id])
 
     elif cli == "grok":
         if mode == "interactive":

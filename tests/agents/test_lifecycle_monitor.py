@@ -4586,7 +4586,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -4638,7 +4638,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit-recycled-pid",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -4934,7 +4934,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-init",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -5006,7 +5006,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-young",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 
@@ -5044,7 +5044,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-naive-uninit",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -5094,7 +5094,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-pattern",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None

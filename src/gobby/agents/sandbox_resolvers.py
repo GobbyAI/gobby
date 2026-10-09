@@ -16,7 +16,6 @@ from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, compute_sa
 from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
-_QWEN_INCLUDE_DIRECTORY_LIMIT = 5
 _CLAUDE_LOOPBACK_DOMAINS = ["localhost", "127.0.0.1", "::1"]
 
 
@@ -24,7 +23,7 @@ class SandboxResolver(ABC):
     """
     Abstract base class for CLI-specific sandbox configuration resolution.
 
-    Each CLI (Claude Code, Codex, Qwen) has different mechanisms for
+    Each CLI (Claude Code, Codex, Grok) has different mechanisms for
     enabling sandboxing. Subclasses implement the resolve() method to
     convert a SandboxConfig and ResolvedSandboxPaths into CLI-specific
     arguments and environment variables.
@@ -168,45 +167,6 @@ class CodexSandboxResolver(SandboxResolver):
                 args.extend(["--add-dir", path])
 
         return (args, {})
-
-
-class QwenSandboxResolver(SandboxResolver):
-    """Sandbox resolver for Qwen CLI's Seatbelt-backed sandbox contract."""
-
-    @property
-    def cli_name(self) -> str:
-        return "qwen"
-
-    @staticmethod
-    def seatbelt_profile(config: SandboxConfig, paths: ResolvedSandboxPaths) -> str:
-        """Return the documented Qwen Seatbelt profile name."""
-        mode_prefix = "restrictive" if config.mode == "restrictive" else "permissive"
-        network_suffix = "open" if paths.allow_external_network else "proxied"
-        return f"{mode_prefix}-{network_suffix}"
-
-    def resolve(
-        self, config: SandboxConfig, paths: ResolvedSandboxPaths
-    ) -> tuple[list[str], dict[str, str]]:
-        if not config.enabled:
-            return ([], {})
-
-        args = ["-s"]
-        include_dirs = _compact_external_write_paths(
-            _external_write_paths(paths),
-            limit=_QWEN_INCLUDE_DIRECTORY_LIMIT,
-        )
-        if len(include_dirs) > _QWEN_INCLUDE_DIRECTORY_LIMIT:
-            raise ValueError(
-                "Qwen sandbox supports at most "
-                f"{_QWEN_INCLUDE_DIRECTORY_LIMIT} external "
-                f"--include-directories paths; got {len(include_dirs)}"
-            )
-        for path in include_dirs:
-            args.extend(["--include-directories", path])
-
-        env = {"SEATBELT_PROFILE": self.seatbelt_profile(config, paths)}
-
-        return (args, env)
 
 
 class GrokSandboxResolver(SandboxResolver):
@@ -449,7 +409,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
     Factory function to get the appropriate sandbox resolver for a CLI.
 
     Args:
-        cli: The CLI name ("claude", "codex", "grok", "qwen", or "agy")
+        cli: The CLI name ("claude", "codex", "grok", or "agy")
 
     Returns:
         The appropriate SandboxResolver subclass instance.
@@ -461,7 +421,6 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
         "claude": ClaudeSandboxResolver,
         "codex": CodexSandboxResolver,
         "grok": GrokSandboxResolver,
-        "qwen": QwenSandboxResolver,
         "agy": AgySandboxResolver,
     }
 
@@ -505,58 +464,3 @@ def _external_write_paths(paths: ResolvedSandboxPaths) -> list[str]:
         external_paths.append(path_text)
 
     return external_paths
-
-
-def _compact_external_write_paths(paths: list[str], *, limit: int) -> list[str]:
-    """Compact related external write paths until they fit provider arg limits."""
-    compacted = [Path(path) for path in paths]
-
-    while len(compacted) > limit:
-        candidates: dict[Path, set[int]] = {}
-        for left_index, left_path in enumerate(compacted):
-            for right_index in range(left_index + 1, len(compacted)):
-                common_path = _common_write_parent(left_path, compacted[right_index])
-                if common_path is None:
-                    continue
-                candidates.setdefault(common_path, set()).update({left_index, right_index})
-
-        best_parent: Path | None = None
-        best_indexes: set[int] = set()
-        for parent in candidates:
-            covering_indexes = {
-                index
-                for index, path in enumerate(compacted)
-                if path == parent or path.is_relative_to(parent)
-            }
-            if len(covering_indexes) < 2:
-                continue
-            key = (len(parent.parts), len(covering_indexes))
-            best_key = (len(best_parent.parts), len(best_indexes)) if best_parent else (-1, -1)
-            if key > best_key:
-                best_parent = parent
-                best_indexes = covering_indexes
-
-        if best_parent is None:
-            break
-
-        first_index = min(best_indexes)
-        next_paths: list[Path] = []
-        for index, path in enumerate(compacted):
-            if index == first_index:
-                next_paths.append(best_parent)
-            elif index not in best_indexes:
-                next_paths.append(path)
-        compacted = next_paths
-
-    return [str(path) for path in compacted]
-
-
-def _common_write_parent(left_path: Path, right_path: Path) -> Path | None:
-    try:
-        common_text = os.path.commonpath([str(left_path), str(right_path)])
-    except ValueError:
-        return None
-    common_path = Path(common_text)
-    if common_path == common_path.parent:
-        return None
-    return common_path

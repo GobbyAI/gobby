@@ -573,7 +573,7 @@ describe("App wiring", () => {
     vi.clearAllMocks();
     vi.mocked(useChat).mockReturnValue({
       ...chatState,
-      selectedProvider: "qwen",
+      selectedProvider: "grok",
     } as never);
     rerender(<App />);
 
@@ -589,7 +589,7 @@ describe("App wiring", () => {
       );
       expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
         expected_revision: 3,
-        values: { ui_settings: { selectedProvider: "qwen" } },
+        values: { ui_settings: { selectedProvider: "grok" } },
       });
     });
   });

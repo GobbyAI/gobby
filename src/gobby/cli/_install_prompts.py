@@ -239,7 +239,6 @@ def _prompt_hub_api_keys(
 _CLI_INSTALL_META: dict[str, tuple[str, str, str | None]] = {
     "claude": ("Claude Code", "~/.claude/settings.json", "~/.claude.json"),
     "grok": ("Grok CLI", "~/.grok/hooks/gobby.json", None),
-    "qwen": ("Qwen CLI", "~/.qwen/settings.json", "~/.qwen/settings.json"),
     "agy": ("Antigravity CLI", "~/.gemini/config/hooks.json", "~/.gemini/config/mcp_config.json"),
     "codex": ("Codex", "~/.codex/hooks.json", None),
     "droid": ("Droid CLI", "~/.factory/hooks.json", "~/.factory/mcp.json"),
@@ -511,7 +510,6 @@ _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "agy": ("Antigravity CLI", "hooks from settings"),
     "claude": ("Claude Code", "hooks from settings"),
     "grok": ("Grok CLI", "hooks from settings"),
-    "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
     "droid": ("Droid CLI", "hooks from settings"),
 }
