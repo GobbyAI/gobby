@@ -125,6 +125,18 @@ def test_viewport_too_small_for_any_grid_refuses() -> None:
     assert layout_pane_ids(layout) == panes
 
 
+@pytest.mark.parametrize(
+    "count,columns,rows", [(1, 205, 59), (3, 186, 47), (7, 205, 59), (7, 186, 47), (12, 323, 60)]
+)
+def test_layout_extent_sums_pane_sizes_back_to_the_viewport(
+    count: int, columns: int, rows: int
+) -> None:
+    from gobby.storage.workspace_layout import layout_extent
+
+    layout = balanced_layout(squeezed(count)[0], columns, rows)
+    assert layout_extent(layout, pane_sizes(layout, columns, rows)) == (columns, rows)
+
+
 def test_nine_seat_lane_fits_three_columns_at_height_floor() -> None:
     layout: LayoutNode = {"kind": "pane", "pane_id": str(uuid4())}
     for _ in range(8):

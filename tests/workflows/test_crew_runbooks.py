@@ -56,7 +56,7 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         },
     ]
     assert definition.inputs["seats"]["default"] == "developer"
-    for name in ("workspace", "lane_pane", "worktree", "report_to"):
+    for name in ("workspace", "lane_pane", "worktree", "report_to", "lane_columns", "lane_rows"):
         assert definition.inputs[name]["default"] is None
         assert not definition.inputs[name].get("required", False)
     assert "worktree_id" not in definition.inputs
@@ -201,6 +201,7 @@ def test_crew_lane_renders_operator_inputs(
     assert catalogued["title"] == f"Lane {lane} {title}"
     assert catalogued["agent"] == seat
     assert guarded["worktree"] == "pilot-worktree"
+    assert (guarded["lane_columns"], guarded["lane_rows"]) == (160, 100)
     context["steps"]["guard"] = {
         "output": {
             "workspace": "pilot-workspace",
@@ -208,6 +209,8 @@ def test_crew_lane_renders_operator_inputs(
             "worktree": "pilot-worktree",
             "report_to": "gobby#14972",
             "project_path": "/pilot/project",
+            "lane_columns": 160,
+            "lane_rows": 100,
         }
     }
     step = next(step for step in definition.steps if step.id == seat)
@@ -285,7 +288,6 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         lane="6",
-        lane_rows=100,
         seats=",".join(reversed(seats)),
         lane_pane=lane_pane,
         workspace="pilot-workspace",
@@ -302,6 +304,8 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
             "worktree": "pilot-worktree",
             "report_to": "gobby#14972",
             "project_path": "/pilot/project",
+            "lane_columns": 205,
+            "lane_rows": 59,
         }
     }
     titles = {
@@ -322,8 +326,8 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
             "split": {
                 "pane": anchor_pane,
                 "axis": "balanced",
-                "columns": 80,
-                "rows": 100,
+                "columns": 205,
+                "rows": 59,
                 "title": f"Lane 6 {titles[step.id]}",
             }
         }

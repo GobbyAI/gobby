@@ -16,6 +16,26 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+async def test_viewports_report_live_gclient_windows_only() -> None:
+    registry = TerminalLeaseRegistry()
+    first = await registry.attach("shown-terminal")
+    second = await registry.attach("shown-terminal")
+    web = await registry.attach("shown-terminal", viewer="web")
+    unsized = await registry.attach("shown-terminal")
+    gone = await registry.attach("shown-terminal")
+    for attachment in (first, second):
+        registry.set_viewport(attachment.attachment_id, 19, 102)
+    registry.set_viewport(web.attachment_id, 40, 60)
+    registry.set_viewport(gone.attachment_id, 11, 50)
+    await registry.finalize(gone.attachment_id, "ws_close")
+    assert unsized.viewport is None
+    assert registry.viewports("shown-terminal") == {(19, 102)}
+    registry.set_viewport(second.attachment_id, 14, 102)
+    assert registry.viewports("shown-terminal") == {(19, 102), (14, 102)}
+    assert registry.viewports("other-terminal") == set()
+
+
+@pytest.mark.asyncio
 async def test_cancelled_holder_cleanup_is_retried_by_shutdown() -> None:
     registry = TerminalLeaseRegistry()
     attachment = await registry.attach("cancelled-terminal", websocket=object())

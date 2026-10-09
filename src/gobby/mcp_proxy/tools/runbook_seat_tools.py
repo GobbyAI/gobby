@@ -37,7 +37,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
             "session ref; require_report_to rejects omission without lane inference. "
             "For crew-lane, lane resolves omitted report_to, workspace, lane_pane and "
-            "worktree from the shared roster and live state; explicit names/UUIDs override. "
+            "worktree from the shared roster and live state, and omitted lane_columns and "
+            "lane_rows from the gclient window showing the workspace; explicit values, "
+            "names and UUIDs override. "
             "Ambiguous state refuses with candidates. On success it returns the checked "
             "seats and resolved launch inputs."
         ),
@@ -52,6 +54,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         lane: str | int | None = None,
         worktree: str | None = None,
         lane_pane: str | None = None,
+        lane_columns: int | None = None,
+        lane_rows: int | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -63,6 +67,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             caller_session_id = ctx.resolve_session_id(caller_ref)
             resolved: dict[str, Any] = {}
             if lane is not None:
+                leases = ctx.lease_registry_resolver() if ctx.lease_registry_resolver else None
                 resolved = asdict(
                     resolve_crew_lane_inputs(
                         ctx.db,
@@ -72,6 +77,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                         report_to=report_to,
                         worktree=worktree,
                         lane_pane=lane_pane,
+                        lane_columns=lane_columns,
+                        lane_rows=lane_rows,
+                        viewports=None if leases is None else leases.viewports,
                     )
                 )
                 workspace = resolved["workspace"]

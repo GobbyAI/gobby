@@ -96,6 +96,21 @@ def _join(nodes: list[LayoutNode], sizes: list[int], axis: LayoutAxis) -> Layout
     )
 
 
+def layout_extent(layout: LayoutNode, sizes: Mapping[str, tuple[int, int]]) -> tuple[int, int]:
+    """Return the (columns, rows) a tab spans from each pane's (columns, rows).
+
+    The inverse of ``balanced_layout``'s budget: one divider cell per split.
+    """
+    if layout["kind"] == "pane":
+        return sizes[layout["pane_id"]]
+    (first_columns, first_rows), (second_columns, second_rows) = (
+        layout_extent(child, sizes) for child in layout["children"]
+    )
+    if layout["axis"] == "horizontal":
+        return first_columns + 1 + second_columns, max(first_rows, second_rows)
+    return max(first_columns, second_columns), first_rows + 1 + second_rows
+
+
 def validate_layout(value: object) -> LayoutNode:
     """Return ``value`` as a tab's split tree, or raise when it is not one.
 

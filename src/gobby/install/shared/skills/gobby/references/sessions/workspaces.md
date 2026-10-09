@@ -29,8 +29,11 @@ killed. A viewport under 80x12 or too small for even the tiled grid, missing
 height, or an in-flight spawn refuses the operation. Hidden PTY dimensions can
 be stale; supply known viewport dimensions. Crew-lane uses this same layout
 through spawn placement's
-`axis: balanced`, `columns` and required `rows` budgets. Supply `lane_columns`
-and required `lane_rows` when launching the crew-lane runbook.
+`axis: balanced`, `columns` and required `rows` budgets. Its guard reads them
+from the gclient window showing the lane's workspace: the focused tab's live
+pane sizes plus divider cells, since every tab shares the window. Without one
+live size per pane it refuses before launching; pass `lane_columns` and
+`lane_rows` to override.
 The operator CLI is
 `gobby workspaces rebalance-tab TAB --columns WIDTH --rows HEIGHT --json`.
 
