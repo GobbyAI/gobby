@@ -2130,6 +2130,9 @@ def external_write_audit_environment(tmp_path_factory: pytest.TempPathFactory) -
     log = tmp_path_factory.mktemp("external-write-audit") / "writes.jsonl"
     log.touch()
     with pytest.MonkeyPatch.context() as patch, observe_writes(root, log):
+        # Imports from a checkout under ~/.gobby must not write bytecode there.
+        patch.setattr(sys, "dont_write_bytecode", True)
+        patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
         patch.setenv(ROOT_ENV, str(root))
         patch.setenv(LOG_ENV, str(log))
         yield
