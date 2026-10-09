@@ -224,6 +224,65 @@ async def _cancel_followups(dispatcher: WakeDispatcher) -> None:
     await asyncio.sleep(0)
 
 
+@pytest.mark.parametrize("failure", ["none", "refresh", "reconcile"])
+async def test_active_wake_retries_after_open_turn_ends(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    """A deferred active decline stays queued until a turn settles, even after an error."""
+    settled = False
+    release_retry = asyncio.Event()
+    delays: list[float] = []
+
+    def read(_session_id: str) -> TerminalActivity:
+        return _EMPTY if settled else TerminalActivity(ComposerRead("empty"), "open-turn")
+
+    async def retry_wait(_dispatcher: WakeDispatcher, delay: float) -> None:
+        delays.append(delay)
+        assert len(delays) <= 3
+        await release_retry.wait()
+
+    monkeypatch.setattr(WakeDispatcher, "_composer_retry_wait", retry_wait)
+    wake = await _deferred_wake(temp_db, session_manager, sample_project["id"], read)
+    try:
+        assert wake.session_id in wake.dispatcher._composer_retries
+        row = session_manager.get(wake.session_id)
+        assert row is not None and row.status == "active"
+        assert len(wake.messages.get_undelivered_wake_messages(wake.session_id)) == 1
+        wake.sender.assert_not_awaited()
+        failed = False
+        pause_idle = wake.dispatcher._pause_idle_prompt
+
+        async def refresh(session_id: str) -> None:
+            nonlocal failed
+            if failure == "refresh" and not failed:
+                failed = True
+                raise RuntimeError("transient refresh failure")
+            await _flush(session_id)
+
+        async def reconcile(session_id: str) -> str:
+            nonlocal failed
+            if failure == "reconcile" and not failed:
+                failed = True
+                raise RuntimeError("transient reconcile failure")
+            return await pause_idle(session_id)
+
+        monkeypatch.setattr(wake.dispatcher, "_lifecycle_refresh", refresh)
+        monkeypatch.setattr(wake.dispatcher, "_pause_idle_prompt", reconcile)
+        settled = True
+        release_retry.set()
+        await asyncio.wait_for(wake.dispatcher._composer_retries[wake.session_id], timeout=2)
+        wake.sender.assert_awaited_once()
+        row = session_manager.get(wake.session_id)
+        assert row is not None and row.status == "paused"
+        assert delays == ([15.0] if failure == "none" else [15.0, 30.0])
+    finally:
+        await _cancel_followups(wake.dispatcher)
+
+
 @pytest.mark.parametrize(
     ("send_read", "skipped"),
     [

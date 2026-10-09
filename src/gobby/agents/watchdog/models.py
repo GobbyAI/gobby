@@ -308,7 +308,7 @@ class WatchdogTranscriptSnapshot:
         """True when the newest tool event is a start without a later update."""
         last_tool: TranscriptEventSummary | None = None
         for event in self.tail:
-            if event.payload_type in {"tool_call", "tool_call_update"}:
+            if event.payload_type in {"tool_call", "tool_call_update", "tool_result"}:
                 last_tool = event
         return last_tool is not None and last_tool.payload_type == "tool_call"
 
@@ -319,8 +319,10 @@ class WatchdogTranscriptSnapshot:
     def is_live_transcript_activity(
         self, *, idle_timeout_seconds: float, now: datetime | None = None
     ) -> bool:
-        """Open tools stay live; other tail activity is live within the idle window."""
-        if self.has_open_tool_call:
+        """Bound AGY's incomplete turns; explicit open tools otherwise stay live."""
+        # AGY may stop at a tool call without a completion/abort record. The
+        # transcript alone must not keep such a stopped seat live indefinitely.
+        if self.provider != "agy" and self.has_open_tool_call:
             return True
         latest = self.latest_tail_timestamp()
         if latest is None:
