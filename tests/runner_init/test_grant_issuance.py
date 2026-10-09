@@ -248,6 +248,56 @@ def test_managed_refresh_rotates_live_binding(
 
 @pytest.mark.integration
 @pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+def test_managed_refresh_reuses_current_binding_during_drain(
+    kind: ManagedKind,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = _execution_id(kind, fixture)
+    manager = _manager(fixture, tmp_path / kind)
+    try:
+        predecessor_generation = _issue_initial_binding(manager, fixture, kind, execution_id)
+        current = manager.rotate(
+            managed_execution_id=execution_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            before = admin.execute(
+                f"SELECT credential_generation, revoked_at, revocation_requested_at, "
+                f"predecessor_drain_deadline FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert len(before) == 2
+        assert before[0][0] == predecessor_generation
+        assert before[0][2] is not None
+        assert before[0][3] is not None
+        grant = _handshake(fixture, manager).issue_for_agent(
+            _claims(kind, fixture, execution_id),
+            machine_id=str(fixture.machine_id),
+            project_id=str(fixture.project_id),
+        )
+        postgres = grant.capabilities.postgres
+        assert isinstance(postgres, PostgresDirect)
+        assert postgres.credential_generation == current.credential_generation
+        assert postgres.role_name == current.role_name
+        assert postgres.valid_until == int(current.expires_at.timestamp())
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            after = admin.execute(
+                f"SELECT credential_generation, revoked_at, revocation_requested_at, "
+                f"predecessor_drain_deadline FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert after == before
+    finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
 def test_managed_refresh_rotates_expired_binding(
     kind: ManagedKind,
     authorization_fixture: AuthorizationFixture,
