@@ -72,6 +72,20 @@ def test_untracked_terminal_is_blocked_until_released() -> None:
     assert ledger.read("t1") == _EMPTY
 
 
+def test_submit_record_adopts_a_terminal_bound_before_the_ledger_tracked_it() -> None:
+    ledger = ComposerLedger()
+    ledger.resume_host("e1", 40, since=None, gap=False)
+    ledger.observe_host_event(_host(41, submit=None))
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _UNTRACKED
+
+    ledger.record_submit("t1", adopt=True)
+    assert ledger.read("t1") == _EMPTY
+
+    ledger.observe_host_event(_host(42))
+    assert ledger.read("t1") == _DRAFT
+
+
 def test_submit_flagged_host_input_is_consumed_by_the_next_record() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1))
