@@ -229,9 +229,12 @@ async def _code_reviewer(run: SeatRun) -> None:
     await run.load(*run.vars["required_skills"])
     assert run.step == "await"
 
+    title = "TASK_TITLE=Keep NOTE= and VERDICT=BOUNCE out of fields"
     reports = (
         ("#101", "EVENT=LANDED TASK=#101 SHA=abc RECEIPT=r1"),
         ("#102", "EVENT=CANDIDATE_VERDICT TASK=#102 SHA=abc VERDICT=BOUNCE NOTE=HIGH finding"),
+        ("#103", f"EVENT=LANDED TASK=#103 {title} SHA=abc RECEIPT=r1"),
+        ("#104", f"EVENT=CANDIDATE_VERDICT TASK=#104 {title} SHA=abc VERDICT=BOUNCE NOTE=HIGH"),
     )
     for task, report in reports:
         assert await run.admits(*WAIT)
@@ -242,8 +245,14 @@ async def _code_reviewer(run: SeatRun) -> None:
 
         await run.set_flag("verdict_ready", True)
         assert run.step == "verdict"
-        # Prose mentions of the terminal tokens or of the task leave the unit open.
+        # Prose mentions of the terminal tokens or of the task, title words, and a
+        # terminal line that does not start the message leave the unit open.
         for content in (
+            f" {report}",
+            f"\n{report}",
+            f"EVENT=CANDIDATE_VERDICT TASK={task} TASK_TITLE=Retry VERDICT=BOUNCE handling "
+            f"SHA=abc VERDICT=LAND NOTE=ok",
+            f"EVENT=LANDED TASK=#999 TASK_TITLE=Follow-up TASK={task} SHA=abc",
             f"EVENT=CANDIDATE_VERDICT TASK={task} SHA=abc VERDICT=LAND "
             f"NOTE=EVENT=LANDED follows; no VERDICT=BOUNCE needed",
             f"Reviewer note: EVENT=LANDED TASK={task} follows",
