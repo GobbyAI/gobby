@@ -7,7 +7,7 @@ from gobby.agents.srt_package_patch import HTTP_PROXY_PATH, MUX_PROXY_PATH, appl
 
 
 def upstream_proxy_bytes(name: str = "http-proxy") -> bytes:
-    fixture = Path(__file__).parent / f"fixtures/srt/{name}-0.0.76.js.gz"
+    fixture = Path(__file__).parent / f"fixtures/srt/{name}-0.0.79.js.gz"
     return gzip.decompress(fixture.read_bytes())
 
 

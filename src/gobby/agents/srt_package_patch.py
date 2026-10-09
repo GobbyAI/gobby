@@ -10,7 +10,7 @@ MUX_PROXY_PATH = HTTP_PROXY_PATH.with_name("mux-proxy.js")
 _PATCHES = (
     (
         HTTP_PROXY_PATH,
-        "fbf1184b57d41400f5c73b5f0626df901caae0278b7b37103263a587e9c0cda4",
+        "edd5ad21903b9a9b4d091618c55e7e9bee7f6f5135cc58be668c0a5e6deae582",
         SRT_RELEASE.http_proxy_sha256,
         b"upstream.on('close', () => socket.destroy());",
     ),
@@ -33,7 +33,7 @@ def verify_srt_proxy_patch(root: Path) -> None:
 
 
 def apply_srt_proxy_patch(root: Path) -> None:
-    """Patch only the verified upstream file in an unpublished staging tree."""
+    """Patch only verified upstream files in an unpublished staging tree."""
     patches: list[tuple[Path, bytes]] = []
     for relative_path, original_sha256, expected, destroy in _PATCHES:
         path = root / relative_path

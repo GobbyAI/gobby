@@ -22,7 +22,7 @@ DependencyPayload = dict[str, str | None]
 
 PYTHON_MIN_VERSION = "3.13.0"
 GIT_MIN_VERSION = "2.38.0"
-NODE_MIN_VERSION = "20.11.0"
+NODE_MIN_VERSION = "22.12.0"
 DOCKER_COMPOSE_MIN_VERSION = "2.7.0"
 STARTING_GRACE_SECONDS = 120.0
 
@@ -62,18 +62,18 @@ class SrtRelease:
 
 SRT_RELEASE = SrtRelease(
     package="@anthropic-ai/sandbox-runtime",
-    version="0.0.76",
+    version="0.0.79",
     tarball_url=(
-        "https://registry.npmjs.org/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.76.tgz"
+        "https://registry.npmjs.org/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.79.tgz"
     ),
-    tarball_sha256="8696ddc02f4ec0b7c7ce300d3a4bf61be85e7af9c67157895158401044cdccdd",
+    tarball_sha256="5a730e4367c264ccc4b592af01dab038a6c39db7c184efbd132841688fa854f1",
     npm_integrity=(
-        "sha512-wIC++TvCopRPJcX/v/PCp/SjYOWk/cAVq+VF9v6E3WwkriFP9uu2wvPJ2E+"
-        "wMrNa3i3h3ew9zTpHcmyGLBKo0w=="
+        "sha512-WjBmS9fbTpnQwQkM9SU+JjhM2CcXo9eWEELktY1100RMvTy/jPhP44yZ3NXhh+"
+        "GHB350OgPbM3+FubE5WVRtSA=="
     ),
-    lockfile_sha256="10a6bb1ee25325c9a3558d212b30d74370c140c50da9fdd698eae618f3839831",
+    lockfile_sha256="efd7a3220b4dcf538f4cca60cbdae040969a11047f144e7640fdbdff8fdeb175",
     runner_sha256="64b092b4104666fcb6d03c87c63788728274d45ec68cb1a244605cb1513862da",
-    http_proxy_sha256="7900ea2283ab2ed7dff05c400dc574a3eab462e7c6f5168a26b0bf6a75560ac5",
+    http_proxy_sha256="5ee6a6e26a95f063ffd38e5222b001c0ad888aab597b92a3a3eabd903fe0cfb6",
     mux_proxy_sha256="0a47d7841cd0c934734a2d65ad9094eec967481f59ac64381636a4a420b41755",
 )
 
@@ -342,7 +342,7 @@ def node_dependency_status() -> DependencyStatus:
         executable="node",
         arguments=("--version",),
         minimum_version=NODE_MIN_VERSION,
-        install_action="Install Node.js 20.11.0 or newer and retry.",
+        install_action=f"Install Node.js {NODE_MIN_VERSION} or newer and retry.",
     )
 
 

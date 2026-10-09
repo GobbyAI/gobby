@@ -286,8 +286,8 @@ def installed_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "node_dependency_status",
         lambda: DependencyStatus(
             state="healthy",
-            installed_version="20.11.0",
-            minimum_version="20.11.0",
+            installed_version="22.12.0",
+            minimum_version="22.12.0",
             expected_version=None,
             path="/usr/bin/node",
             error=None,
