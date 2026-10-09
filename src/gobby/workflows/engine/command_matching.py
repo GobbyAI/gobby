@@ -250,24 +250,28 @@ _UV_TOOL_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
 _TOOL_SPEC_SUFFIX = re.compile(r"[@\[<>=!~].*", re.DOTALL)
 
 
-def _uv_run_argv(name: str, args: list[str]) -> list[str] | None:
-    """The argv ``uv run``, ``uv tool run`` or ``uvx`` executes; None for other commands."""
+def _uv_run_argvs(name: str, args: list[str]) -> list[list[str]] | None:
+    """The argvs ``uv run``, ``uv tool run`` or ``uvx`` executes; None for other commands.
+
+    ``uv run -m X args`` runs module X as ``python -m X args`` would, so it yields
+    both readings: rules match the module's own command (``pip install``) or the
+    ``python -m`` form.
+    """
     if name == "uvx":
-        return _tool_argv(_after_options(args, _UV_TOOL_RUN_VALUE_OPTIONS))
+        return [_tool_argv(_after_options(args, _UV_TOOL_RUN_VALUE_OPTIONS))]
     if name != "uv":
         return None
     subcommand = _after_options(args, _UV_GLOBAL_VALUE_OPTIONS)
     if subcommand[:1] == ["run"]:
         argv = _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
-        # `uv run -m X` runs module X as `python -m X` would.
         options = subcommand[1 : len(subcommand) - len(argv)]
         if argv and {"-m", "--module"} & set(options):
-            return ["python", "-m", *argv]
-        return argv
+            return [argv, ["python", "-m", *argv]]
+        return [argv]
     if subcommand[:1] == ["tool"]:
         tool = _after_options(subcommand[1:], _UV_GLOBAL_VALUE_OPTIONS)
         if tool[:1] in (["run"], ["uvx"]):
-            return _tool_argv(_after_options(tool[1:], _UV_TOOL_RUN_VALUE_OPTIONS))
+            return [_tool_argv(_after_options(tool[1:], _UV_TOOL_RUN_VALUE_OPTIONS))]
     return None
 
 
@@ -382,10 +386,10 @@ def _wrapper_scripts(stages: list[list[str]], *, resolve_uv_run: bool = True) ->
                 scripts.append(" ".join(rest[1:]))
             continue
         # These exec their argv directly, so each word stays one word.
-        argv = _uv_run_argv(name, unwrapped[1:])
-        if argv is not None:
-            if argv and resolve_uv_run:
-                scripts.append(shlex.join(argv))
+        argvs = _uv_run_argvs(name, unwrapped[1:])
+        if argvs is not None:
+            if resolve_uv_run:
+                scripts.extend(shlex.join(argv) for argv in argvs if argv)
             continue
         if unwrapped != words:
             scripts.append(shlex.join(unwrapped))
