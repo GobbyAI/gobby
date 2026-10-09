@@ -315,7 +315,9 @@ def _evaluate_validation_commands(
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
-    passing_runs = [run for run in credited if run.outcome == "success"]
+    passing_runs = [
+        run for run in credited if run.outcome == "success" and run.categories == ("test",)
+    ]
     confined_paths, confinement_audit = confinement_credit(
         runs=credited,
         required_paths=tuple(

@@ -278,3 +278,122 @@ def test_foreign_tree_rerun_requires_every_changed_path_to_match(
     assert _credit(candidate, context, green=green)[0] == frozenset(OWNED)
     (copy / OWNED[1]).write_text("changed\n")
     assert _credit(candidate, context, green=green) == (frozenset(), [])
+
+
+@pytest.mark.parametrize("prefix", ["absolute", "uv run python -m pytest"])
+@pytest.mark.parametrize("side", ["failure", "rerun"])
+def test_python_module_invocation_earns_confinement_credit(
+    case: tuple[CloseCandidate, ConfinementContext], prefix: str, side: str
+) -> None:
+    candidate, context = case
+    if prefix == "absolute":
+        prefix = str(Path(candidate.root) / ".venv/bin/python") + " -m pytest"
+    failure = _run(Path(candidate.root), 1, failed=True)
+    green = _run(Path(candidate.root), 4)
+    if side == "failure":
+        failure = replace(failure, command=failure.command.replace("uv run pytest", prefix))
+        context = replace(
+            context,
+            handoffs=(
+                replace(
+                    context.handoffs[0],
+                    content=f"Failing command: {failure.command}; {FOREIGN}: AssertionError; blocks close.",
+                ),
+            ),
+        )
+    else:
+        green = replace(green, command=green.command.replace("uv run pytest", prefix))
+    paths, audit = _credit(candidate, context, failure=failure, green=green)
+    assert paths == frozenset(OWNED)
+    assert audit[0]["rerun_command"] == green.command
+
+
+@pytest.mark.parametrize("option", ["-qk test_ok", "-qm slow", "-vx"])
+@pytest.mark.parametrize("side", ["failure", "rerun"])
+def test_short_option_clusters_never_earn_confinement_credit(
+    case: tuple[CloseCandidate, ConfinementContext], option: str, side: str
+) -> None:
+    candidate, context = case
+    failure = _run(Path(candidate.root), 1, failed=True)
+    green = _run(Path(candidate.root), 4)
+    if side == "failure":
+        failure = replace(failure, command=failure.command + " " + option)
+        context = replace(
+            context,
+            handoffs=(
+                replace(
+                    context.handoffs[0],
+                    content=f"Failing command: {failure.command}; {FOREIGN}: AssertionError; blocks close.",
+                ),
+            ),
+        )
+    else:
+        green = replace(green, command=green.command + " " + option)
+    assert _credit(candidate, context, failure=failure, green=green) == (frozenset(), [])
+
+
+@pytest.mark.parametrize("option", ["--co", "--setup-plan"])
+def test_non_validation_rerun_never_earns_confinement_credit(
+    case: tuple[CloseCandidate, ConfinementContext], option: str
+) -> None:
+    candidate, context = case
+    green = _run(Path(candidate.root), 4)
+    green = replace(green, command=green.command + " " + option, categories=())
+    assert _credit(candidate, context, green=green) == (frozenset(), [])
+
+
+@pytest.mark.parametrize("option", ["--co", "--setup-plan"])
+@pytest.mark.parametrize("confined", [False, True])
+def test_close_gate_does_not_credit_non_validation_pytest_coverage(
+    case: tuple[CloseCandidate, ConfinementContext],
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+    confined: bool,
+) -> None:
+    from gobby.tasks import close_checklist
+    from gobby.tasks.transcript_evidence_models import (
+        TranscriptEvidence,
+        TranscriptValidationSegment,
+    )
+
+    candidate, context = case
+    monkeypatch.setattr(close_checklist, "CloseCandidate", lambda *_: candidate)
+    root = Path(candidate.root)
+    audit_command = (
+        "gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    audit = replace(
+        _run(root, 7),
+        categories=("type_check",),
+        matcher_id="gobby-test-types-audit",
+        command="uv run " + audit_command,
+        validation_segments=(
+            TranscriptValidationSegment(
+                command=audit_command,
+                categories=("type_check",),
+                languages=("python",),
+                bounded_inputs=True,
+            ),
+        ),
+    )
+    collection = replace(
+        _run(root, 4),
+        command="uv run pytest " + " ".join(OWNED) + " " + option,
+        categories=(),
+    )
+    foreign = replace(_run(root, 6), command=f"uv run pytest {FOREIGN} -q")
+    runs: tuple[TranscriptValidationRun, ...] = (collection, foreign, audit)
+    if confined:
+        runs = (_run(root, 1, failed=True), *runs)
+    result = close_checklist.evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(validation_runs=runs),
+        has_attributed_edits=True,
+        changed_paths=OWNED,
+        close_root=candidate.root,
+        candidate_commit_sha=candidate.commit,
+        confinement_context=context if confined else None,
+    )
+    assert result.status == "failed"
+    assert result.details["pytest_uncovered_paths"] == list(OWNED)
+    assert result.details["confinement_credit"] == []

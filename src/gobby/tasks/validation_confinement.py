@@ -113,12 +113,14 @@ def _full_pytest(run: TranscriptValidationRun) -> bool:
     if run.wrapped or run.core_command is None or pytest_targets(run.core_command) is None:
         return False
     words = shlex.split(run.core_command)
+    pytest_index = next(i for i, word in enumerate(words) if word.rsplit("/", 1)[-1] == "pytest")
+    arguments = words[pytest_index + 1 :]
     return not any(
         "::" in word
         or word == limit
         or word.startswith(limit + "=")
-        or (limit in {"-k", "-m", "-x"} and word.startswith(limit))
-        for word in words
+        or (word.startswith("-") and not word.startswith("--") and set(word[1:]) & {"k", "m", "x"})
+        for word in arguments
         for limit in _LIMITS
     )
 
@@ -211,6 +213,7 @@ def confinement_credit(
             if (
                 green.outcome != "success"
                 or green.exit_code != 0
+                or green.categories != ("test",)
                 or green.session_id != failure.session_id
                 or green.started_at < failure.completed_at
                 or not _full_pytest(green)
