@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from gobby.hooks.envelope_dedupe import DirectoryPruneResult
-from gobby.hooks.inbox import get_hook_inbox_dir, get_hook_quarantine_dir
+from gobby.hooks.inbox_envelopes import get_hook_inbox_dir, get_hook_quarantine_dir
 
 logger = logging.getLogger(__name__)
 
