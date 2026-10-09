@@ -106,8 +106,10 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         description=(
             "Take over activation-receipt authority for a task whose creator and "
             "delegator have both expired, or whose live creator is its claimant with "
-            "no live delegator. Refused while a creator that is not the claimant, or "
-            "a delegator, is live, and for the task's claimant or a task-close reviewer."
+            "no live delegator. A paused creator or delegator counts as ended once every "
+            "agent run linked to it ended or its recorded process exited. Refused while a "
+            "creator that is not the claimant, or a delegator, is otherwise live, and for "
+            "the task's claimant or a task-close reviewer."
         ),
         input_schema={
             "type": "object",
