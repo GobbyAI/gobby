@@ -157,7 +157,7 @@ def sync_bundled_rules(
     if scan_is_authoritative and rule_files and not result["errors"]:
         # Only the scopes this scan covers (global plus ``project_id``) are
         # authoritative; another project's rows are never on this disk.
-        for row in manager.list_all():
+        for row in manager.list_sync_candidates():
             if (
                 row.source == "installed"
                 and tag in (row.tags or [])

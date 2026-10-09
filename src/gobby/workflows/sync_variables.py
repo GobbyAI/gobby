@@ -133,8 +133,13 @@ def sync_bundled_variables(
 
     result["orphaned"] = 0
     if scan_is_authoritative and variable_files and not result["errors"]:
-        for row in manager.list_all():
-            if _is_sync_managed_variable(row, tag) and row.name not in on_disk:
+        for row in manager.list_sync_candidates():
+            if (
+                row.source == "installed"
+                and row.project_id is None
+                and tag in (row.tags or [])
+                and row.name not in on_disk
+            ):
                 manager.delete(row.id)
                 logger.debug("Soft-deleted orphaned bundled variable", extra={"variable": row.name})
                 result["orphaned"] += 1
