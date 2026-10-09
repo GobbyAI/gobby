@@ -323,7 +323,10 @@ def register_terminal_tools(
 
         session_id = get_current_session_id()
         if session_id is not None:
-            variables = SessionVariableManager(db).get_variables(session_id)
+            variables = SessionVariableManager(db).get_variable_subset(
+                session_id,
+                (HANDOFF_DISPATCH_GATE_VARIABLE, FAILED_HANDOFF_VARIABLE, PENDING_HANDOFF_VARIABLE),
+            )
             gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
             failed = variables.get(FAILED_HANDOFF_VARIABLE)
             if (

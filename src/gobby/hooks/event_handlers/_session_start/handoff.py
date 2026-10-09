@@ -183,7 +183,9 @@ def resolve_session_start_identity(
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            row_vars = SessionVariableManager(handler._session_manager.db).get_variables(session.id)
+            row_vars = SessionVariableManager(handler._session_manager.db).get_variable_subset(
+                session.id, (COMPACT_HANDOFF_MARKER_VARIABLE,)
+            )
             marker_present = row_vars.get(COMPACT_HANDOFF_MARKER_VARIABLE) == "compact"
         except Exception as e:
             handler.logger.debug("Could not read compact marker for %s: %s", session.id, e)

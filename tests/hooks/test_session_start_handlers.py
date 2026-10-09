@@ -1074,6 +1074,7 @@ class TestSessionStartPreCreatedSession:
         mock_svm.get_variables.return_value = {
             "pending_context_reset": pending_reset,
         }
+        mock_svm.get_variable_subset.return_value = {"pending_context_reset": pending_reset}
         mock_svm_cls.return_value = mock_svm
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session

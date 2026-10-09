@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -221,6 +222,8 @@ def test_projected_mutations_sanitize_nul_variable_names(
         "memory-ids",
         "grok-ack",
         "step-recovery",
+        "terminal-stop",
+        "start-context",
     ],
 )
 def test_small_read_consumers_do_not_decode_unrelated_variables(
@@ -236,13 +239,17 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
         resolve_agent_name,
     )
     from gobby.hooks.event_handlers._session_start.claims import rehydrate_found_work_gate_arm
+    from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
     from gobby.hooks.grok_pending_context import (
         DELIVERY_VARIABLE,
         handle_ack_pending_inbox_envelope,
     )
     from gobby.hooks.rule_evaluator import _committed_set_values
     from gobby.hooks.session_activation import _ensure_step_instance
-    from gobby.hooks.terminal_handoff_delivery import _consecutive_delivery_failures
+    from gobby.hooks.terminal_handoff_delivery import (
+        _consecutive_delivery_failures,
+        schedule_staged_handoff_on_stop,
+    )
     from gobby.mcp_proxy.tools.apply_agent_definition import commit_definition_changes
     from gobby.mcp_proxy.tools.memory_review import _accessed_ids
     from gobby.mcp_proxy.tools.memory_session import ACCESSED_MEMORY_IDS_VARIABLE
@@ -259,6 +266,7 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
             "_agent_definition_hash": "old-pin",
             "_persona_name": "live-persona",
             "_active_skill_names": ["persona-skill"],
+            "_agent_context_injected": True,
             "seen": ["one"],
             HANDOFF_DELIVERY_FAILURES_VARIABLE: 3,
             ACCESSED_MEMORY_IDS_VARIABLE: [{"task_id": "task-one", "memory_id": "memory-one"}],
@@ -329,6 +337,33 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
         )
         assert envelope_path.exists()
         assert removed == []
+    elif operation == "terminal-stop":
+        event = HookEvent(
+            event_type=HookEventType.STOP,
+            session_id="bounded-shared-mutation",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": mutation_session},
+        )
+        assert (
+            schedule_staged_handoff_on_stop(
+                event,
+                session_manager=session_manager,
+                agent_run_manager=MagicMock(),
+                event_loop=None,
+            )
+            is False
+        )
+    elif operation == "start-context":
+        decision = classify_session_start_context(
+            handler,
+            session_id=mutation_session,
+            session=session_manager.get(mutation_session),
+            session_source="resume",
+            is_existing_session=True,
+        )
+        assert decision.mode == "live"
     else:
         assert (
             _ensure_step_instance(
