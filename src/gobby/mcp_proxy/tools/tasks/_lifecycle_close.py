@@ -84,6 +84,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidenceUnavailable,
 )
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+from gobby.tasks.validation_confinement import load_confinement_context
 
 _DELIBERATE_CLOSE_SKIP = "Skipped for a justified deliberate close of an escalated task."
 _NO_WORK_TARGET_RE = re.compile(
@@ -637,6 +638,13 @@ async def _evaluate_close(
             ),
         )
         evaluation.transcript_evidence = transcript.summary()
+        confinement_context = await asyncio.to_thread(
+            load_confinement_context,
+            ctx.task_manager.db,
+            project_id=task.project_id,
+            closing_session_id=resolved_session_id,
+            evidence=transcript,
+        )
         command_gate = replace(
             await asyncio.to_thread(
                 evaluate_validation_commands,
@@ -648,6 +656,7 @@ async def _evaluate_close(
                 deleted_paths=deleted_paths,
                 close_root=repo_path,
                 candidate_commit_sha=evaluation.candidate_commit_sha,
+                confinement_context=confinement_context,
             ),
             item=10,
         )
