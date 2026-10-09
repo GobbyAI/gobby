@@ -1043,7 +1043,7 @@ class TestCanSpawnAgent:
             "gobby.utils.project_context.get_project_context",
             lambda *_args, **_kwargs: {"id": project_id, "project_path": "/tmp/slot-probe"},
         )
-        monkeypatch.setattr(_spawn_guards, "max_active_agents_for_project", lambda _path: cap)
+        monkeypatch.setattr(_spawn_guards, "configured_max_active_agents", lambda: cap)
         runner = MagicMock()
         runner.can_spawn.return_value = (True, "OK", 0)
 

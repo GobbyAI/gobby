@@ -109,7 +109,7 @@ async def test_exit_before_first_turn_releases_slot_and_delivers_parent_wait(
     assert services.terminal_for(run) is None
 
     with patch(
-        "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.max_active_agents_for_project",
+        "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.configured_max_active_agents",
         return_value=1,
     ):
         slot_args = {

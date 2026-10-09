@@ -17,6 +17,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
+from ._dispatch_batch import register_dispatch_batch
 from ._implementation import spawn_agent_impl
 from ._network_override import apply_network_override, validate_network_override
 from ._provider_resolution import (
@@ -24,8 +25,9 @@ from ._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
 )
+from ._request import first_string, non_empty_string
 from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
-from ._spawn_guards import enforce_spawn_caller, max_active_agents_for_project
+from ._spawn_guards import enforce_spawn_caller
 
 if TYPE_CHECKING:
     from gobby.agents.detection.registry import DetectionManifestRegistry
@@ -46,64 +48,16 @@ _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
 _UNRESOLVED_PARENT_PROJECT = "_unresolved_parent_project"
 
 
-def _non_empty_string(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
-
-
-def _first_string(mapping: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = _non_empty_string(mapping.get(key))
-        if value:
-            return value
-    return None
-
-
-def _coalesce_string(mapping: dict[str, Any], key: str, fallback: str | None) -> str | None:
-    return _non_empty_string(mapping.get(key)) or fallback
-
-
-def _coalesce_bool(mapping: dict[str, Any], key: str, fallback: bool | None) -> bool | None:
-    value = mapping.get(key)
-    if isinstance(value, bool):
-        return value
-    return fallback
-
-
-def _coalesce_number(mapping: dict[str, Any], key: str, fallback: float | None) -> float | None:
-    value = mapping.get(key)
-    if isinstance(value, int | float):
-        return float(value)
-    return fallback
-
-
-def _suggestion_task_description(
-    task_manager: LocalTaskManager | None,
-    task_id: str | None,
-) -> str:
-    if not task_manager or not task_id:
-        return ""
-    try:
-        full_task = task_manager.get_task(task_id)
-    except Exception:
-        logger.debug("Failed to load dispatch suggestion task %s", task_id, exc_info=True)
-        return ""
-    description = getattr(full_task, "description", "") if full_task else ""
-    return description if isinstance(description, str) else ""
-
-
 def _project_id_from_context(ctx: dict[str, Any] | None) -> str | None:
     if not ctx:
         return None
-    return _first_string(ctx, "id", "project_id")
+    return first_string(ctx, "id", "project_id")
 
 
 def _project_path_from_context(ctx: dict[str, Any] | None) -> str | None:
     if not ctx:
         return None
-    return _non_empty_string(ctx.get("project_path"))
+    return non_empty_string(ctx.get("project_path"))
 
 
 def _project_lookup_db(db: HubDatabase | None, session_manager: Any | None) -> Any | None:
@@ -141,7 +95,7 @@ def _parent_session_project_context(
         logger.debug("Failed to load parent session %s", parent_session_id, exc_info=True)
         return None
 
-    project_id = _non_empty_string(getattr(session, "project_id", None))
+    project_id = non_empty_string(getattr(session, "project_id", None))
     if project_id is None:
         return None
 
@@ -176,7 +130,7 @@ def _parent_session_project_context(
         project_file_context = _context_from_project_path(repo_path)
         if project_file_context:
             for key in ("parent_project_path", "parent_project_id"):
-                value = _non_empty_string(project_file_context.get(key))
+                value = non_empty_string(project_file_context.get(key))
                 if value:
                     context[key] = value
     return context
@@ -222,7 +176,7 @@ def _resolve_spawn_project_context_with_provenance(
     fallback. Project context lookup failures are debug-logged and return no
     context/path instead of blocking spawn.
     """
-    explicit_path = _non_empty_string(project_path)
+    explicit_path = non_empty_string(project_path)
     if explicit_path:
         explicit_ctx = _context_from_project_path(explicit_path)
         if explicit_ctx is None and parent_session_id:
@@ -710,172 +664,6 @@ def create_spawn_agent_registry(
 
         return result
 
-    @registry.tool(
-        name="dispatch_batch",
-        description=(
-            "Dispatch multiple agents in parallel for non-conflicting tasks. "
-            "Takes task briefs from suggest_next_task and spawns an agent for each. "
-            "Bounds concurrent spawning by max_active_agents."
-        ),
-    )
-    async def dispatch_batch(
-        suggestions: list[dict[str, Any]],
-        agent: str = "developer",
-        worktree_id: str | None = None,
-        clone_id: str | None = None,
-        checkout_mode: Literal["none", "worktree", "clone"] | None = None,
-        branch_name: str | None = None,
-        base_branch: str | None = None,
-        provider: str | None = None,
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-        reasoning_required: bool | None = None,
-        parent_session_id: str | None = None,
-        timeout: float | None = None,
-        notify_parent_on_completion: bool = True,
-        extra_write_paths: list[str] | None = None,
-        write_paths_reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Dispatch multiple agents for non-conflicting tasks.
-
-        Args:
-            suggestions: Task briefs from suggest_next_task output
-            agent: Agent definition name (default: "developer")
-            worktree_id: Shared worktree for all agents (full UUID or unique id prefix)
-            clone_id: Existing clone ID for all agents
-            checkout_mode: Checkout mode (none/worktree/clone)
-            branch_name: Git branch name for isolation
-            base_branch: Base branch for worktree/clone
-            provider: AI provider override
-            model: Model override
-            parent_session_id: Parent session reference
-            timeout: Timeout in seconds for each agent
-            notify_parent_on_completion: Whether to notify parent sessions on completion
-
-        Returns:
-            Dict with dispatched count and per-task results
-        """
-        if not suggestions:
-            return {"dispatched": 0, "results": []}
-        _, batch_project_path = await asyncio.to_thread(
-            _resolve_spawn_project_context,
-            project_path=None,
-            parent_session_id=parent_session_id,
-            session_manager=session_manager,
-            db=db,
-        )
-        batch_cap = (
-            max_active_agents_for_project(batch_project_path)
-            if batch_project_path
-            else len(suggestions)
-        )
-        semaphore = asyncio.Semaphore(max(1, min(len(suggestions), batch_cap)))
-
-        async def _spawn_one(suggestion: dict[str, Any]) -> dict[str, Any]:
-            if not isinstance(suggestion, dict):
-                return {
-                    "task_ref": "",
-                    "run_id": "",
-                    "success": False,
-                    "error": "dispatch_batch suggestions must be objects",
-                }
-
-            task_id = _first_string(suggestion, "task_id", "id")
-            task_ref = _first_string(suggestion, "ref", "task_ref", "task_id", "id")
-            if not task_ref:
-                return {
-                    "task_ref": "",
-                    "run_id": "",
-                    "success": False,
-                    "error": (
-                        "dispatch_batch suggestion is missing ref, task_ref, task_id, or id; "
-                        "refusing to spawn an unknown task"
-                    ),
-                }
-            if not task_id:
-                task_id = task_ref
-
-            task_title = _first_string(suggestion, "title", "summary") or ""
-            prompt = _non_empty_string(suggestion.get("prompt"))
-            if prompt is None:
-                if not task_title:
-                    return {
-                        "task_ref": task_ref,
-                        "run_id": "",
-                        "success": False,
-                        "error": (
-                            "dispatch_batch suggestion is missing prompt and title; "
-                            f"refusing to spawn {task_ref}"
-                        ),
-                    }
-                task_desc = await asyncio.to_thread(
-                    _suggestion_task_description, task_manager, task_id
-                )
-                desc_block = f"\n\nDescription:\n{task_desc}" if task_desc else ""
-                prompt = f"Implement task {task_ref}: {task_title}{desc_block}"
-
-            suggestion_agent = _coalesce_string(suggestion, "agent", agent)
-            try:
-                result = await spawn_agent(
-                    extra_write_paths=suggestion.get("extra_write_paths", extra_write_paths),
-                    write_paths_reason=suggestion.get("write_paths_reason", write_paths_reason),
-                    prompt=prompt,
-                    agent=suggestion_agent or "developer",
-                    execution_mode="one_shot",
-                    task_id=task_id,
-                    worktree_id=_coalesce_string(suggestion, "worktree_id", worktree_id),
-                    clone_id=_coalesce_string(suggestion, "clone_id", clone_id),
-                    checkout_mode=_coalesce_string(suggestion, "checkout_mode", checkout_mode),
-                    branch_name=_coalesce_string(suggestion, "branch_name", branch_name),
-                    base_branch=_coalesce_string(suggestion, "base_branch", base_branch),
-                    provider=_coalesce_string(suggestion, "provider", provider),
-                    model=_coalesce_string(suggestion, "model", model),
-                    reasoning_effort=_coalesce_string(
-                        suggestion, "reasoning_effort", reasoning_effort
-                    ),
-                    reasoning_required=_coalesce_bool(
-                        suggestion, "reasoning_required", reasoning_required
-                    ),
-                    timeout=_coalesce_number(suggestion, "timeout", timeout),
-                    parent_session_id=_coalesce_string(
-                        suggestion, "parent_session_id", parent_session_id
-                    ),
-                    notify_parent_on_completion=_coalesce_bool(
-                        suggestion,
-                        "notify_parent_on_completion",
-                        notify_parent_on_completion,
-                    )
-                    is not False,
-                )
-                out: dict[str, Any] = {
-                    "task_ref": task_ref,
-                    "run_id": result.get("run_id", ""),
-                    "success": result.get("success", False),
-                    "agent": suggestion_agent or "developer",
-                    "external_write_grant": result.get("external_write_grant"),
-                }
-                if not out["success"] and result.get("error"):
-                    out["error"] = result["error"]
-                return out
-            except Exception as e:
-                logger.error("Failed to spawn agent for %s: %s", task_ref, e)
-                return {
-                    "task_ref": task_ref,
-                    "run_id": "",
-                    "success": False,
-                    "error": str(e),
-                }
-
-        async def _spawn_one_bounded(suggestion: dict[str, Any]) -> dict[str, Any]:
-            async with semaphore:
-                return await _spawn_one(suggestion)
-
-        results = await asyncio.gather(*[_spawn_one_bounded(s) for s in suggestions])
-        dispatched = sum(1 for r in results if r["success"])
-
-        return {
-            "dispatched": dispatched,
-            "results": list(results),
-        }
+    register_dispatch_batch(registry, spawn_agent=spawn_agent, task_manager=task_manager)
 
     return registry

@@ -25,6 +25,7 @@
           "https://localhost:*"
         ],
         "daemon_health_check_interval": 10.0,
+        "max_active_agents": 20,
         "test_mode": true,
         "worktrees_dir": "~/.gobby/worktrees",
         "agent_sandbox": {
@@ -1088,6 +1089,7 @@
           "https://localhost:*"
         ],
         "daemon_health_check_interval": 10.0,
+        "max_active_agents": 20,
         "test_mode": true,
         "worktrees_dir": "~/.gobby/worktrees",
         "agent_sandbox": {

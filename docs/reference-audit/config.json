@@ -27,7 +27,7 @@
         "tool-approval-and-chat",
         "downstream-mcp-servers",
         "project-configuration",
-        "build-defaults",
+        "spawn-cap",
         "packaging-diagnostics",
         "validation-rules",
         "troubleshooting",

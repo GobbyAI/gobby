@@ -2546,6 +2546,16 @@
           "default": 50,
           "description": "Maximum runtime output file size in MB"
         },
+        "max_active_agents": {
+          "type": "integer",
+          "namespace": "max_active_agents",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 20,
+          "description": "Maximum active agents per project."
+        },
         "mcp_client_proxy.connect_timeout": {
           "type": "number",
           "namespace": "mcp_client_proxy",
