@@ -548,7 +548,9 @@ class TestSessionStartAndHelpers:
 
         # Session already has agent_type
         with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr:
-            mock_sv_mgr.return_value.get_variables.return_value = {"_agent_type": "spawned-agent"}
+            mock_sv_mgr.return_value.get_variable_subset.return_value = {
+                "_agent_type": "spawned-agent"
+            }
             assert handler._resolve_agent_name("sess-1", None) == "spawned-agent"
 
         # Global default
@@ -556,7 +558,7 @@ class TestSessionStartAndHelpers:
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr,
             patch("gobby.storage.config_repository.ConfigRepository") as mock_repo,
         ):
-            mock_sv_mgr.return_value.get_variables.return_value = {}
+            mock_sv_mgr.return_value.get_variable_subset.return_value = {}
             mock_repo.return_value.read.return_value.values = {"default_agent": "global-agent"}
             assert handler._resolve_agent_name("sess-1", None) == "global-agent"
 
@@ -669,8 +671,10 @@ class TestSessionMoreCoverage:
             ),
             patch.object(handler, "_build_agent_changes") as mock_build,
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value=stored_variables,
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                side_effect=lambda _session_id, keys: {
+                    key: stored_variables[key] for key in keys if key in stored_variables
+                },
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",

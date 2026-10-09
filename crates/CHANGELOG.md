@@ -60,18 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Qwen Code CLI support** — `--cli=qwen` is no longer recognized and exits
   `2` with empty JSON like any unknown CLI. The Qwen structured allow/block
-  response path, which also carried `Stop` blocks, is gone. Version: `0.9.10`.
+  response path, which also carried `Stop` blocks, is gone. Version: `0.9.11`.
 
 #### gobby-client
 
 - **Qwen provider label** — the sidebar no longer maps the `qwen` source.
-  Version: `0.1.26`.
+  Version: `0.1.27`.
 
 #### gobby-core
 
 - **Qwen in the runtime config contract** — the embedded contract's provider
-  descriptions no longer name `qwen`. Dependents rebuilt: gcode `1.9.17`,
-  gdaemon `0.4.12`, ghook `0.9.10`, gclient `0.1.26`.
+  descriptions no longer name `qwen`. Version: `0.10.2`. Dependents rebuilt:
+  gcode `1.9.18`, gdaemon `0.4.13`, ghook `0.9.11`, gclient `0.1.27`.
 
 #### gcode
 

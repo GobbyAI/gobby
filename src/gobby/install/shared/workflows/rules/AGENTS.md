@@ -28,7 +28,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
 | `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
-| `roles` | `roles/` | 8 | Inject the shared seat guidance once per context epoch for catalogue seats (persona or spawned), and re-arm it after context loss; block every seat's agent spawns and pipeline launches through MCP or the gobby CLI; redirect every seat's `AskUserQuestion` to `send_message`; scope Assistant and Archivist writes by resolved path |
+| `roles` | `roles/` | 8 | Inject the shared seat guidance once per context epoch for catalogue seats (persona or spawned), and re-arm it after context loss; block every seat's agent spawns and pipeline launches through MCP or the gobby CLI, except that the Assistant, Orchestrator and Lane Managers may resume an existing session with `spawn_agent` `resume_session_id`; redirect every seat's `AskUserQuestion` to `send_message`; scope Assistant and Archivist writes by resolved path |
 
 Experiments that belong to one project are not bundled. They live in that
 repository's `.gobby/workflows/rules/`, which `gobby install`/`gobby sync` syncs

@@ -54,13 +54,13 @@ pub struct SidebarState {
     /// Machine filter of the sessions section, per window: `None` lists the
     /// rows on the local machine, `Some(ALL_MACHINES)` the rows on every
     /// machine, and `Some(machine_id)` those on that machine;
-    /// `all_sessions` bounds the projects the rows come from.
+    /// `all_projects` bounds the projects the rows come from.
     pub machine_filter: Option<String>,
-    /// The projects section lists every project instead of the working
-    /// ones (`sidebar_rows::working_projects`). Per window, never saved.
+    /// List every project instead of only the focused project.
+    /// Per window, never saved.
     pub all_projects: bool,
-    /// The sessions section lists every project's rows, grouped by project,
-    /// instead of the focused project's. Per window, never saved.
+    /// Group agents under project headings when all projects are shown.
+    /// Per window, never saved.
     pub all_sessions: bool,
 }
 
@@ -79,9 +79,9 @@ impl Default for SidebarState {
             project_order: Vec::new(),
             expanded_project: None,
             project_labels: BTreeMap::new(),
-            machine_filter: None,
-            all_projects: false,
-            all_sessions: false,
+            machine_filter: Some(crate::ui::sidebar::ALL_MACHINES.to_owned()),
+            all_projects: true,
+            all_sessions: true,
         }
     }
 }

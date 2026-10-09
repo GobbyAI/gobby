@@ -3,6 +3,7 @@
 import { appendFileSync, chmodSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
+import { getPriority, setPriority } from 'node:os'
 
 import {
   SandboxManager,
@@ -69,6 +70,11 @@ async function main() {
   if (!SandboxManager.isSupportedPlatform()) {
     throw new Error(`SRT does not support platform ${process.platform}`)
   }
+
+  // Set priority on the host: Seatbelt can deny setpriority after sandbox entry.
+  // Every provider/tool child inherits this, and a failure must prevent launch.
+  setPriority(0, 19)
+  if (getPriority(0) !== 19) throw new Error('failed to set SRT runner niceness to 19')
 
   let seenViolations = 0
   let unsubscribe = () => {}

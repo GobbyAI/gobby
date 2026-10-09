@@ -859,31 +859,34 @@ fn glyph_rows(capture: &str) -> Vec<&str> {
 fn agent_rows_golden() {
     let rendered = deterministic_capture("agent_rows", agent_rows);
     let rows = glyph_rows(&rendered);
+    let agent = rows
+        .iter()
+        .position(|row| row.contains("#123: backend-developer-work"))
+        .expect("agent definition row");
     assert!(
-        rows[9].contains("#123: backend-developer-work"),
+        rows[agent + 1].contains("Working task 123 Implement"),
         "{:?}",
-        rows[9]
+        rows[agent + 1]
     );
+    assert!(rows[agent + 2].contains("gpt-5"));
+    let terminal = rows
+        .iter()
+        .position(|row| row.contains("○ nvim"))
+        .expect("bare terminal row");
     assert!(
-        rows[10].contains("Working task 123 Implement"),
-        "{:?}",
-        rows[10]
-    );
-    assert!(rows[11].contains("gpt-5"));
-    assert!(
-        rows[25].contains("○ nvim") && rows[25].contains("gclient"),
+        rows[terminal].contains("gclient"),
         "foreground app with its address: {:?}",
-        rows[25]
+        rows[terminal]
     );
     assert!(
-        !rows[26].contains("gclient"),
+        !rows[terminal + 1].contains("gclient"),
         "no directory reported: {:?}",
-        rows[26]
+        rows[terminal + 1]
     );
     assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
     let slug_style = rendered
         .lines()
-        .find(|line| line.starts_with("11 :"))
+        .find(|line| line.starts_with(&format!("{:02} :", agent + 2)))
         .expect("model slug style");
     // The model takes the theme's model colour, never dimmed (#23416).
     assert!(slug_style.contains("model/panel_bg*5"), "{slug_style}");
@@ -949,25 +952,21 @@ fn projects_agents_golden() {
         "a folded card lists no worktree\n{rendered}"
     );
     assert!(
-        !rendered.contains("○ beta"),
-        "the working filter hides a project with nothing live\n{rendered}"
+        rendered.contains("○ beta"),
+        "all-projects scope includes a project with nothing live\n{rendered}"
     );
     let sessions = row_containing(" Agents");
     assert_eq!(
         sessions,
-        alpha + 2,
+        alpha + 3,
         "a blank row separates the cards from the agents band"
     );
-    assert_eq!(
-        rows[sessions].trim_end(),
-        " Agents",
-        "the agents band is its title alone"
-    );
+    assert!(rows[sessions].starts_with(" Agents "));
     let entry = row_containing("Unknown");
     assert_eq!(
         entry,
-        sessions + 1,
-        "the attention entry lists under agents"
+        sessions + 2,
+        "the project heading precedes the attention entry"
     );
     assert!(
         rows[entry].contains("⍾ Unknown"),

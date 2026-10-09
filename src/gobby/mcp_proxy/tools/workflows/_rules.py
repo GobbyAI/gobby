@@ -144,8 +144,10 @@ def list_rules(
     Returns:
         Dict with success, rules list, and count
     """
-    if event:
+    if event and project_id is not None:
         rows = def_manager.list_by_event(event, project_id=project_id, enabled=enabled)
+    elif event:
+        rows = def_manager.list_by_event_across_projects(event, enabled=enabled)
     elif group:
         rows = def_manager.list_by_group(group, project_id=project_id, enabled=enabled)
     else:

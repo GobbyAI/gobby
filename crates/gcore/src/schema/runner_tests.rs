@@ -1178,7 +1178,10 @@ fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Resul
         )?;
     }
     let report = SchemaRunner::new(&mut client, "public")?.apply()?;
-    assert_eq!(report.migrations_applied, 1);
+    assert_eq!(
+        report.migrations_applied,
+        MIGRATIONS.len() - migration_index
+    );
     for table in ["tasks", "build_profiles"] {
         let modes: Vec<String> = client
             .query(

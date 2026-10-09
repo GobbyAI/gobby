@@ -6,7 +6,7 @@ use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
     appearance_row_label, arrange_row, blocked_entry, enabled_if, item, passthrough_label,
-    theme_row_label, toggle, ArrangeTarget, MenuAction, MenuItem, Submenu,
+    sidebar_items, theme_row_label, toggle, ArrangeTarget, MenuAction, MenuItem, Submenu,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -40,24 +40,25 @@ pub fn menu_bar_items<W: WorkspaceView>(
             enabled_if(act("Detach", Action::Detach), held),
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
-        // Each section's options live under Sidebar ▸ in a submenu of their
-        // own; the state legend is Help › Keybinds.
-        MenuBarMenu::View => vec![
-            item(
-                appearance_row_label(chrome),
-                MenuAction::OpenSubmenu(Submenu::Appearance),
-            ),
-            item(
-                theme_row_label(chrome),
-                MenuAction::OpenSubmenu(Submenu::Theme),
-            ),
-            toggle(
-                ("✓ Monochrome", "  Monochrome"),
-                chrome.prefs.monochrome,
-                MenuAction::ToggleMonochrome,
-            ),
-            item("  Sidebar ▸", MenuAction::OpenSubmenu(Submenu::Sidebar)),
-        ],
+        MenuBarMenu::View => {
+            let mut items = vec![
+                item(
+                    appearance_row_label(chrome),
+                    MenuAction::OpenSubmenu(Submenu::Appearance),
+                ),
+                item(
+                    theme_row_label(chrome),
+                    MenuAction::OpenSubmenu(Submenu::Theme),
+                ),
+                toggle(
+                    ("✓ Monochrome", "  Monochrome"),
+                    chrome.prefs.monochrome,
+                    MenuAction::ToggleMonochrome,
+                ),
+            ];
+            items.extend(sidebar_items(chrome));
+            items
+        }
         MenuBarMenu::Window => {
             let mut items = vec![
                 enabled_if(

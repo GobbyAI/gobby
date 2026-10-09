@@ -66,6 +66,8 @@ from gobby.sessions.transcript_cursor import TranscriptTailCursor
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
 from gobby.terminals.runtime import SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -597,14 +599,17 @@ class _RejectingGrokPane:
     backend = "native"
     target = "term-grok"
 
-    def __init__(self, events_path: Path) -> None:
+    def __init__(self, events_path: Path, ledger: ComposerLedger) -> None:
         self.keys: list[str] = []
         self.typed: list[str] = []
         self.screen = "working...\n> "
         self._events_path = events_path
+        self._ledger = ledger
+        ledger.record_spawn(self.target, "")
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
+        self._ledger.observe_write(self.target, origin="daemon", kind="key", payload=key)
         if key == "ctrl_c":
             with self._events_path.open("ab") as stream:
                 stream.write(json.dumps({"type": "turn_ended", "outcome": "cancelled"}).encode())
@@ -613,6 +618,7 @@ class _RejectingGrokPane:
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        self._ledger.observe_write(self.target, origin="daemon", kind="text", payload=text)
         # The write carries its own newline, so the command submits -- and is
         # rejected -- on the write rather than on a later Enter key.
         self.screen += f"\n{GROK_REJECTION}\n> "
@@ -634,13 +640,19 @@ async def _run_operation(
 async def test_rejected_grok_compaction_settles_as_delivery_failed(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    # The empty transcript never settles the turn, so the 30 s wait would only delay Ctrl+C.
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._terminal_compaction._TURN_SETTLE_WAIT_SECONDS", 0.05
+    )
     transcript = tmp_path / "updates.jsonl"
     transcript.write_bytes(b"")
     events = tmp_path / "events.jsonl"
     events.write_bytes(b"")
-    pane = _RejectingGrokPane(events)
+    pane = _RejectingGrokPane(events, composer_ledger)
     session = SimpleNamespace(id=SESSION_ID, source="grok", transcript_path=str(transcript))
     session_manager = MagicMock()
     session_manager.get.return_value = session
@@ -1038,12 +1050,15 @@ async def _await_continuations() -> None:
 async def test_native_worker_receives_the_continuation_after_set_handoff_compaction(
     hub_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
+    composer_ledger: ComposerLedger,
 ) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
     runtime = FakeRuntime(backend="native")
-    store = MemoryTerminalStore(
-        replace(make_memory_terminal(backend="native"), session_id=SESSION_ID)
-    )
+    terminal = replace(make_memory_terminal(backend="native"), session_id=SESSION_ID)
+    # The native host records the spawn. FakeRuntime writes bypass the ledger, which
+    # leaves the same clean read the PRE_COMPACT submit record leaves after /compact.
+    composer_ledger.record_spawn(str(terminal.id), "")
+    store = MemoryTerminalStore(terminal)
     registry = runtime_registry(runtime)
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.sessions._terminal._COMPACTION_REJECTION_SETTLE_SECONDS", 0.0
@@ -1730,38 +1745,74 @@ def test_stop_recovers_only_a_dispatch_this_daemon_does_not_own(
         assert marker["dispatch_started_at"] == started_at
 
 
+_CONTINUATION_TARGET = "term-continuation"
+
+
+class _ContinuationPane:
+    """Native pane fake whose writes the ledger records as daemon input, as write_batch does."""
+
+    backend = "native"
+    target = _CONTINUATION_TARGET
+
+    def __init__(self, ledger: ComposerLedger) -> None:
+        self.ledger = ledger
+        self.typed: list[str] = []
+        self.keys: list[str] = []
+
+    async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
+        return ""
+
+    async def type_text(self, text: str) -> tuple[bool, str | None]:
+        self.typed.append(text)
+        self.ledger.observe_write(self.target, origin="daemon", kind="text", payload=text)
+        return True, None
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        self.keys.append(key)
+        self.ledger.observe_write(self.target, origin="daemon", kind="key", payload=key)
+        return True, None
+
+
+@pytest.fixture
+def continuation_ledger(composer_ledger: ComposerLedger) -> ComposerLedger:
+    """The bound ledger tracking the continuation seat, whose composer starts empty."""
+    composer_ledger.record_spawn(_CONTINUATION_TARGET, "")
+    return composer_ledger
+
+
+def _empty_read(_snapshot: str | None) -> ComposerRead:
+    return ComposerRead(state="empty")
+
+
+async def _no_before_agent() -> bool:
+    return False
+
+
 @pytest.mark.asyncio
 async def test_continuation_resubmits_until_before_agent_observed(
     hub_db: HubDatabase,
+    continuation_ledger: ComposerLedger,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A false 'draft left' read keeps re-submitting until BEFORE_AGENT arrives.
 
     The 22:28:40 CDT read on 2026-09-21 reported the composer left the draft while
-    the prompt was still unsent. Only the session's BEFORE_AGENT (a turn-lifecycle
-    generation bump) settles the continuation, and no retry may follow it.
+    the prompt was still unsent. The ledger still holds the daemon's paste, so each
+    retry starts with a bare Enter. When BEFORE_AGENT still has not arrived, the
+    provider may have dropped the prompt, so the held copy is drained one backspace
+    per character and re-pasted into the frame that then reads empty. Only the
+    session's BEFORE_AGENT (a turn-lifecycle generation bump) settles the
+    continuation, and no retry may follow it.
     """
-    from gobby.agents.idle_detector import ComposerRead
     from gobby.sessions import continuation_retry
     from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 
     session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
-    pane = SimpleNamespace(
-        backend="native",
-        snapshot=AsyncMock(return_value=""),
-        type_text=AsyncMock(return_value=(True, None)),
+    pane = _ContinuationPane(continuation_ledger)
+    held = "continue the handoff\n"
+    continuation_ledger.observe_write(
+        _CONTINUATION_TARGET, origin="daemon", kind="text", payload=held
     )
-
-    # The first (entry) read is the false positive: it reports the draft left while
-    # the prompt never reached the CLI. The read after the bare Enter correctly
-    # shows the prompt still held, so the bounded budget re-sends Enter.
-    entry_reads = {"count": 0}
-
-    def composer_read(_snapshot: str | None) -> ComposerRead:
-        entry_reads["count"] += 1
-        if entry_reads["count"] == 1:
-            return ComposerRead(state="empty")
-        return ComposerRead(state="draft", line="continue the handoff")
 
     resent_enters: list[str] = []
 
@@ -1782,6 +1833,7 @@ async def test_continuation_resubmits_until_before_agent_observed(
         caplog.at_level(logging.WARNING, logger="gobby.sessions.continuation_retry"),
         patch.object(continuation_retry, "send_pane_key", fake_send_key),
         patch.object(continuation_retry, "await_before_agent", fake_await_before_agent),
+        patch("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0),
     ):
         confirmed = await continuation_retry.resubmit_until_before_agent(
             pane,
@@ -1790,14 +1842,22 @@ async def test_continuation_resubmits_until_before_agent_observed(
             db=hub_db,
             baseline_generation=7,
             cli_source="claude",
-            composer_read=composer_read,
+            composer_read=_empty_read,
             verify_seconds=0.0,
             retry_limit=3,
         )
 
     assert confirmed is True
     # Two re-submits happened before the hook arrived, and no retry after it.
-    assert len(resent_enters) == 2
+    assert resent_enters == ["enter", "enter"]
+    # The first found no BEFORE_AGENT, drained the held copy by length and
+    # re-pasted it once; the second was the bare Enter the hook answered.
+    assert pane.typed == [held]
+    assert pane.keys == [
+        *["backspace"] * len(held),
+        *composer_clear_sequence("claude"),
+        "enter",
+    ]
     # Retries are bounded, not logged (daemon-loop logging ban, #23303).
     assert caplog.records == []
     # Every check before the arrival returned False; the loop never re-submitted
@@ -1814,40 +1874,17 @@ async def test_continuation_resubmits_until_before_agent_observed(
 @pytest.mark.asyncio
 async def test_continuation_does_not_repaste_when_enter_delivered_before_agent(
     hub_db: HubDatabase,
+    continuation_ledger: ComposerLedger,
 ) -> None:
     """An Enter that delivered BEFORE_AGENT must not be followed by a re-paste.
 
-    The entry read can report the draft gone while the composer still holds it, so
-    the retry sends Enter first. That Enter submits the held draft and the
-    session's BEFORE_AGENT arrives immediately; the composer is then empty, which
-    the next read cannot distinguish from a lost prompt. Re-pasting would queue a
-    duplicate continuation, so the hook is rechecked after the Enter and the
-    re-paste is skipped (#22706 MEDIUM).
+    With the ledger reading the composer empty, the retry sends Enter first. If that
+    Enter submitted a copy the CLI still held, the session's BEFORE_AGENT arrives
+    immediately and the composer is empty again, which cannot be told apart from a
+    lost prompt. Re-pasting would queue a duplicate continuation, so the hook is
+    rechecked after the Enter and the re-paste is skipped (#22706 MEDIUM).
     """
-    from gobby.agents.idle_detector import ComposerRead
     from gobby.sessions import continuation_retry
-
-    class _Pane:
-        backend = "native"
-
-        def __init__(self) -> None:
-            self.typed: list[str] = []
-            self.keys: list[str] = []
-
-        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
-            return ""
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.typed.append(text)
-            return True, None
-
-        async def send_key(self, key: str) -> tuple[bool, str | None]:
-            self.keys.append(key)
-            return True, None
-
-    def composer_read(_snapshot: str | None) -> ComposerRead:
-        # The false positive: it reports the draft left while it is still held.
-        return ComposerRead(state="empty")
 
     async def hook_after_enter() -> bool:
         # The Enter in resubmit_continuation submitted the held draft, so the
@@ -1857,13 +1894,13 @@ async def test_continuation_does_not_repaste_when_enter_delivered_before_agent(
     async def hook_not_arrived() -> bool:
         return False
 
-    pane: Any = _Pane()
+    pane: Any = _ContinuationPane(continuation_ledger)
     resent = await continuation_retry.resubmit_continuation(
         pane,
         "continue the handoff",
         SESSION_ID,
         cli_source="claude",
-        composer_read=composer_read,
+        composer_read=_empty_read,
         verify_seconds=0.0,
         before_agent_check=hook_after_enter,
     )
@@ -1874,58 +1911,39 @@ async def test_continuation_does_not_repaste_when_enter_delivered_before_agent(
 
     # Without the hook the same inputs do re-paste the lost copy, so the check
     # above is what prevents the duplicate rather than the composer state.
-    pane_without_hook: Any = _Pane()
+    pane_without_hook: Any = _ContinuationPane(continuation_ledger)
     await continuation_retry.resubmit_continuation(
         pane_without_hook,
         "continue the handoff",
         SESSION_ID,
         cli_source="claude",
-        composer_read=composer_read,
+        composer_read=_empty_read,
         verify_seconds=0.0,
         before_agent_check=hook_not_arrived,
     )
     assert pane_without_hook.typed == ["continue the handoff\n"]
 
 
-async def test_continuation_repastes_the_prompt_when_the_composer_is_empty() -> None:
+async def test_continuation_repastes_the_prompt_when_the_composer_is_empty(
+    continuation_ledger: ComposerLedger,
+) -> None:
     """An empty composer is positive evidence the prompt was lost, so it is re-typed.
 
     ``resubmit_continuation`` used to send a bare Enter only, which cannot recover a
-    prompt the false-positive read consumed. With an ``empty`` read the text is
-    re-pasted and verified (#22706 MEDIUM).
+    prompt the false-positive read consumed. With the ledger reading ``empty`` the
+    text is re-pasted and verified (#22706 MEDIUM).
     """
-    from gobby.agents.idle_detector import ComposerRead
     from gobby.sessions import continuation_retry
 
-    class _Pane:
-        backend = "native"
-
-        def __init__(self) -> None:
-            self.typed: list[str] = []
-            self.keys: list[str] = []
-
-        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
-            return ""
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.typed.append(text)
-            return True, None
-
-        async def send_key(self, key: str) -> tuple[bool, str | None]:
-            self.keys.append(key)
-            return True, None
-
-    def composer_read(_snapshot: str | None) -> ComposerRead:
-        return ComposerRead(state="empty")
-
-    pane: Any = _Pane()
+    pane: Any = _ContinuationPane(continuation_ledger)
     resent = await continuation_retry.resubmit_continuation(
         pane,
         "continue the handoff",
         SESSION_ID,
         cli_source="claude",
-        composer_read=composer_read,
+        composer_read=_empty_read,
         verify_seconds=0.0,
+        before_agent_check=_no_before_agent,
     )
 
     assert resent is True
@@ -1935,54 +1953,52 @@ async def test_continuation_repastes_the_prompt_when_the_composer_is_empty() -> 
     assert pane.keys == ["enter", "enter"]
 
 
+def _host_gap(ledger: ComposerLedger) -> None:
+    ledger.block(_CONTINUATION_TARGET, "gap")
+
+
+def _operator_draft(ledger: ComposerLedger) -> None:
+    ledger.observe_write(
+        _CONTINUATION_TARGET, origin="operator", kind="text", payload="half-typed operator note"
+    )
+
+
+def _other_daemon_text(ledger: ComposerLedger) -> None:
+    ledger.observe_write(_CONTINUATION_TARGET, origin="daemon", kind="text", payload="/compact")
+
+
+def _untracked(_ledger: ComposerLedger) -> None:
+    bind_composer_ledger(ComposerLedger())
+
+
 @pytest.mark.parametrize(
-    "read",
-    [
-        pytest.param(ComposerRead(state="unknown"), id="unreadable"),
-        pytest.param(ComposerRead(state="draft", line="half-typed operator note"), id="draft"),
-    ],
+    "seed",
+    [_host_gap, _operator_draft, _other_daemon_text, _untracked],
+    ids=["blocked", "draft", "other-daemon-text", "untracked"],
 )
 async def test_continuation_never_writes_over_unknown_or_operator_text(
-    read: ComposerRead,
+    continuation_ledger: ComposerLedger,
+    seed: Callable[[ComposerLedger], None],
 ) -> None:
-    """A frame that may hold operator text gets no Enter, drain or re-paste.
+    """A composer the ledger cannot vouch for gets no Enter, drain or re-paste.
 
-    #22915 gates every composer write on a confirmed-empty read: an operator draft
-    belongs to the operator, and an unclassifiable frame may hide one. The retry
-    writes nothing and reports False, so the caller's durable fallback delivers
-    the continuation instead.
+    #22915 gates every composer write: an operator draft belongs to the operator,
+    and a blocked or untracked seat may hide one. Other daemon text is not this
+    prompt, so an Enter would submit the wrong thing. The retry writes nothing and
+    reports False, so the caller's durable fallback delivers the continuation instead.
     """
     from gobby.sessions import continuation_retry
 
-    class _Pane:
-        backend = "native"
-
-        def __init__(self) -> None:
-            self.typed: list[str] = []
-            self.keys: list[str] = []
-
-        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
-            return ""
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.typed.append(text)
-            return True, None
-
-        async def send_key(self, key: str) -> tuple[bool, str | None]:
-            self.keys.append(key)
-            return True, None
-
-    def composer_read(_snapshot: str | None) -> ComposerRead:
-        return read
-
-    pane: Any = _Pane()
+    seed(continuation_ledger)
+    pane: Any = _ContinuationPane(continuation_ledger)
     resent = await continuation_retry.resubmit_continuation(
         pane,
         "continue the handoff",
         SESSION_ID,
         cli_source="claude",
-        composer_read=composer_read,
+        composer_read=_empty_read,
         verify_seconds=0.0,
+        before_agent_check=_no_before_agent,
     )
 
     assert resent is False
@@ -1990,7 +2006,9 @@ async def test_continuation_never_writes_over_unknown_or_operator_text(
     assert pane.keys == []
 
 
-async def test_continuation_without_a_composer_reader_only_resends_enter() -> None:
+async def test_continuation_without_a_composer_reader_only_resends_enter(
+    continuation_ledger: ComposerLedger,
+) -> None:
     """With no reader to verify a paste, a bare Enter is the only safe retry.
 
     Enter submits a held copy and is a no-op on an empty composer; a re-paste
@@ -1998,22 +2016,7 @@ async def test_continuation_without_a_composer_reader_only_resends_enter() -> No
     """
     from gobby.sessions import continuation_retry
 
-    class _Pane:
-        backend = "native"
-
-        def __init__(self) -> None:
-            self.typed: list[str] = []
-            self.keys: list[str] = []
-
-        async def type_text(self, text: str) -> tuple[bool, str | None]:
-            self.typed.append(text)
-            return True, None
-
-        async def send_key(self, key: str) -> tuple[bool, str | None]:
-            self.keys.append(key)
-            return True, None
-
-    pane: Any = _Pane()
+    pane: Any = _ContinuationPane(continuation_ledger)
     resent = await continuation_retry.resubmit_continuation(
         pane,
         "continue the handoff",
@@ -2021,6 +2024,7 @@ async def test_continuation_without_a_composer_reader_only_resends_enter() -> No
         cli_source="claude",
         composer_read=None,
         verify_seconds=0.0,
+        before_agent_check=_no_before_agent,
     )
 
     assert resent is True

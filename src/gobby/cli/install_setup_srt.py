@@ -119,6 +119,13 @@ def _install_srt_runtime() -> SrtInstallResult:
             ):
                 raise SrtRuntimeError("npm installed an unexpected Sandbox Runtime package")
 
+            from gobby.agents.srt_package_patch import apply_srt_proxy_patch
+
+            try:
+                apply_srt_proxy_patch(staging)
+            except ValueError as exc:
+                raise SrtRuntimeError(str(exc)) from exc
+
             runner_source = Path(__file__).parents[1] / "agents" / "srt_runner.mjs"
             runner_target = staging / "runner.mjs"
             shutil.copyfile(runner_source, runner_target)
@@ -226,8 +233,11 @@ def _runner_only_drift(target: Path) -> tuple[dict[str, str], dict[str, object]]
     ):
         return None
     try:
+        from gobby.agents.srt_package_patch import verify_srt_proxy_patch
+
+        verify_srt_proxy_patch(target)
         _verify_srt_content(target, manifest | {"runner.mjs": runner_sha256})
-    except (OSError, SrtRuntimeError):
+    except (OSError, SrtRuntimeError, ValueError):
         return None
     return manifest, receipt
 

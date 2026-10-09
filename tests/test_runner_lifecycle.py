@@ -32,6 +32,8 @@ from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.cron_models import CronRunStatus
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminals import composer_ledger
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from tests._timing import wait_for_async_condition
@@ -5482,6 +5484,77 @@ class TestAgentRestartRecoveryHelpers:
 
         assert events[:3] == ["close", "health", "drain"]
         assert events[-1] == "executor"
+
+    @pytest.mark.asyncio
+    async def test_async_shutdown_flushes_the_composer_ledger_after_the_host_stops(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+        persisting = asyncio.Event()
+
+        async def nothing(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        async def stop_host(*, drain_host: bool) -> None:
+            events.append(f"host-stop:{drain_host}")
+
+        async def persist() -> None:
+            persisting.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                events.append("ledger-flush")
+                raise
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "close_terminal_delivery_admission", lambda: None
+        )
+        monkeypatch.setattr(runner_lifecycle_shutdown, "cancel_and_await_health_checks", nothing)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "drain_shielded_terminal_deliveries", nothing
+        )
+        monkeypatch.setattr(runner_shutdown_storage, "_shutdown_database_executor", nothing)
+        task = asyncio.create_task(persist())
+        await persisting.wait()
+        runner = SimpleNamespace(
+            db_executor=object(),
+            terminal_host_manager=SimpleNamespace(stop=stop_host),
+            _composer_ledger_task=task,
+        )
+
+        await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+            cast(GobbyRunner, runner),
+            shutdown_intent=ShutdownIntent.STOP,
+            reap_remaining_child_processes=nothing,
+            shutdown_telemetry=lambda: None,
+        )
+
+        assert events == ["host-stop:False", "ledger-flush"]
+        assert task.cancelled()
+
+
+async def test_terminal_host_start_persists_the_host_composer_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    persisted: list[tuple[ComposerLedger, Path]] = []
+
+    async def persist(ledger: ComposerLedger, path: Path) -> None:
+        persisted.append((ledger, path))
+
+    monkeypatch.setattr(composer_ledger, "persist_ledger", persist)
+    host = SimpleNamespace(
+        composer_ledger=ComposerLedger(), start=AsyncMock(), native_available=True, last_error=None
+    )
+    runner = SimpleNamespace(terminal_host_manager=host, _composer_ledger_task=None)
+
+    await runner_lifecycle_subsystems._start_terminal_host(cast(GobbyRunner, runner), None)
+    task = runner._composer_ledger_task
+    assert isinstance(task, asyncio.Task)
+    await task
+
+    host.start.assert_awaited_once_with()
+    assert persisted == [(host.composer_ledger, composer_ledger.composer_ledger_path())]
 
 
 async def test_restart_preserve_set_keeps_host_and_active_run_pids() -> None:

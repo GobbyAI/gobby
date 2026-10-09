@@ -411,32 +411,12 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_tmux_text_injection_integration.py::::mypy:return-value",
-      "issue_code": "mypy:return-value",
-      "line": 25,
-      "message": "Incompatible return value type (got \"tuple[int | None, bytes, bytes]\", expected \"tuple[int, bytes, bytes]\")",
-      "occurrences": 1,
-      "path": "tests/agents/test_tmux_text_injection_integration.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_trust.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 247,
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 1,
       "path": "tests/agents/test_trust.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/watchdog/test_droid_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 155,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, object]]\"; expected \"list[dict[str, object] | str | bytes]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_droid_reader.py",
       "severity": "high",
       "test_name": ""
     },
@@ -2251,16 +2231,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_session_start_handlers.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 715,
-      "message": "Unsupported right operand type for in (\"str | None\")",
-      "occurrences": 1,
-      "path": "tests/hooks/test_session_start_handlers.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_skill_manager.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 173,
@@ -3473,7 +3443,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_rule_tools.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
-      "line": 54,
+      "line": 56,
       "message": "Argument \"source\" to \"create\" of \"RuleDefinitionManager\" has incompatible type \"str\"; expected \"Literal['installed', 'custom', 'project']\"",
       "occurrences": 1,
       "path": "tests/mcp_proxy/tools/test_rule_tools.py",
@@ -3483,7 +3453,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_rule_tools.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
-      "line": 76,
+      "line": 78,
       "message": "Function is missing a type annotation",
       "occurrences": 28,
       "path": "tests/mcp_proxy/tools/test_rule_tools.py",
@@ -3583,7 +3553,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_worktrees_create.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
-      "line": 483,
+      "line": 489,
       "message": "Argument \"created_at\" to \"Worktree\" has incompatible type \"str\"; expected \"datetime\"",
       "occurrences": 2,
       "path": "tests/mcp_proxy/tools/test_worktrees_create.py",
@@ -3593,7 +3563,7 @@
     {
       "fingerprint": "tests/mcp_proxy/tools/test_worktrees_create.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
-      "line": 54,
+      "line": 55,
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 12,
       "path": "tests/mcp_proxy/tools/test_worktrees_create.py",
@@ -5267,36 +5237,6 @@
       "message": "Cannot assign to a method",
       "occurrences": 10,
       "path": "tests/servers/test_websocket_server_disconnects.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_websocket_subscriptions.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 63,
-      "message": "\"MockWebSocket\" has no attribute \"subscriptions\"",
-      "occurrences": 12,
-      "path": "tests/servers/test_websocket_subscriptions.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_websocket_subscriptions.py::::mypy:no-untyped-call",
-      "issue_code": "mypy:no-untyped-call",
-      "line": 45,
-      "message": "Call to untyped function \"MockWebSocket\" in typed context",
-      "occurrences": 11,
-      "path": "tests/servers/test_websocket_subscriptions.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_websocket_subscriptions.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 13,
-      "message": "Function is missing a type annotation",
-      "occurrences": 12,
-      "path": "tests/servers/test_websocket_subscriptions.py",
       "severity": "high",
       "test_name": ""
     },

@@ -264,7 +264,7 @@ class TestDedupSkillResults:
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_prepare_filters_already_suggested_without_claim(self, MockSVM: MagicMock) -> None:
         mock_svm = MockSVM.return_value
-        mock_svm.get_variables.return_value = {"suggested_skill_names": ["already-seen"]}
+        mock_svm.get_variable_subset.return_value = {"suggested_skill_names": ["already-seen"]}
         result = self._manager()._dedup_skill_results(
             self._payload("already-seen", "new-skill"), SESSION_ID
         )

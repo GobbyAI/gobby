@@ -179,7 +179,8 @@ class HandlerMixin:
             data: Subscribe message with "events" list
         """
         events = data.get("events", [])
-        if not isinstance(events, list):
+        # Validate every member before mutating so a bad request leaves the set untouched.
+        if not isinstance(events, list) or not all(isinstance(event, str) for event in events):
             await self._send_error(websocket, "events must be a list of strings")
             return
 
@@ -207,7 +208,8 @@ class HandlerMixin:
             data: Unsubscribe message with "events" list
         """
         events = data.get("events", [])
-        if not isinstance(events, list):
+        # Validate every member before mutating so a bad request leaves the set untouched.
+        if not isinstance(events, list) or not all(isinstance(event, str) for event in events):
             await self._send_error(websocket, "events must be a list of strings")
             return
 
