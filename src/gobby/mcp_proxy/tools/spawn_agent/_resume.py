@@ -44,3 +44,11 @@ def resolve_resume_target(
     ):
         raise ValueError(f"Resume target {ref} has no recorded provider thread")
     return session
+
+
+def resume_isolation(session: Session, run_storage: Any) -> tuple[str | None, str | None]:
+    """Return the worktree and clone ids the resumed session's last run worked in."""
+    run = run_storage.get(session.agent_run_id) if session.agent_run_id else None
+    if run is None:
+        return None, None
+    return run.worktree_id, run.clone_id
