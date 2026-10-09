@@ -78,6 +78,26 @@ pub fn run() -> Result<()> {
         .build()
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
+        let (retention_stop, retention_shutdown) = tokio::sync::watch::channel(false);
+        let retention_task = if let Some(database_url) = &bootstrap.database_url {
+            let home = path.parent().context("bootstrap has no parent directory")?;
+            let machine_id = gobby_core::machine::read_machine_id_from_home(home)?;
+            let pool = gobby_core::postgres_pool::Pool::build(
+                database_url,
+                gobby_core::postgres_pool::PoolSettings {
+                    max_size: 2,
+                    application_name: "gobby-gdaemon-retention".to_owned(),
+                    acquire_timeout: Duration::from_secs(2),
+                },
+            )?;
+            Some(tokio::spawn(crate::retention::run(
+                pool,
+                uuid::Uuid::parse_str(&machine_id)?,
+                retention_shutdown,
+            )))
+        } else {
+            None
+        };
         let terminal_family =
             if bootstrap.front_door.routes.get("terminal_ws") == Some(&RouteBackend::Native) {
                 let home = path.parent().context("bootstrap has no parent directory")?;
@@ -129,6 +149,10 @@ pub fn run() -> Result<()> {
         };
         let tls = tls.map(|loaded| loaded.config);
         let result = serve(listeners, &bootstrap.front_door.routes, tls, auth, shutdown).await;
+        retention_stop.send_replace(true);
+        if let Some(task) = retention_task {
+            task.await.context("token-event retention task failed")?;
+        }
         if let Some(family) = &terminal_family {
             if drain.load(std::sync::atomic::Ordering::Acquire) {
                 family

@@ -5259,6 +5259,8 @@ CREATE UNIQUE INDEX idx_token_events_dedup ON token_events USING btree (session_
 
 CREATE INDEX idx_token_events_session ON token_events USING btree (session_id, event_at);
 
+CREATE INDEX idx_token_events_event_at ON token_events USING btree (event_at, id);
+
 CREATE INDEX idx_tool_metrics_call_count ON tool_metrics USING btree (call_count DESC);
 
 CREATE INDEX idx_tool_metrics_daily_date ON tool_metrics_daily USING btree (date);

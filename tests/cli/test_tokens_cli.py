@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import importlib
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import click
 import pytest
 from click.testing import CliRunner
+
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.token_events import TokenEvent, TokenEventStore
 
 tokens_module = importlib.import_module("gobby.cli.tokens")
 
@@ -18,6 +22,67 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def test_audit_fix_preserves_archived_usage(runner: CliRunner) -> None:
+    database = MagicMock(spec=HubDatabase)
+    manager = Mock()
+    manager.get.return_value = _make_session("sess-retention")
+    store = Mock(spec=TokenEventStore)
+    archive = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_creation_tokens": 3,
+        "cache_read_tokens": 4,
+    }
+    lifetime = {
+        "input_tokens": 107,
+        "output_tokens": 25,
+        "cache_creation_tokens": 3,
+        "cache_read_tokens": 4,
+    }
+    store.get_session_totals.side_effect = [archive, lifetime]
+    event = TokenEvent(
+        session_id="sess-retention",
+        project_id=None,
+        message_id="retained",
+        source="claude",
+        origin="transcript",
+        model=None,
+        input_tokens=7,
+        output_tokens=5,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+        event_at=datetime.now(UTC),
+    )
+    with (
+        patch.object(tokens_module, "require_cli_database", return_value=database),
+        patch.object(tokens_module, "resolve_project_ref", return_value=None),
+        patch.object(tokens_module, "resolve_session_id", return_value="sess-retention"),
+        patch.object(tokens_module, "SessionManager", return_value=manager),
+        patch.object(tokens_module, "TokenEventStore", return_value=store),
+        patch.object(tokens_module, "_load_session_messages", return_value=[]),
+        patch.object(tokens_module, "_messages_to_events", return_value=([event], None)),
+    ):
+        result = runner.invoke(
+            tokens_module.tokens, ["audit", "--session", "sess-retention", "--fix"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "repaired" in result.output
+    manager.update_usage.assert_called_once_with(
+        session_id="sess-retention",
+        input_tokens=107,
+        output_tokens=25,
+        cache_creation_tokens=3,
+        cache_read_tokens=4,
+        context_window=None,
+        model=None,
+    )
+    assert store.record_batch.call_args.args[0] == [event]
+    assert (
+        store.delete_session_events.call_args.kwargs["retention_cutoff"]
+        == store.record_batch.call_args.kwargs["retention_cutoff"]
+    )
 
 
 @pytest.mark.parametrize(
