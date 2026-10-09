@@ -9,6 +9,8 @@
 //! line: the name, then the branch and git counts in parentheses, dropped
 //! whole before the name truncates.
 
+use std::borrow::Cow;
+
 use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
@@ -73,6 +75,8 @@ pub struct SidebarRow {
     pub nested: bool,
     /// The last nested row under its parent (`└─` instead of `├─`).
     pub last_child: bool,
+    /// Ancestors with a later sibling, from the outermost branch inward.
+    pub ancestor_branches: Vec<bool>,
     pub selected: bool,
     /// A project card: the focused project. An agent row: the focused pane
     /// of the active tab shows its terminal (herdr "active workspace": bold
@@ -232,19 +236,49 @@ pub(crate) fn attention_kind(entry_id: &str) -> &str {
 }
 
 /// The `├─ `/`└─ ` prefix of a nested row, empty on a top-level one.
-fn nest_prefix(row: &SidebarRow) -> &'static str {
-    match (row.nested, row.last_child) {
-        (false, _) => "",
-        (true, false) => "├─ ",
-        (true, true) => "└─ ",
+fn tree_prefix(row: &SidebarRow, continuation: bool) -> Cow<'static, str> {
+    if !row.nested {
+        return Cow::Borrowed("");
     }
+    let branch = match (continuation, row.last_child) {
+        (false, false) => "├─ ",
+        (false, true) => "└─ ",
+        (true, false) => "│  ",
+        (true, true) => "   ",
+    };
+    if row.ancestor_branches.is_empty() {
+        return Cow::Borrowed(branch);
+    }
+    let mut prefix = String::new();
+    for branch in &row.ancestor_branches {
+        prefix.push_str(if *branch { "│  " } else { "   " });
+    }
+    prefix.push_str(branch);
+    Cow::Owned(prefix)
+}
+
+fn nest_prefix(row: &SidebarRow) -> Cow<'static, str> {
+    tree_prefix(row, false)
+}
+
+fn continuation_indent(row: &SidebarRow, width: u16, palette: &Palette) -> Span<'static> {
+    let indent = format!(" {}  ", tree_prefix(row, true));
+    let style = if indent.contains('│') {
+        Style::default().fg(palette.overlay0)
+    } else {
+        Style::default()
+    };
+    Span::styled(
+        indent.chars().take(usize::from(width)).collect::<String>(),
+        style,
+    )
 }
 
 /// Cells a worktree row leaves its name: the width less the marker, the
 /// two-cell indent, the nest prefix, the glyph and its spacer. The name's
 /// ticker and its travel both measure against this one budget.
 fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
-    usize::from(width).saturating_sub(5 + display_width(nest_prefix(row)))
+    usize::from(width).saturating_sub(5 + display_width(&nest_prefix(row)))
 }
 
 /// A worktree row's lead after the marker: two cells so the branch sits
@@ -367,24 +401,26 @@ pub(crate) fn row_line_with_scrolling<'a>(
         }
         RowKind::Machine => {
             let prefix = nest_prefix(row);
+            let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
             spans.extend(fitted_spans(
                 glyph,
                 (&row.label, title_style),
                 &[(row.detail.as_str(), secondary_style)],
                 p,
-                budget.saturating_sub(display_width(prefix)),
+                budget.saturating_sub(prefix_width),
             ));
         }
         RowKind::Terminal => {
             let prefix = nest_prefix(row);
+            let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
             spans.extend(fitted_spans(
                 glyph,
                 (&row.label, title_style),
                 &[],
                 p,
-                budget.saturating_sub(display_width(prefix)),
+                budget.saturating_sub(prefix_width),
             ));
             // The name outranks the address: it takes the right edge
             // only with a cell to spare after the name.
@@ -398,8 +434,9 @@ pub(crate) fn row_line_with_scrolling<'a>(
         }
         RowKind::Agent => {
             let prefix = nest_prefix(row);
+            let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
-            let budget = budget.saturating_sub(display_width(prefix));
+            let budget = budget.saturating_sub(prefix_width);
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
@@ -493,7 +530,7 @@ fn card_spans(
 pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
     match row.kind {
         RowKind::Agent => {
-            let budget = usize::from(width).saturating_sub(3 + display_width(nest_prefix(row)));
+            let budget = usize::from(width).saturating_sub(3 + display_width(&nest_prefix(row)));
             let name = overrun(
                 display_width(&row.definition),
                 budget.saturating_sub(pinned_width(row)),
@@ -667,9 +704,9 @@ pub(crate) fn row_second_line_with_travel<'a>(
     chrome: &Chrome,
     max_travel: usize,
 ) -> Line<'a> {
-    let indent = 3 + display_width(nest_prefix(row));
+    let indent = 3 + display_width(&nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
-    let mut spans = vec![Span::raw(" ".repeat(indent.min(usize::from(width))))];
+    let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
@@ -701,10 +738,10 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
     if row.kind != RowKind::Agent {
         return Line::default();
     }
-    let indent = 3 + display_width(nest_prefix(row));
+    let indent = 3 + display_width(&nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
     Line::from(vec![
-        Span::raw(" ".repeat(indent.min(usize::from(width)))),
+        continuation_indent(row, width, &chrome.palette),
         // The theme's model colour, a muted hue no state uses (the
         // model-line board, #23416).
         Span::styled(

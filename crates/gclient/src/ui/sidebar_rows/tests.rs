@@ -441,8 +441,48 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_second_line(&nested, 60, &chrome)),
-        "      Working task 123 Review auth"
+        " │    Working task 123 Review auth"
     );
+    assert_eq!(
+        line_text(&row_third_line(&nested, 60, &chrome)),
+        " │    gpt-5"
+    );
+    let descendant = SidebarRow {
+        ancestor_branches: vec![true],
+        last_child: true,
+        ..nested.clone()
+    };
+    assert_eq!(
+        line_text(&row_line(&descendant, 60, &chrome, 0)),
+        " │  └─ ⍾ #123: Backend"
+    );
+    assert_eq!(
+        line_text(&row_second_line(&descendant, 60, &chrome)),
+        " │       Working task 123 Review auth"
+    );
+    assert_eq!(
+        line_text(&row_third_line(&descendant, 60, &chrome)),
+        " │       gpt-5"
+    );
+    let last = SidebarRow {
+        last_child: true,
+        ..nested
+    };
+    assert_eq!(
+        line_text(&row_third_line(&last, 60, &chrome)),
+        "      gpt-5"
+    );
+    for width in 0..12 {
+        for line in [
+            row_second_line(&descendant, width, &chrome),
+            row_third_line(&descendant, width, &chrome),
+        ] {
+            assert!(
+                line.width() <= usize::from(width),
+                "width {width}: {line:?}"
+            );
+        }
+    }
     let bare = SidebarRow { task: None, ..row };
     assert_eq!(
         line_text(&row_second_line(&bare, 60, &chrome)),

@@ -263,7 +263,7 @@ fn arrange(candidates: Vec<Candidate>, sort: AgentSort) -> Vec<SidebarRow> {
     for parent in parents {
         let session = parent.session_id.clone();
         rows.push(parent.row);
-        push_children(&session, &mut children, &mut rows);
+        push_children(&session, &mut children, &mut rows, &[]);
     }
     rows
 }
@@ -275,6 +275,7 @@ fn push_children(
     session: &Option<String>,
     children: &mut [Option<Candidate>],
     rows: &mut Vec<SidebarRow>,
+    ancestors: &[bool],
 ) {
     let own: Vec<Candidate> = children
         .iter_mut()
@@ -289,9 +290,12 @@ fn push_children(
     for (index, mut child) in own.into_iter().enumerate() {
         child.row.nested = true;
         child.row.last_child = index + 1 == count;
+        child.row.ancestor_branches = ancestors.to_vec();
+        let mut descendants = ancestors.to_vec();
+        descendants.push(!child.row.last_child);
         let session = child.session_id.clone();
         rows.push(child.row);
-        push_children(&session, children, rows);
+        push_children(&session, children, rows, &descendants);
     }
 }
 
@@ -406,6 +410,8 @@ mod tests {
         assert_eq!(ids, ["session:a", "run:b", "run:c", "run:d"]);
         assert!(rows[1].nested && rows[1].last_child);
         assert!(rows[2].nested && rows[2].last_child);
+        assert_eq!(rows[1].ancestor_branches, Vec::<bool>::new());
+        assert_eq!(rows[2].ancestor_branches, [false]);
         assert!(!rows[3].nested);
         // Priority keeps the flattened order.
         let rows = arrange(
@@ -417,5 +423,23 @@ mod tests {
         );
         assert_eq!(rows[0].id, "run:c");
         assert!(!rows[0].nested);
+    }
+
+    #[test]
+    fn grouped_tree_keeps_ancestor_rules_until_the_next_sibling() {
+        let rows = arrange(
+            vec![
+                candidate("session:a", Some("a"), None),
+                candidate("session:b", Some("b"), Some("a")),
+                candidate("session:c", Some("c"), Some("b")),
+                candidate("session:d", Some("d"), Some("a")),
+            ],
+            AgentSort::Grouped,
+        );
+        assert!(!rows[1].last_child);
+        assert_eq!(rows[2].ancestor_branches, [true]);
+        assert!(rows[2].last_child);
+        assert!(rows[3].last_child);
+        assert!(rows[3].ancestor_branches.is_empty());
     }
 }
