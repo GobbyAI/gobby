@@ -2455,6 +2455,22 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     )
     parent_env["GOBBY_HOME"] = str(tmp_path)
     parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")
+    # Managed launches publish a private, daemon-owned capability envelope before
+    # the scrubbed MCP subprocess starts. It must remain readable without bootstrap.yaml.
+    grant_path = tmp_path / "grant.json"
+    grant_path.write_text(
+        json.dumps(
+            {
+                "managed_api_token": parent_env["GOBBY_AGENT_API_TOKEN"],
+                "principal": {
+                    "execution_id": run_id,
+                    "session_id": child_session_id,
+                    "project_id": "project-uuid",
+                },
+            }
+        )
+    )
+    grant_path.chmod(0o600)
 
     overrides = _codex_mcp_config_overrides("/main/repo", managed_identity_env=parent_env)
 

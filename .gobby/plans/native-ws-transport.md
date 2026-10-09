@@ -4,7 +4,7 @@ Plan artifact: `.gobby/plans/native-ws-transport.md`
 
 **Plan ID:** native-ws-transport
 **Root task:** #21558 — Native WS transport in gdaemon.
-**Status:** canonical narrative with Adv4's M1; Adv2 consensus 43c0f7fa; evidence refreshed against 0.5.0 on 2026-10-08; Adv1 delta review, PD review, Josh approval and expansion pending.
+**Status:** canonical narrative with Adv4's M1; Adv2 consensus 43c0f7fa; evidence refreshed against 0.5.0 on 2026-10-08; Adv1 delta review PASS with nit N1 repaired, N1 recheck pending; PD review, Josh approval and expansion pending.
 
 ## C1 Scope and Decision Record
 `kind: framing`
@@ -24,7 +24,7 @@ Decisions confirmed by the Orchestrator through LM7 on 2026-10-06, 18:42 CT, and
 
 Entry mode describes the public transport, not the credential or the user's UI: `direct` is the dedicated public WS listener; `browser` is the HTTP listener's ASGI `/ws` entry, including bearer clients using that path. Direct begins with an absent subscription attribute; browser begins with initialized-empty subscriptions. Reconnect preserves the entry mode and resets its state, never a previous subscription set.
 
-Downstream: #21562 (Sessions and transcripts), #21568 (Remaining route families) and #23219 (terminal WS operations, relay, and family cutover) are blocked by #21558 itself. The epic closes only after D1's deferred tail lands, so D1's native activation, with gdaemon serving `:60888` and the HTTP `/ws` entry, is what unblocks all three. A1 to A3 alone unblock none of them.
+Downstream: #21562 (Sessions and transcripts), #21568 (Remaining route families) and #23219 (terminal WS operations, relay, and family cutover) are blocked by #21558 itself. The epic closes only after D1's deferred tail lands, so D1's native activation, with gdaemon serving `:60888` and the HTTP `/ws` entry, and the closure of #21558 remove the WS prerequisite from all three. Their other blockers still apply: #21562 and #21568 also wait on #21560 (Tasks family), and #23219 also waits on #23214 (Rust tmux runtime parity), #23216 (terminal WS codec and golden replay), #23217 (native ownership cutover) and #23218 (input-grant finalization) and keeps its `needs-planning` hold. A1 to A3 alone unblock none of them.
 
 Native gterm operation without a daemon is an invariant. Nothing in this plan changes gterm, gclient, JSON-lines control, bincode frames, or their independent connection paths. Future hub-to-node relays may consume the frozen envelope, but no relay, replay log, durable event bus, or node protocol is introduced here.
 
@@ -130,7 +130,7 @@ Use immutable shared frame bytes per batch. Bound each client's queue to 16 pend
 
 ```yaml
 deferral:
-  task_ref: "post-key-cutover-native-ws"
+  task_ref: "#23881"
   reason: "The native upgrade/auth seam is owned by #23519 and its live activation by the separate #23523. This tail requires both external tasks plus A1/A2/A3 before implementation; an isolated source landing alone does not establish activated auth. The fixed spec below introduces no fallback retiring verifier."
   owner: "Lane 8 Terminal port, coordinated with Lane 1"
   original_acceptance_items:
@@ -226,6 +226,8 @@ Obligations retained for the deferred task:
 2026-10-06: Pre-audit consensus reached with Adv2 gobby#15414, receipt `43c0f7fa-a836-4109-8ca5-b34fc4391e07`, on behavior, decisions, all 13 active criteria and eight deferred obligations. WS-A2-01 through WS-A2-05 are resolved; Adv2 independently verified all 84 quoted source lines (per Adv2’s packet correction) and base validation passed. WS-A2-06 inventory nit is corrected with an explicit whole-file scope reason for the existing runner/child test harness. Final-byte check remains pending. M1, canonical GO, Program Director review, Josh approval and expansion remain separate gates; none is implied by pre-audit consensus.
 
 2026-10-08: Refresh by W4 gobby#15528 on LM7's direction: the Downstream paragraph in C1 names what unblocks #21562, #21568 and #23219; E1 is re-cited at 0.5.0 `3987d09dcc4311a1ebda7d58a47d885a9413560a` with #23519's landed auth surface in E2, E14 and E22; the status line is current. No acceptance item changed. Plan Adversary gobby#15401 reviews this delta.
+
+2026-10-09: N1 repair by Plan Writer gobby#15860 on LM7's assignment. Adv1 gobby#15401's delta review of 41884d6ebc passed with one nit, N1: the C1 Downstream paragraph overstated readiness. It now says D1's activation and the closure of #21558 remove the WS prerequisite from #21562, #21568 and #23219, while #21560 still blocks #21562 and #21568, #23214, #23216, #23217 and #23218 still block #23219, and #23219 keeps its needs-planning hold. "A1 to A3 alone unblock none" is preserved. The status line records Adv1's PASS. No acceptance item, Target or M1 entry changed. Adv1 rechecks N1.
 
 ## E1 Source evidence
 `kind: framing`

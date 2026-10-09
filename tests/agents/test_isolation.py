@@ -787,8 +787,8 @@ class TestEnsureIsolationCodeIndex:
             call.kwargs["env"]["GOBBY_AGENT_API_TOKEN"] for call in self._gcode_calls(popen)
         ]
         assert probe_tokens == [token, token, token]
-        # The capability is handed to probes only: never to the spawned agent's env,
-        # the wrapper, the runtime home, or a logged repr.
+        # The daemon-owned private grant envelope is the renewable capability source.
+        # It stays out of the agent's env, wrapper, runtime home, and logged repr.
         assert token not in result.env.values()
         assert token not in repr(result)
         assert token not in (workspace / ".gobby" / "bin" / "gcode").read_text()
@@ -797,7 +797,8 @@ class TestEnsureIsolationCodeIndex:
         assert not [path for path in runtime_files if token.encode() in path.read_bytes()]
         grant_path = Path(result.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"])
         assert grant_path == credential.bootstrap_path.parent / "grant.json"
-        assert token.encode() not in grant_path.read_bytes()
+        assert json.loads(grant_path.read_bytes())["managed_api_token"] == token
+        assert grant_path.stat().st_mode & 0o777 == 0o600
 
     @pytest.mark.asyncio
     async def test_no_api_token_inherits_daemon_env_untouched(self, tmp_path: Path) -> None:
