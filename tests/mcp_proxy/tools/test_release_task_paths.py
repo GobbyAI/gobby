@@ -881,3 +881,49 @@ async def test_release_uses_unassigned_session_workspace(
     assert result["released_paths"] == [SHARED_PATH]
     ledger = harness.variables.get_variables(harness.owner.id)["task_edited_file_checkouts"]
     assert ledger[harness.task.id] == {main_root: [SHARED_PATH]}
+
+
+@pytest.mark.asyncio
+async def test_release_checks_artifact_worktree_before_primary_workspace(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    worktree = tmp_path / "recovered-worker"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worktree), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+    )
+    registered = LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worktree),
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=worktree, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    harness.tasks.artifacts.set_artifacts_atomic(
+        harness.task.id,
+        worktree_path=str(worktree),
+        worktree_id=registered.id,
+        base_commit_sha=base,
+    )
+    harness.sessions.update(harness.owner.id, workspace_path=str(harness.repo))
+    root = normalize_task_checkout_root(str(worktree))
+    assert root is not None
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {"task_edited_file_checkouts": {harness.task.id: {root: [SHARED_PATH]}}},
+    )
+    (worktree / SHARED_PATH).write_text("worker_uncommitted = True\n", encoding="utf-8")
+    before = harness.variables.get_variables(harness.owner.id)
+
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths", {"task_id": harness.task.id, "paths": [SHARED_PATH]}
+        )
+
+    assert result["success"] is False
+    assert result["dirty_paths"] == [SHARED_PATH]
+    assert harness.variables.get_variables(harness.owner.id) == before

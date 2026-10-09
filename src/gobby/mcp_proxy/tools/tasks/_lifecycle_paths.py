@@ -83,11 +83,13 @@ def _path_operation_checkout_root(
     session_id: str,
     project_id: str,
     checkout_path: str | None = None,
-    fallback_path: str | None = None,
+    artifact_path: str | None = None,
 ) -> str | None:
-    """Select explicit, assigned, workspace, artifact, then primary checkout."""
-    overlay = checkout_path or _claimed_session_worktree_path(
-        ctx, session_id=session_id, project_id=project_id
+    """Select explicit, assigned, artifact, workspace, then primary checkout."""
+    overlay = (
+        checkout_path
+        or _claimed_session_worktree_path(ctx, session_id=session_id, project_id=project_id)
+        or artifact_path
     )
     if not overlay:
         session = ctx.session_manager.get(session_id)
@@ -101,7 +103,7 @@ def _path_operation_checkout_root(
         ctx,
         session_id=session_id,
         project_id=project_id,
-        overlay_path=overlay or fallback_path,
+        overlay_path=overlay,
     )
 
 
@@ -299,7 +301,7 @@ def register_release_task_paths(
                 session_id=session_id,
                 project_id=task.project_id,
                 checkout_path=checkout_path,
-                fallback_path=artifacts.worktree_path,
+                artifact_path=artifacts.worktree_path,
             )
         except CHECKOUT_RESOLUTION_ERRORS as exc:
             return checkout_unresolved_error(exc)
