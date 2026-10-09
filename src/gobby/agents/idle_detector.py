@@ -278,14 +278,15 @@ class IdleDetector:
         whole turn (``✻ Grooving… (7m 12s · still thinking with xhigh effort)``,
         ``• Working (4m 58s • esc to interrupt)``), including long thinking phases
         that write nothing to the transcript. The fingerprint follows the counter,
-        so a live turn keeps changing it while a frozen CLI does not.
+        so a live turn keeps changing it while a frozen CLI does not. Wake probes
+        pass an ``ansi`` snapshot, so styling is stripped before the rule matches.
         """
         manifest = self._manifest()
         if manifest is None:
             return None
         lines = [
             " ".join(line.split())
-            for line in pane_output.splitlines()
+            for line in plain_text(pane_output).splitlines()
             if manifest.match_rule("turn_in_flight", line.strip()).match is not None
         ]
         if not lines:

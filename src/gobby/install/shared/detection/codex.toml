@@ -69,7 +69,8 @@ id = "turn_in_flight"
 state = "working"
 priority = 695
 region = "whole_recent"
-line_regex = ['(?i)(?:^\s*[^\s\w]{1,2}\s+\S+\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\s*[·•]|\besc to interrupt\b)']
+# A narrow pane cuts the status row inside its elapsed counter: `• Working (4m…`.
+line_regex = ['(?i)(?:^\s*[^\s\w]{1,2}\s+\S+\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\s*[·•]|\besc to interrupt\b|^\s*[^\s\w]{1,2}\s+\S[^(]*\((?:\d+[hms]\s*)+\d*…\s*$)']
 
 [[rules]]
 id = "active_work"

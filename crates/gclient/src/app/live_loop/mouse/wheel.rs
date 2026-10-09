@@ -96,7 +96,12 @@ pub(super) fn wheel<W: WorkspaceView>(
             if let Some(outcome) = pane.and_then(|pane| {
                 forward::report(ws, pane, mouse, KeyModifiers::empty(), (col, row))
             }) {
-                return outcome;
+                return match outcome {
+                    MouseOutcome::Write { pane, bytes } if chrome.focused_pane() != Some(pane) => {
+                        MouseOutcome::FocusWrite { pane, bytes }
+                    }
+                    outcome => outcome,
+                };
             }
         }
     }

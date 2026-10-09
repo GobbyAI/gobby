@@ -63,7 +63,9 @@ def _descriptor_path(descriptor: int) -> Path:
     if sys.platform == "darwin":
         import fcntl
 
-        return Path(os.fsdecode(fcntl.fcntl(descriptor, 1029, bytes(1024)).split(b"\0", 1)[0]))
+        return Path(
+            os.fsdecode(fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
+        )
     return Path(os.readlink(f"/proc/self/fd/{descriptor}"))
 
 

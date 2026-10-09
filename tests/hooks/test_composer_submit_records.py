@@ -36,7 +36,7 @@ def ledger() -> Iterator[ComposerLedger]:
 def terminals() -> MagicMock:
     terminals = MagicMock(name="terminal_manager")
     terminals.get_live_for_session.side_effect = lambda session_id: (
-        SimpleNamespace(id=_TERMINAL) if session_id == _SESSION else None
+        SimpleNamespace(id=_TERMINAL, backend="native") if session_id == _SESSION else None
     )
     return terminals
 
@@ -74,6 +74,28 @@ def test_prompt_submit_consumes_the_typed_prompt(
     handlers.handle_before_agent(_event(HookEventType.BEFORE_AGENT, {"prompt": "fix it"}))
 
     assert ledger.read(_TERMINAL) == _EMPTY
+
+
+@pytest.mark.parametrize(
+    ("backend", "after"),
+    [("native", _EMPTY), ("tmux", LedgerRead("blocked", "untracked"))],
+    ids=["native-adopted", "tmux-unobserved"],
+)
+def test_prompt_submit_adopts_an_untracked_seat_only_when_its_input_is_observed(
+    handlers: EventHandlers,
+    ledger: ComposerLedger,
+    terminals: MagicMock,
+    backend: str,
+    after: LedgerRead,
+) -> None:
+    terminals.get_live_for_session.side_effect = None
+    terminals.get_live_for_session.return_value = SimpleNamespace(
+        id="pre-ledger-seat", backend=backend
+    )
+
+    handlers.handle_before_agent(_event(HookEventType.BEFORE_AGENT, {"prompt": "continue"}))
+
+    assert ledger.read("pre-ledger-seat") == after
 
 
 def test_native_child_prompt_leaves_the_parent_composer_alone(

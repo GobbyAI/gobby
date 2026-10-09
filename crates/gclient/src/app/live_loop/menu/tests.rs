@@ -42,16 +42,28 @@ fn view_menu_exposes_sidebar_controls_without_a_section_tree() {
 #[test]
 fn selected_theme_and_appearance_choices_remain_enabled() {
     let ws = Workspace::scripted();
-    let chrome = Chrome::dark();
+    let mut chrome = Chrome::dark();
     for submenu in [Submenu::Theme, Submenu::Appearance] {
-        let menu = build_menu(&ws, &chrome, ContextMenuKind::Submenu(submenu), (0, 0));
+        open_menu(&ws, &mut chrome, ContextMenuKind::Submenu(submenu), (0, 0));
+        let menu = chrome.menu.as_mut().expect("choice menu is open");
         let selected = menu
             .items
             .iter()
-            .find(|item| item.label.starts_with(['✓', '●']));
-        let selected = selected.expect("one selected choice");
+            .position(|item| item.label.starts_with(['✓', '●']))
+            .expect("one selected choice");
+        menu.selected = selected;
+        let selected = &menu.items[selected];
         assert!(selected.enabled);
         assert_eq!(selected.action, MenuAction::Noop);
+        assert_eq!(
+            activate_menu(&mut chrome).expect("enabled repick").1,
+            MenuAction::Noop
+        );
+        assert!(
+            chrome.menu.is_none(),
+            "repicking visibly dismisses the menu"
+        );
+        assert_eq!(chrome.mode, Mode::Terminal);
     }
 }
 
@@ -1032,9 +1044,7 @@ fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
     assert_eq!(theme_row_label(&chrome), "  Theme: Restored ▸");
 }
 
-/// View › Sidebar › a section cascades two deep with every menu behind it
-/// open on the row that led there; left goes back one level, right opens a
-/// submenu row. Each section's submenu holds only that section's options.
+/// The flat View machine control sets the filter read by the sidebar rows.
 #[test]
 fn view_machine_scope_sets_the_filter_the_rows_read() {
     let mut ws = Workspace::scripted();

@@ -251,6 +251,8 @@ class DaemonProxy:
 
         try:
             client = self._get_client()
+            if os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
+                self._auth_headers = daemon_auth_headers()
             request_headers = {**headers, **self._auth_headers}
             request_kwargs: dict[str, Any] = {
                 "json": json,
