@@ -1,5 +1,6 @@
 """Tests for WebSocket subscriptions."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,16 +11,19 @@ pytestmark = pytest.mark.unit
 
 
 class MockWebSocket:
-    def __init__(self, user_id="test-user"):
+    # Declared only: the subscribe handler creates the set on first use.
+    subscriptions: set[str]
+
+    def __init__(self, user_id: str = "test-user") -> None:
         self.user_id = user_id
         self.latency = 0.1
-        self.sent_messages = []
+        self.sent_messages: list[str] = []
         self.closed = False
 
-    async def send(self, message):
+    async def send(self, message: str) -> None:
         self.sent_messages.append(message)
 
-    async def close(self, code=1000, reason=""):
+    async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = True
 
 
@@ -83,6 +87,44 @@ async def test_unsubscribe_all(mock_config, mock_mcp_manager):
     await server._handle_unsubscribe(ws, data)
 
     assert len(ws.subscriptions) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [["event3", {}], ["event3", None]],
+    ids=["unhashable-member", "hashable-non-string-member"],
+)
+async def test_subscribe_rejects_mixed_payload_without_mutating(
+    mock_config: MagicMock, mock_mcp_manager: MagicMock, events: list[object]
+) -> None:
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    ws = MockWebSocket()
+    ws.subscriptions = {"event1"}
+
+    await server._handle_subscribe(ws, {"events": events})
+
+    assert ws.subscriptions == {"event1"}
+    assert [json.loads(message)["type"] for message in ws.sent_messages] == ["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [["event1", {}], ["*", 5]],
+    ids=["unhashable-member", "wildcard-with-non-string-member"],
+)
+async def test_unsubscribe_rejects_mixed_payload_without_mutating(
+    mock_config: MagicMock, mock_mcp_manager: MagicMock, events: list[object]
+) -> None:
+    server = WebSocketServer(mock_config, mock_mcp_manager, AsyncMock(return_value="test-user"))
+    ws = MockWebSocket()
+    ws.subscriptions = {"event1", "event2"}
+
+    await server._handle_unsubscribe(ws, {"events": events})
+
+    assert ws.subscriptions == {"event1", "event2"}
+    assert [json.loads(message)["type"] for message in ws.sent_messages] == ["error"]
 
 
 @pytest.mark.asyncio
