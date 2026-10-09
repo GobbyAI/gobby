@@ -320,6 +320,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "b9ce19c5bc0b15a9f14e4bc29ea9ccb03babf3cb50303f0e126125ecc562c23d",
         sql: include_str!("../../assets/schema/migrations/465_token_event_retention.sql"),
     },
+    EmbeddedMigration {
+        version: 466,
+        filename: "466_bounded_managed_rotation_drain.sql",
+        checksum: "54b6d53ceb2c903e1089861d250138aecf9bc6b319fc35bc11c86494e3e884e4",
+        sql: include_str!("../../assets/schema/migrations/466_bounded_managed_rotation_drain.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

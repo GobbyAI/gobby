@@ -213,6 +213,59 @@ def test_managed_source_without_capability_fails_closed(
         daemon_auth_headers()
 
 
+def test_rotation_of_legacy_envelope_does_not_renew_launch_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refreshed Postgres binding cannot seed renewal in a pre-C28 envelope."""
+    from gobby.runtime_grants.launch import rewrite_managed_grant_file
+    from gobby.runtime_grants.schema import GrantPrincipal
+    from gobby.utils import local_token
+    from tests.runtime_grants.support import DEPLOYMENT_TOKEN
+
+    now = 1_800_000_000
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: now)
+    grant = _grant().model_copy(
+        update={
+            "principal": GrantPrincipal(
+                kind="agent_run",
+                machine_id="test-machine",
+                project_id="test-project",
+                execution_id="test-run",
+                session_id="test-session",
+            )
+        }
+    )
+    launch_token = local_token.issue_agent_api_token(
+        agent_run_id="test-run",
+        session_id="test-session",
+        project_id="test-project",
+        machine_id="test-machine",
+        signing_key=b"legacy-test-key",
+    )
+    path = write_grant_file(tmp_path / "grant.json", grant)
+    now += 23 * 3600
+    issued = datetime.fromtimestamp(now, UTC)
+    rewrite_managed_grant_file(
+        path,
+        managed_execution_id="test-run",
+        scoped_dsn="postgresql://fixture",
+        role_name="test-role",
+        credential_generation=2,
+        issued_at=issued,
+        expires_at=issued + timedelta(minutes=59),
+        deployment_token=DEPLOYMENT_TOKEN,
+        fencing_epoch=1,
+        signing_secret="test-grant-signing-secret",
+    )
+    assert "managed_api_token" not in json.loads(path.read_bytes())
+    now += 2 * 3600
+    assert local_token.verify_agent_api_token(launch_token, b"legacy-test-key") is None
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(path))
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", launch_token)
+    assert daemon_auth_headers()["Authorization"] == f"Bearer {launch_token}"
+
+
 @pytest.mark.parametrize(
     "invalid", ["permissions", "execution", "session", "project", "ambiguous", "json"]
 )
