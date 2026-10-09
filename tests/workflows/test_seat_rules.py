@@ -345,6 +345,7 @@ PROJECT_CREATE_BLOCKED: tuple[dict[str, Any], ...] = (
 PROJECT_CREATE_ALLOWED: tuple[dict[str, Any], ...] = (
     ASSISTANT,
     ORCHESTRATOR,
+    {"_agent_type": "assistant", "is_spawned_agent": True},
     {"_agent_type": "orchestrator", "is_spawned_agent": True},
     {"_agent_type": "default"},
     {},
