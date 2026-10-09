@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import tarfile
@@ -16,6 +17,7 @@ import yaml
 from click.testing import CliRunner, Result
 
 from gobby.cli.hub_backup import cli as hub_cli
+from gobby.cli.hub_backup._stores import GLOBALS_DUMP_RELPATH, POSTGRES_DUMP_RELPATH
 from gobby.cli.hub_backup.files_home import (
     FILES_ARCHIVE_RELPATH,
     MAX_ARCHIVE_BYTES,
@@ -306,25 +308,36 @@ def test_hub_backup_restore_files_uses_dest_files_home(
         info = tarfile.TarInfo("USER.md")
         info.size = len(payload)
         tar.addfile(info, io.BytesIO(payload))
-    digest = __import__("hashlib").sha256(archive.read_bytes()).hexdigest()
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     seen: list[Path] = []
 
     def _restore(source: Path, **kwargs: Any) -> dict[str, object]:
-        del kwargs
+        assert (
+            kwargs["expected_sha256"]
+            == hashlib.sha256((backup / POSTGRES_DUMP_RELPATH).read_bytes()).hexdigest()
+        )
         seen.append(source)
-        return {"database_url": "postgresql://gobby:****@target/gobby"}
+        return {"database_url": "postgresql://gobby_test:****@127.0.0.1:60892/gobby_test"}
 
-    monkeypatch.setattr(hub_cli, "restore_postgres_globals", lambda *_a, **_k: None)
+    def _restore_globals(_database_url: str, source: Path, *, expected_sha256: str) -> None:
+        assert expected_sha256 == hashlib.sha256(source.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(hub_cli, "restore_postgres_globals", _restore_globals)
     monkeypatch.setattr(hub_cli, "reconcile_restored_principals", lambda *_a, **_k: 0)
     monkeypatch.setattr(hub_cli, "restore_postgres_backup", _restore)
     monkeypatch.setattr(hub_cli, "_daemon_is_running", lambda: False)
     monkeypatch.setattr(
         hub_cli, "load_manifest", lambda _p: _fake_verified_manifest(backup, digest)
     )
-    monkeypatch.setattr(hub_cli, "verify_artifacts", lambda *_a, **_k: None)
     result = CliRunner().invoke(
         hub_cli.hub_backup,
-        ["restore", str(backup), "--database-url", "postgresql://gobby:x@t/gobby", "--yes"],
+        [
+            "restore",
+            str(backup),
+            "--database-url",
+            "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+            "--yes",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert (env.files_home / "USER.md").read_bytes() == b"hub"
@@ -344,19 +357,30 @@ def _fake_verified_manifest(backup: Path, digest: str) -> Any:
         verified=True, method="test", timestamp="2026-08-18T00:00:00+00:00"
     )
     store = StoreRecord(archive_verified=verified, restore_verified=verified, details={})
+    artifacts = [
+        ArtifactRecord(
+            name="files-home",
+            path=FILES_ARCHIVE_RELPATH,
+            sha256=digest,
+            size_bytes=(backup / FILES_ARCHIVE_RELPATH).stat().st_size,
+        )
+    ]
+    for relative_path in (GLOBALS_DUMP_RELPATH, POSTGRES_DUMP_RELPATH):
+        payload = relative_path.encode()
+        path = backup / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        artifacts.append(
+            ArtifactRecord(
+                relative_path, relative_path, hashlib.sha256(payload).hexdigest(), len(payload)
+            )
+        )
     return HubBackupManifest(
         created_at="2026-08-18T00:00:00+00:00",
         gobby_version="0.5.0",
         source_identity=SourceIdentity("1", "gobby", 1),
         backup_starting_head=1,
         row_count_probes={},
-        artifacts=[
-            ArtifactRecord(
-                name="files-home",
-                path=FILES_ARCHIVE_RELPATH,
-                sha256=digest,
-                size_bytes=0,
-            )
-        ],
+        artifacts=artifacts,
         stores=dict.fromkeys(("postgres", "qdrant", "falkordb", "volumes", "files"), store),
     )
