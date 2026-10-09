@@ -273,7 +273,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
         from gobby.workflows.state_manager import SessionVariableManager
 
         sv_mgr = SessionVariableManager(self._session_manager.db)
-        variables = sv_mgr.get_variables(session_id)
+        variables = sv_mgr.get_variable_subset(
+            session_id,
+            (
+                "_agent_identity_reinject",
+                "_agent_context_rehydrate_pending",
+                "_agent_context_injected",
+                "is_spawned_agent",
+                "_persona_name",
+                "_agent_type",
+                "_agent_definition_drift",
+            ),
+        )
 
         identity_reinject = bool(variables.get("_agent_identity_reinject"))
         rehydrate_pending = bool(variables.get("_agent_context_rehydrate_pending"))

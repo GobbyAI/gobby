@@ -37,7 +37,9 @@ Every encountered defect, warning, or failed check becomes work in this session:
    delegator have both ended, or a self-claimed task has no live delegator,
    `transfer_task_authority(task_id, reason)` takes over activation-receipt
    authority; it refuses while a creator that is not the claimant, or a delegator,
-   is live, and refuses the task's claimant and task-close reviewers.
+   is live, and refuses the task's claimant and task-close reviewers. A paused
+   holder counts as ended once every agent run linked to it ended or its recorded
+   process exited on this machine; a lost terminal or wake binding alone does not.
 3. Only a genuine decision, necessary planning pass, or broad clean window permits
    filing `needs-decision`, `needs-planning`, or `clean-window`, with the reason
    in the description. Filing alone does not finish found work.

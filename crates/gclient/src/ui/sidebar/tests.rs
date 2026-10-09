@@ -95,6 +95,94 @@ fn current_project_chrome() -> Chrome {
 }
 
 #[test]
+fn agents_tree_rules_continue_through_multiline_rows_and_scroll() {
+    let agent = |id: &str, nested: bool, last_child: bool, ancestors: Vec<bool>| SidebarRow {
+        id: id.to_owned(),
+        definition: id.to_owned(),
+        kind: RowKind::Agent,
+        model_slug: "codex".to_owned(),
+        nested,
+        last_child,
+        ancestor_branches: ancestors,
+        has_children: id == "parent" || id == "first",
+        ..SidebarRow::default()
+    };
+    let group = |name: &str| SidebarRow {
+        id: format!("group:{name}"),
+        label: name.to_owned(),
+        kind: RowKind::Group,
+        ..SidebarRow::default()
+    };
+    let rows = [
+        group("gobby"),
+        agent("parent", false, false, vec![]),
+        agent("first", true, false, vec![]),
+        agent("grandchild", true, true, vec![true]),
+        agent("last", true, true, vec![]),
+        group("game-goblins"),
+        agent("other", false, false, vec![]),
+    ];
+    for (scroll, height, child_y) in [(0, 20, 5), (1, 15, 4), (2, 11, 1)] {
+        let mut chrome = Chrome::dark();
+        chrome.sidebar.set_scroll(SidebarSection::Agents, scroll);
+        let mut terminal = Terminal::new(TestBackend::new(32, height)).unwrap();
+        let mut hits = SidebarHits::default();
+        terminal
+            .draw(|frame| {
+                render_section_rows(
+                    frame,
+                    frame.area(),
+                    SidebarSection::Agents,
+                    &rows,
+                    &chrome,
+                    &mut hits,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        if scroll < 2 {
+            for y in child_y - 2..child_y {
+                assert_eq!(buffer[(1, y)].symbol(), "│", "parent to first child");
+                assert_eq!(buffer[(1, y)].fg, chrome.palette.overlay0);
+            }
+        }
+        for y in child_y + 1..child_y + 3 {
+            assert_eq!(buffer[(4, y)].symbol(), "│", "parent to grandchild");
+            assert_eq!(buffer[(4, y)].fg, chrome.palette.overlay0);
+        }
+        for (offset, glyph) in [
+            (0, "├"),
+            (1, "│"),
+            (2, "│"),
+            (3, "│"),
+            (4, "│"),
+            (5, "│"),
+            (6, "└"),
+            (7, " "),
+            (8, " "),
+        ] {
+            assert_eq!(
+                buffer[(1, child_y + offset)].symbol(),
+                glyph,
+                "scroll {scroll}, offset {offset}"
+            );
+        }
+        assert_eq!(buffer[(4, child_y + 3)].symbol(), "└");
+        assert_eq!(buffer[(4, child_y + 4)].symbol(), " ");
+        assert_eq!(buffer[(1, child_y + 1)].fg, chrome.palette.overlay0);
+        assert_eq!(hits.agents[if scroll == 0 { 1 } else { 0 }].1.height, 3);
+        if scroll == 0 {
+            assert_eq!(buffer[(1, 14)].symbol(), "g", "next project heading");
+            assert_eq!(
+                buffer[(1, 16)].symbol(),
+                " ",
+                "next project has no ancestor rule"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
     // column in and run to the sidebar's last column.

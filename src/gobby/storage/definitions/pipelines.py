@@ -11,6 +11,7 @@ from typing import Any
 from gobby.storage.definitions._shared import (
     DefinitionNotFoundError,
     DefinitionSource,
+    DefinitionSyncCandidate,
     apply_definition_update,
     assert_live_name_free,
     decode_json_list,
@@ -22,6 +23,7 @@ from gobby.storage.definitions._shared import (
     hard_delete_definition,
     insert_definition_row,
     list_definition_rows,
+    list_definition_sync_candidates,
     move_definition_scope,
     new_definition_id,
     prepare_sync_values,
@@ -309,6 +311,10 @@ class PipelineDefinitionManager:
             if count:
                 touch_revision(txn, "pipelines")
         return count
+
+    def list_sync_candidates(self) -> list[DefinitionSyncCandidate]:
+        """List live identity and ownership without loading pipeline bodies."""
+        return list_definition_sync_candidates(self.db, _TABLE)
 
     def list_all(
         self,

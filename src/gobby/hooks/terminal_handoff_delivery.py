@@ -28,7 +28,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
-from gobby.sessions.compact_continuation import persist_pull_prompt_message
+from gobby.sessions.compact_continuation import _schedule_coroutine, persist_pull_prompt_message
 from gobby.sessions.handoff import (
     DISPATCH_OWNER,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -40,6 +40,7 @@ from gobby.sessions.handoff import (
     restore_staged_handoff,
     staged_handoff_rejection,
 )
+from gobby.sessions.handoff_reconciliation import settle_expired_unconfirmed_compact
 from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
@@ -67,8 +68,14 @@ _RETRY_GUIDANCE = (
 )
 _COMPACT_UNCONFIRMED_GUIDANCE = (
     "The provider has not confirmed the compact boundary yet. Wait for it, then call "
-    "gobby-sessions:get_handoff to recover this attempt. Do not submit /compact again "
-    "unless the pane proves the command was never accepted and remains in the composer."
+    "gobby-sessions:get_handoff to recover this attempt. If none arrives within 20 minutes "
+    "of the handoff, Gobby releases this gate on its own and wakes the seat, so end the "
+    "turn instead of polling. Do not submit /compact again unless the pane proves the "
+    "command was never accepted and remains in the composer."
+)
+_COMPACT_EXPIRED_GUIDANCE = (
+    "Normal tools are open again. Call gobby-sessions:set_handoff once if context "
+    "pressure still requires a handoff; do not submit /compact yourself."
 )
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _COMPOSER_OCCUPIED_GUIDANCE = (
@@ -432,12 +439,13 @@ def _settle_dead_dispatch(
         if not claimed.clear_session and getattr(session, "status", None) == "awaiting_handoff":
             return started_at
         return None
-    _compensate_delivery_failure(
+    failure = _compensate_delivery_failure(
         db,
         claimed,
         f"dispatch died after claiming at {claimed.reclaimed_dispatch_started_at}",
         error_code=None if claimed.clear_session else "compact_unconfirmed",
     )
+    _arm_compact_expiry(db, claimed.session_id, failure, loop=event_loop)
     return False
 
 
@@ -571,6 +579,7 @@ async def _settle_delivery(
             str(reason),
             error_code=str(error_code) if isinstance(error_code, str) else None,
         )
+        _arm_compact_expiry(db, claimed.session_id, failure)
         await _wake_failed_attempt(db, claimed.session_id, failure)
 
     try:
@@ -730,7 +739,11 @@ def _compensate_delivery_failure(
 
 
 async def _wake_failed_attempt(
-    db: HubDatabase, session_id: str, failure: Mapping[str, Any] | None
+    db: HubDatabase,
+    session_id: str,
+    failure: Mapping[str, Any] | None,
+    *,
+    completion_id: str | None = None,
 ) -> None:
     """Tell the seat its attempt failed; an idle seat otherwise waits for a keystroke."""
     if failure is None:
@@ -745,7 +758,7 @@ async def _wake_failed_attempt(
         _failed_attempt_prompt(failure),
         {
             "message_type": "handoff_delivery_failed",
-            "completion_id": f"handoff-failed:{attempt_id}",
+            "completion_id": completion_id or f"handoff-failed:{attempt_id}",
             "attempt_id": attempt_id,
             "error_code": failure.get("error_code"),
         },
@@ -773,6 +786,76 @@ def _failed_attempt_prompt(failure: Mapping[str, Any]) -> str:
         f"Gobby handoff delivery failed: {failure['reason']}. "
         f"{failure['retry_guidance']} {failure['recovery_guidance']}"
     )
+
+
+def _arm_compact_expiry(
+    db: HubDatabase,
+    session_id: str,
+    failure: Mapping[str, Any] | None,
+    *,
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> bool:
+    """Own the release of an unconfirmed compact's retry gate; shutdown cancels it."""
+    if failure is None or failure.get("error_code") != "compact_unconfirmed":
+        return False
+    return _schedule_coroutine(
+        _release_expired_compact(db, session_id, str(failure["attempt_id"])), loop=loop
+    )
+
+
+async def _release_expired_compact(db: HubDatabase, session_id: str, attempt_id: str) -> None:
+    """Release an unconfirmed compact's retry gate once its reconcile window closes.
+
+    Bounded: one settle now and, while the window is open, one more just after it
+    closes. Only the settle that releases the gate wakes the seat.
+    """
+    settled = await asyncio.to_thread(
+        settle_expired_unconfirmed_compact, db, session_id, attempt_id
+    )
+    if isinstance(settled, datetime):
+        await asyncio.sleep(max((settled - utc_now()).total_seconds(), 0.0) + 1.0)
+        settled = await asyncio.to_thread(
+            settle_expired_unconfirmed_compact, db, session_id, attempt_id
+        )
+    if settled is not True:
+        return
+    await _wake_failed_attempt(
+        db,
+        session_id,
+        {
+            "attempt_id": attempt_id,
+            "error_code": "compact_unconfirmed",
+            "reason": "no compact boundary arrived within 20 minutes, so Gobby released its gate",
+            "retry_guidance": _COMPACT_EXPIRED_GUIDANCE,
+            "recovery_guidance": (
+                "Authored content is available through "
+                f"gobby-sessions:get_handoff(failed_attempt_id={attempt_id!r}); "
+                "this explicit read does not deliver it."
+            ),
+        },
+        completion_id=f"handoff-expired:{attempt_id}",
+    )
+
+
+def resume_unconfirmed_compact_expiries(
+    machine_id: str, db: HubDatabase, *, event_loop: asyncio.AbstractEventLoop
+) -> int:
+    """Own the gate release of every unconfirmed compact a previous daemon left."""
+    rows = db.fetchall(
+        """
+        SELECT s.id,
+               v.variables -> 'context_compact_handoff_result' ->> 'attempt_id' AS attempt_id,
+               v.variables -> 'context_compact_handoff_result' ->> 'error_code' AS error_code
+          FROM sessions s JOIN session_variables v ON v.session_id = s.id
+         WHERE s.machine_id = %s
+           AND s.status NOT IN ('expired', 'deleted')
+           AND v.variables -> 'context_compact_handoff_result' ->> 'error_code'
+               = 'compact_unconfirmed'
+           AND v.variables -> 'context_compact_handoff_result' ->> 'delivery_failed' = 'true'
+        """,
+        (machine_id,),
+    )
+    return sum(_arm_compact_expiry(db, str(row["id"]), row, loop=event_loop) for row in rows)
 
 
 def _clear_compact_failure_attention(db: HubDatabase, session_id: str) -> None:

@@ -42,9 +42,11 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
 from gobby.terminals.composer_attention import sync_composer_attention
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
+from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -684,7 +686,9 @@ class WakeDispatcher:
             return session, state_failure
 
         def read_variables() -> dict[str, Any]:
-            return SessionVariableManager(self._session_manager.db).get_variables(session_id)
+            return SessionVariableManager(self._session_manager.db).get_variable_subset(
+                session_id, (HANDOFF_TURN_END_PENDING_VARIABLE, PENDING_HANDOFF_VARIABLE)
+            )
 
         return session, handoff_delivery_skip(session_id, await self._run_db(read_variables))
 
@@ -901,7 +905,9 @@ class WakeDispatcher:
         """
 
         def wake_outstanding() -> bool:
-            variables = SessionVariableManager(self._session_manager.db).get_variables(session_id)
+            variables = SessionVariableManager(self._session_manager.db).get_variable_subset(
+                session_id, (LIVE_WAKE_SENT_AT_VARIABLE,)
+            )
             sent_at = variables.get(LIVE_WAKE_SENT_AT_VARIABLE)
             if not isinstance(sent_at, str):
                 return False

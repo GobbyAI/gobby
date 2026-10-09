@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -39,6 +40,38 @@ class DefinitionNameConflictError(Exception):
 
 class DefinitionNotFoundError(Exception):
     """No matching definition row exists for the requested lookup."""
+
+
+@dataclass(frozen=True)
+class DefinitionSyncCandidate:
+    """Identity and ownership needed to decide whether a live row is an orphan."""
+
+    id: str
+    name: str
+    project_id: str | None
+    source: str
+    tags: list[str] | None
+
+
+def list_definition_sync_candidates(db: HubDatabase, table: str) -> list[DefinitionSyncCandidate]:
+    table = _validate_table(table)
+    rows = db.fetchall(
+        render_internal_sql(
+            "SELECT id, name, project_id, source, tags FROM {table} "
+            "WHERE deleted_at IS NULL ORDER BY name",
+            table=table,
+        )
+    )
+    return [
+        DefinitionSyncCandidate(
+            id=str(row["id"]),
+            name=row["name"],
+            project_id=row["project_id"],
+            source=row["source"],
+            tags=decode_json_list(row["tags"]),
+        )
+        for row in rows
+    ]
 
 
 def compute_definition_hash(definition_json: str) -> str:
@@ -454,6 +487,7 @@ __all__ = [
     "DefinitionNameConflictError",
     "DefinitionNotFoundError",
     "DefinitionSource",
+    "DefinitionSyncCandidate",
     "apply_definition_update",
     "assert_live_name_free",
     "compute_definition_hash",
@@ -467,6 +501,7 @@ __all__ = [
     "hard_delete_definition",
     "insert_definition_row",
     "list_definition_rows",
+    "list_definition_sync_candidates",
     "live_name_taken",
     "move_definition_scope",
     "new_definition_id",

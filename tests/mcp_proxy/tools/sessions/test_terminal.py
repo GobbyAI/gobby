@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -40,6 +40,10 @@ from gobby.sessions.handoff import (
     build_handoff_continue_prompt,
     claim_staged_handoff_delivery,
     consume_pending_handoff,
+)
+from gobby.sessions.handoff_reconciliation import (
+    UNCONFIRMED_COMPACT_WINDOW,
+    settle_expired_unconfirmed_compact,
 )
 from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.storage.hub.protocol import HubDatabase
@@ -1591,3 +1595,63 @@ def test_abandoned_compact_delivery_arms_no_retry_gate(
     assert (gate["delivery_failed"], gate["delivery_abandoned"]) == (False, True)
     assert "Do not call set_handoff again" in gate["retry_guidance"]
     assert _gate_decision(engine, session_id)[0] == "allow"
+
+
+def test_settled_unconfirmed_compact_admits_work_and_one_fresh_set_handoff(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    """Once the reconcile window closes, the seat works again and may stage one new attempt."""
+    engine, session_id, gate = _failed_compact_attempt(temp_db, tmp_path, "compact_unconfirmed")
+    old_attempt = str(gate["attempt_id"])
+    set_handoff = _feedback_registry(temp_db, SessionManager(temp_db), survey="off").get_tool(
+        "set_handoff"
+    )
+    assert set_handoff is not None
+    pane = MagicMock(backend="tmux", target="%12")
+    pane.snapshot = AsyncMock(return_value="ready")
+
+    def stage() -> dict[str, Any]:
+        with (
+            session_context_for_test(session_id),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io",
+                return_value=(pane, None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+                return_value=(None, None),
+            ),
+        ):
+            result: dict[str, Any] = asyncio.run(
+                set_handoff(current_state="Fresh", next_steps=["Continue"])
+            )
+        return result
+
+    work, work_reason = _gate_decision(engine, session_id)
+    assert work == "block"
+    assert "releases this gate on its own" in work_reason
+    assert "releases this gate on its own" in gate["retry_guidance"]
+    assert stage()["error_code"] == "compact_unconfirmed"
+    temp_db.execute(
+        "UPDATE session_handoffs SET authored_at = authored_at - %s WHERE session_id = %s",
+        (UNCONFIRMED_COMPACT_WINDOW + timedelta(minutes=1), session_id),
+    )
+
+    assert settle_expired_unconfirmed_compact(temp_db, session_id, old_attempt) is True
+
+    assert _gate_decision(engine, session_id)[0] == "allow"
+    assert _gate_decision(engine, session_id, "set_handoff")[0] == "allow"
+    fresh = stage()
+    assert fresh["handoff_staged"] is True
+    assert fresh["attempt_id"] != old_attempt
+    assert claim_staged_handoff_delivery(
+        temp_db, session_id, fresh["attempt_id"], recover_unarmed_gate=True
+    )
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    assert FAILED_HANDOFF_VARIABLE not in variables
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["attempt_id"] == fresh["attempt_id"]
+    assert _delivery_count(temp_db, old_attempt) == 0
+    assert [
+        _gate_decision(engine, session_id)[0],
+        _gate_decision(engine, session_id, "set_handoff")[0],
+    ] == ["block", "block"]

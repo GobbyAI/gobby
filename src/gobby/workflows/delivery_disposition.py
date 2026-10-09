@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.definitions._shared import (
+    DefinitionNotFoundError,
     apply_definition_update,
     encode_json_value,
     touch_revision,
@@ -110,7 +111,7 @@ def prepare_rule_definition_for_persist(
 def migrate_rule_delivery_dispositions(db: HubDatabase) -> dict[str, Any]:
     """Write explicit ``on_receipt`` onto live rows that match the one-shot criterion."""
     manager = RuleDefinitionManager(db)
-    rows = manager.list_all()
+    rows = manager.list_delivery_disposition_candidates()
     errors: list[str] = []
     skipped = 0
     plans: list[Any] = []
@@ -126,7 +127,20 @@ def migrate_rule_delivery_dispositions(db: HubDatabase) -> dict[str, Any]:
         if not outcome.changed:
             skipped += 1
             continue
-        plans.append((row, outcome.definition))
+        # Only a row needing a rewrite carries its full body into Python.
+        try:
+            detail = manager.get(row.id)
+        except DefinitionNotFoundError:
+            errors.append(f"delivery disposition: Rule '{row.name}' concurrent edit")
+            continue
+        if detail.updated_at != row.updated_at:
+            errors.append(f"delivery disposition: Rule '{row.name}' concurrent edit")
+            continue
+        replacement = apply_rule_delivery_dispositions(detail.name, detail.definition_json)
+        if replacement.errors:
+            errors.extend(replacement.errors)
+            continue
+        plans.append((detail, replacement.definition))
 
     if errors:
         return {"success": False, "updated": 0, "skipped": skipped, "errors": errors}

@@ -239,7 +239,7 @@ def sync_bundled_pipelines(db: HubDatabase) -> dict[str, Any]:
 
     result["orphaned"] = 0
     if scan_complete:
-        for row in manager.list_all():
+        for row in manager.list_sync_candidates():
             if (
                 row.source == "installed"
                 and "gobby" in (row.tags or [])
