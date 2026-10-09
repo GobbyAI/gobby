@@ -262,6 +262,38 @@ async def test_rendered_write_denies_are_the_ones_a_grant_can_reach(
     assert len(deny_write) < 100 < len(paths.deny_write_paths)
 
 
+def test_rendering_keeps_write_denies_under_each_pinned_default_grant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Independently captured from getDefaultWritePaths() in verified SRT 0.0.76.
+    # A pin bump requires refreshing this contract, without a network fetch in pytest.
+    assert SRT_RELEASE.version == "0.0.76"
+    defaults = (
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/null",
+        "/dev/tty",
+        "/dev/dtracehelper",
+        "/dev/autofs_nowait",
+        "/tmp/claude",
+        "/private/tmp/claude",
+        "~/.npm/_logs",
+        "~/.claude/debug",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    denies = [str(Path(path).expanduser() / "synthetic") for path in defaults]
+    paths = ResolvedSandboxPaths(
+        workspace_path=str(tmp_path),
+        read_paths=[],
+        write_paths=[],
+        allow_external_network=False,
+        deny_write_paths=denies,
+    )
+
+    assert render_srt_settings(paths)["filesystem"]["denyWrite"] == denies
+
+
 def test_write_deny_under_a_symlinked_srt_default_is_rendered(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
