@@ -8,11 +8,11 @@ cases equal.
 
 ## Case format
 
-Each case is one JSON file at `schema_version` 1:
+Each case is one JSON file at `schema_version` 2:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "health_ok",
   "family": "health",
   "backend": "up",

@@ -79,20 +79,20 @@ Remote clients use the hub owner for those files; they do not provision a second
 files home. See
 [hub-owned files home](../architecture/hub-owned-files-home.md).
 
-Local `gobby install` owns `$GOBBY_HOME/local_cli_token` (normally
-`~/.gobby/local_cli_token`) with mode `0600`. A database-unreachable install
-can still create the token file; daemon startup adopts its hash into the
-authentication configuration. Additional trusted client machines receive
-the same token with the same permissions.
+Local `gobby install` provisions a hub-issued key for this machine and writes
+`api_key` into the owner-only `$GOBBY_HOME/bootstrap.yaml`. Provisioning requires
+the hub database; there is no offline credential-file adoption.
 
-Remote installation requires the copied token and secret key; it never generates
-or rotates the shared token. Its authenticated owner-profile probe must succeed
+Remote nodes enroll with `gobby auth login` after configuring `hub_daemon_url`.
+Their own key is stored in their owner-only bootstrap. Remote installation
+requires that enrolled key and the hub's `.secret_kek`; it never generates or
+rotates shared secret material. Its authenticated owner-profile probe must succeed
 before datastore probes. Preserve each machine's own `machine_id` and register its
 ordinary checkout roots separately. A hub-visible project is not proof of a local
 checkout. See [machine and project ownership](shared-stack.md#machine-and-project-ownership).
 
-`gobby auth token --rotate` replaces the token and its stored hash. Copy
-the new token to additional client machines after rotation. Stateful daemon
-HTTP and WebSocket surfaces require authentication.
+Replace and revoke API keys through the authenticated `/api/auth/keys` routes.
+Update only the matching machine's credential when replacing a key. Stateful
+daemon HTTP and WebSocket surfaces require authentication.
 
 _Last verified: 2026-09-12_

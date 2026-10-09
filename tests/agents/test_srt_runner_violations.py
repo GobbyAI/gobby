@@ -18,6 +18,7 @@ _RUNNER = Path(__file__).resolve().parents[2] / "src" / "gobby" / "agents" / "sr
 # command emits RUN_EVENTS while subscribed; LATE_EVENTS arrive after the
 # runner unsubscribes, so only its final flush can record them.
 _STUB_RUNTIME = """
+import { getPriority } from 'node:os'
 const RUN_EVENTS = 150
 const LATE_EVENTS = 5
 
@@ -50,7 +51,9 @@ export const SandboxRuntimeConfigSchema = { safeParse: data => ({ success: true,
 
 export const SandboxManager = {
   isSupportedPlatform: () => true,
-  initialize: async () => {},
+  initialize: async () => {
+    if (getPriority(0) !== 19) throw new Error('SRT initialized before host priority was set')
+  },
   getSandboxViolationStore: () => store,
   wrapWithSandboxArgv: async command => {
     for (let i = 0; i < RUN_EVENTS; i++) store.addViolation({ line: `v${i}` })
@@ -109,3 +112,35 @@ def test_runner_records_violations_after_the_ring_wraps(stub_runner: Path) -> No
     lines = [json.loads(line)["line"] for line in violations.read_text().splitlines()]
     assert lines == [f"v{i}" for i in range(155)]
     assert violations.stat().st_mode & 0o777 == 0o600
+
+
+def test_runner_child_inherits_host_niceness(stub_runner: Path) -> None:
+    root = stub_runner.parent
+    settings = root / "settings.json"
+    settings.write_text("{}", encoding="utf-8")
+    violations = root / "violations.jsonl"
+    violations.write_text("", encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    result = subprocess.run(
+        [
+            node,
+            str(stub_runner),
+            "--settings",
+            str(settings),
+            "--violations",
+            str(violations),
+            "--",
+            "/bin/sh",
+            "-c",
+            'exec /bin/ps -o nice= -p "$$"',
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert int(result.stdout.strip()) == 19

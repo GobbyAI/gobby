@@ -5,21 +5,31 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats, the Plan Writer included, do not spawn agents"
+    description: "Seats, the Plan Writer included, do not spawn agents; recovery seats may resume one"
     event: before_tool
     enabled: true
     priority: 10
+    # Only a resume re-mints an expired seat capability, and these three seats
+    # already recover stalled sessions, so they may resume an existing session.
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'merge-manager']
+      and not (
+        variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager']
+        and tool_input.get('server_name') == 'gobby-agents'
+        and tool_input.get('tool_name') == 'spawn_agent'
+        and ((tool_input.get('arguments') or tool_input) or {}).get('resume_session_id')
+      )
     effects:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
         reason: >-
           Seats do not spawn agents. The automated task-close reviewer is the only
-          spawn path; send the work to the Orchestrator.
+          spawn path, and the Assistant, Orchestrator and Lane Managers may only
+          resume an existing session with spawn_agent resume_session_id; send other
+          work to the Orchestrator.
 
   seat-no-pipeline-launch:
     description: "Seats, the Plan Writer included, do not launch pipelines through MCP"
