@@ -570,8 +570,10 @@ cannot be rebound.
 A new tab opens empty. Use New Terminal or a split to start a shell in the
 focused project's checkout; that shell and its pane are created together in the
 daemon workspace. The tab stays `Untitled` until you rename it. Worktree rows
-in the sidebar open a tab whose shell starts in that worktree, or reveal the tab
-that already shows it. An empty tab is a draft in this window; once you open a
+in the sidebar focus the most urgent agent occupying the worktree; ties follow
+roster order. The row and its status glyph choose the same agent. With no occupant,
+the row opens a shell tab in the worktree, or reveals the tab already showing it.
+An empty tab is a draft in this window; once you open a
 shell in it, the daemon-owned tab takes its place and survives reattachment.
 Splitting a tab of bare terminals moves its current pane layout into the daemon
 workspace. Those existing terminals stay adopted; the new shell is owned.
@@ -725,8 +727,9 @@ finds the panes of one tab. `j` / `k` or the arrows move, `enter` switches to th
 idle rows. `prefix+g` opens with the search box already focused.
 
 **Navigate mode (`up` / `down`).** Moves the selection through the project cards
-and worktree rows. `enter` focuses the selected project or opens the selected
-worktree; `esc` returns to the terminal.
+and worktree rows. `enter` focuses the selected project, or the most urgent agent
+occupying the selected worktree. With no occupant it opens the worktree shell,
+as a click does; `esc` returns to the terminal.
 
 **Keybinding help (`prefix+?`).** The attention legend, then the live keymap
 with names. A search hides the legend. `j` / `k`, the
@@ -839,7 +842,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over the keybinding help, the alert log, the navigator, or the Open worktree or Destroy orphaned terminals list | Do what its arrow keys do: the help and the log scroll three rows a notch, the navigator and the two lists move their selection one row; a notch outside the popup does nothing |
 | Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
-| Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
+| Click a project card / worktree row | Focus the project (expanding its card) / focus the worktree's most urgent agent, or open its shell when unoccupied |
 | Drag a project card | Reorder projects |
 | Click a `▸`/`▾` fold mark | Fold or unfold the card's worktrees |
 | Click a session or bare terminal row | Focus its pane (a needs-you row's question is already on screen) |

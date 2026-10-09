@@ -1732,8 +1732,8 @@ fn bound_worktree_board() -> (Workspace, Chrome, Terminal<TestBackend>) {
 
 /// #23280 item 5: the worktree indicator drew blank for sessions and had
 /// no hit of its own. A bound worktree draws its rolled-up dot, and that
-/// cell shows the most urgent bound agent; the rest of the row still opens
-/// the worktree, and a right click there still opens its menu.
+/// cell and the rest of the row focus the most urgent bound agent;
+/// a right click still opens the worktree menu.
 #[test]
 fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
     let (ws, mut chrome, term) = bound_worktree_board();
@@ -1758,7 +1758,7 @@ fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
     assert_ne!((col, row), (cell.x, cell.y));
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::OpenWorktree("wt-1".to_string())
+        MouseOutcome::FocusAgent("session:sess-1".to_string())
     );
     route(&ws, &mut chrome, LEFT_UP, col, row);
     assert_eq!(
@@ -1778,6 +1778,22 @@ fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
 fn unbound_worktree_draws_no_glyph_and_no_glyph_hit() {
     let (_, chrome, _) = project_board();
     assert!(chrome.view.worktree_glyph_hit_areas.is_empty());
+}
+
+#[test]
+fn navigate_enter_on_an_occupied_worktree_focuses_its_most_urgent_agent() {
+    let (ws, mut chrome, _) = bound_worktree_board();
+    chrome.mode = Mode::Navigate;
+    chrome.sidebar.selected = 1;
+    let enter = KeyInput {
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    assert_eq!(
+        route_modal_key(&ws, &mut chrome, &enter),
+        ModalOutcome::FocusAgent("session:sess-1".to_string())
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
 }
 
 /// Plan 3.1.2: the project rows' pointer and navigate entry points, one
