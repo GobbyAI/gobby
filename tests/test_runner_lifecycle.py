@@ -693,7 +693,7 @@ class TestInitSubsystems:
         capacity_service = MagicMock()
         local_context_store = MagicMock()
         local_context_service = MagicMock()
-        local_route = SimpleNamespace(provider="qwen", model_id="Local-Model")
+        local_route = SimpleNamespace(provider="codex", model_id="Local-Model")
 
         with (
             patch(
@@ -760,7 +760,7 @@ class TestInitSubsystems:
         assert coverage_factory.call_args is not None
         assert "excluded_providers" not in coverage_factory.call_args.kwargs
         assert callable(coverage_factory.call_args.kwargs["excluded_models"])
-        assert excluded_models == frozenset({("qwen", "local-model")})
+        assert excluded_models == frozenset({("codex", "local-model")})
         configured_routes.assert_called_once_with(config, machine_id="machine-1")
         local_store_factory.assert_called_once()
         local_service_factory.assert_called_once_with(local_context_store, run_db=None)

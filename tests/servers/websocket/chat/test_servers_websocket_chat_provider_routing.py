@@ -109,9 +109,9 @@ class TestPendingProviderOverride:
     async def test_pending_provider_takes_precedence_over_agent_or_default(self) -> None:
         """Queued provider overrides should route the next session creation."""
         mixin = _make_mixin()
-        mixin._pending_providers["test-conv-routing"] = "qwen"
+        mixin._pending_providers["test-conv-routing"] = "grok"
         mock_session = AsyncMock()
-        mock_session.provider = "qwen"
+        mock_session.provider = "grok"
         mock_session.chat_mode = "plan"
         mock_session.db_session_id = None
         mock_session.resume_session_id = None
@@ -124,7 +124,7 @@ class TestPendingProviderOverride:
 
         session = await _create_session_for_provider(mixin, provider=None)
 
-        assert session.provider == "qwen"
+        assert session.provider == "grok"
 
     @pytest.mark.asyncio
     async def test_daemon_chat_provider_used_when_request_has_no_provider(self) -> None:
@@ -179,7 +179,7 @@ class TestPendingProviderOverride:
             ),
         )
         mock_session = AsyncMock()
-        mock_session.provider = "qwen"
+        mock_session.provider = "grok"
         mock_session.chat_mode = "plan"
         mock_session.db_session_id = None
         mock_session.resume_session_id = None
@@ -190,22 +190,21 @@ class TestPendingProviderOverride:
         runtime_manager.create_session.return_value = mock_session
         mixin.web_chat_runtime_manager = runtime_manager
 
-        # qwen carries no reasoning flag (provider_capabilities.py), so the
-        # binding is exercised without one -- and the configured candidate's
-        # xhigh must not leak in behind it.
+        # The explicit binding requests no effort, so none is sent -- and the
+        # configured candidate's xhigh must not leak in behind it.
         await mixin._create_chat_session(
             conversation_id="test-conv-routing",
-            provider="qwen",
-            model="qwen3-coder",
+            provider="grok",
+            model="grok-4",
         )
 
         assert runtime_manager.create_session.call_args.kwargs == {
-            "provider": "qwen",
+            "provider": "grok",
             "conversation_id": "test-conv-routing",
-            "model": "qwen3-coder",
+            "model": "grok-4",
             "reasoning_effort": None,
         }
-        mock_session.start.assert_awaited_once_with(model="qwen3-coder")
+        mock_session.start.assert_awaited_once_with(model="grok-4")
 
 
 class TestSessionRegistration:

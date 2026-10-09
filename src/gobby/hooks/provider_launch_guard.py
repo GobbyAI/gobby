@@ -31,7 +31,7 @@ from gobby.hooks._python_pipeline_classifier import (
     _inline_interpreter_parts,
 )
 
-_PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "qwen", "agy"})
+_PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "agy"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 _MAX_DEPTH = 24
@@ -92,26 +92,6 @@ _SUBCOMMANDS: dict[str, _Subcommands] = {
         "sessions": {},
         "doctor": {},
         "version": {},
-    },
-    "qwen": {
-        "auth": {},
-        "channel": {},
-        "extensions": {
-            "disable": {},
-            "enable": {},
-            "install": {},
-            "link": {},
-            "list": {},
-            "new": {},
-            "uninstall": {},
-            "update": {},
-        },
-        "hooks": {},
-        "mcp": _MCP,
-        "review": {},
-        "serve": {},
-        "sessions": {},
-        "update": {},
     },
     "agy": {
         "agent": {},
@@ -496,7 +476,7 @@ def _administration(args: list[str], provider: str) -> bool:
         return True
     return args == ["--version"] or (
         (provider == "codex" and args in [["login", "status"], ["-V"]])
-        or (provider in {"claude", "droid", "grok", "qwen"} and args == ["-v"])
+        or (provider in {"claude", "droid", "grok"} and args == ["-v"])
     )
 
 

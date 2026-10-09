@@ -10,7 +10,6 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse
 
 pytestmark = pytest.mark.unit
@@ -29,12 +28,6 @@ def _translators() -> list[tuple[str, Translator]]:
         (
             "codex",
             lambda response: CodexHooksAdapter().translate_from_hook_response(
-                response, hook_type="PreToolUse"
-            ),
-        ),
-        (
-            "qwen",
-            lambda response: QwenAdapter().translate_from_hook_response(
                 response, hook_type="PreToolUse"
             ),
         ),

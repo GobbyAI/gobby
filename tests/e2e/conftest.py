@@ -1567,7 +1567,6 @@ class CLIEventSimulator:
             "codex": "UserPromptSubmit",
             "droid": "UserPromptSubmit",
             "grok": "user_prompt_submit",
-            "qwen": "UserPromptSubmit",
         }
         hook_type = hook_type_by_source[source]
         input_data: dict[str, Any] = {

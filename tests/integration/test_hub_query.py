@@ -74,7 +74,7 @@ def multi_project_hub(hub_db):
         for k, (source, status) in enumerate(
             [
                 ("claude", "active"),
-                ("qwen", "ended"),
+                ("codex", "ended"),
             ]
         ):
             hub_db.execute(

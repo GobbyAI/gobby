@@ -11,7 +11,6 @@ from gobby.utils.datetime import normalize_datetime_model, utc_now
 ContextUsageSource = Literal[
     "claude",
     "codex",
-    "qwen",
     "droid",
     "agy",
     "grok",

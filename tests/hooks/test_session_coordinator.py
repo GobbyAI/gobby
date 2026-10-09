@@ -377,7 +377,7 @@ class TestSessionLifecycleTransitions:
                     MagicMock(
                         id="session-2",
                         transcript_path="/path/to/2.jsonl",
-                        source="qwen",
+                        source="codex",
                         transcript_processed=False,
                     ),
                 ],

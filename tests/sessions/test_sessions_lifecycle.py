@@ -1564,24 +1564,6 @@ class TestProcessSessionTranscriptParsers:
     """Tests for _process_session_transcript parser selection."""
 
     @pytest.mark.asyncio
-    async def test_qwen_parser_selected(
-        self, tmp_path: Path, manager: SessionLifecycleManager
-    ) -> None:
-        """Qwen source uses QwenTranscriptParser."""
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text('{"type": "message"}\n')
-
-        session = MagicMock()
-        session.source = "qwen"
-        manager.session_manager.get.return_value = session
-
-        with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
-            MockParser.return_value.parse_lines.return_value = []
-            await manager._process_session_transcript("s1", str(transcript_path))
-            MockParser.assert_called_once()
-            assert manager.session_manager.update_usage.call_count == 0
-
-    @pytest.mark.asyncio
     async def test_codex_parser_selected(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
@@ -1984,62 +1966,18 @@ class TestProcessSessionTranscriptParsers:
 
 
 class TestProcessSessionTranscriptLineParsing:
-    """Tests for .json transcript dispatch."""
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_uses_current_line_parser(
-        self, tmp_path: Path, manager: SessionLifecycleManager
-    ) -> None:
-        """Lifecycle backfill indexes Qwen's current line-envelope .json file."""
-        transcript_path = tmp_path / "session-abc.json"
-        fixture = (
-            Path(__file__).parents[1]
-            / "fixtures"
-            / "transcripts"
-            / "qwen"
-            / "current_envelope.jsonl"
-        )
-        transcript_path.write_text(fixture.read_text())
-
-        session = MagicMock()
-        session.source = "qwen"
-        session.project_id = None
-        session.context_window = None
-        session.model = "qwen3-coder"
-        session.transcript_path = str(transcript_path)
-        session.usage_input_tokens = 0
-        session.usage_output_tokens = 0
-        session.usage_cache_creation_tokens = 0
-        session.usage_cache_read_tokens = 0
-        manager.session_manager.get.return_value = session
-        manager.token_event_store = EmptyTokenEventStore()
-
-        await manager._process_session_transcript("s1", str(transcript_path))
-
-        st = transcript_path.stat()
-        index = load_index_sidecar(
-            str(transcript_path),
-            "qwen",
-            "s1",
-            seek_mode="byte",
-            mtime_ns=st.st_mtime_ns,
-            size=st.st_size,
-        )
-        assert index is not None
-        assert index.raw_record_count == 7
-        assert index.parsed_message_count == 7
-        manager.session_manager.update_stats.assert_called_once()
+    """Tests for line-oriented transcript dispatch."""
 
     @pytest.mark.asyncio
     async def test_jsonl_still_uses_parse_lines(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
-        """Qwen .jsonl transcripts use the same line parser."""
+        """.jsonl transcripts use the line parser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
         session = MagicMock()
-        session.source = "qwen"
+        session.source = "codex"
         manager.session_manager.get.return_value = session
 
         with patch("gobby.sessions.transcript_processing.get_parser") as MockParser:
@@ -2052,12 +1990,12 @@ class TestProcessSessionTranscriptLineParsing:
     async def test_invalid_json_returns_early(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
-        """An invalid Qwen envelope fails soft without crashing."""
+        """An invalid transcript line fails soft without crashing."""
         transcript_path = tmp_path / "session-bad.json"
         transcript_path.write_text("{invalid json content")
 
         session = MagicMock()
-        session.source = "qwen"
+        session.source = "claude"
         manager.session_manager.get.return_value = session
 
         # Should not raise

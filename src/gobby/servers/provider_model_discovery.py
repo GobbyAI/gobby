@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 
 Which = Callable[[str], str | None]
 DeepMerge = Callable[[dict[str, Any], dict[str, Any]], None]
-TrustAuthorizer = Callable[[str, Path], Awaitable[object]]
-ModelDiscoveryCwd = Callable[[str], Awaitable[tuple[Path, bool]]]
-CleanupTree = Callable[[Path], object]
+ModelDiscoveryCwd = Callable[[str], Awaitable[Path]]
 ACPDiscoverer = Callable[[type[ACPClient]], Awaitable[list[dict[str, Any]]]]
 ContextLengthResolver = Callable[[str | None, str | None], int | None]
 
@@ -163,22 +161,6 @@ def load_claude_settings(
     )
 
 
-def load_qwen_settings(
-    *,
-    deep_merge: DeepMerge,
-    logger: logging.Logger,
-) -> dict[str, Any]:
-    return _load_merged_json_settings(
-        (
-            Path.home() / ".qwen" / "settings.json",
-            Path.cwd() / ".qwen" / "settings.json",
-        ),
-        provider="Qwen",
-        deep_merge=deep_merge,
-        logger=logger,
-    )
-
-
 def _load_merged_json_settings(
     settings_paths: Sequence[Path],
     *,
@@ -210,28 +192,12 @@ async def discover_acp_models(
     client_cls: type[ACPClient],
     which: Which,
     model_discovery_cwd: ModelDiscoveryCwd,
-    authorize_trust: TrustAuthorizer,
-    cleanup_tree: CleanupTree,
     logger: logging.Logger,
 ) -> list[dict[str, Any]]:
     if not which(client_cls.cli_name):
         raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-    cwd, created_cwd = await model_discovery_cwd(client_cls.cli_name)
-    try:
-        await authorize_trust(client_cls.cli_name, cwd)
-    except Exception:
-        if created_cwd:
-            try:
-                await asyncio.to_thread(cleanup_tree, cwd)
-            except Exception as cleanup_exc:
-                logger.exception(
-                    "Failed to remove %s model-discovery cwd %s after authorization failure: %s",
-                    client_cls.cli_name,
-                    cwd,
-                    cleanup_exc,
-                )
-        raise
+    cwd = await model_discovery_cwd(client_cls.cli_name)
     client = client_cls(
         cwd=os.fspath(cwd),
         purpose="model-discovery",

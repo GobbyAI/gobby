@@ -153,7 +153,7 @@ class TestMultiRuleYamlWithDefaults:
             """
 group: tool-hygiene
 tags: [enforcement]
-sources: [claude, qwen]
+sources: [claude, grok]
 
 rules:
   rule-a:

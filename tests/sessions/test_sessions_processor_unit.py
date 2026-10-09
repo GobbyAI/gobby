@@ -225,13 +225,13 @@ class TestSessionRegistration:
 
         # Test different source types
         processor.register_session("claude-session", str(transcript), source="claude")
-        processor.register_session("qwen-session", str(transcript), source="qwen")
+        processor.register_session("droid-session", str(transcript), source="droid")
         processor.register_session("codex-session", str(transcript), source="codex")
         assert "agy" in PARSER_REGISTRY
         processor.register_session("agy-session", str(transcript), source="agy")
 
         assert "claude-session" in processor._parsers
-        assert "qwen-session" in processor._parsers
+        assert "droid-session" in processor._parsers
         assert "codex-session" in processor._parsers
         assert getattr(processor._parsers["agy-session"], "cli_name", None) == "agy"
 
@@ -371,26 +371,6 @@ class TestSessionRegistration:
         assert usage_call is not None
         assert usage_call.args[1] == rendered
         persist_snapshot.assert_awaited_once()
-
-    def test_register_qwen_json_creates_incremental_index_appender(
-        self, processor: SessionMessageProcessor, tmp_path: Path
-    ) -> None:
-        transcript = tmp_path / "session.json"
-        transcript.write_text(
-            json.dumps(
-                {
-                    "type": "user",
-                    "uuid": "qwen-user-1",
-                    "timestamp": "2026-07-17T01:00:00Z",
-                    "message": {"role": "user", "parts": [{"text": "hi"}]},
-                }
-            )
-            + "\n"
-        )
-
-        processor.register_session("qwen-session", str(transcript), source="qwen")
-
-        assert "qwen-session" in processor._index_appenders
 
     def test_register_session_hydrates_matching_sidecar(
         self, mock_db: MagicMock, tmp_path: Path
@@ -979,100 +959,6 @@ class TestProcessSession:
         assert processor._stats["session-1"]["message_count"] == 1
         assert processor._message_indices["session-1"] == 0
         assert processor._index_appenders["session-1"].index.raw_record_count == 1
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_processes_appended_envelopes_incrementally(
-        self, processor: SessionMessageProcessor, tmp_path: Path
-    ) -> None:
-        transcript = tmp_path / "session.json"
-        first = json.dumps(
-            {
-                "type": "user",
-                "uuid": "qwen-user-1",
-                "timestamp": "2026-07-17T01:00:00Z",
-                "message": {"role": "user", "parts": [{"text": "Hello"}]},
-            }
-        )
-        second = json.dumps(
-            {
-                "type": "assistant",
-                "uuid": "qwen-assistant-1",
-                "timestamp": "2026-07-17T01:00:01Z",
-                "message": {"role": "model", "parts": [{"text": "Hi"}]},
-            }
-        )
-        transcript.write_text(first + "\n")
-        processor.register_session("session-1", str(transcript), source="qwen")
-
-        await processor._process_session("session-1", str(transcript))
-        with transcript.open("a") as handle:
-            handle.write(second + "\n")
-        await processor._process_session("session-1", str(transcript))
-
-        st = transcript.stat()
-        index = load_index_sidecar(
-            str(transcript),
-            "qwen",
-            "session-1",
-            seek_mode="byte",
-            mtime_ns=st.st_mtime_ns,
-            size=st.st_size,
-        )
-        assert processor._stats["session-1"]["message_count"] == 2
-        assert processor._message_indices["session-1"] == 1
-        assert index is not None
-        assert index.parsed_message_count == 2
-
-    @pytest.mark.asyncio
-    async def test_concurrent_poll_and_flush_do_not_double_process_json(
-        self, processor: SessionMessageProcessor, tmp_path: Path
-    ) -> None:
-        transcript = tmp_path / "session.json"
-        transcript.write_text(
-            json.dumps(
-                {
-                    "type": "user",
-                    "uuid": "qwen-user-1",
-                    "timestamp": "2026-07-17T01:00:00Z",
-                    "message": {"role": "user", "parts": [{"text": "Hello"}]},
-                }
-            )
-            + "\n"
-        )
-        processor.register_session("session-1", str(transcript), source="qwen")
-        batch_entered = asyncio.Event()
-        release_batch = asyncio.Event()
-        second_batch_entered = asyncio.Event()
-        original_process_batch = processor._process_parsed_batch
-        batch_count = 0
-
-        async def blocked_process_batch(
-            session_id: str, messages: list[ParsedMessage], *, publish_occupancy: bool = True
-        ) -> MessageStats:
-            nonlocal batch_count
-            batch_count += 1
-            if batch_count > 1:
-                second_batch_entered.set()
-            batch_entered.set()
-            await asyncio.wait_for(release_batch.wait(), timeout=1)
-            return await original_process_batch(
-                session_id, messages, publish_occupancy=publish_occupancy
-            )
-
-        with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
-            async with asyncio.TaskGroup() as tasks:
-                poll_task = tasks.create_task(processor._process_all_sessions())
-                await asyncio.wait_for(batch_entered.wait(), timeout=1)
-                flush_task = tasks.create_task(processor.flush_session("session-1"))
-                with pytest.raises(TimeoutError):
-                    await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
-                release_batch.set()
-
-        assert poll_task.result() is None
-        assert flush_task.result().flushed is True
-        assert batch_count == 1
-        assert processor._stats["session-1"]["message_count"] == 1
-        assert processor._message_indices["session-1"] == 0
 
     @pytest.mark.asyncio
     async def test_unregister_during_processing_does_not_resurrect_state(

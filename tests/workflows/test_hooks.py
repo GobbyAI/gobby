@@ -1395,7 +1395,7 @@ class TestVariablePersistence:
     def _make_after_agent_event(
         self,
         session_id: str = SESSION_ID,
-        source: SessionSource = SessionSource.QWEN,
+        source: SessionSource = SessionSource.AGY,
     ) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.AFTER_AGENT,
@@ -2463,10 +2463,10 @@ class TestCodexToolContextRehydration:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "source",
-        [SessionSource.CLAUDE, SessionSource.QWEN, SessionSource.DROID],
+        [SessionSource.CLAUDE, SessionSource.DROID],
     )
     async def test_rehydrates_supported_cli_sources(self, source: SessionSource) -> None:
-        """Claude, Qwen, and Droid share the same tool-context rehydration path."""
+        """Claude and Droid share the same tool-context rehydration path."""
         handler, rule_engine = self._make_handler()
 
         before_event = self._make_event(
@@ -2491,48 +2491,6 @@ class TestCodexToolContextRehydration:
         assert after_event.metadata["_tool_context_rehydrated_source"] == source.value
         evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
         assert evaluated_event.data["tool_input"] == {"file_path": "src/main.py"}
-
-    @pytest.mark.asyncio
-    async def test_qwen_get_skill_output_envelope_tracks_loaded_skill(self) -> None:
-        """Qwen get_skill results wrapped in output JSON still update loaded_skills."""
-        handler, rule_engine = self._make_handler()
-        completed_skill_result = {
-            "result": {
-                "success": True,
-                "skill": {"name": "brevity", "content": "Be brief."},
-                "page": {"complete": True, "next_cursor": None},
-            }
-        }
-
-        before_event = self._make_event(
-            HookEventType.BEFORE_TOOL,
-            data={
-                "tool_name": "mcp_gobby-skills_get_skill",
-                "tool_input": {"name": "brevity"},
-                "tool_use_id": "qwen-skill-1",
-            },
-            source=SessionSource.QWEN,
-        )
-        await handler._evaluate_rules(before_event)
-
-        after_event = self._make_event(
-            HookEventType.AFTER_TOOL,
-            data={
-                "tool_use_id": "qwen-skill-1",
-                "tool_response": {
-                    "output": json.dumps(completed_skill_result),
-                },
-            },
-            source=SessionSource.QWEN,
-        )
-        await handler._evaluate_rules(after_event)
-
-        assert after_event.data["mcp_server"] == "gobby-skills"
-        assert after_event.data["mcp_tool"] == "get_skill"
-        assert after_event.data["tool_output"] == completed_skill_result
-        variables = rule_engine.evaluate.await_args_list[-1].kwargs["variables"]
-        assert variables["loaded_skills"] == ["brevity"]
-        assert variables["mcp_calls"]["gobby-skills"] == ["get_skill"]
 
     @pytest.mark.asyncio
     async def test_pipeline_after_tool_source_is_unchanged(self) -> None:

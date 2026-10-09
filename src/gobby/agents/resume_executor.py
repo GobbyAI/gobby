@@ -70,7 +70,7 @@ from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_RESUME_PROVIDERS = frozenset({"agy", "claude", "qwen", "grok", "codex", "droid"})
+SUPPORTED_RESUME_PROVIDERS = frozenset({"agy", "claude", "grok", "codex", "droid"})
 
 # Protocol bookkeeping accumulated on the original run must never leak into a
 # successor's launch snapshot: each recovery episode starts clean.
@@ -687,14 +687,12 @@ _RESUME_API_BASE_ENV_KEYS = {
     "codex": "OPENAI_BASE_URL",
     "droid": "FACTORY_API_BASE_URL",
     "grok": "GROK_API_BASE",
-    "qwen": "QWEN_API_BASE",
 }
 _RESUME_API_TOKEN_ENV_KEYS = {
     "claude": "ANTHROPIC_AUTH_TOKEN",
     "codex": "OPENAI_API_KEY",
     "droid": "FACTORY_API_KEY",
     "grok": "XAI_API_KEY",
-    "qwen": "QWEN_API_KEY",
 }
 
 

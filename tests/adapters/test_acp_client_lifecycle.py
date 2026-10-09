@@ -12,7 +12,7 @@ import pytest
 from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.adapters.acp_session_state import ACPSessionState
-from gobby.adapters.qwen_acp_client import QwenACPClient
+from gobby.adapters.grok_acp_client import GrokACPClient
 from gobby.utils.child_supervisor import supervised_argv
 
 pytestmark = pytest.mark.unit
@@ -174,7 +174,7 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
 
 
 @pytest.mark.asyncio
-async def test_daemon_spawned_qwen_acp_disables_terminal_hooks(
+async def test_daemon_spawned_acp_child_disables_terminal_hooks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     process = _FakeProcess(
@@ -194,11 +194,13 @@ async def test_daemon_spawned_qwen_acp_disables_terminal_hooks(
         return process
 
     monkeypatch.setattr("gobby.utils.spawn.create_subprocess_exec", fake_create_subprocess_exec)
-    client = QwenACPClient(cli_path="/usr/bin/qwen")
+    client = GrokACPClient(cli_path="/usr/bin/grok")
 
     await client.start(auto_session=False)
 
-    assert captured["args"] == tuple(supervised_argv(["/usr/bin/qwen", "--acp"]))
+    assert captured["args"] == tuple(
+        supervised_argv(["/usr/bin/grok", "agent", "--no-leader", "--always-approve", "stdio"])
+    )
     assert captured["env"]["GOBBY_HOOKS_DISABLED"] == "1"
     assert captured["env"]["GOBBY_ACP_CHILD"] == "1"
 

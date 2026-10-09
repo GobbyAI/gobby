@@ -16,12 +16,11 @@ WriteOutcome = Literal["delivered", "indeterminate", "refused"]
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_QWEN_INTERRUPT_RE = re.compile(r"\b(?:interrupted|cancelled|canceled)\b", re.IGNORECASE)
 _AGY_INTERRUPT_RE = re.compile(
     r"\bInterrupted\s*[·:-]\s*What should Antigravity CLI do instead\?",
     re.IGNORECASE,
 )
-_SUPPORTED_PROVIDERS = frozenset({"qwen", "agy"})
+_SUPPORTED_PROVIDERS = frozenset({"agy"})
 _INTERRUPT_INPUTS = frozenset({"\x03", "\x1b"})
 
 
@@ -77,7 +76,7 @@ def _visible_output(value: str) -> str:
 class TerminalTurnObserver:
     """Correlate Gobby-mediated interrupt keys with current provider output.
 
-    A key is only a candidate: Qwen and AGY use the same keys for ordinary UI
+    A key is only a candidate: AGY uses the same keys for ordinary UI
     dismissal. The current turn becomes interrupted only when matching provider
     output arrives before the candidate expires and before its lifecycle generation
     changes.
@@ -213,12 +212,7 @@ class TerminalTurnObserver:
             return False
         candidate.output = (candidate.output + output)[-4096:]
         visible = _visible_output(candidate.output)
-        matched = (
-            bool(_QWEN_INTERRUPT_RE.search(visible))
-            if candidate.provider == "qwen"
-            else bool(_AGY_INTERRUPT_RE.search(visible))
-        )
-        if not matched:
+        if not _AGY_INTERRUPT_RE.search(visible):
             return False
         self._candidates.pop(terminal_id, None)
         result = self._lifecycle.end_turn(

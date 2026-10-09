@@ -468,7 +468,7 @@ def install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str]
     installed: dict[str, list[str]] = {"commands": []}
 
     # CLI-specific commands (slash commands)
-    # Claude/AGY/Qwen: commands/, Codex: prompts/
+    # Claude/AGY: commands/, Codex: prompts/
     for cmd_dir_name in ["commands", "prompts"]:
         cli_commands = cli_dir / cmd_dir_name
         if cli_commands.exists():

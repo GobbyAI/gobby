@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unified settings validator for all CLI integrations.
 
-Validates hook configuration files across Claude Code, Qwen CLI, Codex,
+Validates hook configuration files across Claude Code, Codex,
 Grok, and Factory Droid.
 
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
@@ -15,7 +15,7 @@ Validates:
 
 Usage:
     validate_settings.py --cli=claude
-    validate_settings.py --cli=qwen
+    validate_settings.py --cli=codex
     validate_settings.py  # auto-detects from script path
 
 Exit Codes:
@@ -87,11 +87,10 @@ class ValidationConfig:
     """Per-CLI validation configuration."""
 
     cli_name: str
-    settings_dir: str  # ".claude", ".qwen", etc.
+    settings_dir: str  # ".claude", ".codex", etc.
     settings_file: str  # "settings.json" or "hooks.json"
     required_hooks: tuple[str, ...]  # Required hook types
-    nested: bool  # True = hooks have nested "hooks" array (Claude/Qwen)
-    check_disable_all_hooks: bool = False  # Qwen requires top-level disableAllHooks=false
+    nested: bool  # True = hooks have nested "hooks" array (Claude)
     check_version: int | None = None  # Reserved for future use
     flat_hooks: bool = False  # Droid: hooks are top-level keys (no "hooks" wrapper)
 
@@ -125,31 +124,6 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
             "SubagentStop",
         ),
         nested=True,
-    ),
-    "qwen": ValidationConfig(
-        cli_name="Qwen CLI",
-        settings_dir=".qwen",
-        settings_file="settings.json",
-        required_hooks=(
-            "SessionStart",
-            "SessionEnd",
-            "UserPromptSubmit",
-            "PreToolUse",
-            "PermissionRequest",
-            "PostToolUse",
-            "PostToolUseFailure",
-            "Stop",
-            "StopFailure",
-            "SubagentStart",
-            "SubagentStop",
-            "PreCompact",
-            "PostCompact",
-            "Notification",
-            "TodoCreated",
-            "TodoCompleted",
-        ),
-        nested=True,
-        check_disable_all_hooks=True,
     ),
     "codex": ValidationConfig(
         cli_name="Codex CLI",
@@ -243,12 +217,6 @@ def validate(config: ValidationConfig) -> int:
     print("Hooks section found")
 
     # 4. CLI-specific extra checks
-    if config.check_disable_all_hooks:
-        if settings.get("disableAllHooks") is not False:
-            print(f"disableAllHooks is not set to false (required for {config.cli_name})")
-            return 1
-        print("disableAllHooks is false")
-
     if config.check_version is not None:
         version = settings.get("version")
         if version != config.check_version:
@@ -268,7 +236,7 @@ def validate(config: ValidationConfig) -> int:
             return 1
 
         if config.nested:
-            # Claude/Qwen: nested structure with "hooks" array
+            # Claude: nested structure with "hooks" array
             first_config = hook_configs[0]
             if not isinstance(first_config.get("hooks"), list) or not first_config["hooks"]:
                 print(f"No 'hooks' array in {hook_type} configuration")
@@ -292,7 +260,7 @@ def main() -> int:
     """Main entry point."""
     config = detect_cli_config()
     if config is None:
-        print("Could not detect CLI. Use --cli=<name> (claude, grok, qwen, codex, droid)")
+        print("Could not detect CLI. Use --cli=<name> (claude, grok, codex, droid)")
         return 1
 
     return validate(config)

@@ -1,7 +1,7 @@
 """Unified hook event models for multi-CLI session management.
 
 This module defines the unified internal representation for hook events across
-all supported CLIs (Claude Code, Droid CLI, Qwen CLI, Grok CLI, Codex CLI).
+all supported CLIs (Claude Code, Droid CLI, Grok CLI, Codex CLI, AGY).
 Adapters translate between CLI-specific formats and these unified types.
 
 Design Decision: This file coexists with hook_types.py. The existing HookType enum
@@ -95,7 +95,6 @@ class SessionSource(str, Enum):
     CLAUDE = "claude"
     DROID = "droid"
     GROK = "grok"
-    QWEN = "qwen"
     CODEX = "codex"
     PIPELINE = "pipeline"
     UNKNOWN = "unknown"
@@ -288,173 +287,140 @@ class HookResponse:
 # Event type mapping table for documentation (see plan-multi-cli.md section 1.2)
 # This is informational - actual mappings are in adapters
 EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
-    HookEventType.SETUP: {"claude": "Setup", "qwen": None, "codex": None},
+    HookEventType.SETUP: {"claude": "Setup", "codex": None},
     HookEventType.SESSION_START: {
         "claude": "SessionStart",
-        "qwen": "SessionStart",
         "codex": "SessionStart",
     },
     HookEventType.SESSION_END: {
         "claude": "SessionEnd",
-        "qwen": "SessionEnd",
         "codex": "SessionEnd",
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",
-        "qwen": "UserPromptSubmit",
         "codex": "UserPromptSubmit",
     },
     HookEventType.USER_PROMPT_EXPANSION: {
         "claude": "UserPromptExpansion",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
-        "qwen": "Stop",
         "codex": None,
     },
     HookEventType.STOP: {
         "claude": "Stop",
-        "qwen": "Stop",
         "codex": "Stop",
     },
     # Only Codex has a dedicated hook; the other adapters derive INTERRUPT
     # from their stop/failure payloads.
-    HookEventType.INTERRUPT: {"claude": None, "qwen": None, "codex": "Interrupt"},
+    HookEventType.INTERRUPT: {"claude": None, "codex": "Interrupt"},
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
-        "qwen": "PreToolUse",
         "codex": "PreToolUse",
     },
     HookEventType.AFTER_TOOL: {
         "claude": "PostToolUse",
-        "qwen": "PostToolUse",
         "codex": "PostToolUse",
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
-        "qwen": None,
         "codex": None,
     },
     HookEventType.POST_TOOL_BATCH: {
         "claude": "PostToolBatch",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.BEFORE_MODEL: {
         "claude": None,
-        "qwen": None,
         "codex": None,
     },
     HookEventType.AFTER_MODEL: {
         "claude": None,
-        "qwen": None,
         "codex": None,
     },
     HookEventType.PRE_COMPACT: {
         "claude": "PreCompact",
-        "qwen": "PreCompact",
         "codex": "PreCompact",
     },
     HookEventType.POST_COMPACT: {
         "claude": "PostCompact",
-        "qwen": "PostCompact",
         "codex": "PostCompact",
     },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
-        "qwen": "SubagentStart",
         "codex": "SubagentStart",
     },
     HookEventType.SUBAGENT_STOP: {
         "claude": "SubagentStop",
-        "qwen": "SubagentStop",
         "codex": "SubagentStop",
     },
     HookEventType.PERMISSION_REQUEST: {
         "claude": "PermissionRequest",
-        "qwen": "PermissionRequest",
         "codex": "PermissionRequest",
     },
     HookEventType.PERMISSION_DENIED: {
         "claude": "PermissionDenied",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.NOTIFICATION: {
         "claude": "Notification",
-        "qwen": "Notification",
         "codex": None,
     },
     HookEventType.MESSAGE_DISPLAY: {
         "claude": "MessageDisplay",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.DIRECTORY_ADDED: {
         "claude": "DirectoryAdded",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.STOP_FAILURE: {
         "claude": "StopFailure",
-        "qwen": "StopFailure",
         "codex": None,
     },
     HookEventType.TASK_CREATED: {
         "claude": "TaskCreated",
-        "qwen": "TodoCreated",
         "codex": None,
     },
     HookEventType.TASK_COMPLETED: {
         "claude": "TaskCompleted",
-        "qwen": "TodoCompleted",
         "codex": None,
     },
     HookEventType.TEAMMATE_IDLE: {
         "claude": "TeammateIdle",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.INSTRUCTIONS_LOADED: {
         "claude": "InstructionsLoaded",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.CONFIG_CHANGE: {
         "claude": "ConfigChange",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.CWD_CHANGED: {
         "claude": "CwdChanged",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.FILE_CHANGED: {
         "claude": "FileChanged",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.WORKTREE_CREATE: {
         "claude": "WorktreeCreate",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.WORKTREE_REMOVE: {
         "claude": "WorktreeRemove",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.ELICITATION: {
         "claude": "Elicitation",
-        "qwen": None,
         "codex": None,
     },
     HookEventType.ELICITATION_RESULT: {
         "claude": "ElicitationResult",
-        "qwen": None,
         "codex": None,
     },
 }

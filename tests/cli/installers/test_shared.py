@@ -232,18 +232,18 @@ class TestInstallCliContent:
     def test_install_cli_workflows_db_managed(self, temp_dir: Path) -> None:
         """Test that CLI-specific workflows are not installed (DB-managed)."""
         install_dir = temp_dir / "install"
-        cli_dir = install_dir / "qwen"
+        cli_dir = install_dir / "codex"
         workflows_dir = cli_dir / "workflows"
         workflows_dir.mkdir(parents=True)
 
-        (workflows_dir / "qwen-workflow.yaml").write_text("name: qwen-workflow")
+        (workflows_dir / "codex-workflow.yaml").write_text("name: codex-workflow")
 
-        target_path = temp_dir / ".qwen"
+        target_path = temp_dir / ".codex"
         target_path.mkdir(parents=True)
 
         with patch("gobby.cli.installers.shared.get_install_dir") as mock_install_dir:
             mock_install_dir.return_value = install_dir
-            result = install_cli_content("qwen", target_path)
+            result = install_cli_content("codex", target_path)
 
         # Workflows are DB-managed, not file-based
         assert "workflows" not in result

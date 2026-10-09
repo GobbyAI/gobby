@@ -31,7 +31,7 @@ PROVIDER_ALIASES = {
     "openai": "codex",
 }
 
-SPAWN_CAPABLE_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
+SPAWN_CAPABLE_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok"})
 
 SpawnArgumentCode = Literal["provider_required_for_model", "incompatible_model_provider"]
 PROVIDER_REQUIRED_FOR_MODEL: SpawnArgumentCode = "provider_required_for_model"

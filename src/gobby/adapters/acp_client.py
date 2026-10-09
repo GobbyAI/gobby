@@ -9,7 +9,7 @@ Protocol lifecycle:
   2. session/new or session/load  →  obtain a sessionId
   3. session/prompt  →  send user input, receive streaming notifications
 
-Per-CLI concretes (``GrokACPClient``, ``QwenACPClient``) override the class
+Per-CLI concretes (``GrokACPClient``) override the class
 attributes ``cli_name``, ``display_name``, ``prompt_timeout_env``,
 ``protocol_version`` and may override ``_normalize_notification`` or
 ``_extract_text_content`` to handle protocol-specific seams.
@@ -55,13 +55,11 @@ _next_id = itertools.count(1)
 
 DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS = 120.0
-ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
 
 __all__ = [
     "ACPClient",
     "ACP_PROMPT_TIMEOUT_ENV_GROK",
-    "ACP_PROMPT_TIMEOUT_ENV_QWEN",
     "StreamEvent",
     "UnsupportedACPMethodError",
 ]
@@ -133,7 +131,7 @@ def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None
 class ACPClient:
     """Base client for an ACP-speaking CLI's ``--acp`` mode.
 
-    Concrete subclasses (``GrokACPClient``, ``QwenACPClient``) set the four
+    Concrete subclasses (``GrokACPClient``) set the four
     class attributes below; everything else — protocol mechanics, lifecycle,
     notification dispatch — is inherited.
 
@@ -151,7 +149,7 @@ class ACPClient:
 
     Usage::
 
-        client = QwenACPClient()
+        client = GrokACPClient()
         await client.start()
         async for event in client.send("Hello"):
             print(event)

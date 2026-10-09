@@ -35,7 +35,7 @@ class _Row:
     id: str = "sess-1"
     external_id: str = "acp-session-xyz"
     machine_id: str = "21000000-0000-4000-8000-000000000001"
-    source: str = "qwen"
+    source: str = "grok"
     project_id: str = "proj-1"
     status: str = "active"
     session_type: str = "web_chat"
@@ -144,8 +144,8 @@ class _Backend:
 
 def _runtime(backend: _Backend) -> SimpleNamespace:
     return SimpleNamespace(
-        acp_backends=lambda: {"qwen": backend},
-        acp_backend=lambda provider: backend if provider == "qwen" else None,
+        acp_backends=lambda: {"grok": backend},
+        acp_backend=lambda provider: backend if provider == "grok" else None,
         acp_session_capabilities=lambda provider: {"close": True, "delete": True},
         get_acp_session_info=lambda _p, _s: None,
         sandbox_config=SandboxConfig(enabled=False),
@@ -207,7 +207,7 @@ class TestRestartBeforeRehydration:
         with pytest.raises(ACPWorkspaceIdentityError, match="before launch"):
             await service._with_operation_client(
                 cast(Any, stale),
-                "qwen",
+                "grok",
                 lambda client: client.close_session("acp-session-xyz"),
                 capability="close",
             )
@@ -368,7 +368,7 @@ class TestPendingWorktreeOverrideLaunch:
         existing.seq_num = 1
         existing.session_type = "web_chat"
         existing.status = "active"
-        existing.source = "qwen"
+        existing.source = "grok"
         existing.project_id = "proj-1"
         existing.external_id = None
         existing.usage_output_tokens = 0
@@ -380,7 +380,7 @@ class TestPendingWorktreeOverrideLaunch:
 
         launch_paths: list[str | None] = []
         session = AsyncMock()
-        session.provider = "qwen"
+        session.provider = "grok"
         session.chat_mode = "plan"
         session.db_session_id = None
         session.resume_session_id = None
@@ -411,7 +411,7 @@ class TestPendingWorktreeOverrideLaunch:
 
         with patch("gobby.storage.projects.LocalProjectManager") as project_manager:
             project_manager.return_value.get.return_value = SimpleNamespace(repo_path="/repo/main")
-            await mixin._create_chat_session_inner("conv-wt", provider="qwen")
+            await mixin._create_chat_session_inner("conv-wt", provider="grok")
 
         assert launch_paths == [str(worktree)]
         assert session.project_path == str(worktree)

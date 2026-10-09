@@ -16,7 +16,7 @@ KNOWN_PROVIDER_ERROR_KINDS = frozenset({"capacity", "api_error", "retry", "termi
 KNOWN_ERROR_REASONS = frozenset(
     {"server_overloaded", "api_error", "retrying", "usage_limit_exceeded", "provider_error"}
 )
-KNOWN_WATCHDOG_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok", "qwen"})
+KNOWN_WATCHDOG_PROVIDERS = frozenset({"agy", "claude", "codex", "droid", "grok"})
 # A terminal provider error may instead carry a reader-built single-line description
 # (error kind, HTTP status, provider error message) so the failed run can name it.
 MAX_TERMINAL_ERROR_REASON_CHARS = 240

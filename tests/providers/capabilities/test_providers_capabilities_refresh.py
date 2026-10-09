@@ -348,22 +348,6 @@ def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
 
 
 @pytest.mark.unit
-def test_coverage_audit_includes_unresolved_qwen_models(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    remote_model = "remote-model(openai)"
-    store = _MemoryStore(_snapshot("qwen", remote_model, context_length=None))
-    auditor = ModelMetadataCoverageAuditor(store, _MetadataStore(), [])
-
-    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
-        auditor.audit()
-
-    messages = [record.getMessage() for record in caplog.records]
-    assert len(messages) == 1
-    assert remote_model in messages[0]
-
-
-@pytest.mark.unit
 def test_coverage_audit_skips_exact_local_model(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -396,12 +380,12 @@ async def test_local_coverage_remote_recovery(
             self.snapshots[snapshot.provider] = snapshot
 
     store = MultiSnapshotStore(
-        _snapshot("qwen", "local-model", "remote-model", context_length=None)
+        _snapshot("codex", "local-model", "remote-model", context_length=None)
     )
     metadata = _MetadataStore()
     aliases = [
         ModelMetadataAlias(
-            provider="qwen",
+            provider="codex",
             provider_model_id="remote-model",
             openrouter_model_id="vendor/remote-model",
         )
@@ -410,13 +394,13 @@ async def test_local_coverage_remote_recovery(
         store,
         metadata,
         aliases,
-        excluded_models=lambda: frozenset({("qwen", "local-model")}),
+        excluded_models=lambda: frozenset({("codex", "local-model")}),
     )
     route = LocalContextRoute(
         machine_id="machine-1",
-        endpoint_id="cli:qwen:active",
+        endpoint_id="cli:codex:active",
         configuration_fingerprint="fingerprint",
-        provider="qwen",
+        provider="codex",
         protocol="openai-compatible",
         model_id="local-model",
         api_base="http://localhost:1234/v1",
@@ -438,7 +422,7 @@ async def test_local_coverage_remote_recovery(
             machine_id=identity.machine_id,
             endpoint_id=identity.endpoint_id,
             configuration_fingerprint=identity.configuration_fingerprint,
-            provider="qwen",
+            provider="codex",
             model_id=model_id,
             canonical_limit=32_768,
         )
@@ -462,10 +446,10 @@ async def test_local_coverage_remote_recovery(
     assert recovered.canonical_limit == 32_768
     messages = [record.getMessage() for record in caplog.records]
     unresolved = [message for message in messages if "models without context metadata" in message]
-    assert unresolved == ["Provider qwen has 1 models without context metadata: remote-model"]
+    assert unresolved == ["Provider codex has 1 models without context metadata: remote-model"]
     assert sum("configured alias targets missing" in message for message in messages) == 1
-    assert "Provider qwen context metadata coverage recovered" in messages
-    assert "Provider qwen model metadata alias targets recovered" in messages
+    assert "Provider codex context metadata coverage recovered" in messages
+    assert "Provider codex model metadata alias targets recovered" in messages
 
 
 @pytest.mark.asyncio
@@ -503,8 +487,8 @@ async def test_authentication_required_refresh_is_informational(
         raise ValueError("ACP session/new error: Authentication required")
 
     coordinator = CapabilityRefreshCoordinator(
-        _MemoryStore(_snapshot("qwen", "qwen-seed")),
-        {"qwen": _Collector(collect, provider="qwen")},
+        _MemoryStore(_snapshot("grok", "grok-seed")),
+        {"grok": _Collector(collect, provider="grok")},
     )
 
     with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.refresh"):
@@ -560,7 +544,7 @@ async def test_refreshes_providers_concurrently() -> None:
         store,
         {
             "codex": _Collector(lambda: collect("codex")),
-            "qwen": _Collector(lambda: collect("qwen"), provider="qwen"),
+            "grok": _Collector(lambda: collect("grok"), provider="grok"),
         },
     )
     refresh = asyncio.create_task(coordinator.refresh_all())

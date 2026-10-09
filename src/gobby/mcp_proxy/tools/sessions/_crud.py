@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
 
-_SUPPORTED_SESSION_SOURCES = ("claude", "grok", "qwen", "codex", "droid", "agy", "unknown")
+_SUPPORTED_SESSION_SOURCES = ("claude", "grok", "codex", "droid", "agy", "unknown")
 
 
 def register_crud_tools(
@@ -81,7 +81,7 @@ def register_crud_tools(
         description="""Get YOUR current session ID - the CORRECT way to look up your session.
 
 Use this when session_id wasn't in your injected context. Pass your external_id
-(from transcript path or GOBBY_SESSION_ID env) and source (claude, grok, qwen, codex, droid, agy).
+(from transcript path or GOBBY_SESSION_ID env) and source (claude, grok, codex, droid, agy).
 
 DO NOT use list_sessions to find your session - it won't work with multiple active sessions.""",
     )
@@ -93,12 +93,12 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
                 Look up your internal session_id from external_id and source.
 
         The agent passes external_id (from injected context or GOBBY_SESSION_ID env var)
-        and source (claude, grok, qwen, codex, droid, agy). project_id is
+        and source (claude, grok, codex, droid, agy). project_id is
                 auto-resolved from config files.
 
                 Args:
                     external_id: Your CLI's session ID (from context or GOBBY_SESSION_ID env)
-        source: CLI source - "claude", "grok", "qwen", "codex", "droid", or "agy"
+        source: CLI source - "claude", "grok", "codex", "droid", or "agy"
 
                 Returns:
                     session_id: Internal Gobby session ID (use for parent_session_id, etc.)
@@ -168,7 +168,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                     project_id: Filter by project ID
             status: Filter by status (active, paused, interrupted, awaiting_input,
                 awaiting_approval, awaiting_handoff, expired, archived)
-        source: Filter by CLI source (claude, grok, qwen, codex, droid, agy)
+        source: Filter by CLI source (claude, grok, codex, droid, agy)
                     machine_id: Filter by client machine id
                     limit: Max results (default 20)
 

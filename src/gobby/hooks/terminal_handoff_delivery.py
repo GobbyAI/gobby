@@ -57,7 +57,6 @@ _TERMINAL_SOURCES = frozenset(
         SessionSource.CLAUDE,
         SessionSource.CODEX,
         SessionSource.GROK,
-        SessionSource.QWEN,
         SessionSource.DROID,
     }
 )

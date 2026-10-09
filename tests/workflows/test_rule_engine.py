@@ -3472,7 +3472,7 @@ class TestTurnEndResolution:
         )
 
         variables: dict[str, Any] = {}
-        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.AGY)
         await _assert_evaluation(db, event, "allow", variables=variables)
 
         assert variables["matched"] is True

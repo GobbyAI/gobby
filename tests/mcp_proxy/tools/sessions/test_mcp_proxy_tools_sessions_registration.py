@@ -280,7 +280,7 @@ class TestRegisterSession:
         mock_session.seq_num = 99
         mock_session.external_id = "ext-opt"
         mock_session.status = "active"
-        mock_session.source = "qwen"
+        mock_session.source = "codex"
         mock_session.project_id = "11111111-1111-4111-8111-111111110001"
         session_manager.register.return_value = mock_session
 
@@ -290,7 +290,7 @@ class TestRegisterSession:
 
         register(
             external_id="ext-opt",
-            source="qwen",
+            source="codex",
             machine_id="21000000-0000-4000-8000-000000000005",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
@@ -302,7 +302,7 @@ class TestRegisterSession:
         session_manager.register.assert_called_once_with(
             external_id="ext-opt",
             machine_id="21000000-0000-4000-8000-000000000005",
-            source="qwen",
+            source="codex",
             project_id="11111111-1111-4111-8111-111111110001",
             title="My Session",
             title_source="manual",

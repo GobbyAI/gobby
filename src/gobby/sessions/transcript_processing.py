@@ -304,7 +304,7 @@ class TranscriptProcessingMixin:
 
         # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
         # records; this token-event path only consumes ParsedMessage fields
-        # (model, usage, message_id). Qwen's .json transcripts use the same
+        # (model, usage, message_id). Other JSON transcripts use the same
         # line-oriented envelope contract as the other supported CLIs.
         # JSON strings may contain Unicode line separators; only physical LF ends a record.
         parsed_records = parser.parse_lines(list(StringIO(raw)), start_index=0)

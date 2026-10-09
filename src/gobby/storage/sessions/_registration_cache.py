@@ -142,7 +142,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
 
         Args:
             external_id: External session identifier
-            source: CLI source identifier (e.g., "claude", "qwen", "codex")
+            source: CLI source identifier (e.g., "claude", "codex", "grok")
             project_id: Project identifier
 
         Returns:
@@ -199,7 +199,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
 
         Args:
             external_id: External session identifier
-            source: CLI source identifier (e.g., "claude", "qwen", "codex")
+            source: CLI source identifier (e.g., "claude", "codex", "grok")
             project_id: Optional project scope.
 
         Returns:

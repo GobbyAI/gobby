@@ -34,7 +34,6 @@ def _provider_from_adapter_name(adapter_name: str) -> str:
         "ClaudeCodeAdapter": "claude",
         "CodexHooksAdapter": "codex",
         "GrokAdapter": "grok",
-        "QwenAdapter": "qwen",
         "DroidAdapter": "droid",
     }
     if adapter_name in explicit:
@@ -132,7 +131,7 @@ def normalize_adapter_response_reason(
 class BaseAdapter(ABC):
     """Base class for CLI adapters that translate native events to HookEvents.
 
-    Each CLI (Claude Code, Qwen, Codex) has its own adapter that:
+    Each CLI (Claude Code, Codex, Grok) has its own adapter that:
     1. Knows how to parse the CLI's native hook payload format
     2. Translates payloads to unified HookEvent objects
     3. Translates HookResponse objects back to CLI-expected format
@@ -186,7 +185,7 @@ class BaseAdapter(ABC):
             native_event: The raw payload from the CLI's hook dispatcher.
                 Structure varies by CLI:
                 - Claude Code: {"hook_type": "...", "input_data": {...}}
-                - Qwen/Grok: {"hook_event_name": "...", "session_id": "...", ...}
+                - Grok: {"hook_event_name": "...", "session_id": "...", ...}
                 - Codex: JSON-RPC params from app-server events
 
         Returns:
@@ -204,7 +203,7 @@ class BaseAdapter(ABC):
         Returns:
             A dict in the format expected by the CLI's hook dispatcher:
             - Claude Code: {"continue": bool, "stopReason": str | None, ...}
-            - Qwen/Grok: {"decision": str, "hookSpecificOutput": {...}}
+            - Grok: {"decision": str, "hookSpecificOutput": {...}}
             - Codex: JSON-RPC response format
         """
         pass

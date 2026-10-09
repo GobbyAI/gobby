@@ -272,7 +272,7 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
 
 @pytest.mark.parametrize(
     ("provider", "headless"),
-    [("grok", True), ("droid", True), ("claude", False), ("codex", False), ("qwen", False)],
+    [("grok", True), ("droid", True), ("claude", False), ("codex", False)],
 )
 def test_only_headless_clis_declare_headless_spawn(provider: str, headless: bool) -> None:
     assert provider_capabilities(provider).headless_spawn is headless

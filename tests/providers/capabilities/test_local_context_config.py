@@ -48,7 +48,7 @@ def test_configured_local_routes() -> None:
     routes = configured_local_routes(
         config,
         machine_id="machine-a",
-        environment={"VLLM_TOKEN": "vllm-secret", "QWEN_API_KEY": "qwen-secret"},
+        environment={"VLLM_TOKEN": "vllm-secret"},
         codex_config={
             "model": "codex-model",
             "model_provider": "active-local",
@@ -64,17 +64,6 @@ def test_configured_local_routes() -> None:
             "model": "claude-remote",
             "env": {"ANTHROPIC_BASE_URL": "https://models.example.test/v1"},
         },
-        qwen_settings={
-            "model": {"name": "qwen-model"},
-            "modelProviders": {
-                "openai": [
-                    {
-                        "id": "qwen-model",
-                        "baseUrl": "http://127.0.0.1:9000/v1?private=query",
-                    }
-                ]
-            },
-        },
     )
 
     by_selection = {(route.provider, route.model_id): route for route in routes}
@@ -84,7 +73,6 @@ def test_configured_local_routes() -> None:
         ("codex", "codex-model"),
         ("droid", "droid-model"),
         ("grok", "grok-model"),
-        ("qwen", "qwen-model"),
     }
     matched = by_selection["codex", "codex-model"]
     assert matched.endpoint_id == "endpoint:vllm"
@@ -93,13 +81,11 @@ def test_configured_local_routes() -> None:
         matched.configuration_fingerprint
         == by_selection["endpoint:vllm", "vllm-default"].configuration_fingerprint
     )
-    assert by_selection["qwen", "qwen-model"].endpoint_id == "cli:qwen:openai:qwen-model"
     assert all(route.is_local for route in routes)
 
     rendered = repr(routes) + repr([route.to_dict() for route in routes])
     assert "studio-secret" not in rendered
     assert "vllm-secret" not in rendered
-    assert "qwen-secret" not in rendered
     assert "private=query" not in rendered
 
 
@@ -170,7 +156,6 @@ def test_route_matches_only_exact_observation_identity() -> None:
         environment={},
         codex_config={},
         claude_settings={},
-        qwen_settings={},
     )[0]
     observation = build_context_observation(
         machine_id=route.machine_id,
