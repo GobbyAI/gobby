@@ -11,7 +11,7 @@
         "mental-model",
         "quick-start",
         "authentication",
-        "rotate-the-local-token",
+        "replace-or-revoke-an-api-key",
         "manual-verification-matrix",
         "secrets",
         "service-helpers",
