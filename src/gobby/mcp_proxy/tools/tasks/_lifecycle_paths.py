@@ -141,11 +141,14 @@ def register_release_task_paths(
         try:
             session_id = ctx.resolve_session_id(session_ref)
             project_id = ctx.resolve_project_from_session(session_ref)
+            session = ctx.session_manager.get(session_id)
+            workspace = session.workspace_path if session is not None else None
             checkout_root = _lifecycle_checkout_root(
                 ctx,
                 session_id=session_id,
                 project_id=project_id,
-                overlay_path=_claimed_session_worktree_path(
+                overlay_path=workspace
+                or _claimed_session_worktree_path(
                     ctx,
                     session_id=session_id,
                     project_id=project_id,
