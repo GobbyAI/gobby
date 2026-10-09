@@ -1,5 +1,6 @@
 """Managed observability must not use the agent's restricted hub credentials."""
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,6 +15,8 @@ from gobby.utils.status import RichStatusProbe
 
 pytestmark = pytest.mark.unit
 
+_EXECUTION_ID = "00000000-0000-0000-0000-000000000123"
+
 
 @pytest.fixture
 def bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -21,9 +24,29 @@ def bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     path = tmp_path / "bootstrap.yaml"
     path.write_text(f"daemon_port: 61234\nfiles_home: {tmp_path}\n")
     path.chmod(0o600)
-    for name in ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "GOBBY_DAEMON_URL", "GOBBY_DAEMON_PORT"):
+    for name in (
+        "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+        "GOBBY_DAEMON_URL",
+        "GOBBY_DAEMON_PORT",
+        "GOBBY_AGENT_RUN_ID",
+        "GOBBY_MANAGED_EXECUTION_ID",
+        "GOBBY_SESSION_ID",
+        "GOBBY_PROJECT_ID",
+        "GOBBY_MACHINE_ID",
+    ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "test-run-capability")
+    envelope = tmp_path / "grant.json"
+    envelope.write_text(
+        json.dumps(
+            {
+                "managed_api_token": "test-run-capability",
+                "principal": {"kind": "tool_chat", "execution_id": _EXECUTION_ID},
+            }
+        )
+    )
+    envelope.chmod(0o600)
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_ID", _EXECUTION_ID)
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "stale-run-capability")
     for module in ("gobby.cli.daemon", "gobby.cli.daemon_health"):
         monkeypatch.setattr(f"{module}.get_gobby_home", lambda: tmp_path)
         monkeypatch.setattr(
@@ -69,9 +92,43 @@ def test_status_and_health_under_agent_role_skip_config_store(
     assert "Gobby daemon: healthy" in result.output
     http_get.assert_called_once_with(
         "http://127.0.0.1:61234/api/health",
-        headers={"Authorization": "Bearer test-run-capability"},
+        headers={
+            "Authorization": "Bearer test-run-capability",
+            "X-Gobby-Managed-Execution-Id": _EXECUTION_ID,
+        },
         timeout=2.0,
     )
+    for access in forbidden_config:
+        access.assert_not_called()
+
+
+@pytest.mark.parametrize("fault", ["missing", "permissions", "owner"])
+def test_managed_observability_rejects_invalid_envelope_without_fallback(
+    fault: str,
+    bootstrap: Path,
+    forbidden_config: tuple[MagicMock, MagicMock],
+    http_get: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope = bootstrap.parent / "grant.json"
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(envelope))
+    if fault == "missing":
+        envelope.unlink()
+    elif fault == "permissions":
+        envelope.chmod(0o644)
+    else:
+        payload = json.loads(envelope.read_text())
+        payload["principal"]["execution_id"] = "foreign-execution"
+        envelope.write_text(json.dumps(payload))
+    operator_token = MagicMock(side_effect=AssertionError("managed seat read operator token"))
+    monkeypatch.setattr("gobby.utils.local_token.read_local_api_token", operator_token)
+
+    result = CliRunner().invoke(cli, ["--config", str(bootstrap), "status"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    http_get.assert_not_called()
+    operator_token.assert_not_called()
     for access in forbidden_config:
         access.assert_not_called()
 
