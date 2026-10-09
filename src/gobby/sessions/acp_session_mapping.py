@@ -23,9 +23,9 @@ SESSION_TYPE_WEB_CHAT = "web_chat"
 # ``"acp"`` source; only these provider sources carry an ACP session. The runtime
 # manager's ``acp_backends()`` is the live source of truth — this constant is the
 # fallback used to classify ACP rows when no runtime manager is reachable (e.g.
-# web chat disabled), so a stale grok/qwen row still resolves to "provider
+# web chat disabled), so a stale grok row still resolves to "provider
 # unavailable" rather than "not an ACP target".
-ACP_PROVIDERS: tuple[str, ...] = ("grok", "qwen")
+ACP_PROVIDERS: tuple[str, ...] = ("grok",)
 
 # ACP lifecycle outcomes mapped onto Gobby's existing paradigm. ``close`` reuses
 # the known ``expired`` status (no new "closed" status is introduced); ``delete``
@@ -76,7 +76,7 @@ def map_session_info(
     """Translate an ACP ``SessionInfo`` into canonical Session fields.
 
     Returns ``None`` when the payload carries no usable ``sessionId``. The
-    ``provider`` (e.g. ``"grok"``/``"qwen"``) becomes the canonical ``source``;
+    ``provider`` (e.g. ``"grok"``) becomes the canonical ``source``;
     ACP has no literal ``"acp"`` source.
     """
     if not isinstance(info, Mapping):

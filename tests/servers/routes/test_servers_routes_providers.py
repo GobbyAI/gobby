@@ -146,7 +146,7 @@ class TestProviderRoutes:
         data = response.json()
         assert "providers" in data
         names = [p["name"] for p in data["providers"]]
-        assert names == ["claude", "codex", "droid", "grok", "qwen", "agy"]
+        assert names == ["claude", "codex", "droid", "grok", "agy"]
 
     def test_list_providers_includes_configured_local_endpoints(self) -> None:
         config = DaemonConfig(
@@ -179,13 +179,11 @@ class TestProviderRoutes:
             response = client.get("/api/providers")
             data = response.json()
             providers = {p["name"]: p for p in data["providers"]}
-            assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
+            assert set(providers) == {"claude", "codex", "droid", "grok", "agy"}
             assert providers["claude"]["available"] is True
             assert providers["claude"]["path"] == "/usr/bin/claude"
             assert providers["grok"]["available"] is False
             assert providers["grok"]["path"] is None
-            assert providers["qwen"]["available"] is False
-            assert providers["qwen"]["path"] is None
             assert providers["codex"]["available"] is False
             assert providers["codex"]["path"] is None
             assert providers["droid"]["available"] is False
@@ -208,7 +206,6 @@ class TestProviderRoutes:
         paths = {
             "claude": "/usr/local/bin/claude",
             "grok": "/usr/local/bin/grok",
-            "qwen": "/usr/local/bin/qwen",
             "codex": "/usr/local/bin/codex",
             "droid": "/usr/local/bin/droid",
             "agy": "/usr/local/bin/agy",
@@ -305,9 +302,9 @@ class TestProviderRoutes:
         app = FastAPI()
         runtime_manager = MagicMock()
         runtime_manager.health.side_effect = lambda provider: SimpleNamespace(
-            available=False if provider == "qwen" else True,
-            startup_error="Timed out starting Qwen ACP backend after 15.0s"
-            if provider == "qwen"
+            available=False if provider == "grok" else True,
+            startup_error="Timed out starting Grok ACP backend after 15.0s"
+            if provider == "grok"
             else None,
         )
         server = _server_stub(web_chat_runtime_manager=runtime_manager)
@@ -321,9 +318,9 @@ class TestProviderRoutes:
             response = client.get("/api/providers")
 
         providers = {p["name"]: p for p in response.json()["providers"]}
-        assert providers["qwen"]["available"] is True
+        assert providers["grok"]["available"] is True
         assert (
-            providers["qwen"]["startup_error"] == "Timed out starting Qwen ACP backend after 15.0s"
+            providers["grok"]["startup_error"] == "Timed out starting Grok ACP backend after 15.0s"
         )
 
     def test_usage_route_uses_shared_capacity_service(self) -> None:
@@ -475,7 +472,6 @@ class TestProviderModelsRoute:
         assert set(providers.keys()) == {
             "claude",
             "grok",
-            "qwen",
             "codex",
             "droid",
             "agy",
@@ -486,7 +482,7 @@ class TestProviderModelsRoute:
         assert providers["agy"]["supports_web_chat"] is True
         assert providers["agy"]["supports_agent_spawn"] is True
         assert providers["agy"]["available"] is False
-        for provider in ("claude", "codex", "droid", "grok", "qwen", "agy"):
+        for provider in ("claude", "codex", "droid", "grok", "agy"):
             assert providers[provider]["models"] == []
             assert providers[provider]["refresh"]["sources"][0]["state"] == "pending"
 
@@ -498,10 +494,9 @@ class TestProviderModelsRoute:
         ):
             response = client.get("/api/providers/models")
             providers = {p["provider"]: p for p in response.json()["providers"]}
-            assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
+            assert set(providers) == {"claude", "codex", "droid", "grok", "agy"}
             assert providers["claude"]["available"] is True
             assert providers["grok"]["available"] is False
-            assert providers["qwen"]["available"] is False
             assert providers["codex"]["available"] is False
             assert providers["droid"]["available"] is False
             assert providers["agy"]["available"] is False
@@ -658,7 +653,6 @@ class TestProviderModelsRoute:
             codex=(_model("gpt-5.4"),),
             droid=(_model("droid-model", label="droid-label"),),
             grok=(_model("grok-model", label="grok-label"),),
-            qwen=(_model("qwen-model", label="qwen-label"),),
         )
         server = _server_stub(provider_capability_service=service)
         app.include_router(create_providers_router(server))
@@ -671,9 +665,8 @@ class TestProviderModelsRoute:
             response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
-        assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
+        assert set(providers) == {"claude", "codex", "droid", "grok", "agy"}
         assert providers["claude"]["models"][0]["canonical_model"] == "claude-model"
-        assert providers["qwen"]["models"][0]["canonical_model"] == "qwen-model"
         assert providers["codex"]["models"][0]["canonical_model"] == "gpt-5.4"
         assert providers["codex"]["models"][0]["context_length"] == {
             "value": None,
@@ -1160,8 +1153,8 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
-        for provider in ("claude", "codex", "droid", "grok", "qwen"):
+        assert set(providers) == {"claude", "codex", "droid", "grok", "agy"}
+        for provider in ("claude", "codex", "droid", "grok"):
             assert providers[provider]["refresh"]["sources"][0]["state"] == "pending"
             assert providers[provider]["models"] == []
 
@@ -1236,8 +1229,8 @@ def test_cold_start_seed_and_pending() -> None:
     for provider in ("claude", "droid"):
         assert providers[provider]["models"][0]["canonical_model"] == f"{provider}-seed"
         assert providers[provider]["refresh"]["sources"][0]["state"] == "stale"
-    assert providers["qwen"]["models"] == []
-    assert providers["qwen"]["refresh"] == {
+    assert providers["grok"]["models"] == []
+    assert providers["grok"]["refresh"] == {
         "generation": 0,
         "sources": [{"source_key": "local", "state": "pending"}],
     }

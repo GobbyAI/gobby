@@ -26,6 +26,20 @@ Finish in this order:
    Coverage is judged per invocation and never unioned across runs, so one file per
    call never adds up. Beyond that baseline and `--fail-on-new`, only the
    output-only flags `--format`, `--output` and `--min-severity` keep credit.
+   AGENTS.md rule 4 rung 2 also permits strict per-path confinement credit for
+   pytest runs. A non-zero run keeps its failed outcome. Its complete, untruncated
+   final summary must enumerate every failure in paths attributed to another
+   currently active, claimed task in this project. A durable direct message from
+   the failing session to each owner must name the failing command, paths and
+   failure. A later clean scoped pytest rerun must avoid the failed paths. Both
+   runs must match the named close candidate's bytes for the credited tests and
+   every changed path, including when running in the close checkout. Only the
+   other covered test paths earn credit; failed paths never do. The close audit
+   records the failed command and exit, paths, owners, handoff IDs, rerun and
+   candidate. Owned/unowned failures, missing handoffs, truncated/incomplete
+   summaries, filtered or fail-fast runs, and mismatched bytes grant no credit.
+   This does not satisfy an explicit criterion requiring the failed command to
+   pass, or waive the covering test-type audit or other validation requirements.
 3. Stage only task paths and commit with a task reference. Use
    `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task` with `task_id`, `commit_sha`, `changes_summary`, and
@@ -85,7 +99,9 @@ live, a live session in the task's project takes over that authority with
 `transfer_task_authority(task_id, reason)`. It becomes the delegator, the
 delegation receiver is kept, and the reason is appended to the delegation reason.
 It refuses a closed task, the claimant, a task-close reviewer, and any caller
-while a creator that is not the claimant, or a delegator, is still live.
+while a creator that is not the claimant, or a delegator, is still live. A paused
+holder counts as ended once every agent run linked to it ended or its recorded
+process exited on this machine; a lost terminal or wake binding alone does not.
 Re-running it is a no-op for the session already holding authority.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit

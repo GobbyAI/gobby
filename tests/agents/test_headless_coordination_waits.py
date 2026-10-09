@@ -27,7 +27,7 @@ pytestmark = pytest.mark.unit
 #: ``grok --single`` and ``droid exec`` exit when the turn yields.
 HEADLESS_PROVIDERS = ("grok", "droid")
 #: These keep reading their terminal across a yielded turn, so a wake reaches them.
-TERMINAL_PROVIDERS = ("claude", "codex", "qwen")
+TERMINAL_PROVIDERS = ("claude", "codex")
 WAITER = "waiter-session"
 OWNER = "owner-session"
 

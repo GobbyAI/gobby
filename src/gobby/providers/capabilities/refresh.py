@@ -51,7 +51,6 @@ def _default_collectors() -> Mapping[str, CapabilityCollector]:
     from gobby.providers.capabilities.collectors.codex import CodexCollector
     from gobby.providers.capabilities.collectors.droid import DroidCollector
     from gobby.providers.capabilities.collectors.grok import GrokCollector
-    from gobby.providers.capabilities.collectors.qwen import QwenCollector
 
     builtins = (
         cast(CapabilityCollector, AgyCollector()),
@@ -59,7 +58,6 @@ def _default_collectors() -> Mapping[str, CapabilityCollector]:
         cast(CapabilityCollector, CodexCollector()),
         cast(CapabilityCollector, DroidCollector()),
         cast(CapabilityCollector, GrokCollector()),
-        cast(CapabilityCollector, QwenCollector()),
     )
     defaults = {collector.provider: collector for collector in builtins}
     defaults.update(registered_collectors())

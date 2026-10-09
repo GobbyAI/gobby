@@ -44,13 +44,13 @@ async def _read_transcript(
 ) -> list[dict[str, Any]]:
     """Read and parse a transcript file in its native format.
 
-    Claude, Codex, Droid, and Qwen use JSONL (one JSON object per line).
+    Claude, Codex, and Droid use JSONL (one JSON object per line).
     The returned dicts are in the source's native format - callers that need
     to iterate content blocks should use format-aware helpers.
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"qwen"``, ``"codex"``,
+        source: Session source (``"claude"``, ``"codex"``,
             ``"droid"``).
     """
     return (await _read_transcript_window(path, source=source, max_records=max_turns)).turns

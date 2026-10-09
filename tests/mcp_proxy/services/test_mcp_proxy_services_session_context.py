@@ -27,7 +27,6 @@ class _Service:
     [
         (SessionSource.CODEX, False),
         (SessionSource.CLAUDE, False),
-        (SessionSource.QWEN, False),
         (SessionSource.DROID, False),
         (SessionSource.GROK, False),
         (SessionSource.AGY, False),

@@ -2,13 +2,18 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
-from gobby.mcp_proxy.tools.worktrees._helpers import copy_project_json_to_worktree
+from gobby.mcp_proxy.tools.worktrees._helpers import (
+    copy_project_json_to_worktree,
+    install_provider_hooks,
+)
 from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
@@ -52,6 +57,31 @@ def test_create_worktree_requires_branch_name(registry) -> None:
 
     assert tool is not None
     assert "branch_name" in tool["inputSchema"]["required"]
+
+
+def _schema_enum_values(schema: object) -> set[str]:
+    if isinstance(schema, dict):
+        values = {value for value in schema.get("enum", []) if isinstance(value, str)}
+        for child in schema.values():
+            values |= _schema_enum_values(child)
+        return values
+    if isinstance(schema, list):
+        return set().union(*(_schema_enum_values(child) for child in schema))
+    return set()
+
+
+def test_create_worktree_provider_schema_rejects_qwen(registry: InternalToolRegistry) -> None:
+    tool = registry.get_schema("create_worktree")
+
+    assert tool is not None
+    provider_values = _schema_enum_values(tool["inputSchema"]["properties"]["provider"])
+    assert provider_values == {"claude", "codex", "droid"}
+    call = {"branch_name": "feature/qwen", "provider": "qwen"}
+    assert check_arguments(call, tool["inputSchema"]) == [
+        "Invalid value for parameter 'provider': expected one of 'claude', 'codex', 'droid'"
+    ]
+    assert check_arguments({**call, "provider": "droid"}, tool["inputSchema"]) == []
+    assert install_provider_hooks(cast(Any, "qwen"), "/tmp/worktree") is False
 
 
 @pytest.mark.asyncio

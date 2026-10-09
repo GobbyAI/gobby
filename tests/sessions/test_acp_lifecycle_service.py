@@ -43,7 +43,7 @@ class _FakeSession:
     id: str = "sess-1"
     external_id: str = "acp-session-xyz"
     machine_id: str = "21000000-0000-4000-8000-000000000001"
-    source: str = "qwen"
+    source: str = "grok"
     project_id: str = "proj-1"
     title: str | None = "Work"
     title_source: str | None = "manual"
@@ -165,13 +165,13 @@ class _FakeRuntimeManager:
         return self.mismatch_reason
 
     def acp_backends(self) -> dict[str, _FakeBackend]:
-        return {"qwen": self.backend}
+        return {"grok": self.backend}
 
     def acp_backend(self, provider: str) -> _FakeBackend | None:
-        return self.backend if provider == "qwen" else None
+        return self.backend if provider == "grok" else None
 
     def acp_session_capabilities(self, provider: str) -> dict[str, bool]:
-        return dict(self.backend.capabilities) if provider == "qwen" else {}
+        return dict(self.backend.capabilities) if provider == "grok" else {}
 
     def get_acp_session_info(self, _provider: str, _session_id: str) -> None:
         return None

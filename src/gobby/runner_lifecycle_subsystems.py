@@ -11,7 +11,10 @@ from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.config.ui import effective_ui_host
 from gobby.hooks.background_tasks import create_background_task
-from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
+from gobby.hooks.terminal_handoff_delivery import (
+    resume_dead_handoff_dispatches,
+    resume_unconfirmed_compact_expiries,
+)
 from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
@@ -558,6 +561,13 @@ async def _resume_dead_handoff_dispatches(runner: GobbyRunner) -> None:
             event_loop=asyncio.get_running_loop(),
             terminal_manager=getattr(handlers, "terminal_manager", None),
             terminal_runtime_registry=handlers._terminal_runtime_registry,
+        )
+        # After the dead dispatches settle, so their unconfirmed compacts are owned too.
+        await asyncio.to_thread(
+            resume_unconfirmed_compact_expiries,
+            require_machine_id(),
+            handlers._session_manager.db,
+            event_loop=asyncio.get_running_loop(),
         )
     except Exception:
         logger.warning("Failed resuming dead handoff dispatches", exc_info=True)

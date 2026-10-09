@@ -42,12 +42,16 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
+from gobby.terminals.composer_attention import sync_composer_attention
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
+from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.attention import AttentionStateManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
 
@@ -130,6 +134,7 @@ class WakeDispatcher:
         sdk_resumer: Optional async callable to resume an SDK session with a new prompt
         agent_run_manager: Optional manager for looking up sdk_session_id from agent runs
         terminal_manager: Optional lookup for the live terminal row hosting a session
+        attention_manager: Optional store for a blocked composer's attention item
     """
 
     def __init__(
@@ -145,6 +150,7 @@ class WakeDispatcher:
         run_db: RunDb | None = None,
         lifecycle_refresh: LifecycleRefresh | None = None,
         activity_probe: ActivityProbe | None = None,
+        attention_manager: AttentionStateManager | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -157,6 +163,7 @@ class WakeDispatcher:
         self._run_db = run_db or _default_run_db
         self._lifecycle_refresh = lifecycle_refresh
         self._activity_probe = activity_probe
+        self._attention_manager = attention_manager
         self._restart_horizon_ms: int | None = None
         self._restart_excluded_session_ids: frozenset[str] = frozenset()
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -335,9 +342,10 @@ class WakeDispatcher:
     def _schedule_composer_retry(self, session_id: str, *, priority: str) -> None:
         """Retry a wake withheld from a composer that was not confirmed empty.
 
-        Each withheld attempt doubles the wait until ``COMPOSER_RETRY_MAX_SECONDS``.
-        Keep one retry task until a confirmed empty composer accepts the wake or
-        its lifecycle/terminal outcome no longer permits delivery.
+        Each withheld or failed attempt doubles the wait until
+        ``COMPOSER_RETRY_MAX_SECONDS``. Keep one retry task until a confirmed empty
+        composer accepts the wake or its lifecycle/terminal outcome no longer
+        permits delivery; an attempt that raises is not an outcome.
         """
         if session_id in self._composer_retries:
             return
@@ -366,7 +374,8 @@ class WakeDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                return
+                delay = min(delay * 2, COMPOSER_RETRY_MAX_SECONDS)
+                continue
             skipped = result.get("skipped")
             if skipped not in RETRYABLE_WAKE_SKIPS:
                 return
@@ -677,7 +686,9 @@ class WakeDispatcher:
             return session, state_failure
 
         def read_variables() -> dict[str, Any]:
-            return SessionVariableManager(self._session_manager.db).get_variables(session_id)
+            return SessionVariableManager(self._session_manager.db).get_variable_subset(
+                session_id, (HANDOFF_TURN_END_PENDING_VARIABLE, PENDING_HANDOFF_VARIABLE)
+            )
 
         return session, handoff_delivery_skip(session_id, await self._run_db(read_variables))
 
@@ -707,6 +718,9 @@ class WakeDispatcher:
         An open transcript turn blocks even on an ``empty`` composer: the row was
         reconciled idle earlier, so a turn that started since then would be
         steered or cancelled by this write.
+
+        A gap or interrupt block raises the seat's attention item naming
+        ``release_composer``; any other read retires it (``composer_attention``).
         """
         if self._activity_probe is None:
             return None, False
@@ -715,6 +729,10 @@ class WakeDispatcher:
         except Exception:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
+        if self._attention_manager is not None:
+            await sync_composer_attention(
+                self._attention_manager, self._run_db, session, activity.composer.reason
+            )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
         state = activity.composer.state
@@ -887,7 +905,9 @@ class WakeDispatcher:
         """
 
         def wake_outstanding() -> bool:
-            variables = SessionVariableManager(self._session_manager.db).get_variables(session_id)
+            variables = SessionVariableManager(self._session_manager.db).get_variable_subset(
+                session_id, (LIVE_WAKE_SENT_AT_VARIABLE,)
+            )
             sent_at = variables.get(LIVE_WAKE_SENT_AT_VARIABLE)
             if not isinstance(sent_at, str):
                 return False

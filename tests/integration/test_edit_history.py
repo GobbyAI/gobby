@@ -96,7 +96,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-1",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
         data={"tool_name": edit_tool, "tool_input": {"file_path": str(in_repo_file)}},
@@ -122,7 +122,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     event_read = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-1",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": "read_file"},
         metadata={"_platform_session_id": session.id},
@@ -219,7 +219,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-outside",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
         data={"tool_name": edit_tool, "tool_input": {"file_path": str(outside_file)}},
@@ -246,7 +246,7 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
     session = session_manager.register(
         external_id="test-session-2",
         machine_id="21000000-0000-4000-8000-000000000002",
-        source="qwen",
+        source="claude",
         project_id=project_id,
     )
 
@@ -262,7 +262,7 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-2",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": edit_tool},
         metadata={"_platform_session_id": session.id},
@@ -292,14 +292,14 @@ def test_edit_history_without_claim_records_no_task_scoped_edits(temp_db, tmp_pa
     session = session_manager.register(
         external_id="test-session-no-claim",
         machine_id="21000000-0000-4000-8000-000000000002",
-        source="qwen",
+        source="claude",
         project_id=project.id,
     )
 
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-no-claim",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
         data={"tool_name": list(EDIT_TOOLS)[0], "tool_input": {"file_path": str(in_repo_file)}},
@@ -332,7 +332,7 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     session = session_manager.register(
         external_id="test-session-multi-claim",
         machine_id="21000000-0000-4000-8000-000000000002",
-        source="qwen",
+        source="claude",
         project_id=project.id,
     )
     first = task_manager.create_task(
@@ -360,7 +360,7 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id="test-session-multi-claim",
-        source=SessionSource.QWEN,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         cwd=str(repo_root),
         data={"tool_name": list(EDIT_TOOLS)[0], "tool_input": {"file_path": str(in_repo_file)}},

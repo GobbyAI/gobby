@@ -141,7 +141,7 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
             data["tool_name"] = canonical
             tool_name = canonical
 
-    # 1a-pre. Normalize double-underscore MCP prefix (Grok, Qwen) to canonical
+    # 1a-pre. Normalize double-underscore MCP prefix (Grok) to canonical
     # form. Grok sends <server>__<tool>; canonical is mcp__<server>__<tool>.
     # Without this, rules keyed on mcp_server/mcp_tool or the canonical proxy
     # spelling never recognize Grok's discovery and call_tool invocations.

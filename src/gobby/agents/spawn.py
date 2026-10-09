@@ -200,7 +200,7 @@ def prepare_terminal_spawn(
         parent_session_id: Parent session ID
         project_id: Project ID
         machine_id: Machine ID
-    source: CLI source (claude, qwen, codex, droid)
+    source: CLI source (claude, codex, droid, grok, agy)
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
         agent_name: Agent definition name used for the spawned session/run

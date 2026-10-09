@@ -33,8 +33,8 @@ without daemon input until provider evidence makes wake safe.
 
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. Direct
-`session`, `agent`, and `build` sends require `target_id`. Qwen and AGY sessions
-interrupted through direct tmux input remain unconfirmed and therefore active; positive
+`session`, `agent`, and `build` sends require `target_id`. AGY sessions interrupted
+through direct tmux input remain unconfirmed and therefore active; positive
 hook or Gobby-mediated key/output evidence is required for protected interruption state.
 
 ## Configurability Convention

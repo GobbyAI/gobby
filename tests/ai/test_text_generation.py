@@ -211,7 +211,6 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
         "codex": AIAdapterStyle.DAEMON,
         "endpoint:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
         "grok": AIAdapterStyle.CLI,
-        "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
     }
     registry = AICapabilityRegistry(
@@ -569,10 +568,10 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -583,22 +582,22 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
             ),
         ]
     )
-    qwen = StaticTextAdapter(prompt)
+    grok = StaticTextAdapter(prompt)
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
+    service = TextGenerationService(registry, {"grok": grok, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             profile="feature_mid",
-            candidates=("qwen/qwen-model", "claude/sonnet"),
+            candidates=("grok/grok-model", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert qwen.requests[0].model == "qwen-model"
+    assert grok.requests[0].model == "grok-model"
     assert claude.requests[0].model == "sonnet"
 
 
@@ -611,10 +610,10 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -625,23 +624,23 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
             ),
         ]
     )
-    qwen = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
+    grok = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
+    service = TextGenerationService(registry, {"grok": grok, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             system_prompt=system_prompt,
             profile="feature_mid",
-            candidates=("qwen/qwen-model", "claude/sonnet"),
+            candidates=("grok/grok-model", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert qwen.requests[0].model == "qwen-model"
+    assert grok.requests[0].model == "grok-model"
     assert claude.requests[0].model == "sonnet"
 
 
@@ -963,7 +962,6 @@ async def test_image_routing_skips_generic_codex() -> None:
     grok = RecordingAdapter("grok")
     agy = RecordingAdapter("agy")
     droid = RecordingAdapter("droid")
-    qwen = RecordingAdapter("qwen")
     responses = RecordingAdapter("endpoint:openrouter")
     registry = AICapabilityRegistry(
         [
@@ -995,13 +993,6 @@ async def test_image_routing_skips_generic_codex() -> None:
                 available=True,
                 models=("default",),
             ),
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("qwen3-coder",),
-            ),
             _endpoint_binding(
                 "endpoint:openrouter",
                 "kimi",
@@ -1025,7 +1016,6 @@ async def test_image_routing_skips_generic_codex() -> None:
             "grok": grok,
             "agy": agy,
             "droid": droid,
-            "qwen": qwen,
             "endpoint:openrouter": responses,
             "endpoint:vision": vision,
         },
@@ -1039,7 +1029,6 @@ async def test_image_routing_skips_generic_codex() -> None:
                 "grok/grok-4",
                 "agy/auto",
                 "droid/default",
-                "qwen/qwen3-coder",
                 "endpoint:vision/qwen-vl",
                 "endpoint:openrouter/kimi",
             ),
@@ -1053,7 +1042,6 @@ async def test_image_routing_skips_generic_codex() -> None:
     assert grok.requests == []
     assert agy.requests == []
     assert droid.requests == []
-    assert qwen.requests == []
     assert responses.requests == []
     assert vision.requests[0].images == [_gif_data_url()]
 
@@ -1381,7 +1369,7 @@ async def test_text_generation_service_rejects_partial_explicit_routing(
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_model_only_qwen_never_initializes_droid() -> None:
+async def test_text_generation_service_model_only_request_never_initializes_droid() -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1956,31 +1944,35 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair(
 
 @pytest.mark.asyncio
 async def test_text_generation_service_rejects_pin_when_transport_has_no_flag() -> None:
+    # "flagless" is a CLI provider with no entry in PROVIDER_CAPABILITIES, so its
+    # transport has no reasoning flag.
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="flagless",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("flagless-model",),
             ),
         ]
     )
-    qwen = RecordingAdapter("qwen")
-    service = TextGenerationService(registry, {"qwen": qwen})
+    flagless = RecordingAdapter("flagless")
+    service = TextGenerationService(registry, {"flagless": flagless})
 
     with pytest.raises(ValueError, match="transport does not support reasoning effort"):
         await service.generate_result(
             TextGenerationRequest(
                 prompt="summarize",
                 candidates=(
-                    FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
+                    FeatureCandidateConfig(
+                        candidate="flagless/flagless-model", reasoning_effort="high"
+                    ),
                 ),
             )
         )
 
-    assert qwen.requests == []
+    assert flagless.requests == []
 
 
 @pytest.mark.asyncio
@@ -1989,27 +1981,29 @@ async def test_text_generation_service_omits_auto_when_transport_has_no_flag() -
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="flagless",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("flagless-model",),
             ),
         ]
     )
-    qwen = RecordingAdapter("qwen")
-    service = TextGenerationService(registry, {"qwen": qwen})
+    flagless = RecordingAdapter("flagless")
+    service = TextGenerationService(registry, {"flagless": flagless})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="auto"),
+                FeatureCandidateConfig(
+                    candidate="flagless/flagless-model", reasoning_effort="auto"
+                ),
             ),
         )
     )
 
     assert result.applied_reasoning_effort is None
-    assert qwen.requests[0].reasoning_effort is None
+    assert flagless.requests[0].reasoning_effort is None
 
 
 def test_coerce_text_result_applies_reasoning_effort_to_raw_string() -> None:
@@ -2409,19 +2403,19 @@ async def test_text_generation_service_json_parse_failure_reports_raw_preview() 
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             )
         ]
     )
-    adapter = EmptyTextAdapter("qwen")
-    service = TextGenerationService(registry, {"qwen": adapter})
+    adapter = EmptyTextAdapter("grok")
+    service = TextGenerationService(registry, {"grok": adapter})
 
     with pytest.raises(ValueError) as exc_info:
         await service.generate_json(
-            TextGenerationRequest(prompt="classify", provider="qwen", model="qwen-model")
+            TextGenerationRequest(prompt="classify", provider="grok", model="grok-model")
         )
 
     message = str(exc_info.value)
@@ -2432,7 +2426,7 @@ async def test_text_generation_service_json_parse_failure_reports_raw_preview() 
 
 @pytest.mark.asyncio
 async def test_text_generation_service_resolves_only_selected_adapter() -> None:
-    providers = ("claude", "codex", "endpoint:lm-studio", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "endpoint:lm-studio", "grok", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -2502,7 +2496,7 @@ async def test_text_generation_service_rejects_none_factory_result() -> None:
 
 
 def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
-    providers = ("claude", "codex", "endpoint:lm-studio", "agy", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "endpoint:lm-studio", "agy", "grok", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -2542,35 +2536,15 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
 
 
 def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapters() -> None:
-    config = DaemonConfig(
-        ai={
-            "generation": {
-                "endpoints": {
-                    "ollama": {
-                        "api_base": "http://localhost:11434/v1",
-                        "model": "llama3.2",
-                    }
-                }
-            }
-        }
-    )
-    factories = _daemon_text_generation_adapter_factories(config)
+    factories = _daemon_text_generation_adapter_factories(DaemonConfig())
 
     codex_adapter = factories["codex"]()
     agy_adapter = factories["agy"]()
     grok_adapter = factories["grok"]()
-    qwen_adapter = factories["qwen"]()
 
     assert isinstance(codex_adapter, CodexCLITextGenerateAdapter)
     assert isinstance(agy_adapter, AgyCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
-    assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
-    qwen_command = qwen_adapter.build_command(
-        TextGenerationRequest(prompt="x", model="stale-model")
-    )
-    assert "--openai-base-url" in qwen_command
-    assert "http://localhost:11434/v1" in qwen_command
-    assert qwen_command[qwen_command.index("--model") + 1] == "llama3.2"
 
 
 class FakeNativeTextProvider:
@@ -2978,20 +2952,6 @@ def test_cli_text_generate_adapters_treat_auto_reasoning_effort_as_unset() -> No
     assert "--reasoning-effort" not in grok_command
 
 
-def test_emit_nothing_cli_text_generate_adapters_ignore_reasoning_effort() -> None:
-    qwen = text_generation_adapters._QwenCLITextGenerateAdapter(command_path="/bin/qwen")
-    request = TextGenerationRequest(
-        prompt="prompt",
-        model="model-a",
-        reasoning_effort="high",
-    )
-
-    qwen_command = qwen.build_command(request)
-
-    assert "--reasoning-effort" not in qwen_command
-    assert "model_reasoning_effort" not in " ".join(qwen_command)
-
-
 @pytest.mark.asyncio
 async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
     monkeypatch: pytest.MonkeyPatch,
@@ -3050,10 +3010,10 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -3068,7 +3028,7 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
     service = TextGenerationService(
         registry,
         {
-            "qwen": FailingAdapter(),
+            "grok": FailingAdapter(),
             "claude": claude,
         },
     )
@@ -3077,7 +3037,7 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("qwen/qwen-model", "claude/haiku"),
+            candidates=("grok/grok-model", "claude/haiku"),
         )
     )
 
@@ -3090,10 +3050,10 @@ async def test_text_generation_service_falls_back_when_output_validator_rejects(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -3104,9 +3064,9 @@ async def test_text_generation_service_falls_back_when_output_validator_rejects(
             ),
         ]
     )
-    qwen = StaticTextAdapter("invalid summary")
+    grok = StaticTextAdapter("invalid summary")
     claude = StaticTextAdapter("valid summary")
-    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
+    service = TextGenerationService(registry, {"grok": grok, "claude": claude})
 
     def validate(text: str) -> str | None:
         return None if text == "valid summary" else "missing required summary sections"
@@ -3115,13 +3075,13 @@ async def test_text_generation_service_falls_back_when_output_validator_rejects(
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("qwen/qwen-model", "claude/haiku"),
+            candidates=("grok/grok-model", "claude/haiku"),
             output_validator=validate,
         )
     )
 
     assert result.text == "valid summary"
-    assert qwen.requests[0].output_validator is validate
+    assert grok.requests[0].output_validator is validate
     assert claude.requests[0].output_validator is validate
 
 
@@ -3131,10 +3091,10 @@ async def test_text_generation_service_reports_all_output_validation_failures() 
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -3148,7 +3108,7 @@ async def test_text_generation_service_reports_all_output_validation_failures() 
     service = TextGenerationService(
         registry,
         {
-            "qwen": StaticTextAdapter("private rejected output one"),
+            "grok": StaticTextAdapter("private rejected output one"),
             "claude": StaticTextAdapter("private rejected output two"),
         },
     )
@@ -3159,13 +3119,13 @@ async def test_text_generation_service_reports_all_output_validation_failures() 
             TextGenerationRequest(
                 prompt="summarize",
                 profile="feature_low",
-                candidates=("qwen/qwen-model", "claude/haiku"),
+                candidates=("grok/grok-model", "claude/haiku"),
                 output_validator=lambda _text: next(reasons),
             )
         )
 
     error = str(exc_info.value)
-    assert "qwen/qwen-model" in error
+    assert "grok/grok-model" in error
     assert "claude/haiku" in error
     assert "missing Current State" in error
     assert "missing Next Steps" in error
@@ -3252,22 +3212,22 @@ async def test_json_text_generation_composes_json_instruction() -> None:
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("qwen-model",),
+                models=("grok-model",),
             )
         ]
     )
     adapter = RecordingJSONTextAdapter()
-    service = TextGenerationService(registry, {"qwen": adapter})
+    service = TextGenerationService(registry, {"grok": adapter})
 
     result = await service.generate_json(
         TextGenerationRequest(
             prompt="classify",
             system_prompt="caller prompt",
-            provider="qwen",
-            model="qwen-model",
+            provider="grok",
+            model="grok-model",
         )
     )
 
@@ -3320,16 +3280,16 @@ async def test_spawn_cold_same_provider_calls_respect_global_concurrency_cap() -
     prompts = {f"hold-{index}" for index in range(5)}
     state = GateProbeState(expected_started=3)
     service = TextGenerationService(
-        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
-        {"qwen": GateProbeAdapter(state, wait_prompts=prompts)},
+        _registry_for_text_generation(("grok", AIAdapterStyle.CLI, "grok-model")),
+        {"grok": GateProbeAdapter(state, wait_prompts=prompts)},
         spawn_cold_max_concurrency=3,
     )
     tasks = [
         asyncio.create_task(
             service.generate_result(
                 TextGenerationRequest(
-                    provider="qwen",
-                    model="qwen-model",
+                    provider="grok",
+                    model="grok-model",
                     prompt=f"hold-{index}",
                 )
             )
@@ -3356,11 +3316,11 @@ async def test_spawn_cold_same_provider_calls_respect_global_concurrency_cap() -
 @pytest.mark.asyncio
 async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() -> None:
     requests = [
-        ("qwen", "qwen-model", "hold-qwen-1"),
+        ("grok", "grok-model", "hold-grok-1"),
         ("codex", "gpt-5", "hold-codex-1"),
-        ("qwen", "qwen-model", "hold-qwen-2"),
+        ("grok", "grok-model", "hold-grok-2"),
         ("codex", "gpt-5", "hold-codex-2"),
-        ("qwen", "qwen-model", "hold-qwen-3"),
+        ("grok", "grok-model", "hold-grok-3"),
     ]
     state = GateProbeState(expected_started=3)
     adapter = GateProbeAdapter(
@@ -3369,10 +3329,10 @@ async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() ->
     )
     service = TextGenerationService(
         _registry_for_text_generation(
-            ("qwen", AIAdapterStyle.CLI, "qwen-model"),
+            ("grok", AIAdapterStyle.CLI, "grok-model"),
             ("codex", AIAdapterStyle.DAEMON, "gpt-5"),
         ),
-        {"qwen": adapter, "codex": adapter},
+        {"grok": adapter, "codex": adapter},
         spawn_cold_max_concurrency=3,
     )
     tasks = [
@@ -3387,7 +3347,7 @@ async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() ->
     try:
         await asyncio.wait_for(state.started_event.wait(), timeout=1)
         assert len(state.started) == 3
-        assert set(state.started) == {"qwen", "codex"}
+        assert set(state.started) == {"grok", "codex"}
         assert state.max_active == 3
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(state.over_expected_event.wait(), timeout=0.02)
@@ -3438,14 +3398,14 @@ async def test_fast_generation_lanes_bypass_spawn_cold_gate() -> None:
 async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
-        {"qwen": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
+        _registry_for_text_generation(("grok", AIAdapterStyle.CLI, "grok-model")),
+        {"grok": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
         cli_candidate_timeout_seconds=0.05,
         spawn_cold_max_concurrency=1,
     )
     slow_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="slow")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="slow")
         )
     )
     await asyncio.wait_for(state.started_event.wait(), timeout=1)
@@ -3453,7 +3413,7 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     started_waiting_at = asyncio.get_running_loop().time()
     fast_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="fast")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="fast")
         )
     )
 
@@ -3462,43 +3422,43 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     result = await asyncio.wait_for(fast_task, timeout=1)
 
     assert asyncio.get_running_loop().time() - started_waiting_at >= 0.05
-    assert result.text == "qwen:fast"
+    assert result.text == "grok:fast"
 
 
 @pytest.mark.asyncio
 async def test_spawn_cold_gate_releases_slot_after_provider_error() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
-        {"qwen": GateProbeAdapter(state, failures={"error"})},
+        _registry_for_text_generation(("grok", AIAdapterStyle.CLI, "grok-model")),
+        {"grok": GateProbeAdapter(state, failures={"error"})},
         spawn_cold_max_concurrency=1,
     )
 
     with pytest.raises(RuntimeError, match="boom"):
         await service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="error")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="error")
         )
     result = await asyncio.wait_for(
         service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="success")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="success")
         ),
         timeout=1,
     )
 
-    assert result.text == "qwen:success"
+    assert result.text == "grok:success"
 
 
 @pytest.mark.asyncio
 async def test_spawn_cold_gate_releases_slot_after_cancellation() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
-        {"qwen": GateProbeAdapter(state, wait_prompts={"wait"})},
+        _registry_for_text_generation(("grok", AIAdapterStyle.CLI, "grok-model")),
+        {"grok": GateProbeAdapter(state, wait_prompts={"wait"})},
         spawn_cold_max_concurrency=1,
     )
     cancelled_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="wait")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="wait")
         )
     )
     await asyncio.wait_for(state.started_event.wait(), timeout=1)
@@ -3508,12 +3468,12 @@ async def test_spawn_cold_gate_releases_slot_after_cancellation() -> None:
         await cancelled_task
     result = await asyncio.wait_for(
         service.generate_result(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="success")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="success")
         ),
         timeout=1,
     )
 
-    assert result.text == "qwen:success"
+    assert result.text == "grok:success"
 
 
 @pytest.mark.asyncio
@@ -3767,20 +3727,20 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     slow_adapter = SlowAdapter()
     monkeypatch.setattr(
         text_generation_adapters,
-        "_QwenCLITextGenerateAdapter",
+        "_GrokCLITextGenerateAdapter",
         lambda **_kwargs: slow_adapter,
     )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
             )
         ]
     )
-    # The qwen binding is a spawn-cold CLI lane, so it is bounded by
+    # The grok binding is a spawn-cold CLI lane, so it is bounded by
     # cli_candidate_timeout_seconds, which the config clamps down to
     # timeout_seconds (0.01s) here since the default 600s exceeds it.
     service = build_daemon_text_generation_service(
@@ -3798,7 +3758,7 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     assert service._spawn_cold_max_concurrency == 1
     with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
         await service.generate(
-            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="never completes")
+            TextGenerationRequest(provider="grok", model="grok-model", prompt="never completes")
         )
 
 
@@ -3829,7 +3789,7 @@ def test_default_spawn_cold_candidate_timeout_selection() -> None:
     request = TextGenerationRequest(prompt="prompt")
 
     for provider, style in (
-        ("qwen", AIAdapterStyle.CLI),
+        ("grok", AIAdapterStyle.CLI),
         ("codex", AIAdapterStyle.DAEMON),
         ("claude", AIAdapterStyle.LLM_PROVIDER),
     ):
@@ -3906,8 +3866,8 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
     task = asyncio.create_task(
         text_generation_adapters._run_cli_text_generation_command(
-            "Qwen",
-            ("/usr/local/bin/qwen", "--prompt", "slow"),
+            "Grok",
+            ("/usr/local/bin/grok", "--prompt", "slow"),
             neutral_cwd=Path("/tmp"),
             timeout_seconds=30,
             env_overrides={},
@@ -3959,8 +3919,8 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
     )
     task = asyncio.create_task(
         text_generation_adapters._run_cli_text_generation_command(
-            "Qwen",
-            ("/usr/local/bin/qwen", "--model", "slow"),
+            "Grok",
+            ("/usr/local/bin/grok", "--model", "slow"),
             neutral_cwd=Path("/tmp"),
             timeout_seconds=30,
             env_overrides={},
@@ -4075,124 +4035,6 @@ def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
     assert Path(env["XDG_CACHE_HOME"]) == temp_home / ".cache"
     assert env["GOBBY_HOOKS_DISABLED"] == "1"
     return temp_home
-
-
-@pytest.mark.asyncio
-async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commands: list[tuple[str, ...]] = []
-    cwds: list[Path] = []
-    envs: list[dict[str, str]] = []
-
-    async def fake_create_session_exec(
-        *command: str,
-        env: dict[str, str],
-        cwd: Path,
-        input_bytes: bytes | None = None,
-    ) -> FakeProcess:
-        commands.append(command)
-        cwds.append(cwd)
-        envs.append(env)
-        return FakeProcess(b"qwen text\n")
-
-    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
-    adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
-        command_path="/usr/local/bin/qwen"
-    )
-
-    response = await adapter.generate(
-        TextGenerationRequest(
-            prompt="explain",
-            system_prompt="system",
-            model="qwen3-coder",
-            cwd="/tmp/project",
-        )
-    )
-
-    assert response == "qwen text"
-    assert commands == [
-        (
-            "/usr/local/bin/qwen",
-            "--bare",
-            "--chat-recording=false",
-            "--max-tool-calls",
-            "0",
-            "--max-session-turns",
-            "1",
-            "--output-format",
-            "text",
-            "--model",
-            "qwen3-coder",
-            f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
-        )
-    ]
-    assert "--resume" not in commands[0]
-    assert "--continue" not in commands[0]
-    assert "--session-id" not in commands[0]
-    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
-    assert cwds[0] != Path("/tmp/project")
-    assert "gobby-textgen-" in str(cwds[0])
-    assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
-
-
-@pytest.mark.asyncio
-async def test_qwen_cli_text_generate_adapter_uses_configured_openai_endpoint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commands: list[tuple[str, ...]] = []
-    envs: list[dict[str, str]] = []
-
-    async def fake_create_session_exec(
-        *command: str,
-        env: dict[str, str],
-        cwd: Path,
-        input_bytes: bytes | None = None,
-    ) -> FakeProcess:
-        commands.append(command)
-        envs.append(env)
-        return FakeProcess(b"qwen text\n")
-
-    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
-    adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
-        command_path="/usr/local/bin/qwen",
-        openai_endpoints={
-            "ollama": SimpleNamespace(
-                api_base="http://localhost:11434/v1",
-                model="llama3.2",
-                api_key=None,
-            )
-        },
-    )
-
-    response = await adapter.generate(TextGenerationRequest(prompt="explain", model="qwen3-coder"))
-
-    assert response == "qwen text"
-    assert commands == [
-        (
-            "/usr/local/bin/qwen",
-            "--bare",
-            "--chat-recording=false",
-            "--max-tool-calls",
-            "0",
-            "--max-session-turns",
-            "1",
-            "--output-format",
-            "text",
-            "--auth-type",
-            "openai",
-            "--openai-base-url",
-            "http://localhost:11434/v1",
-            "--model",
-            "llama3.2",
-            f"{ONE_SHOT_DIRECTIVE}\n\nexplain",
-        )
-    ]
-    assert "qwen3-coder" not in commands[0]
-    assert "--openai-api-key" not in commands[0]
-    assert envs[0]["OPENAI_API_KEY"] == "not-needed"
-    assert envs[0]["OPENAI_BASE_URL"] == "http://localhost:11434/v1"
-    assert envs[0]["OPENAI_MODEL"] == "llama3.2"
 
 
 @pytest.mark.asyncio
@@ -4958,8 +4800,8 @@ async def test_run_cli_text_generation_command_gives_stdin_only_its_prompt(
     monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
 
     result = await text_generation_adapters._run_cli_text_generation_command(
-        "Qwen",
-        ("/usr/local/bin/qwen", "--prompt", "hi"),
+        "Grok",
+        ("/usr/local/bin/grok", "--prompt", "hi"),
         neutral_cwd=tmp_path,
         timeout_seconds=5,
         env_overrides={},
@@ -4970,61 +4812,6 @@ async def test_run_cli_text_generation_command_gives_stdin_only_its_prompt(
     # Without a prompt stdin is /dev/null, so codex-style "Reading additional input
     # from stdin" cannot hang; with one, the prompt is all the CLI can read.
     assert captured == {"input_bytes": expected_input, "cwd": tmp_path}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("returncode", [0, 55])
-async def test_run_cli_text_generation_command_returns_accepted_exit_details(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    returncode: int,
-) -> None:
-    async def fake_create_session_exec(
-        *command: str,
-        env: dict[str, str],
-        cwd: Path,
-        input_bytes: bytes | None = None,
-    ) -> FakeProcess:
-        return FakeProcess(b"partial stdout\n", b"budget diagnostic\n", returncode=returncode)
-
-    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
-
-    result = await text_generation_adapters._run_cli_text_generation_command(
-        "Qwen",
-        ("/usr/local/bin/qwen", "--prompt", "hi"),
-        neutral_cwd=tmp_path,
-        timeout_seconds=5,
-        env_overrides={},
-        accepted_exit_codes=frozenset({53, 55}),
-    )
-
-    assert result == ("partial stdout", "budget diagnostic", returncode)
-
-
-@pytest.mark.asyncio
-async def test_run_cli_text_generation_command_rejects_unaccepted_exit(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    async def fake_create_session_exec(
-        *command: str,
-        env: dict[str, str],
-        cwd: Path,
-        input_bytes: bytes | None = None,
-    ) -> FakeProcess:
-        return FakeProcess(b"partial stdout", b"unexpected failure", returncode=54)
-
-    monkeypatch.setattr("gobby.utils.spawn.create_session_exec", fake_create_session_exec)
-
-    with pytest.raises(RuntimeError, match="Qwen CLI failed with exit code 54: unexpected failure"):
-        await text_generation_adapters._run_cli_text_generation_command(
-            "Qwen",
-            ("/usr/local/bin/qwen", "--prompt", "hi"),
-            neutral_cwd=tmp_path,
-            timeout_seconds=5,
-            env_overrides={},
-            accepted_exit_codes=frozenset({53, 55}),
-        )
 
 
 @pytest.mark.asyncio

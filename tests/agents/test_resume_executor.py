@@ -795,7 +795,6 @@ async def test_resume_never_replays_stored_secret_overrides(
     [
         ("droid", "FACTORY_API_BASE_URL", "FACTORY_API_KEY"),
         ("grok", "GROK_API_BASE", "XAI_API_KEY"),
-        ("qwen", "QWEN_API_BASE", "QWEN_API_KEY"),
     ],
 )
 @pytest.mark.asyncio

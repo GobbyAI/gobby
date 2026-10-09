@@ -197,7 +197,7 @@ impl AgentEntry {
 }
 
 /// The daemon's `_PROVIDER_TITLE_LABELS` (`storage/sessions/_title_defaults.py`).
-const PROVIDER_LABELS: [(&str, &str); 10] = [
+const PROVIDER_LABELS: [(&str, &str); 9] = [
     ("agy", "Antigravity"),
     ("claude", "Claude"),
     ("claude_code", "Claude Code"),
@@ -205,7 +205,6 @@ const PROVIDER_LABELS: [(&str, &str); 10] = [
     ("droid", "Droid"),
     ("grok", "Grok"),
     ("pipeline", "Pipeline"),
-    ("qwen", "Qwen"),
     ("system", "System"),
     ("unknown", "Unknown"),
 ];

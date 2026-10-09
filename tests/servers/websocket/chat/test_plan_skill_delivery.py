@@ -28,7 +28,6 @@ from gobby.servers.websocket.chat.backends.droid import (
     _DroidProcessHandle,
 )
 from gobby.servers.websocket.chat.backends.grok import GrokManagedChatSession, GrokWebChatBackend
-from gobby.servers.websocket.chat.backends.qwen import QwenManagedChatSession, QwenWebChatBackend
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -112,7 +111,6 @@ def managed_session(provider: str, wire: ProviderWire, monkeypatch: pytest.Monke
         monkeypatch.setattr(backend, "_read_until_terminal", read_result)
     else:
         session_type, backend_type = {
-            "qwen": (QwenManagedChatSession, QwenWebChatBackend),
             "grok": (GrokManagedChatSession, GrokWebChatBackend),
         }[provider]
         backend = backend_type()
@@ -151,7 +149,7 @@ def bind_rules(
     return host, variables
 
 
-@pytest.mark.parametrize("provider", ["codex", "qwen", "grok", "droid"])
+@pytest.mark.parametrize("provider", ["codex", "grok", "droid"])
 async def test_managed_web_plan_delivery_periods(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -242,7 +240,7 @@ async def test_claude_web_directive_ack_requires_serialized_hook_output(
     )
 
 
-@pytest.mark.parametrize("provider", ["codex", "qwen", "grok", "droid"])
+@pytest.mark.parametrize("provider", ["codex", "grok", "droid"])
 async def test_managed_blocked_prompt_never_reaches_provider(
     monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
@@ -254,7 +252,7 @@ async def test_managed_blocked_prompt_never_reaches_provider(
     assert wire.prompts == []
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "qwen", "grok", "droid"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "grok", "droid"])
 @pytest.mark.parametrize("reset", ["mode_change", "clear", "compact"])
 async def test_context_change_during_evaluation_invalidates_older_receipt(
     temp_db: HubDatabase,

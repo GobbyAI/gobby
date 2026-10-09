@@ -33,7 +33,6 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PROVIDERS = [
     SessionSource.CLAUDE,
     SessionSource.CODEX,
-    SessionSource.QWEN,
     SessionSource.DROID,
     SessionSource.GROK,
     SessionSource.AGY,

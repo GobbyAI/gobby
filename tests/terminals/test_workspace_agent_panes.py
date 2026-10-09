@@ -565,9 +565,9 @@ async def test_balanced_height_refusal_leaves_tab_and_bindings_unchanged(harness
     tab, manager = _base(harness, workspace)
     panes = harness.workspaces.list_panes(workspace.id)
     events = _kinds(harness)
-    with pytest.raises(InvalidWorkspaceOpError, match="cannot fit"):
+    with pytest.raises(InvalidWorkspaceOpError, match="at least 12"):
         harness.workspaces.add_pane(
-            mint_pane_id(), beside=manager.id, axis="vertical", balance_columns=80, balance_rows=24
+            mint_pane_id(), beside=manager.id, axis="vertical", balance_columns=80, balance_rows=11
         )
     assert harness.workspaces.list_panes(workspace.id) == panes
     assert harness.workspaces.list_tabs(workspace.id) == [tab]

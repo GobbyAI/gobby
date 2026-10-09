@@ -7,9 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.adapters.qwen_acp_client import QwenACPClient
-from gobby.agents.trust import authorize_model_discovery_trust
-from gobby.providers.capabilities.collectors import qwen as qwen_capabilities
+from gobby.adapters.grok_acp_client import GrokACPClient
+from gobby.providers.capabilities.collectors import grok as grok_capabilities
 from gobby.providers.capabilities.collectors import validate_snapshot
 from gobby.providers.capabilities.collectors.grok import (
     _EFFORT_SOURCE_KEY,
@@ -17,7 +16,6 @@ from gobby.providers.capabilities.collectors.grok import (
     GrokCollector,
     GrokSourceError,
 )
-from gobby.providers.capabilities.collectors.qwen import QwenCollector, QwenSourceError
 from gobby.providers.capabilities.models import ReasoningSupport, SourceState
 from gobby.servers.provider_models_grok import models_from_cache
 
@@ -65,33 +63,12 @@ async def test_standard_only_discovery() -> None:
         ),
         clock=lambda: _OBSERVED_AT,
     )
-    qwen = QwenCollector(
-        discover_models=_discoverer(
-            {
-                "value": "qwen3-coder-plus",
-                "label": "Qwen3 Coder Plus",
-                "context_length": 262_144,
-                "reasoning": {
-                    "supported_efforts": ["low", "medium", "high"],
-                    "default_effort": "medium",
-                },
-            }
-        ),
-        clock=lambda: _OBSERVED_AT,
-    )
 
-    snapshots = (
-        validate_snapshot(await grok.collect(), grok.sources),
-        validate_snapshot(await qwen.collect(), qwen.sources),
-    )
+    snapshot = validate_snapshot(await grok.collect(), grok.sources)
 
-    grok_models = {model.canonical_model: model for model in snapshots[0].models}
+    grok_models = {model.canonical_model: model for model in snapshot.models}
     assert grok_models["grok-composer-2.5-fast"].context_length == 200_000
     assert grok_models["grok-build"].context_length == 512_000
-    assert snapshots[1].models[0].context_length == 262_144
-    assert snapshots[1].models[0].reasoning is ReasoningSupport.KNOWN
-    assert snapshots[1].models[0].supported_efforts == ("low", "medium", "high")
-    assert snapshots[1].models[0].default_effort == "medium"
 
 
 async def test_unknown_reasoning_null_efforts() -> None:
@@ -100,20 +77,12 @@ async def test_unknown_reasoning_null_efforts() -> None:
         discover_models=_discoverer({"value": "grok-build", "label": "Grok Build"}),
         clock=lambda: _OBSERVED_AT,
     )
-    qwen = QwenCollector(
-        discover_models=_discoverer({"value": "coder-model", "label": "Qwen Coder"}),
-        clock=lambda: _OBSERVED_AT,
-    )
 
-    models = (
-        (await grok.collect()).models[0],
-        (await qwen.collect()).models[0],
-    )
+    model = (await grok.collect()).models[0]
 
-    for model in models:
-        assert model.reasoning is ReasoningSupport.UNKNOWN
-        assert model.supported_efforts is None
-        assert model.default_effort is None
+    assert model.reasoning is ReasoningSupport.UNKNOWN
+    assert model.supported_efforts is None
+    assert model.default_effort is None
 
 
 async def test_documented_grok_models_emit_reasoning_efforts() -> None:
@@ -197,41 +166,33 @@ async def test_missing_cli_is_source_failure() -> None:
 
     with pytest.raises(GrokSourceError, match="CLI not found in PATH") as grok_error:
         await GrokCollector(discover_models=missing_cli).collect()
-    with pytest.raises(QwenSourceError, match="CLI not found in PATH") as qwen_error:
-        await QwenCollector(discover_models=missing_cli).collect()
 
     assert grok_error.value.source_key == GrokCollector.sources[0].source_key
-    assert qwen_error.value.source_key == QwenCollector.sources[0].source_key
 
 
 @pytest.mark.asyncio
-async def test_qwen_discovery_uses_acp_only(
+async def test_grok_discovery_uses_acp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     discover_acp = AsyncMock(
         return_value=[
-            {"value": "acp-local(openai)", "label": "ACP Local (openai)"},
-            {"value": "oauth-model(qwen-oauth)", "label": "OAuth (qwen-oauth)"},
+            {"value": "grok-build", "label": "Grok Build"},
+            {"value": "grok-4.6", "label": "Grok 4.6"},
         ]
     )
-    monkeypatch.setattr(qwen_capabilities, "discover_acp_models", discover_acp)
-    collector = QwenCollector(clock=lambda: _OBSERVED_AT)
+    monkeypatch.setattr(grok_capabilities, "discover_acp_models", discover_acp)
+    collector = GrokCollector(fetch_models_cache=_cache_loader(), clock=lambda: _OBSERVED_AT)
 
     snapshot = validate_snapshot(await collector.collect(), collector.sources)
 
-    assert {model.canonical_model for model in snapshot.models} == {
-        "acp-local(openai)",
-        "oauth-model(qwen-oauth)",
-    }
+    assert {model.canonical_model for model in snapshot.models} == {"grok-build", "grok-4.6"}
     discover_acp.assert_awaited_once_with(
-        client_cls=QwenACPClient,
+        client_cls=GrokACPClient,
         which=shutil.which,
-        model_discovery_cwd=qwen_capabilities._model_discovery_cwd,
-        authorize_trust=authorize_model_discovery_trust,
-        cleanup_tree=shutil.rmtree,
-        logger=qwen_capabilities.logger,
+        model_discovery_cwd=grok_capabilities._model_discovery_cwd,
+        logger=grok_capabilities.logger,
     )
 
     discover_acp.side_effect = RuntimeError("ACP discovery failed")
-    with pytest.raises(QwenSourceError, match="ACP discovery failed"):
+    with pytest.raises(GrokSourceError, match="ACP discovery failed"):
         await collector.collect()

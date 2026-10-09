@@ -879,19 +879,18 @@ class TestPeriodicAgentTerminalEnter:
     @pytest.mark.asyncio
     async def test_sends_enter_to_all_active_terminal_providers(self) -> None:
         mock_run_mgr = MagicMock()
-        monitor = self._monitor(mock_run_mgr, "gobby-codex", "gobby-claude", "gobby-qwen")
+        monitor = self._monitor(mock_run_mgr, "gobby-codex", "gobby-claude")
         runtime = _runtime_of(monitor)
         mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-codex", terminal_id="gobby-codex", provider="codex"),
             self._run(run_id="run-claude", terminal_id="gobby-claude", provider="claude"),
-            self._run(run_id="run-qwen", terminal_id="gobby-qwen", provider="qwen"),
         ]
 
         handled = await monitor.check_periodic_enters()
 
-        assert handled == 3
-        assert runtime.write_log == [("key", "enter")] * 3
-        assert runtime.write_targets == ["gobby-codex", "gobby-claude", "gobby-qwen"]
+        assert handled == 2
+        assert runtime.write_log == [("key", "enter")] * 2
+        assert runtime.write_targets == ["gobby-codex", "gobby-claude"]
 
     @pytest.mark.asyncio
     async def test_periodic_enter_skips_approval_prompt_when_gate_disabled(self) -> None:

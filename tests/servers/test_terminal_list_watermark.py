@@ -616,3 +616,71 @@ async def test_byte_cap_truncation_preserves_forward_progress(
     assert response.json()["detail"] == "terminal_page_too_large"
 
     await server.lease_registry.shutdown_lifecycle_publication()
+
+
+def _page_rows(count: int) -> tuple[list[dict[str, str]], list[str]]:
+    terminal_ids = [str(uuid.UUID(int=index + 1)) for index in range(count)]
+    rows = [
+        {"terminal_id": terminal_id, "title": f"résumé {index} " + "x" * 120}
+        for index, terminal_id in enumerate(terminal_ids)
+    ]
+    cursors = [
+        f"2026-01-01T00:00:{index:02d}+00:00|{tid}" for index, tid in enumerate(terminal_ids)
+    ]
+    return rows, cursors
+
+
+def test_encode_page_encodes_each_row_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows, cursors = _page_rows(40)
+    real_dumps = json.dumps
+    encoded_chars: list[int] = []
+
+    def counting_dumps(value: object, **kwargs: Any) -> str:
+        text = real_dumps(value, **kwargs)
+        encoded_chars.append(len(text))
+        return text
+
+    monkeypatch.setattr(json, "dumps", counting_dumps)
+    page = ws_protocol.encode_page(
+        rows, None, snapshot={"seq": 1}, item_cursors=cursors, envelope={"type": "terminal_list"}
+    )
+    monkeypatch.undo()
+
+    page_chars = len(json.dumps(page, separators=(",", ":")))
+    assert len(page["items"]) == 40
+    assert sum(encoded_chars) <= 2 * page_chars
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 5])
+def test_encode_page_cuts_at_the_real_encoded_size(
+    monkeypatch: pytest.MonkeyPatch, count: int
+) -> None:
+    rows, cursors = _page_rows(5)
+    snapshot = {"daemon_epoch": "epoch", "seq": 3}
+    envelope = {"type": "terminal_list", "request_id": "page"}
+    expected = {
+        **envelope,
+        "items": rows[:count],
+        "next_cursor": cursors[count - 1] if count < len(rows) else None,
+        "snapshot": snapshot,
+    }
+    exact_fit = len(json.dumps(expected, separators=(",", ":")).encode("utf-8"))
+
+    monkeypatch.setattr(ws_protocol, "TERMINAL_LIST_MAX_ENCODED_BYTES", exact_fit)
+    page = ws_protocol.encode_page(
+        rows, None, snapshot=snapshot, item_cursors=cursors, envelope=envelope
+    )
+    assert page == expected
+
+    monkeypatch.setattr(ws_protocol, "TERMINAL_LIST_MAX_ENCODED_BYTES", exact_fit - 1)
+    if count == 1:
+        with pytest.raises(ws_protocol.TerminalPageTooLargeError):
+            ws_protocol.encode_page(
+                rows, None, snapshot=snapshot, item_cursors=cursors, envelope=envelope
+            )
+        return
+    page = ws_protocol.encode_page(
+        rows, None, snapshot=snapshot, item_cursors=cursors, envelope=envelope
+    )
+    assert page["items"] == rows[: count - 1]
+    assert page["next_cursor"] == cursors[count - 2]

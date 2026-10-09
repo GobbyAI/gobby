@@ -6,7 +6,6 @@ from gobby.agents.watchdog.codex import CODEX_WATCHDOG_READER
 from gobby.agents.watchdog.droid import DROID_WATCHDOG_READER
 from gobby.agents.watchdog.grok import GROK_WATCHDOG_READER
 from gobby.agents.watchdog.models import KNOWN_WATCHDOG_PROVIDERS
-from gobby.agents.watchdog.qwen import QWEN_WATCHDOG_READER
 from gobby.agents.watchdog.reader import TranscriptWatchdogReader
 
 _READERS: dict[str, TranscriptWatchdogReader] = {
@@ -15,7 +14,6 @@ _READERS: dict[str, TranscriptWatchdogReader] = {
     "codex": CODEX_WATCHDOG_READER,
     "droid": DROID_WATCHDOG_READER,
     "grok": GROK_WATCHDOG_READER,
-    "qwen": QWEN_WATCHDOG_READER,
 }
 
 if frozenset(_READERS) != KNOWN_WATCHDOG_PROVIDERS:  # pragma: no cover - import-time guard

@@ -8,18 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.adapters.acp_stream import StreamEvent
-from gobby.adapters.acp_tool_names import normalize_acp_tool_name
-from gobby.llm.claude_models import ToolCallEvent
-from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
     CodexWebChatBackend,
 )
-from gobby.servers.websocket.chat.backends.qwen import (
-    QwenManagedChatSession,
-    QwenWebChatBackend,
+from gobby.servers.websocket.chat.backends.grok import (
+    GrokManagedChatSession,
+    GrokWebChatBackend,
 )
 from tests._timing import drain_asyncio_tasks
 
@@ -31,25 +27,6 @@ def test_codex_backend_and_session_share_provider_id() -> None:
     session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
 
     assert session.provider == backend.provider == "codex"
-
-
-def test_qwen_acp_web_chat_uses_shared_tool_name_normalizer_directly() -> None:
-    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
-
-    assert session._tool_name_adapter() is normalize_acp_tool_name
-    translated = session._translate_event(
-        StreamEvent(
-            event_type="tool_call",
-            data={"tool_name": "run_shell_command", "id": "qwen-call"},
-        )
-    )
-
-    assert isinstance(translated, ToolCallEvent)
-    assert translated.tool_name == "Bash"
-
-
-def test_qwen_backend_uses_generic_acp_attach() -> None:
-    assert QwenWebChatBackend.attach_session is ACPWebChatBackend.attach_session
 
 
 @pytest.mark.asyncio
@@ -130,9 +107,9 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     client.load_session = AsyncMock(side_effect=load_session)
     client.resume_session = AsyncMock(side_effect=resume_session)
 
-    backend = QwenWebChatBackend(client=client, default_model="qwen-default")
-    backend._health = ProviderBackendHealth(provider="qwen", available=True)
-    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+    backend = GrokWebChatBackend(client=client, default_model="grok-default")
+    backend._health = ProviderBackendHealth(provider="grok", available=True)
+    session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
     session.project_path = "workspace"
     session.resume_session_id = resume_session_id
 
@@ -142,13 +119,13 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     ) as pre_approve:
         await backend.attach_session(session)
 
-    pre_approve.assert_called_once_with("qwen", expected_cwd)
+    pre_approve.assert_called_once_with("grok", expected_cwd)
     assert order == ["trust", expected_request]
     expected_ids = {"create": "created", "load": "loaded", "resume": "resumed"}
     assert session.sdk_session_id == expected_ids[expected_request]
     if expected_request == "create":
         client.create_session.assert_awaited_once_with(
-            model="qwen-default",
+            model="grok-default",
             cwd=expected_cwd,
             reasoning_effort=None,
         )
@@ -157,7 +134,7 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     elif expected_request == "load":
         client.load_session.assert_awaited_once_with(
             "prev",
-            model="qwen-default",
+            model="grok-default",
             cwd=expected_cwd,
             reasoning_effort=None,
         )
@@ -166,7 +143,7 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     else:
         client.resume_session.assert_awaited_once_with(
             "prev",
-            model="qwen-default",
+            model="grok-default",
             cwd=expected_cwd,
             reasoning_effort=None,
         )
@@ -182,9 +159,9 @@ async def test_acp_attach_session_requires_resolved_model_before_session_request
     client.create_session = AsyncMock()
     client.load_session = AsyncMock()
 
-    backend = QwenWebChatBackend(client=client, default_model=None)
-    backend._health = ProviderBackendHealth(provider="qwen", available=True)
-    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+    backend = GrokWebChatBackend(client=client, default_model=None)
+    backend._health = ProviderBackendHealth(provider="grok", available=True)
+    session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
 
     with pytest.raises(RuntimeError, match="model could not be resolved"):
         await backend.attach_session(session)

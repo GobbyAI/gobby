@@ -1,13 +1,13 @@
 [project]
 name = "gobby"
 version = "0.5.0"
-description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is fleet management for AI coding agents: a local daemon that turns a task into a PR across Claude Code, Codex, Droid, Grok, Qwen, and AGY. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
+description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is fleet management for AI coding agents: a local daemon that turns a task into a PR across Claude Code, Codex, Droid, Grok, and AGY. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
 license = "FSL-1.1-ALv2"
 authors = [
     { name = "Josh Wilhelmi", email = "josh@gobby.ai" }
 ]
-keywords = ["cli", "mcp", "claude", "codex", "droid", "grok", "qwen", "agy", "daemon", "session-management"]
+keywords = ["cli", "mcp", "claude", "codex", "droid", "grok", "agy", "daemon", "session-management"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -166,7 +166,6 @@ gobby = [
     "install/agy/**/*",
     "install/claude/**/*",
     "install/codex/**/*",
-    "install/qwen/**/*",
     "install/bundled_content_manifest.json",
     "install/srt-package-lock.json",
     "install/impeccable-package-lock.json",

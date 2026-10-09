@@ -1562,97 +1562,6 @@ def test_initial_goal_handles_list_content() -> None:
     assert ctx.initial_goal == "Please fix the login bug"
 
 
-# ------------------------------------------------------------------
-# Qwen current JSONL envelope format
-# ------------------------------------------------------------------
-
-
-@pytest.fixture
-def qwen_turns() -> list[dict[str, Any]]:
-    """Turns in Qwen's current nested message-parts format."""
-    return [
-        {
-            "id": "msg-1",
-            "type": "user",
-            "timestamp": "2026-04-12T16:20:00Z",
-            "message": {
-                "role": "user",
-                "parts": [{"text": "Fix the auth bug"}],
-            },
-        },
-        {
-            "id": "msg-2",
-            "type": "assistant",
-            "timestamp": "2026-04-12T16:20:01Z",
-            "message": {
-                "role": "model",
-                "parts": [
-                    {"text": "I'll fix it now."},
-                    {
-                        "functionCall": {
-                            "id": "replace_1",
-                            "name": "replace",
-                            "args": {
-                                "file_path": "auth.py",
-                                "old_string": "bad",
-                                "new_string": "good",
-                            },
-                        }
-                    },
-                ],
-            },
-        },
-        {
-            "id": "msg-3",
-            "type": "assistant",
-            "timestamp": "2026-04-12T16:20:02Z",
-            "message": {
-                "role": "model",
-                "parts": [
-                    {"text": "I decided to use the new auth library because it's more secure."},
-                    {
-                        "functionCall": {
-                            "id": "shell_1",
-                            "name": "shell",
-                            "args": {"command": "git commit -m 'fix auth'"},
-                        }
-                    },
-                ],
-            },
-        },
-    ]
-
-
-def test_qwen_initial_goal(qwen_turns: list[dict[str, Any]]) -> None:
-    """Qwen format: initial goal extracted from first user message."""
-    analyzer = TranscriptAnalyzer(get_parser("claude"))
-    ctx = analyzer.extract_handoff_context(qwen_turns)
-    assert ctx.initial_goal == "Fix the auth bug"
-
-
-def test_qwen_tool_calls_detected(qwen_turns: list[dict[str, Any]]) -> None:
-    """Qwen format: tool calls from functionCall parts are detected."""
-    analyzer = TranscriptAnalyzer(get_parser("claude"))
-    ctx = analyzer.extract_handoff_context(qwen_turns)
-    assert len(ctx.recent_activity) > 0
-
-
-def test_qwen_key_decisions(qwen_turns: list[dict[str, Any]]) -> None:
-    """Qwen format: key decisions from assistant text content are extracted."""
-    analyzer = TranscriptAnalyzer(get_parser("claude"))
-    ctx = analyzer.extract_handoff_context(qwen_turns)
-    assert ctx.key_decisions is not None
-    assert any("decided" in d.lower() or "because" in d.lower() for d in ctx.key_decisions)
-
-
-def test_qwen_empty_turns() -> None:
-    """Qwen format: empty turns produce empty context."""
-    analyzer = TranscriptAnalyzer(get_parser("claude"))
-    ctx = analyzer.extract_handoff_context([])
-    assert ctx.initial_goal == ""
-    assert not ctx.active_gobby_task
-
-
 def test_analyzer_turns_from_grok_and_codex_transcripts() -> None:
     """Provider tool envelopes become analyzer-visible Claude-shaped blocks."""
     import json
@@ -1773,35 +1682,8 @@ def test_git_commits_carry_hashes_from_results_and_task_tools() -> None:
 def test_adapter_consumes_every_block_of_multi_part_records() -> None:
     from gobby.sessions.analyzer_turns import analyzer_turns_from_transcript
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
-    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     timestamp = "2026-08-26T12:00:00Z"
-    qwen_turns = [
-        {
-            "type": "assistant",
-            "timestamp": timestamp,
-            "message": {
-                "parts": [
-                    {"text": "Inspecting"},
-                    {
-                        "functionCall": {
-                            "id": "qwen-read",
-                            "name": "Read",
-                            "args": {"file_path": "qwen.py"},
-                        }
-                    },
-                    {
-                        "functionResponse": {
-                            "id": "qwen-read",
-                            "name": "Read",
-                            "response": {"output": "done"},
-                        }
-                    },
-                ]
-            },
-            "toolCallResult": {"callId": "qwen-read", "status": "completed"},
-        }
-    ]
     droid_turns = [
         {
             "type": "message",
@@ -1821,14 +1703,10 @@ def test_adapter_consumes_every_block_of_multi_part_records() -> None:
         }
     ]
 
-    qwen_blocks = analyzer_turns_from_transcript(QwenTranscriptParser(), qwen_turns)[0]["message"][
-        "content"
-    ]
     droid_blocks = analyzer_turns_from_transcript(DroidTranscriptParser(), droid_turns)[0][
         "message"
     ]["content"]
 
-    assert [block["type"] for block in qwen_blocks] == ["text", "tool_use", "tool_result"]
     assert [block["type"] for block in droid_blocks] == ["text", "tool_use"]
     assert TranscriptAnalyzer(get_parser("claude")).extract_handoff_context(
         analyzer_turns_from_transcript(DroidTranscriptParser(), droid_turns)
@@ -1880,7 +1758,6 @@ def _noncommit_provider_cases() -> list[tuple[TranscriptParser, list[dict[str, A
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
     from gobby.sessions.transcripts.grok import GrokTranscriptParser
-    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     timestamp = "2026-08-26T12:00:00Z"
     return [
@@ -1955,42 +1832,6 @@ def _noncommit_provider_cases() -> list[tuple[TranscriptParser, list[dict[str, A
                         "type": "function_call_output",
                         "call_id": "read",
                         "output": "secret",
-                    },
-                },
-            ],
-        ),
-        (
-            QwenTranscriptParser(),
-            [
-                {
-                    "type": "assistant",
-                    "timestamp": timestamp,
-                    "message": {
-                        "parts": [
-                            {
-                                "functionCall": {
-                                    "id": "read",
-                                    "name": "Read",
-                                    "args": {"file_path": "qwen.py"},
-                                }
-                            }
-                        ]
-                    },
-                },
-                {
-                    "type": "tool_result",
-                    "timestamp": timestamp,
-                    "toolCallResult": {"callId": "read", "status": "completed"},
-                    "message": {
-                        "parts": [
-                            {
-                                "functionResponse": {
-                                    "id": "read",
-                                    "name": "Read",
-                                    "response": {"output": "secret"},
-                                }
-                            }
-                        ]
                     },
                 },
             ],

@@ -55,9 +55,6 @@ class TranscriptAnalyzer:
     # Format-agnostic helpers
     # ------------------------------------------------------------------
     # Claude turns:  {"type": "user"|"assistant", "message": {"content": [blocks]}}
-    # Typed-JSON turns:  {"type": "user"|"model", "content": str|[{"text":...}],
-    #                     "toolCalls": [{name, args, ...}]}
-    # These helpers let extract_handoff_context work with either format.
 
     @staticmethod
     def _get_user_text(turn: dict[str, Any]) -> str:
@@ -77,16 +74,11 @@ class TranscriptAnalyzer:
                 return content.strip()
             if content not in (None, ""):
                 return str(content).strip()
-            return " ".join(
-                block["text"]
-                for block in TranscriptAnalyzer._iter_content_blocks(turn)
-                if block.get("type") == "text" and isinstance(block.get("text"), str)
-            ).strip()
         return ""
 
     @staticmethod
     def _iter_content_blocks(turn: dict[str, Any]) -> list[dict[str, Any]]:
-        """Return normalized content blocks from a Claude or Qwen turn.
+        """Return normalized content blocks from a Claude turn.
 
         Every returned block has at least a ``type`` key (``"text"``,
         ``"tool_use"``, ``"tool_result"``).
@@ -99,27 +91,7 @@ class TranscriptAnalyzer:
         if isinstance(content, list):
             return [block for block in content if isinstance(block, dict)]
 
-        blocks: list[dict[str, Any]] = []
-        parts = msg.get("parts", [])
-        if not isinstance(parts, list):
-            return blocks
-        for part in parts:
-            if not isinstance(part, dict):
-                continue
-            text = part.get("text")
-            if isinstance(text, str) and text and part.get("thought") is not True:
-                blocks.append({"type": "text", "text": text})
-            function_call = part.get("functionCall")
-            if isinstance(function_call, dict):
-                block: dict[str, Any] = {
-                    "type": "tool_use",
-                    "name": function_call.get("name", "unknown"),
-                    "input": function_call.get("args", {}),
-                }
-                if function_call.get("id"):
-                    block["id"] = function_call["id"]
-                blocks.append(block)
-        return blocks
+        return []
 
     @staticmethod
     def _is_user_turn(turn: dict[str, Any]) -> bool:
@@ -148,8 +120,7 @@ class TranscriptAnalyzer:
         - The original user goal (first user message)
         - Recent tool activity summaries
 
-        Handles Claude and current Qwen JSONL envelope formats
-        transparently via ``_iter_content_blocks`` / ``_get_user_text``.
+        Handles the Claude JSONL envelope format via ``_iter_content_blocks`` / ``_get_user_text``.
 
         Args:
             turns: List of transcript turns (dicts) in any supported format.

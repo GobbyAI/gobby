@@ -7,7 +7,7 @@ auto-switch; managed CLIs (no protocol session/set_mode) advertise False.
 
 The permission/plan helpers are unified in a single protocol-neutral
 ``ManagedWebChatPermissionsMixin`` (#15631), shared by the ACP sessions
-(Grok/Qwen), Codex (app-server), and Droid (stream-jsonrpc).
+(Grok), Codex (app-server), and Droid (stream-jsonrpc).
 """
 
 from __future__ import annotations

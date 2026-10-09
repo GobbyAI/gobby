@@ -1854,7 +1854,6 @@ class TestRequireClaimedTaskExtraSkills:
             SessionSource.CODEX,
             SessionSource.DROID,
             SessionSource.GROK,
-            SessionSource.QWEN,
         ],
     )
     @pytest.mark.asyncio

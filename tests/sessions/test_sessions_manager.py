@@ -82,7 +82,7 @@ class TestSessionManagerRegistration:
         session_id = session_mgr.register_session(
             external_id="full-cli-123",
             machine_id="21000000-0000-4000-8000-000000000003",
-            source="qwen",
+            source="droid",
             project_id=test_project["id"],
             parent_session_id=None,  # Use None instead of invalid UUID
             transcript_path="/path/to/transcript.jsonl",
@@ -216,7 +216,7 @@ class TestSessionManagerLookup:
         session_id = session_mgr.register_session(
             external_id="full-data",
             machine_id="21000000-0000-4000-8000-000000000003",
-            source="qwen",
+            source="droid",
             project_id=test_project["id"],
             title="Full Data Session",
         )
@@ -225,7 +225,7 @@ class TestSessionManagerLookup:
         assert session is not None
         assert session.id == session_id
         assert session.external_id == "full-data"
-        assert session.source == "qwen"
+        assert session.source == "droid"
         assert session.title == "Full Data Session"
 
     def test_get_session_nonexistent(self, session_mgr: SessionManager) -> None:
@@ -260,7 +260,7 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="shared-external-id",
-            source="qwen",
+            source="droid",
             project_id=test_project["id"],
         )
 
@@ -270,7 +270,7 @@ class TestSessionManagerLookup:
         # the validated getter rejects cross-source reads, so assert the raw cache.
         assert (
             session_mgr._session_mapping[
-                ("shared-external-id", "qwen", test_project["id"], "terminal")
+                ("shared-external-id", "droid", test_project["id"], "terminal")
             ]
             == preferred.id
         )
@@ -297,12 +297,12 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="ranked-external-id",
-            source="qwen",
+            source="droid",
             project_id=test_project["id"],
         )
 
         assert recovered is None
-        assert session_mgr.get_session_id("ranked-external-id", "qwen") is None
+        assert session_mgr.get_session_id("ranked-external-id", "droid") is None
 
     def test_recover_session_none_project_searches_real_project(
         self,
@@ -319,7 +319,7 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="real-project-external-id",
-            source="qwen",
+            source="droid",
             project_id=None,
         )
 
@@ -351,7 +351,7 @@ class TestSessionManagerLookup:
 
         recovered = session_mgr.recover_session(
             external_id="colliding-external-id",
-            source="qwen",
+            source="droid",
             project_id=None,
         )
 

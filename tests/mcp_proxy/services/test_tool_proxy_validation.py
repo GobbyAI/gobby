@@ -1479,7 +1479,7 @@ class TestDirectMcpAfterToolWorkflow:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "source",
-        ["codex", "claude", "qwen", "droid", "grok", "agy"],
+        ["codex", "claude", "droid", "grok", "agy"],
     )
     async def test_interactive_source_defers_after_tool_to_native_hook(
         self,

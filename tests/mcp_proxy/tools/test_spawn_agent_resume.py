@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -94,7 +95,10 @@ async def test_resume_refuses_missing_session() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("stub_srt_verifier")
-async def test_resume_binds_existing_identity_and_passes_native_thread() -> None:
+@pytest.mark.parametrize("execution_mode", [None, "interactive", "one_shot"])
+async def test_resume_binds_existing_identity_and_passes_native_thread(
+    execution_mode: Literal["one_shot", "interactive"] | None,
+) -> None:
     target = SimpleNamespace(
         id="existing",
         project_id="project",
@@ -150,6 +154,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread() -> None
             parent_session_id="parent",
             target_project_id="project",
             resume_session_id="gobby#123",
+            execution_mode=execution_mode,
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
                 name="developer",
@@ -168,6 +173,9 @@ async def test_resume_binds_existing_identity_and_passes_native_thread() -> None
     assert request.provider == "codex"
     assert request.resume_session_id == "native-thread"
     assert request.cwd == "/workspace"
+    expected_mode = execution_mode or "interactive"
+    assert resume.call_args.kwargs["resume_metadata_json"]["execution_mode"] == expected_mode
+    assert resume.call_args.kwargs["initial_variables"]["execution_mode"] == expected_mode
     persist.assert_called_once()
 
 

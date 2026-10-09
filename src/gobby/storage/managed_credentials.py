@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import secrets
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
+from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.errors import UniqueViolation
 
@@ -393,29 +395,22 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         )
 
     def get_live_binding_generation(self, managed_execution_id: UUID) -> int | None:
-        """Return the unrevoked generation for rotate, including expired predecessors."""
+        """Return current authority, including an expired binding awaiting refresh."""
         candidates = [
             row
             for row in self._database.fetchall(
-                f"SELECT * FROM {self.auth_schema}.list_active_principals()"
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
             )
             if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+            and _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
         ]
-        if not candidates:
+        if len(candidates) != 1:
             return None
-        now = datetime.now(UTC)
-        live = [
-            row
-            for row in candidates
-            if isinstance(expires_at := _row_value(row, "expires_at"), datetime)
-            and expires_at > now
-        ]
-        rotatable = live or candidates
         try:
-            return max(
-                int(str(_row_value(row, "role_name")).rsplit("_", 1)[1]) for row in rotatable
-            )
-        except (IndexError, ValueError) as error:
+            return int(_row_value(candidates[0], "credential_generation"))
+        except (TypeError, ValueError) as error:
             raise CredentialIssuanceError(
                 "managed principal role has invalid generation"
             ) from error
@@ -443,8 +438,115 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             raise CredentialIssuanceError("managed credential rotation lost binding race")
         return credential
 
+    def reuse_current_during_drain(
+        self,
+        *,
+        managed_execution_id: UUID,
+        owner_kind: OwnerKind,
+        session_id: UUID,
+        project_id: UUID,
+    ) -> ManagedCredential | None:
+        """Reuse proven current authority while its predecessor legitimately drains."""
+        now = datetime.now(UTC)
+        bindings = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+        ]
+        draining = [
+            row
+            for row in bindings
+            if isinstance(_row_value(row, "predecessor_drain_deadline"), datetime)
+            and _row_value(row, "predecessor_drain_deadline") > now
+        ]
+        if not draining:
+            return None
+        if len(bindings) != 2 or not self._rotation_owner_is_live(managed_execution_id):
+            raise CredentialAuthorizationError("managed rotation binding is not live")
+        current = [
+            row
+            for row in bindings
+            if _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
+        ]
+        if len(current) != 1:
+            raise CredentialAuthorizationError("managed rotation binding is ambiguous")
+        binding = current[0]
+        expiry = _row_value(binding, "expires_at")
+        if (
+            _row_value(binding, "owner_kind") != owner_kind
+            or str(_row_value(binding, "session_id")) != str(session_id)
+            or str(_row_value(binding, "project_id")) != str(project_id)
+            or str(_row_value(binding, "agent_run_id"))
+            != str(managed_execution_id if owner_kind == "agent_run" else None)
+            or _row_value(binding, "login_capable") is not True
+            or not isinstance(expiry, datetime)
+            or expiry <= now
+        ):
+            raise CredentialAuthorizationError("managed rotation authority does not match")
+        generation = int(_row_value(binding, "credential_generation"))
+        role_name = str(_row_value(binding, "role_name"))
+        bootstrap_path = self._execution_root(managed_execution_id) / "bootstrap.json"
+        try:
+            with os.fdopen(
+                os.open(bootstrap_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            ) as stream:
+                metadata = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                    or metadata.st_uid != os.getuid()
+                ):
+                    raise ValueError("bootstrap is not private")
+                payload = json.load(stream)
+            dsn = conninfo_to_dict(payload["database_url"])
+            password = dsn.get("password")
+            if (
+                payload["managed_execution_id"] != str(managed_execution_id)
+                or payload["credential_generation"] != generation
+                or payload["role_name"] != role_name
+                or datetime.fromisoformat(payload["expires_at"]) != expiry
+                or not isinstance(password, str)
+                or not password
+                or dsn
+                != conninfo_to_dict(self._scoped_dsn(role_name, password, managed_execution_id))
+            ):
+                raise ValueError("bootstrap does not match current authority")
+        except (OSError, ValueError, TypeError, KeyError, ProgrammingError):
+            # Parsing diagnostics may contain credential material.
+            raise CredentialIssuanceError("managed current bootstrap is unavailable") from None
+        # A concurrent publication or revocation must never turn stale file data
+        # into a grant. This is a state recheck, not a retry or another rotation.
+        latest = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+        ]
+        if latest != bindings or not self._rotation_owner_is_live(managed_execution_id):
+            raise CredentialAuthorizationError("managed rotation authority changed")
+        return ManagedCredential(
+            managed_execution_id=managed_execution_id,
+            role_name=role_name,
+            credential_generation=generation,
+            issued_at=now,
+            expires_at=expiry,
+            bootstrap_path=bootstrap_path,
+        )
+
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
+        # Bounded, deadline-only cleanup; a generic reconcile would revoke an
+        # expired current binding before its live owner can refresh it.
+        self._database.fetchone(
+            f"SELECT {self.auth_schema}.drain_rotation_predecessors(%s)",
+            (self._machine_id,),
+        )
         due = self._database.fetchall(
             f"SELECT * FROM {self.auth_schema}.principals_due_for_rotation(%s)",
             (self._machine_id,),
@@ -545,30 +647,62 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         finally:
             password = ""
 
-        self.revoke(
-            managed_execution_id,
-            generation=predecessor_generation,
-            reason="rotation-predecessor",
-        )
+        # SQL durably marks the predecessor for a bounded drain. Lifecycle
+        # cleanup or reconciliation revokes it after the advertised deadline,
+        # including when the daemon crashes after publication.
         return credential
 
     def _rotation_owner_is_live(self, execution_id: UUID) -> bool:
         """Refuse ambiguous bindings and ended owners before minting any successor."""
         from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 
-        now = datetime.now(UTC)
+        # An expired Postgres password is refreshable for a live owner. Binding
+        # revocation and owner status, rather than password expiry, end that authority.
         bindings = [
             row
             for row in self._database.fetchall(
-                f"SELECT * FROM {self.auth_schema}.list_active_principals()"
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
             )
             if str(_row_value(row, "managed_execution_id")) == str(execution_id)
-            and isinstance(expiry := _row_value(row, "expires_at"), datetime)
-            and expiry > now
+            and isinstance(_row_value(row, "expires_at"), datetime)
         ]
-        if len(bindings) != 1:
+        current = [
+            row
+            for row in bindings
+            if _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
+        ]
+        if len(current) != 1 or len(bindings) > 2:
             return False
-        binding = bindings[0]
+        binding = current[0]
+        for predecessor in bindings:
+            if predecessor is binding:
+                continue
+            requested = _row_value(predecessor, "revocation_requested_at")
+            deadline = _row_value(predecessor, "predecessor_drain_deadline")
+            generation = _row_value(predecessor, "credential_generation")
+            current_generation = _row_value(binding, "credential_generation")
+            if (
+                not isinstance(requested, datetime)
+                or not isinstance(deadline, datetime)
+                or not requested < deadline <= requested + timedelta(minutes=5)
+                or not isinstance(generation, int)
+                or not isinstance(current_generation, int)
+                or generation != current_generation - 1
+                or any(
+                    _row_value(predecessor, key) != _row_value(binding, key)
+                    for key in (
+                        "owner_kind",
+                        "agent_run_id",
+                        "session_id",
+                        "project_id",
+                        "issuing_machine_id",
+                        "code_overlay_project_id",
+                    )
+                )
+            ):
+                return False
         owner_kind = _row_value(binding, "owner_kind")
         if owner_kind == "maintenance":
             return _row_value(binding, "login_capable") is True

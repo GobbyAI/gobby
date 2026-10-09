@@ -280,7 +280,6 @@ def test_full_install_exits_before_provisioning_without_docker(
     for detector in (
         "_is_grok_cli_installed",
         "_is_agy_cli_installed",
-        "_is_qwen_cli_installed",
         "_is_codex_cli_installed",
         "_is_droid_cli_installed",
     ):
@@ -305,7 +304,6 @@ def test_all_with_only_repository_hooks_still_owns_required_stack(
         "_is_claude_code_installed",
         "_is_grok_cli_installed",
         "_is_agy_cli_installed",
-        "_is_qwen_cli_installed",
         "_is_codex_cli_installed",
         "_is_droid_cli_installed",
     ):
@@ -342,7 +340,6 @@ def test_default_install_completes_required_stack_without_detected_cli(
         "_is_claude_code_installed",
         "_is_grok_cli_installed",
         "_is_agy_cli_installed",
-        "_is_qwen_cli_installed",
         "_is_codex_cli_installed",
         "_is_droid_cli_installed",
     ):
@@ -554,7 +551,6 @@ def test_install_allows_non_repository_personal_workspace(
         "_is_claude_code_installed",
         "_is_grok_cli_installed",
         "_is_agy_cli_installed",
-        "_is_qwen_cli_installed",
         "_is_codex_cli_installed",
         "_is_droid_cli_installed",
     ):

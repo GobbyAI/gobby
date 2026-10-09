@@ -55,7 +55,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Codex/Qwen token events should aggregate under their source and model names."""
+    """Codex/Grok token events should aggregate under their source and model names."""
     project = isolated_checkout_factory(temp_db, "token-attribution-project", root=tmp_path).project
     session_manager = SessionManager(temp_db)
     lifecycle = SessionLifecycleManager(
@@ -89,36 +89,36 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         ]
         await lifecycle._process_session_transcript(codex_session.id, str(codex_path))
 
-    qwen_path = tmp_path / "qwen.json"
-    qwen_path.write_text('{"type":"user","message":{"role":"user","parts":[{"text":"hi"}]}}\n')
-    qwen_session = session_manager.register(
-        external_id="qwen-ext",
+    grok_path = tmp_path / "grok.jsonl"
+    grok_path.write_text("{}\n")
+    grok_session = session_manager.register(
+        external_id="grok-ext",
         machine_id="21000000-0000-4000-8000-000000000001",
-        source="qwen",
+        source="grok",
         project_id=project.id,
-        transcript_path=str(qwen_path),
+        transcript_path=str(grok_path),
     )
     session_manager.update_usage(
-        qwen_session.id,
+        grok_session.id,
         input_tokens=0,
         output_tokens=0,
         cache_creation_tokens=0,
         cache_read_tokens=0,
-        model="qwen3-coder",
+        model="grok-code-fast-1",
     )
 
     # Keep this direct call paired with the Codex case above for stable
     # source/model attribution coverage.
     with patch("gobby.sessions.transcript_processing.get_parser") as parser_cls:
         parser_cls.return_value.parse_lines.return_value = [
-            _message(message_id="qwen-msg", input_tokens=200, output_tokens=50)
+            _message(message_id="grok-msg", input_tokens=200, output_tokens=50)
         ]
-        await lifecycle._process_session_transcript(qwen_session.id, str(qwen_path))
+        await lifecycle._process_session_transcript(grok_session.id, str(grok_path))
 
     breakdown = TokenEventStore(temp_db).get_breakdown(project_id=project.id)
 
     assert breakdown["by_source"]["codex"]["input_tokens"] == 123
-    assert breakdown["by_source"]["qwen"]["input_tokens"] == 200
+    assert breakdown["by_source"]["grok"]["input_tokens"] == 200
     assert "gpt-5-codex" in breakdown["by_model"]
-    assert "qwen3-coder" in breakdown["by_model"]
+    assert "grok-code-fast-1" in breakdown["by_model"]
     assert "unknown" not in breakdown["by_model"]

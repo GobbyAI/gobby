@@ -367,6 +367,9 @@ class HTTPServer:
             agent_pane_reserver_resolver=lambda: getattr(
                 services.websocket_server, "agent_pane_reserver", None
             ),
+            lease_registry_resolver=lambda: getattr(
+                services.websocket_server, "lease_registry", None
+            ),
         )
         registry_count = len(self._internal_manager)
         logger.debug("Internal registries initialized: %s registries", registry_count)

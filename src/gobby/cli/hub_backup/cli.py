@@ -291,6 +291,14 @@ def restore_hub_backup(
         manifest = load_manifest(backup_root / MANIFEST_NAME)
     except (OSError, ValueError) as exc:
         raise click.ClickException(f"Invalid hub backup manifest: {exc}") from exc
+    consumed_artifacts: dict[str, ArtifactRecord] = {}
+    for path in (FILES_ARCHIVE_RELPATH, GLOBALS_DUMP_RELPATH, POSTGRES_DUMP_RELPATH):
+        matches = [artifact for artifact in manifest.artifacts if artifact.path == path]
+        if len(matches) != 1:
+            raise click.ClickException(
+                f"Hub backup must list exactly one artifact for {path}; found {len(matches)}"
+            )
+        consumed_artifacts[path] = matches[0]
     verify_artifacts(backup_root, manifest.artifacts)
     postgres_store = manifest.stores.get("postgres")
     if (
@@ -303,23 +311,24 @@ def restore_hub_backup(
         click.echo("Aborted.")
         return
 
-    files_artifact = next(
-        (artifact for artifact in manifest.artifacts if artifact.path == FILES_ARCHIVE_RELPATH),
-        None,
-    )
     try:
         with maintenance_claim(get_gobby_home()):
             restore_hub_files(
                 backup_root,
-                expected_sha256=None if files_artifact is None else files_artifact.sha256,
+                expected_sha256=consumed_artifacts[FILES_ARCHIVE_RELPATH].sha256,
             )
-            restore_postgres_globals(database_url, backup_root / GLOBALS_DUMP_RELPATH)
+            restore_postgres_globals(
+                database_url,
+                backup_root / GLOBALS_DUMP_RELPATH,
+                expected_sha256=consumed_artifacts[GLOBALS_DUMP_RELPATH].sha256,
+            )
             result = restore_postgres_backup(
                 backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
                 clean=clean,
                 allow_unverified=True,
                 gobby_home=get_gobby_home(),
                 database_url=database_url,
+                expected_sha256=consumed_artifacts[POSTGRES_DUMP_RELPATH].sha256,
             )
             reconcile_restored_principals(database_url)
     except FilesHomeArchiveError as exc:
@@ -504,27 +513,42 @@ def _archive_volumes(
     rehearsal: RehearsalProfile | None = None,
 ) -> tuple[list[ArtifactRecord], dict[str, object]]:
     """Archive the hub volumes cold, and bring the services back either way."""
-    if rehearsal is not None:
-        if volumes != rehearsal.volumes:
-            raise click.ClickException("Rehearsal volume inventory changed")
-        try:
-            control_rehearsal_services(rehearsal, "stop")
-            return tar_volumes(backup_root, volumes)
-        finally:
-            control_rehearsal_services(rehearsal, "start")
-    if not _services_stop(gobby_home):
-        raise click.ClickException(
-            "Could not stop the managed Docker services; refusing to archive live volumes"
-        )
+    if rehearsal is not None and volumes != rehearsal.volumes:
+        raise click.ClickException("Rehearsal volume inventory changed")
+    archive_error: BaseException | None = None
     try:
-        artifacts, details = tar_volumes(backup_root, volumes)
+        if rehearsal is not None:
+            control_rehearsal_services(rehearsal, "stop")
+        elif not _services_stop(gobby_home):
+            raise click.ClickException(
+                "Could not stop the managed Docker services; refusing to archive live volumes"
+            )
+        return tar_volumes(backup_root, volumes)
+    except BaseException as exc:
+        archive_error = exc
+        raise
     finally:
-        restart = _services_start(gobby_home)
-    if restart.outcome != "success":
-        raise click.ClickException(
-            f"Docker services did not restart after archiving volumes: {restart.detail}"
-        )
-    return artifacts, details
+        try:
+            if rehearsal is not None:
+                control_rehearsal_services(rehearsal, "start")
+            else:
+                restart = _services_start(gobby_home)
+                if restart.outcome != "success":
+                    raise click.ClickException(
+                        f"Docker services did not restart after archiving volumes: {restart.detail}"
+                    )
+        except Exception as exc:
+            if archive_error is not None:
+                if isinstance(archive_error, KeyboardInterrupt):
+                    archive_detail = "Volume archive interrupted (KeyboardInterrupt)"
+                    if str(archive_error):
+                        archive_detail += f": {archive_error}"
+                else:
+                    archive_detail = f"Volume archive failed: {archive_error}"
+                raise click.ClickException(
+                    f"{archive_detail}; Service restart also failed: {exc}"
+                ) from archive_error
+            raise
 
 
 # ---------------------------------------------------------------------------

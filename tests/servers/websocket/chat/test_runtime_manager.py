@@ -28,8 +28,6 @@ from gobby.servers.websocket.chat.backends import (
     DroidManagedChatSession,
     GrokManagedChatSession,
     GrokWebChatBackend,
-    QwenManagedChatSession,
-    QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.backends.agy import AgyManagedChatSession
 from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
@@ -88,7 +86,6 @@ class TestWebChatRuntimeManager:
             manager._claude_backend,
             manager._codex_backend,
             manager._grok_backend,
-            manager._qwen_backend,
             manager._droid_backend,
             manager._agy_backend,
         )
@@ -127,7 +124,6 @@ class TestWebChatRuntimeManager:
                 provider="claude", conversation_id="conv-1"
             )
             grok_session = await manager.create_session(provider="grok", conversation_id="conv-2")
-            qwen_session = await manager.create_session(provider="qwen", conversation_id="conv-3")
             codex_session = await manager.create_session(provider="codex", conversation_id="conv-4")
             agy_error: Exception | None = None
             try:
@@ -140,7 +136,6 @@ class TestWebChatRuntimeManager:
 
         assert isinstance(claude_session, ChatSession)
         assert isinstance(grok_session, GrokManagedChatSession)
-        assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
         assert agy_error is None
         assert isinstance(agy_session, AgyManagedChatSession)
@@ -171,16 +166,14 @@ class TestWebChatRuntimeManager:
         assert health.startup_error is not None
         assert "removed local: selector" in health.startup_error
 
-    def test_acp_backends_expose_grok_and_qwen_only(self) -> None:
+    def test_acp_backends_expose_grok_only(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
         backends = manager.acp_backends()
 
-        assert set(backends) == {"grok", "qwen"}
+        assert set(backends) == {"grok"}
         assert isinstance(backends["grok"], GrokWebChatBackend)
-        assert isinstance(backends["qwen"], QwenWebChatBackend)
         assert manager.acp_backend("grok") is backends["grok"]
-        assert manager.acp_backend("qwen") is backends["qwen"]
         assert manager.acp_backend("codex") is None
 
     def test_acp_session_capabilities_default_empty_before_initialize(self) -> None:
@@ -424,7 +417,6 @@ class TestWebChatRuntimeManager:
             manager._claude_backend,
             manager._codex_backend,
             manager._grok_backend,
-            manager._qwen_backend,
             manager._droid_backend,
             manager._agy_backend,
         ):
@@ -436,21 +428,11 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         assert manager.sandbox_policy_hash
 
-    def test_manager_constructs_qwen_backend_without_generation_endpoints(self) -> None:
-        with patch(
-            "gobby.servers.websocket.chat.runtime_manager.QwenWebChatBackend"
-        ) as backend_cls:
-            manager = WebChatRuntimeManager(codex_client=None, daemon_config=SimpleNamespace())
-
-        backend_cls.assert_called_once_with()
-        assert manager._qwen_backend is backend_cls.return_value
-
     @pytest.mark.asyncio
     async def test_background_start_skips_acp_backends(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
         manager._codex_backend.start = AsyncMock()
         manager._grok_backend.start = AsyncMock()
-        manager._qwen_backend.start = AsyncMock()
         manager._droid_backend.start = AsyncMock()
         assert hasattr(manager, "_agy_backend")
         manager._agy_backend.start = AsyncMock()
@@ -463,7 +445,6 @@ class TestWebChatRuntimeManager:
         manager._droid_backend.start.assert_awaited_once_with(background=True)
         manager._agy_backend.start.assert_awaited_once_with(background=True)
         manager._grok_backend.start.assert_not_awaited()
-        manager._qwen_backend.start.assert_not_awaited()
 
     def test_start_and_stop_include_agy_backend(self) -> None:
         import inspect
@@ -732,26 +713,8 @@ class TestGrokBackend:
         assert "Bash/exec_command" in context
 
 
-class TestQwenBackend:
-    def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch.object(QwenWebChatBackend, "acp_client_cls") as mock_client:
-            QwenWebChatBackend()
-
-        # cli_name / display_name / prompt_timeout_env are now class attributes
-        # on QwenACPClient; the backend should not pass sandbox-leaking process args.
-        assert mock_client.call_args is not None
-        kwargs = mock_client.call_args.kwargs
-        assert "extra_args" not in kwargs
-        assert "env_overrides" not in kwargs
-
-    def test_qwen_inherits_acp_plan_mode_gcode_context(self) -> None:
-        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
-        session.chat_mode = "plan"
-
-        context = session._pop_plan_mode_context()
-
-        assert context is not None
-        assert "gcode outline/search/symbol" in context
+class TestACPManagedSessionBehavior:
+    """Shared ACP managed-session behavior, exercised through the Grok session."""
 
     @pytest.mark.asyncio
     async def test_interrupt_cancels_pending_acp_tool_approval(self) -> None:
@@ -759,16 +722,16 @@ class TestQwenBackend:
             def __init__(self) -> None:
                 self.cancelled_sessions: list[str | None] = []
 
-            async def interrupt(self, session: QwenManagedChatSession) -> None:
+            async def interrupt(self, session: GrokManagedChatSession) -> None:
                 self.cancelled_sessions.append(session.sdk_session_id)
 
         backend = FakeBackend()
-        session = QwenManagedChatSession(
-            conversation_id="qwen-cancel",
+        session = GrokManagedChatSession(
+            conversation_id="grok-cancel",
             _backend=backend,
             chat_mode="normal",
             project_path=".",
-            sdk_session_id="qwen-session",
+            sdk_session_id="grok-session",
         )
         approval_ready = asyncio.Event()
 
@@ -786,16 +749,16 @@ class TestQwenBackend:
         await session.interrupt()
         result = await approval_task
 
-        assert backend.cancelled_sessions == ["qwen-session"]
+        assert backend.cancelled_sessions == ["grok-session"]
         assert acp_client_requests.is_pre_tool_decision_denied(result)
 
     def test_managed_session_logs_upstream_error_context(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
-        session.db_session_id = "db-qwen"
-        session.sdk_session_id = "sdk-qwen"
-        session._model = "qwen3-coder"
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=MagicMock())
+        session.db_session_id = "db-grok"
+        session.sdk_session_id = "sdk-grok"
+        session._model = "grok-4"
 
         with caplog.at_level("WARNING"):
             event = session._translate_event(
@@ -807,7 +770,7 @@ class TestQwenBackend:
 
         assert isinstance(event, TextChunk)
         assert event.content == "Error: Internal error"
-        assert any("Managed qwen upstream error" in record.message for record in caplog.records)
+        assert any("Managed grok upstream error" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_managed_session_done_event_includes_context_window(self) -> None:
@@ -816,11 +779,11 @@ class TestQwenBackend:
         backend.send_message = MagicMock(
             return_value=_async_stream(StreamEvent(event_type="result", data={}))
         )
-        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
         session._connected = True
-        session.sdk_session_id = "sess-qwen"
-        session._model = "qwen3-coder"
-        session._context_window_overrides = {"qwen3-coder": 262_144}
+        session.sdk_session_id = "sess-grok"
+        session._model = "grok-4"
+        session._context_window_overrides = {"grok-4": 262_144}
 
         events = [event async for event in session.send_message("hi")]
 
@@ -828,7 +791,7 @@ class TestQwenBackend:
         assert events[-1].context_window == 262_144
 
     def test_managed_session_translates_structured_tool_events(self) -> None:
-        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=MagicMock())
 
         tool_call = session._translate_event(
             StreamEvent(

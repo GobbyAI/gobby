@@ -23,7 +23,6 @@ from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.blocked_tool_recovery import recovery_directive_suffix
@@ -161,19 +160,6 @@ def _grok_event(phase: str, proxy_tool: str, tool_input: dict[str, Any]) -> Hook
     )
 
 
-def _qwen_event(phase: str, proxy_tool: str, tool_input: dict[str, Any]) -> HookEvent:
-    return QwenAdapter().translate_to_hook_event(
-        {
-            "hook_type": "PreToolUse" if phase == BEFORE else "PostToolUse",
-            "input_data": {
-                "session_id": EXTERNAL_SESSION_ID,
-                "tool_name": f"mcp_gobby_{proxy_tool}",
-                "tool_input": tool_input,
-            },
-        }
-    )
-
-
 def _agy_event(phase: str, proxy_tool: str, tool_input: dict[str, Any]) -> HookEvent:
     hook_type = "PreToolUse" if phase == BEFORE else "PostToolUse"
     return AgyAdapter().translate_to_hook_event(
@@ -212,7 +198,6 @@ PROVIDERS: dict[str, ProviderEventBuilder] = {
     "codex-hooks": _codex_hooks_event,
     "droid": _droid_event,
     "grok": _grok_event,
-    "qwen": _qwen_event,
     "agy": _agy_event,
     "unnormalized": _unnormalized_event,
 }

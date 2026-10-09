@@ -51,7 +51,6 @@ PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS = (
     "model_context_window",
     "modelContextWindow",
 )
-_QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _KNOWN_PROVIDER_PREFIXES = (
     "agy/",
     "anthropic/",
@@ -184,19 +183,6 @@ def strip_known_provider_prefix(value: str) -> str:
     return normalized
 
 
-def strip_qwen_auth_suffix(value: str) -> str:
-    """Strip Qwen multi-provider auth suffixes from display model IDs."""
-    trimmed = value.strip()
-    close_idx = trimmed.rfind(")")
-    open_idx = trimmed.rfind("(")
-    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
-        model_id = trimmed[:open_idx].strip()
-        auth_type = trimmed[open_idx + 1 : close_idx].strip()
-        if model_id and auth_type in _QWEN_AUTH_TYPES:
-            return model_id
-    return trimmed
-
-
 def strip_context_window_marker_suffix(value: str) -> str:
     """Strip a trailing 1M-context marker (``[1m]``, ``-1m``, ``-context-1m``).
 
@@ -210,9 +196,7 @@ def strip_context_window_marker_suffix(value: str) -> str:
 
 def normalize_model_lookup_id(value: str) -> str:
     """Normalize a model ID for catalog/static prefix matching."""
-    return strip_context_window_marker_suffix(
-        strip_qwen_auth_suffix(strip_known_provider_prefix(value))
-    ).lower()
+    return strip_context_window_marker_suffix(strip_known_provider_prefix(value)).lower()
 
 
 def reconcile_observed_model(
@@ -238,7 +222,7 @@ def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     if key in {"opus", "sonnet", "haiku", "fable"} or key.startswith("claude-"):
         return provider in {None, "claude", "droid"}
     if key.startswith("qwen3-coder"):
-        return provider in {None, "qwen"}
+        return provider is None
     return True
 
 
@@ -475,8 +459,7 @@ def _registry_context_window(
 
 def _registry_lookup_candidates(model: str) -> list[str]:
     """Registry lookups key on the bare model ID alone; provider never keys metadata."""
-    stripped = strip_qwen_auth_suffix(model)
-    return list(dict.fromkeys(candidate for candidate in (model, stripped) if candidate))
+    return [model] if model else []
 
 
 class _UnavailableCapabilityService:
@@ -553,6 +536,5 @@ __all__ = [
     "resolve_context_window",
     "resolve_context_window_with_source",
     "strip_known_provider_prefix",
-    "strip_qwen_auth_suffix",
     "valid_context_length_source",
 ]

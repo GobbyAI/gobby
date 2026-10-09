@@ -2,16 +2,16 @@
 
 These JSONL files are golden stdout streams captured from real ACP CLI runs.
 Filenames pin the provider and CLI version, for example:
-`qwen-0.15.6-session-new-prompt.stdout.jsonl`.
+`grok-0.1.216-session-new-prompt.stdout.jsonl`.
 
 To re-record a fixture:
 
-1. Capture the current CLI version with `qwen --version` or `grok version`.
-2. Start the CLI in ACP mode with `qwen --acp` or
+1. Capture the current CLI version with `grok version`.
+2. Start the CLI in ACP mode with
    `grok agent --no-leader --always-approve stdio`.
 3. Send the same JSON-RPC request sequence used by
    `tests/adapters/test_acp_contract_fixtures.py`: `initialize`, then
-   `session/new` or `session/load`, then `session/prompt`.
+   `authenticate`, then `session/new` or `session/load`, then `session/prompt`.
 4. Save stdout as JSONL and update the pinned version in the filename.
 
 Grok fixtures include `authenticate` after `initialize`, because Grok advertises
@@ -22,14 +22,3 @@ transport contract.
 
 Keep fixtures minimal and scrubbed. Do not include user secrets, local project
 paths, auth tokens, or large model output.
-
-## Synthetic session-lifecycle fixtures
-
-`qwen-0.15.6-session-list.stdout.jsonl`, `qwen-0.15.6-session-close.stdout.jsonl`,
-and `qwen-0.15.6-session-delete.stdout.jsonl` are **hand-authored**, not recorded:
-no provider Gobby talks to today advertises the `session/list`, `session/close`,
-or `session/delete` capabilities (qwen ships `sessionCapabilities: {}`). Each
-fixture's `initialize` response advertises exactly the one capability under test
-so the gated client method is allowed, followed by the lifecycle response. They
-prove the capability-gated request/response contract until a real CLI advertises
-these capabilities and the fixtures can be re-recorded.

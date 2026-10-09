@@ -21,10 +21,8 @@ from gobby.ai._tool_chat_contracts import (
 from gobby.ai._tool_chat_spawn import (
     ACPSpawnToolChatAdapter,
     GrokSpawnToolChatAdapter,
-    QwenSpawnToolChatAdapter,
     compose_gcode_direct_prompt,
     parse_grok_session_signals,
-    parse_qwen_stream,
 )
 from gobby.config.app import DaemonConfig
 
@@ -87,68 +85,6 @@ def test_compose_gcode_direct_prompt_quotes_project_path() -> None:
     prompt = compose_gcode_direct_prompt(request)
 
     assert f"--project {shlex.quote(project_path)}" in prompt
-
-
-# --- Qwen stream parser ----------------------------------------------------
-
-
-def test_parse_qwen_stream_extracts_narrative_and_tool_counts() -> None:
-    # Real qwen-code stream shape: assistant/user messages nest content under
-    # `message` (Claude-Code stream format), captured from qwen-code 0.x.
-    stream = "\n".join(
-        [
-            '{"type":"system","tools":[],"model":"m"}',
-            '{"type":"assistant","message":{"role":"assistant","content":'
-            '[{"type":"thinking","thinking":"..."},'
-            '{"type":"tool_use","name":"run_shell_command","input":{}}]}}',
-            '{"type":"user","message":{"role":"user","content":'
-            '[{"type":"tool_result","tool_use_id":"1","is_error":false}]}}',
-            '{"type":"assistant","message":{"role":"assistant","content":'
-            '[{"type":"tool_use","name":"run_shell_command"}]}}',
-            '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
-            '"num_turns":4,"usage":{"input_tokens":100,"output_tokens":50}}',
-        ]
-    )
-
-    text, total, breakdown, turns, usage, error_message = parse_qwen_stream(stream)
-
-    assert text == "## Auth\n\nNarrative citing src/auth.rs:10."
-    assert total == 2
-    assert breakdown == {"run_shell_command": 2}
-    assert turns == 4
-    assert usage == {"input_tokens": 100, "output_tokens": 50}
-    assert error_message is None
-
-
-def test_parse_qwen_stream_extracts_limit_result_without_narrative() -> None:
-    stream = "\n".join(
-        [
-            '{"type":"assistant","message":{"content":'
-            '[{"type":"tool_use","name":"run_shell_command"}]}}',
-            '{"type":"result","subtype":"error_during_execution","is_error":true,'
-            '"num_turns":6,"usage":{"input_tokens":120,"output_tokens":20},'
-            '"error":{"message":"tool-call budget of 1 exceeded (--max-tool-calls)"}}',
-        ]
-    )
-
-    text, total, breakdown, turns, usage, error_message = parse_qwen_stream(stream)
-
-    assert text is None
-    assert total == 1
-    assert breakdown == {"run_shell_command": 1}
-    assert turns == 6
-    assert usage == {"input_tokens": 120, "output_tokens": 20}
-    assert error_message == "tool-call budget of 1 exceeded (--max-tool-calls)"
-
-
-def test_parse_qwen_stream_skips_non_json_lines() -> None:
-    text, total, _, turns, usage, error_message = parse_qwen_stream("warning text\n{}\n")
-
-    assert text is None
-    assert total == 0
-    assert turns is None
-    assert usage is None
-    assert error_message is None
 
 
 # --- Grok session signals parser -------------------------------------------
@@ -493,206 +429,6 @@ async def test_grok_adapter_hard_fails_on_empty_output(
         await adapter.chat(_request(), _grok_binding())
 
 
-# --- Qwen adapter ----------------------------------------------------------
-
-
-def _qwen_binding() -> CapabilityBinding:
-    return _binding(provider="qwen", style=AIAdapterStyle.ACP)
-
-
-def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
-    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-    request = _request(
-        reasoning_effort="high",
-        limits=ToolLoopLimits(max_turns=4, max_tool_calls=9),
-    )
-
-    command = adapter._build_command(request, model="qwen3-coder")
-
-    assert command[0] == "qwen"
-    assert "--sandbox" in command
-    assert command[command.index("--approval-mode") + 1] == "yolo"
-    assert command[command.index("--output-format") + 1] == "stream-json"
-    assert command[command.index("--max-session-turns") + 1] == "4"
-    assert command[command.index("--max-tool-calls") + 1] == "9"
-    assert "--bare" in command
-    assert command[command.index("--model") + 1] == "qwen3-coder"
-    # The prompt is the final positional argument.
-    assert "gcode" in command[-1]
-    assert "gobby-index" not in command[-1]
-
-
-@pytest.mark.asyncio
-async def test_qwen_adapter_captures_narrative_and_counts_tools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    qwen_stream = "\n".join(
-        [
-            '{"type":"assistant","message":{"role":"assistant","content":'
-            '[{"type":"tool_use","name":"run_shell_command"}]}}',
-            '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
-            '"num_turns":4,"usage":{"input_tokens":100,"output_tokens":20}}',
-        ]
-    )
-    captured: dict[str, object] = {}
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        accepted_exit_codes: frozenset[int] | None = None,
-    ) -> tuple[str, str, int]:
-        captured["env"] = env_overrides
-        assert env_overrides.get("QWEN_CODE_SUPPRESS_YOLO_WARNING") == "1"
-        assert env_overrides.get("SEATBELT_PROFILE") == "gobby-open"
-        assert ".gobby/bin" in env_overrides["PATH"]
-        # Verify the seatbelt profile was written before the temp dir is cleaned up.
-        profile_path = neutral_cwd / ".qwen" / "sandbox-macos-gobby-open.sb"
-        assert profile_path.exists(), f"Seatbelt profile not found at {profile_path}"
-        content = profile_path.read_text(encoding="utf-8")
-        assert "(version 1)" in content
-        assert "file-write*" in content
-        assert accepted_exit_codes == frozenset({53, 55})
-        return qwen_stream, "", 0
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-
-    result = await adapter.chat(_request(), _qwen_binding())
-
-    assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
-    assert result.provider == "qwen"
-    assert result.tool_use_count == 1
-    assert result.turns == 4
-    assert result.tools == {"run_shell_command": 1}
-    assert result.usage == {"input_tokens": 100, "output_tokens": 20}
-    assert result.stop_reason == "completed"
-
-
-@pytest.mark.parametrize(
-    ("returncode", "message", "stderr", "expected_stop_reason"),
-    [
-        (53, "session turn limit exceeded (--max-session-turns)", "", "max_turns"),
-        (55, "tool-call budget of 1 exceeded (--max-tool-calls)", "", "max_tool_calls"),
-        (55, "wall-clock budget of 10s exceeded (--max-wall-time)", "", "timeout"),
-        (55, None, "tool-call budget exceeded (--max-tool-calls)", "max_tool_calls"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_qwen_adapter_maps_limit_exits_to_typed_results(
-    monkeypatch: pytest.MonkeyPatch,
-    returncode: int,
-    message: str | None,
-    stderr: str,
-    expected_stop_reason: str,
-) -> None:
-    stream = json.dumps(
-        {
-            "type": "result",
-            "subtype": "error_during_execution",
-            "is_error": True,
-            "num_turns": 6,
-            "usage": {"input_tokens": 120, "output_tokens": 20},
-            "error": {"message": message},
-        }
-    )
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        accepted_exit_codes: frozenset[int] | None = None,
-    ) -> tuple[str, str, int]:
-        assert accepted_exit_codes == frozenset({53, 55})
-        return stream, stderr, returncode
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-
-    result = await adapter.chat(_request(), _qwen_binding())
-
-    assert result.text is None
-    assert result.stop_reason == expected_stop_reason
-    assert result.turns == 6
-    assert result.usage == {"input_tokens": 120, "output_tokens": 20}
-    assert result.budget_exhausted is True
-
-
-@pytest.mark.asyncio
-async def test_qwen_adapter_rejects_ambiguous_exit_55(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    stream = json.dumps(
-        {
-            "type": "result",
-            "subtype": "error_during_execution",
-            "is_error": True,
-            "num_turns": 2,
-            "error": {"message": "fatal budget exceeded"},
-        }
-    )
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        accepted_exit_codes: frozenset[int] | None = None,
-    ) -> tuple[str, str, int]:
-        return stream, "FatalBudgetExceededError", 55
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-
-    with pytest.raises(RuntimeError, match="ambiguous.*exit code 55"):
-        await adapter.chat(_request(), _qwen_binding())
-
-
-@pytest.mark.asyncio
-async def test_qwen_adapter_hard_fails_on_empty_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        accepted_exit_codes: frozenset[int] | None = None,
-    ) -> tuple[str, str, int]:
-        return '{"type":"system"}\n{"type":"result","result":""}', "", 0
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-
-    with pytest.raises(RuntimeError, match="no final message"):
-        await adapter.chat(_request(), _qwen_binding())
-
-
-def test_prepare_qwen_sandbox_profile_writes_correct_file(tmp_path: Path) -> None:
-    """The seatbelt profile file is written to .qwen/ with the right name and content."""
-    from gobby.ai._tool_chat_spawn import _QWEN_SEATBELT_PROFILE_NAME, _prepare_qwen_sandbox_profile
-
-    _prepare_qwen_sandbox_profile(tmp_path)
-
-    profile_path = tmp_path / ".qwen" / f"sandbox-macos-{_QWEN_SEATBELT_PROFILE_NAME}.sb"
-    assert profile_path.exists()
-    content = profile_path.read_text(encoding="utf-8")
-    assert "(version 1)" in content
-    assert "(allow default)" in content
-    assert "(deny file-write*)" in content
-    assert "TARGET_DIR" in content
-
-
 # --- ACP composite adapter -------------------------------------------------
 
 
@@ -718,31 +454,12 @@ async def test_acp_adapter_dispatches_to_grok(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
-async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        accepted_exit_codes: frozenset[int] | None = None,
-    ) -> tuple[str, str, int]:
-        return '{"type":"result","result":"Qwen narrative."}', "", 0
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-
-    adapter = ACPSpawnToolChatAdapter(DaemonConfig())
-    result = await adapter.chat(_request(), _qwen_binding())
-
-    assert result.text == "Qwen narrative."
-    assert result.provider == "qwen"
-
-
-@pytest.mark.asyncio
 async def test_acp_adapter_rejects_unknown_provider() -> None:
     adapter = ACPSpawnToolChatAdapter(DaemonConfig())
     bad_binding = _binding(provider="unknown", style=AIAdapterStyle.ACP)
 
-    with pytest.raises(ValueError, match="No ACP tool_chat adapter"):
+    with pytest.raises(
+        ValueError,
+        match=r"No ACP tool_chat adapter for provider 'unknown'; expected 'grok'\.",
+    ):
         await adapter.chat(_request(), bad_binding)

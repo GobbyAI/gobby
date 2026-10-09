@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
-from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime
+from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime, to_aware_utc
 from gobby.utils.host_sleep import AWAKE_CLOCK, AwakeClock
 
 if TYPE_CHECKING:
@@ -497,11 +497,14 @@ class ProgressTracker:
             },
         )
 
-    def get_summary(self, session_id: str) -> ProgressSummary:
+    def get_summary(
+        self, session_id: str, *, progress_since: datetime | None = None
+    ) -> ProgressSummary:
         """Get a summary of progress for a session.
 
         Args:
             session_id: The session to get summary for
+            progress_since: Earliest progress baseline for the active run
 
         Returns:
             ProgressSummary with aggregated progress data
@@ -579,10 +582,10 @@ class ProgressTracker:
         # Calculate stagnation
         is_stagnant, stagnation_duration = self._check_stagnation(
             session_id,
-            total_events,
             last_event_at,
             last_event_type,
             last_event_is_passive_wait,
+            progress_since,
         )
 
         return ProgressSummary(
@@ -614,10 +617,10 @@ class ProgressTracker:
     def _check_stagnation(
         self,
         session_id: str,
-        total_events: int,
         last_event_at: datetime | None,
         last_event_type: ProgressType | None,
         last_event_is_passive_wait: bool,
+        progress_since: datetime | None,
     ) -> tuple[bool, float]:
         """Check whether the session has gone quiet.
 
@@ -627,23 +630,34 @@ class ProgressTracker:
 
         Args:
             session_id: The session to check
-            total_events: Total event count
             last_event_at: Timestamp of the most recent event
             last_event_type: Type of the most recent event
+            progress_since: Earliest progress baseline for the active run
 
         Returns:
             Tuple of (is_stagnant, seconds_since_last_event)
         """
-        # No events yet - not stagnant
-        if total_events == 0 or last_event_at is None:
+        # A resumed run gets its own progress clock without deleting session history.
+        progress_since = to_aware_utc(progress_since) if progress_since is not None else None
+        baseline = last_event_at
+        if progress_since is not None and (baseline is None or progress_since > baseline):
+            baseline = progress_since
+        if baseline is None:
             return False, 0.0
 
         # Host sleep is not stagnation: count only time the host was awake (#23772).
-        duration = self._clock.awake_seconds_since(last_event_at)
+        duration = self._clock.awake_seconds_since(baseline)
         if self._task_close_review_store.get_active_for_caller_session(session_id) is not None:
             logger.debug("Session %s is awaiting an active task-close review", session_id)
             return False, duration
-        if last_event_type is ProgressType.TOOL_STARTED and not last_event_is_passive_wait:
+        if (
+            last_event_type is ProgressType.TOOL_STARTED
+            and not last_event_is_passive_wait
+            and (
+                progress_since is None
+                or (last_event_at is not None and last_event_at >= progress_since)
+            )
+        ):
             return False, duration
 
         if duration > self.stagnation_threshold:

@@ -450,7 +450,7 @@ class TestLayeredMemoryGuidance:
     ) -> None:
         _sync_bundled(db)
         variables = _initial_gate_variables()
-        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.AGY)
 
         response = await RuleEngine(db).evaluate(event, SESSION_ID, variables)
 
@@ -706,7 +706,7 @@ class TestPostCloseMemoryReviewRules:
             _gobby_feedback_epoch_submitted=True,
         )
         engine = RuleEngine(db)
-        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+        event = _turn_end_event(HookEventType.AFTER_AGENT, source=SessionSource.AGY)
 
         first = await engine.evaluate(event, SESSION_ID, variables)
         second = await engine.evaluate(event, SESSION_ID, variables)

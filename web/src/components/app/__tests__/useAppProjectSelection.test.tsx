@@ -111,7 +111,7 @@ describe("useAppProjectSelection", () => {
 
     act(() => {
       result.current.selection.selectProject("user-project");
-      result.current.selection.selectProvider("qwen");
+      result.current.selection.selectProvider("grok");
     });
 
     await act(async () => {
@@ -137,7 +137,7 @@ describe("useAppProjectSelection", () => {
     });
 
     expect(result.current.selection.effectiveProjectId).toBe("user-project");
-    expect(result.current.selectedProvider).toBe("qwen");
+    expect(result.current.selectedProvider).toBe("grok");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/config/values",
@@ -157,7 +157,7 @@ describe("useAppProjectSelection", () => {
       expect(patchBodies).toContainEqual(
         expect.objectContaining({
           expected_revision: expect.any(Number),
-          values: { ui_settings: { selectedProvider: "qwen" } },
+          values: { ui_settings: { selectedProvider: "grok" } },
         }),
       );
     });

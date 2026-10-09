@@ -569,7 +569,6 @@ class TestSessionManagerRegistration:
             "claude_code",
             "codex",
             "grok",
-            "qwen",
             "droid",
             "agy",
             "pipeline",

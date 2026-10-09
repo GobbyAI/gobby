@@ -1,5 +1,5 @@
 """
-Tests for transcript parsers (Claude, Codex, Qwen, Droid, and Grok).
+Tests for transcript parsers (Claude, Codex, Droid, and Grok).
 Consolidated from individual files.
 """
 
@@ -25,7 +25,6 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -2383,10 +2382,9 @@ class TestParserRegistry:
 
     def test_registry_has_correct_parsers(self) -> None:
         """Verify each source maps to the correct parser class."""
-        assert set(PARSER_REGISTRY) == {"claude", "grok", "qwen", "codex", "droid", "agy"}
+        assert set(PARSER_REGISTRY) == {"claude", "grok", "codex", "droid", "agy"}
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
         assert PARSER_REGISTRY["grok"] is GrokTranscriptParser
-        assert PARSER_REGISTRY["qwen"] is QwenTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser
         assert PARSER_REGISTRY["droid"] is DroidTranscriptParser
         agy_cls = PARSER_REGISTRY.get("agy")
@@ -2397,7 +2395,6 @@ class TestParserRegistry:
         """get_parser should return instances of the correct parser class."""
         assert isinstance(get_parser("claude"), ClaudeTranscriptParser)
         assert isinstance(get_parser("grok"), GrokTranscriptParser)
-        assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)
         assert isinstance(get_parser("droid"), DroidTranscriptParser)
         assert "agy" in PARSER_REGISTRY
@@ -2427,7 +2424,7 @@ _TRANSCRIPT_FIXTURES = (
 )
 
 
-@pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
+@pytest.mark.parametrize("source", ["claude", "codex", "grok", "droid"])
 @pytest.mark.parametrize(
     "fixture_path",
     _TRANSCRIPT_FIXTURES,
@@ -2501,15 +2498,6 @@ def test_tool_activity_flag_preserves_pair_shape(source: str, fixture_path: Path
     [
         ("claude", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
         ("codex", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
-        (
-            "qwen",
-            [
-                ("user", "previous"),
-                ("assistant", "previous reply"),
-                ("user", "inspect"),
-                ("assistant", "[Tool call: Read]"),
-            ],
-        ),
         ("droid", [("user", "previous"), ("assistant", "previous reply"), ("user", "inspect")]),
         (
             "grok",
@@ -2599,26 +2587,6 @@ def _tool_only_turns(source: str) -> list[dict[str, Any]]:
             }
         )
         return turns
-    if source == "qwen":
-        return [
-            {"type": "user", "message": {"parts": [{"text": "previous"}]}},
-            {"type": "assistant", "message": {"parts": [{"text": "previous reply"}]}},
-            {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
-            {
-                "type": "assistant",
-                "message": {
-                    "parts": [
-                        {
-                            "functionCall": {
-                                "id": "call-1",
-                                "name": "Read",
-                                "args": {"path": "widget.py"},
-                            }
-                        }
-                    ]
-                },
-            },
-        ]
     if source == "droid":
         return [
             {

@@ -592,6 +592,20 @@ class TerminalLeaseRegistry:
         record = self._require_live(attachment_id)
         return record.viewport
 
+    def viewports(self, terminal_id: str) -> set[tuple[int, int]]:
+        """The distinct (rows, cols) live gclient windows last declared for ``terminal_id``.
+
+        Sync tools call this from a worker thread, so it iterates a snapshot.
+        """
+        return {
+            record.viewport
+            for record in list(self._attachments.values())
+            if record.terminal_id == terminal_id
+            and not record.finalized
+            and record.viewer == "gclient"
+            and record.viewport is not None
+        }
+
     def set_scroll_offset(
         self, attachment_id: str, rows_from_live_edge: int, max_rows: int
     ) -> ScrollApplied:

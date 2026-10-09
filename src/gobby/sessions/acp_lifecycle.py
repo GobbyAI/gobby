@@ -143,7 +143,7 @@ def attach_acp_block(
 ) -> None:
     """Attach the normalized ``acp`` enrichment block to a serialized session.
 
-    Present for every ACP web-chat row (grok/qwen) so the UI's
+    Present for every ACP web-chat row (grok) so the UI's
     ``Boolean(session.acp)`` detection is stable; capabilities are empty when the
     agent advertises none (graceful degradation: chip shows, zero buttons). No-op
     for non-ACP rows so the block is absent there.

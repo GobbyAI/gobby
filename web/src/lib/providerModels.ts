@@ -35,7 +35,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   droid: "Droid",
   grok: "Grok",
   agy: "Antigravity",
-  qwen: "Qwen",
   openai: "OpenAI",
 };
 
@@ -506,9 +505,6 @@ function parseModelInfo(
   if (normalizedProvider === "codex") {
     return parseCodexModelInfo(model);
   }
-  if (normalizedProvider === "qwen") {
-    return parseQwenModelInfo(model);
-  }
   return parseGenericModelInfo(model);
 }
 
@@ -561,72 +557,6 @@ function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
     displayLabel: parts.join(" ").trim(),
     strengthRank: tierScore * 10_000 + versionScore(versionParts),
     versionParts,
-    releaseDate: null,
-  };
-}
-
-function stripTrailingParentheticalGroups(value: string): string {
-  // Iterate instead of regex so nested trailing groups like "(foo (bar))" are stripped correctly.
-  let cleaned = value.trim();
-
-  while (cleaned.endsWith(")")) {
-    let depth = 0;
-    let matchingOpenIndex = -1;
-
-    for (let index = cleaned.length - 1; index >= 0; index -= 1) {
-      const char = cleaned[index];
-      if (char === ")") {
-        depth += 1;
-      } else if (char === "(") {
-        depth -= 1;
-        if (depth === 0) {
-          matchingOpenIndex = index;
-          break;
-        }
-      }
-    }
-
-    if (matchingOpenIndex < 0) {
-      break;
-    }
-
-    cleaned = cleaned.slice(0, matchingOpenIndex).trimEnd();
-  }
-
-  return cleaned;
-}
-
-function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
-  const rawValue = model.value || model.label;
-  const modelId = stripTrailingParentheticalGroups(rawValue);
-  const backendLabel = (model.label ?? "").trim();
-  // The backend curates qwen labels (configured display names, relabeled CLI
-  // aliases); only fall back to humanizing the raw id when the label is just
-  // the id itself.
-  const displayLabel =
-    backendLabel && backendLabel !== rawValue && backendLabel !== modelId
-      ? backendLabel
-      : humanizeFallbackModelLabel(modelId);
-  const normalized = normalizeModelIdentifier(modelId) ?? "";
-  const tokens = tokenizeModel(modelId);
-
-  let strengthRank = 0;
-  if (/claude-opus|opus/.test(normalized)) {
-    strengthRank = 500_000;
-  } else if (/claude-sonnet|sonnet/.test(normalized)) {
-    strengthRank = 400_000;
-  } else if (/gpt-5/.test(normalized)) {
-    strengthRank = 350_000;
-  } else if (tokens.includes("gemini") && tokens.includes("pro")) {
-    strengthRank = 300_000;
-  } else if (/flash/.test(normalized)) {
-    strengthRank = 200_000;
-  }
-
-  return {
-    displayLabel,
-    strengthRank,
-    versionParts: extractVersionParts(tokenizeModel(modelId), null),
     releaseDate: null,
   };
 }

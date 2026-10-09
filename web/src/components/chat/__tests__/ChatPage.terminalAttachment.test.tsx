@@ -318,11 +318,11 @@ describe("ChatPage – terminal attachment", () => {
             viewingSessionId: "terminal-live-handoff",
             viewingSessionMeta: {
               ref: "#154",
-              source: "qwen",
+              source: "grok",
               title: "Live Handoff Terminal",
               status: "awaiting_handoff",
               canProxyAttach: true,
-              model: "qwen3-coder",
+              model: "grok-build",
               externalId: "term-154",
               sessionType: "terminal",
             },

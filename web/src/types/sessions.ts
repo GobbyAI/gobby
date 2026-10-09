@@ -2,7 +2,7 @@
  * Normalized ACP lifecycle block, computed per request by the backend
  * (`acp_session_mapping`) and attached only to ACP-backed web_chat rows.
  * Presence — `Boolean(session.acp)` — is the sole ACP detection signal; the
- * `source` string (e.g. `grok`/`qwen`) is never used to detect ACP-ness.
+ * `source` string (e.g. `grok`) is never used to detect ACP-ness.
  * Capabilities are agent-gated: today's providers advertise none, so every
  * flag degrades to `false` (ACP chip shows, zero lifecycle actions).
  */
@@ -78,7 +78,6 @@ export interface GobbySession {
 
 export const KNOWN_SOURCES = [
   "claude",
-  "qwen",
   "codex",
   "droid",
   "agy",

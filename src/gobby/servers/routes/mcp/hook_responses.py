@@ -98,16 +98,6 @@ def _graceful_error_response(
         if isinstance(grok_response, dict):
             return grok_response
 
-    if provider == "qwen":
-        from gobby.adapters.qwen import QwenAdapter
-
-        qwen_response = QwenAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(qwen_response, dict):
-            return qwen_response
-
     from gobby.adapters.claude_code import ClaudeCodeAdapter
 
     claude_response = ClaudeCodeAdapter().translate_from_hook_response(

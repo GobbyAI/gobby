@@ -250,7 +250,7 @@ class TestStopAttemptsPlumbing:
             # only fires on a turn that had the Gobby MCP proxy.
             "_mcp_proxy_ready_this_turn": True,
         }
-        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.AGY)
 
         blocked = await engine.evaluate(event, SESSION_ID, variables)
         assert blocked.decision == "block"
@@ -381,7 +381,7 @@ class TestManualCompactionTurnEndBypass:
 
         after_agent = _make_event(
             HookEventType.AFTER_AGENT,
-            source=SessionSource.QWEN,
+            source=SessionSource.AGY,
         )
         response = await engine.evaluate(after_agent, SESSION_ID, variables)
 
@@ -569,7 +569,7 @@ class TestRequireTaskClose:
     async def test_blocks_on_after_agent_turn_end(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
-        """Bundled turn_end gate should also fire for Qwen/Codex after-agent hooks."""
+        """Bundled turn_end gate should also fire for AGY/Codex after-agent hooks."""
         _sync_bundled(db)
 
         engine = RuleEngine(db)
@@ -582,7 +582,7 @@ class TestRequireTaskClose:
 
         event = _make_event(
             HookEventType.AFTER_AGENT,
-            source=SessionSource.QWEN,
+            source=SessionSource.AGY,
         )
         response = await engine.evaluate(event, SESSION_ID, variables)
 

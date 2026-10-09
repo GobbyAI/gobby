@@ -45,7 +45,6 @@ POSTGRES_SKIP_REASONS=(
     "PostgreSQL DSN required for hub runtime surface tests"
 )
 PYTEST_FORBIDDEN_SKIP_REASONS=(
-    "set GOBBY_RUN_AGY_PROBE=1"
     "set GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1"
     "FalkorDB not reachable for integration benchmark"
     "set GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR"
@@ -53,6 +52,14 @@ PYTEST_FORBIDDEN_SKIP_REASONS=(
     "set GOBBY_OTEL_COLLECTOR_SMOKE=1"
 )
 PYTEST_SELECTION_ARGS=()
+PYTEST_AGY_PROBE=1
+if [ "${CI:-}" = "true" ]; then
+    # Josh decision 2f92c406: live provider credentials stay local.
+    PYTEST_AGY_PROBE=0
+    PYTEST_SELECTION_ARGS+=(--ignore=tests/ai/test_agy_probe.py)
+else
+    PYTEST_FORBIDDEN_SKIP_REASONS+=("set GOBBY_RUN_AGY_PROBE=1")
+fi
 if [ "${GOBBY_RUN_PRE_PUSH_SANDBOX:-}" = "1" ]; then
     PYTEST_SELECTION_ARGS+=(--run-sandbox)
 else
@@ -112,6 +119,18 @@ docker_compose() {
 }
 
 read_managed_falkordb_settings() {
+    # CI owns an isolated service and has no installed Gobby config or SecretStore.
+    # Partial overrides must not mix test and managed settings.
+    if [ -n "${GOBBY_TEST_FALKOR_HOST:-}${GOBBY_TEST_FALKOR_PORT:-}${GOBBY_TEST_FALKOR_PASSWORD:-}" ]; then
+        if [ -z "${GOBBY_TEST_FALKOR_HOST:-}" ] ||
+            [ -z "${GOBBY_TEST_FALKOR_PORT:-}" ] ||
+            [ -z "${GOBBY_TEST_FALKOR_PASSWORD:-}" ]; then
+            echo "Set all GOBBY_TEST_FALKOR_HOST, GOBBY_TEST_FALKOR_PORT, and GOBBY_TEST_FALKOR_PASSWORD" >&2
+            return 1
+        fi
+        printf '%s\n' "$GOBBY_TEST_FALKOR_HOST" "$GOBBY_TEST_FALKOR_PORT" "$GOBBY_TEST_FALKOR_PASSWORD"
+        return 0
+    fi
     uv_run python - <<'PY'
 from pathlib import Path
 
@@ -311,6 +330,10 @@ check_pytest_postgres_skip_guard() {
 }
 
 python3 "$MANIFEST_TOOL" start --manifest "$MANIFEST_PATH" --repo-root .
+if [ "$PYTEST_AGY_PROBE" -eq 0 ]; then
+    echo "Live AGY probe (tests/ai/test_agy_probe.py): not run in CI; required by local pre-push"
+    record_skipped_command "live-agy-probe" "non-gating"
+fi
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."
@@ -501,7 +524,7 @@ elif ! load_pytest_falkordb_settings; then
     echo "✗ Failed to resolve managed FalkorDB settings for pytest"
     echo "  Run gobby install to configure the managed FalkorDB host, port, and password."
     FAILED=1
-elif ! command -v agy >/dev/null 2>&1; then
+elif [ "$PYTEST_AGY_PROBE" -eq 1 ] && ! command -v agy >/dev/null 2>&1; then
     PYTEST_EXIT=1
     echo "✗ agy not found on PATH; install the AGY CLI before running pytest"
     FAILED=1
@@ -513,7 +536,7 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_TEST_FALKOR_HOST="$PYTEST_FALKORDB_HOST" \
     GOBBY_TEST_FALKOR_PORT="$PYTEST_FALKORDB_PORT" \
     GOBBY_TEST_FALKOR_PASSWORD="$PYTEST_FALKORDB_PASSWORD" \
-    GOBBY_RUN_AGY_PROBE=1 \
+    GOBBY_RUN_AGY_PROBE="$PYTEST_AGY_PROBE" \
     GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1 \
     GOBBY_OTEL_COLLECTOR_SMOKE=1 \
     GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR="$PWD/tests/sessions/transcripts/fixtures/grok_audit" \

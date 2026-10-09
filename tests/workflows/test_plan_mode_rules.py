@@ -74,7 +74,6 @@ PLAN_MODE_RULES = {
     "handle-plan-mode-exit",
     "reset-plan-directive-on-resolved-mode-exit",
     "reset-plan-mode-on-session-start",
-    "teach-qwen-gcode-plan-mode",
 }
 
 
@@ -284,43 +283,6 @@ class TestHandlePlanModeEntry:
         assert "plan_skill_directive_delivered" not in variables
 
 
-class TestTeachQwenGcodePlanMode:
-    """Verify Qwen plan-mode gcode guidance."""
-
-    def test_targets_qwen_plan_mode_once(self, db, manager) -> None:
-        _sync_bundled(db)
-
-        row = manager.get_by_name("teach-qwen-gcode-plan-mode")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "turn_start"
-        assert body.when is not None
-        assert "plan_mode" in body.when
-        assert "source == 'qwen'" in body.when
-        assert "qwen_gcode_plan_hint_shown" in body.when
-
-    def test_injects_gcode_context_and_sets_guard(self, db, manager) -> None:
-        _sync_bundled(db)
-
-        row = manager.get_by_name("teach-qwen-gcode-plan-mode")
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-
-        effects = body.resolved_effects
-        assert len(effects) == 2
-        assert effects[0].type == "inject_context"
-        assert effects[0].template is not None
-        assert "gcode outline" in effects[0].template
-        assert "gcode symbol <full-uuid>" in effects[0].template
-        assert "search or outline results" in effects[0].template
-        assert "write/destructive shell commands remain blocked" in effects[0].template
-        assert effects[1].type == "set_variable"
-        assert effects[1].variable == "qwen_gcode_plan_hint_shown"
-        assert effects[1].value is True
-        assert getattr(effects[0], "delivery", None) == "on_receipt"
-        assert getattr(effects[1], "delivery", None) == "on_receipt"
-
-
 class TestHandlePlanModeExit:
     """Verify handle-plan-mode-exit: after_tool on approved ExitPlanMode."""
 
@@ -342,7 +304,7 @@ class TestHandlePlanModeExit:
         db: HubDatabase,
         manager: RuleDefinitionManager,
     ) -> None:
-        """Should clear plan_mode and both Plan Mode epoch guards."""
+        """Should clear plan_mode and the plan directive epoch guard."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-exit")
@@ -350,9 +312,8 @@ class TestHandlePlanModeExit:
 
         effects = body.resolved_effects
         effects_by_variable = {effect.variable: effect for effect in effects}
-        assert len(effects) == 3
+        assert len(effects) == 2
         assert effects_by_variable["plan_mode"].value is False
-        assert effects_by_variable["qwen_gcode_plan_hint_shown"].value is False
         assert effects_by_variable["plan_skill_directive_delivered"].value is False
 
     def test_resolved_mode_exit_resets_directive_period(
@@ -394,7 +355,6 @@ class TestResetPlanModeOnSessionStart:
         assert body.event.value == "session_start"
         effects_by_variable = {effect.variable: effect for effect in body.resolved_effects}
         assert effects_by_variable["plan_mode"].value is False
-        assert effects_by_variable["qwen_gcode_plan_hint_shown"].value is False
         assert effects_by_variable["plan_skill_directive_delivered"].value is False
 
     def test_when_condition_covers_clear_compact_startup(

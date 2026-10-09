@@ -69,6 +69,7 @@ RETIRED_RULES = {
     "require-clean-tree-before-status",
     "search-memories-on-claim",
     "remind-memory-guidance-on-later-turns",
+    "teach-qwen-gcode-plan-mode",
 }
 MONOLITH_RULES = {
     "require-decompose-monolith-before-threshold-write",

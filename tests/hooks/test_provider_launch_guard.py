@@ -294,7 +294,7 @@ async def test_native_codex_command_alias_with_command_pattern_rules(
     assert "block-gobby-tasks-cli" not in (result.reason or "")
 
 
-@pytest.mark.parametrize("provider", ["codex", "claude", "droid", "grok", "qwen", "agy"])
+@pytest.mark.parametrize("provider", ["codex", "claude", "droid", "grok", "agy"])
 @pytest.mark.parametrize("prefix", ["", "/opt/bin/", "'/some path/bin/"])
 @pytest.mark.parametrize(
     "args", ["", " exec hi", " resume", " -p hi", " unknown", " exec prompt --help"]
@@ -311,7 +311,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "claude -h",
         "droid --version",
         "grok --help",
-        "qwen --version",
         "agy --help",
         "codex help",
         "codex -V",
@@ -327,7 +326,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "grok agent --help",
         "grok version",
         "grok v",
-        "qwen mcp --help",
         "agy help mcp",
         "claude auth status",
         "claude mcp add --help",
@@ -335,7 +333,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "grok models --help",
         "claude auth login --help",
         "claude help",
-        "qwen help",
         "env A=b /opt/bin/codex login status",
         "command -- codex --help",
         "codex --help && claude auth status",
@@ -355,7 +352,6 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "claude -v",
         "droid -v",
         "grok -v",
-        "qwen -v",
         "type codex",
         "which codex",
         "cat <<'EOF'\ncodex exec\n$(claude -p hi)\n' malformed documentation\nEOF\n",
@@ -388,7 +384,6 @@ def test_administration_and_documentation(command: str) -> None:
         "codex exec prompt --help",
         "codex help unknown",
         "claude auth status --text --resume",
-        "qwen help mcp",
         "grok agent prompt --help",
         "agy mcp unknown --help",
         # A prompt cannot pose as a help word: unknown words end the path, and
@@ -409,7 +404,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "printf hi | claude -p hi",
         "false || droid",
         "true; grok",
-        "true & qwen",
+        "true & droid",
         "echo done\nagy",
         "A=b codex",
         "env -i A=b codex exec hi",
@@ -459,7 +454,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "sh <<'EOF'\ncodex exec hi\nEOF\n",
         "bash -s <<EOF\nclaude -p hi\nEOF\n",
         "bash -o errexit <<'EOF'\ncodex\nEOF\n",
-        "bash <<-'EOF'\n\tqwen\n\tEOF\n",
+        "bash <<-'EOF'\n\tgrok\n\tEOF\n",
         "cat <<EOF\n'$(codex exec hi)'\nEOF\n",
         "cat <<EOF\n`claude -p hi`\nEOF\n",
         "cat <<'EOF' | sh\ncodex exec\nEOF\n",
@@ -472,9 +467,7 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "claude auth login",
         "droid auth status",
         "grok auth status",
-        "qwen auth status",
         "agy auth status",
-        "qwen -V",
         "claude -V",
         "GOBBY_ALLOW_DIRECT_PROVIDER=1 codex",
         "codex > /dev/null",
@@ -610,7 +603,6 @@ def test_bounded_and_malformed_input() -> None:
         SessionSource.CODEX,
         SessionSource.DROID,
         SessionSource.GROK,
-        SessionSource.QWEN,
         SessionSource.AGY,
     ],
 )

@@ -14,7 +14,6 @@ PINNED_VERSIONS = {
     "codex": "0.153.2",
     "droid": "0.223.0",
     "grok": "1.0.13",
-    "qwen": "0.23.0",
     "agy": "1.1.27",
 }
 REQUIRED_CASES = {
@@ -93,10 +92,7 @@ def test_tool_cancellation_failure_exit_and_replacement_are_distinct(
 ) -> None:
     for provider in contract["providers"]:
         cases = provider["cases"]
-        assert cases["denial"]["expected"]["distinction"] in {
-            "denied_resolution",
-            "tool_local_cancellation",
-        }
+        assert cases["denial"]["expected"]["distinction"] == "denied_resolution"
         assert cases["non_user_failure"]["expected"]["disposition"] == "ended_non_user"
         assert cases["session_exit"]["expected"]["distinction"] == "session_exit"
         assert cases["replacement_prompt_race"]["expected"]["stale_ignored"] is True

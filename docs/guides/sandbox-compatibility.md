@@ -36,16 +36,15 @@ present in that run cache.
 
 | Surface | Provider | Default mapping | Compatibility invariant |
 | --- | --- | --- | --- |
-| Web chat | Claude/Codex/Qwen/Grok/Droid/Antigravity | SRT wraps each session-owned SDK, app-server, ACP, stream-jsonrpc, or stream-json provider process | Bounded network policy is daemon-owned; stale policy hashes invalidate resume; explicit `provider-native` overrides never fall back |
+| Web chat | Claude/Codex/Grok/Droid/Antigravity | SRT wraps each session-owned SDK, app-server, ACP, stream-jsonrpc, or stream-json provider process | Bounded network policy is daemon-owned; stale policy hashes invalidate resume; explicit `provider-native` overrides never fall back |
 | Managed agent | Claude | SRT wraps complete `claude` argv | Claude approval/tool settings and MCP flags remain inside the wrapped argv |
 | Managed agent | Codex | SRT wraps complete `codex` argv | No nested Codex OS sandbox; approval/config flags remain active |
-| Managed agent | Qwen | SRT wraps complete `qwen` argv | No nested Seatbelt profile; Qwen flags and hooks remain active |
 | Managed agent | Grok | SRT wraps complete `grok` argv | No nested Grok OS sandbox; headless/approval flags remain active |
 | Managed agent | Droid | SRT wraps complete `droid` argv | SRT supplies the host boundary even though Droid has no provider-native renderer |
 | Managed agent | Antigravity | SRT wraps complete `agy` argv | Interactive dispatch and terminal lifecycle use the same session-owned process boundary |
 
 Explicit `provider-native` managed-agent mode is covered for Claude, Codex,
-Qwen, and Grok. Selecting it for Droid fails closed. SRT supports both macOS
+and Grok. Selecting it for Droid fails closed. SRT supports both macOS
 Seatbelt and Linux bubblewrap; Windows support in the pinned upstream release is
 alpha and is not part of Gobby's supported compatibility gate.
 
@@ -89,7 +88,7 @@ hook protocol and installed binary contract:
 
 - `tests/integration/sandbox/test_runner_infrastructure.py`
 - `tests/integration/sandbox/test_diagnose_schema.py`
-- `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
+- `tests/integration/sandbox/run_{claude,codex}_sandbox.py`
 
 These are operator-only host checks. Use isolated daemon state and the test hub;
 they are not routine agent documentation-validation commands.

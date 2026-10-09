@@ -1,6 +1,7 @@
 """Read-only resolution of the project crew-lane runbook's launch inputs."""
 
 import re
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,9 +12,17 @@ from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
-from gobby.storage.workspace_layout import WorkspaceNotFoundError
-from gobby.storage.workspaces import WorkspaceManager, WorkspaceTarget
+from gobby.storage.workspace_layout import (
+    MIN_PANE_COLUMNS,
+    MIN_PANE_ROWS,
+    WorkspaceNotFoundError,
+    layout_extent,
+)
+from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceTarget
 from gobby.storage.worktrees import LocalWorktreeManager
+
+# The distinct (rows, cols) live gclient windows show a terminal at.
+type Viewports = Callable[[str], Collection[tuple[int, int]]]
 
 
 @dataclass(frozen=True)
@@ -23,6 +32,8 @@ class CrewLaneInputs:
     worktree: str
     report_to: str
     project_path: str
+    lane_columns: int
+    lane_rows: int
 
 
 def _refuse(kind: str, candidates: list[str]) -> RunbookSeatRefusal:
@@ -100,6 +111,39 @@ def _manager_pane(workspaces: WorkspaceManager, manager: Session) -> WorkspaceTa
     return target
 
 
+def _viewport_refusal(sizes: Collection[tuple[int, int]]) -> RunbookSeatRefusal:
+    refusal = _refuse("lane viewport", [f"{columns}x{rows}" for rows, columns in sizes])
+    return RunbookSeatRefusal(
+        f"{refusal}; show the lane's workspace in gclient or pass lane_rows and lane_columns"
+    )
+
+
+def _lane_viewport(
+    workspaces: WorkspaceManager, workspace: Workspace, viewports: Viewports | None
+) -> tuple[int, int]:
+    """Return the (columns, rows) of the gclient window showing ``workspace``.
+
+    Every tab in a window shares its content area, and only the shown tab's panes
+    carry live sizes: a hidden tab keeps the sizes it was last shown at.
+    """
+    shown_tab = next(
+        (tab for tab in workspaces.list_tabs(workspace.id) if tab.id == workspace.focused_tab_id),
+        None,
+    )
+    if shown_tab is None or viewports is None:
+        raise _viewport_refusal([])
+    sizes: dict[str, tuple[int, int]] = {}
+    for pane in workspaces.list_panes(workspace.id):
+        if pane.tab_id != shown_tab.id:
+            continue
+        shown = viewports(pane.terminal_id) if pane.terminal_id else ()
+        if len(shown) != 1:
+            raise _viewport_refusal(shown)
+        [(rows, columns)] = shown
+        sizes[pane.id] = (columns, rows)
+    return layout_extent(shown_tab.layout, sizes)
+
+
 def resolve_crew_lane_inputs(
     db: HubDatabase,
     *,
@@ -109,6 +153,9 @@ def resolve_crew_lane_inputs(
     lane_pane: str | None = None,
     worktree: str | None = None,
     report_to: str | None = None,
+    lane_columns: int | None = None,
+    lane_rows: int | None = None,
+    viewports: Viewports | None = None,
 ) -> CrewLaneInputs:
     """Resolve overrides or unique existing lane state, without creating or claiming anything."""
     lane = str(lane)
@@ -196,6 +243,15 @@ def resolve_crew_lane_inputs(
         if len(panes) != 1:
             raise _refuse("pane", [pane.id for pane in panes])
         pane_id = panes[0].id
+    if lane_columns is None or lane_rows is None:
+        columns, rows = _lane_viewport(workspaces, target.workspace, viewports)
+        lane_columns = columns if lane_columns is None else lane_columns
+        lane_rows = rows if lane_rows is None else lane_rows
+    if lane_columns < MIN_PANE_COLUMNS or lane_rows < MIN_PANE_ROWS:
+        raise RunbookSeatRefusal(
+            f"lane viewport {lane_columns}x{lane_rows} is under the "
+            f"{MIN_PANE_COLUMNS}x{MIN_PANE_ROWS} pane floor"
+        )
 
     trees = LocalWorktreeManager(db).list_worktrees(
         caller.project_id, status="active", limit=READ_BOUND + 1
@@ -242,4 +298,12 @@ def resolve_crew_lane_inputs(
     chosen = matches[0]
     if not Path(chosen.worktree_path).is_dir():
         raise RunbookSeatRefusal(f"worktree path does not exist: {chosen.worktree_path}")
-    return CrewLaneInputs(target.workspace.id, pane_id, chosen.id, manager.ref, str(root))
+    return CrewLaneInputs(
+        target.workspace.id,
+        pane_id,
+        chosen.id,
+        manager.ref,
+        str(root),
+        lane_columns,
+        lane_rows,
+    )

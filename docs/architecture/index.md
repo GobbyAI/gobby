@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-**Gobby** is fleet management for AI coding agents. It unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
+**Gobby** is fleet management for AI coding agents. It unifies AI coding assistants (Claude Code, Codex, AGY, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
 
 ### Quick Facts
 
@@ -93,7 +93,6 @@ gobby status
 - **AGY CLI** - Hook integration
 - **Codex CLI** - Full hook integration (+ app-server JSON-RPC)
 - **Droid** - Hook integration
-- **Qwen Code** - Native terminal-hook integration plus ACP web chat
 - **Grok CLI** - Hook integration (ACP)
 
 ### Session Management
@@ -109,7 +108,7 @@ gobby status
 - Dynamic server add/remove
 
 ### LLM Integration
-- Multi-provider support (Claude, Codex, AGY, Qwen, Droid, local endpoints)
+- Multi-provider support (Claude, Codex, AGY, Droid, local endpoints)
 - Subscription-based and BYOK authentication
 - Feature-routed LLM calls with profile fallback
 - Tool recommendations

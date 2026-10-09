@@ -328,7 +328,7 @@ class TestSessionEndInput:
         assert input_data.reason == SessionEndReason.COMPACT
 
     def test_runtime_exit_reason(self) -> None:
-        """Test runtime exit reason emitted by Qwen session lifecycle events."""
+        """Test runtime exit reason emitted by session lifecycle events."""
         input_data = SessionEndInput(external_id="key", reason="exit")
         assert input_data.reason == SessionEndReason.EXIT
 

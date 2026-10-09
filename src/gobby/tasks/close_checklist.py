@@ -47,6 +47,7 @@ from gobby.tasks.transcript_outcomes import (
     EvidenceOutcome,
     infer_failure_categories,
 )
+from gobby.tasks.validation_confinement import ConfinementContext, confinement_credit
 from gobby.tasks.validation_diagnostics import (
     bound_diagnostic_record,
     bound_review_details,
@@ -137,6 +138,7 @@ def evaluate_validation_commands(
     deleted_paths: Iterable[str] = (),
     close_root: str | None = None,
     candidate_commit_sha: str | None = None,
+    confinement_context: ConfinementContext | None = None,
 ) -> CloseGateResult:
     """Keep credit decisions separate from observed-run explanations.
 
@@ -164,6 +166,7 @@ def evaluate_validation_commands(
         deleted_paths=deleted_paths,
         close_root=close_root,
         candidate=candidate,
+        confinement_context=confinement_context,
     )
 
     def uncovered(run: TranscriptValidationRun) -> tuple[str, ...] | None:
@@ -272,6 +275,7 @@ def _evaluate_validation_commands(
     deleted_paths: Iterable[str] = (),
     close_root: str | None = None,
     candidate: CloseCandidate | None = None,
+    confinement_context: ConfinementContext | None = None,
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -311,14 +315,34 @@ def _evaluate_validation_commands(
     fresh_runs = _fresh_runs(evidence)
     definitive = [run for run in fresh_runs if run.outcome != "unknown"]
     credited = [run for run in definitive if not run.wrapped and run.core_command is not None]
-    passing_runs = [run for run in credited if run.outcome == "success"]
-    covers = partial(
+    passing_runs = [
+        run for run in credited if run.outcome == "success" and run.categories == ("test",)
+    ]
+    confined_paths, confinement_audit = confinement_credit(
+        runs=credited,
+        required_paths=tuple(
+            dict.fromkeys(
+                (
+                    *_pytest_module_paths(changed_python_test_paths),
+                    *(test for tests in source_tests.values() for test in tests),
+                )
+            )
+        ),
+        changed_paths=changed_paths,
+        candidate=candidate,
+        context=confinement_context,
+    )
+    passing_covers = partial(
         uncovered_pytest_paths,
         passing_runs,
         close_root=close_root,
         changed_paths=changed_paths,
         candidate=candidate,
     )
+
+    def covers(tests: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(path for path in passing_covers(tests) if path not in confined_paths)
+
     uncovered_sources = {
         source: list(uncovered)
         for source, tests in source_tests.items()
@@ -394,6 +418,7 @@ def _evaluate_validation_commands(
     details = {
         **details,
         "fresh_run_count": len(fresh_runs),
+        "confinement_credit": confinement_audit,
         "latest_outcomes": {
             run_category: run.outcome for run_category, run in sorted(latest_by_category.items())
         },

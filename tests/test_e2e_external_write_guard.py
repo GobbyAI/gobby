@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Generator
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +17,52 @@ import pytest
 
 from tests.e2e import conftest as e2e
 from tests.e2e.conftest import _snapshot_dir
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_audit_environment_prevents_import_bytecode_writes(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    child: bool,
+) -> None:
+    home = tmp_path / "operator-home"
+    source = home / ".gobby" / "worktrees" / "sample" / "fresh_module.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 42\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    factory = cast(
+        Callable[[pytest.TempPathFactory], Generator[None]],
+        inspect.unwrap(e2e.external_write_audit_environment),
+    )
+    guard = factory(tmp_path_factory)
+    next(guard)
+    try:
+        if child:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; from importlib.machinery import SourceFileLoader; "
+                    "from tests.fixtures.external_write_audit import daemon_write_audit; "
+                    "\nwith daemon_write_audit():\n"
+                    "    SourceFileLoader('fresh_module', sys.argv[1]).get_code('fresh_module')",
+                    str(source),
+                ],
+                check=True,
+            )
+        else:
+            code = SourceFileLoader("fresh_module", str(source)).get_code("fresh_module")
+            assert code is not None
+        assert not (source.parent / "__pycache__").exists()
+        with pytest.raises(StopIteration):
+            next(guard)
+    finally:
+        guard.close()
+    assert sys.dont_write_bytecode is False
+    assert "PYTHONDONTWRITEBYTECODE" not in os.environ
 
 
 def _write(path: Path, content: str = "x") -> None:

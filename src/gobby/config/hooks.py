@@ -40,7 +40,7 @@ class HookTimeoutConfig(BaseModel):
         default_factory=dict,
         description=(
             "Per-provider additionalContext character limits keyed by session "
-            "source (claude, grok, codex, qwen, droid, agy). Unset providers "
+            "source (claude, grok, codex, droid, agy). Unset providers "
             "use additional_context_limit."
         ),
     )

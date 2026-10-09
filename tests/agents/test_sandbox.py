@@ -31,7 +31,6 @@ from gobby.agents.sandbox_policy import (
 from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
-    QwenSandboxResolver,
     SandboxResolver,
     _normalize_sandbox_path,
     get_sandbox_resolver,
@@ -756,50 +755,6 @@ class TestCodexSandboxResolver:
 
 
 @pytest.mark.unit
-class TestQwenSandboxResolver:
-    """Tests for QwenSandboxResolver."""
-
-    def test_cli_name(self) -> None:
-        resolver = QwenSandboxResolver()
-        assert resolver.cli_name == "qwen"
-
-    def test_qwen_sets_seatbelt_profiles(self) -> None:
-        resolver = QwenSandboxResolver()
-        config = SandboxConfig(enabled=True, mode="restrictive", allow_network=False)
-        paths = ResolvedSandboxPaths(
-            workspace_path="/project",
-            read_paths=[],
-            write_paths=["/project"],
-            allow_external_network=False,
-        )
-
-        args, env = resolver.resolve(config, paths)
-        assert args == ["-s"]
-        assert env["SEATBELT_PROFILE"] == "restrictive-proxied"
-
-    def test_qwen_includes_external_write_dirs(self, tmp_path: Path) -> None:
-        resolver = QwenSandboxResolver()
-        workspace = tmp_path / "workspace"
-        external = tmp_path / "repo" / ".git" / "worktrees" / "task"
-        workspace.mkdir()
-        paths = ResolvedSandboxPaths(
-            workspace_path=str(workspace),
-            read_paths=[],
-            write_paths=[str(workspace), str(external)],
-            allow_external_network=True,
-        )
-
-        args, env = resolver.resolve(SandboxConfig(enabled=True), paths)
-
-        assert args == [
-            "-s",
-            "--include-directories",
-            str(external.resolve(strict=False)),
-        ]
-        assert env["SEATBELT_PROFILE"] == "permissive-open"
-
-
-@pytest.mark.unit
 class TestGetSandboxResolver:
     """Tests for get_sandbox_resolver factory function."""
 
@@ -812,11 +767,6 @@ class TestGetSandboxResolver:
         """Test that 'codex' returns CodexSandboxResolver."""
         resolver = get_sandbox_resolver("codex")
         assert isinstance(resolver, CodexSandboxResolver)
-
-    def test_returns_qwen_resolver(self) -> None:
-        """Test that 'qwen' returns QwenSandboxResolver."""
-        resolver = get_sandbox_resolver("qwen")
-        assert isinstance(resolver, QwenSandboxResolver)
 
     def test_droid_raises_value_error(self) -> None:
         """Test that providers without sandbox support raise ValueError."""
@@ -969,7 +919,6 @@ class TestComputeSandboxPaths:
             ("claude", True),
             ("codex", False),
             ("droid", False),
-            ("qwen", False),
             ("grok", False),
         ],
     )

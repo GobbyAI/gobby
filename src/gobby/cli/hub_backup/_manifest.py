@@ -59,6 +59,24 @@ HUB_BACKUP_MANIFEST_SCHEMA_V3: dict[str, Any] = {
         "artifacts",
         "stores",
     ],
+    "if": {
+        "properties": {
+            "stores": {
+                "anyOf": [
+                    {
+                        "properties": {
+                            key: {
+                                "properties": {flag: {"properties": {"verified": {"const": True}}}}
+                            }
+                        }
+                    }
+                    for key in STORE_KEYS
+                    for flag in ("archive_verified", "restore_verified")
+                ]
+            }
+        }
+    },
+    "then": {"properties": {"artifacts": {"minItems": 1}}},
     "properties": {
         "manifest_format": {"const": MANIFEST_FORMAT},
         "manifest_version": {"const": MANIFEST_VERSION},

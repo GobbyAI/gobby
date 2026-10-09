@@ -630,6 +630,8 @@ HANDOFF_PREREQUISITE_EVENTS = [
         id="proxy-get-tool-schema",
     ),
     pytest.param({"tool_name": "mcp__gobby__list_tools"}, id="proxy-list-tools"),
+    # After compaction Claude Code defers the proxy tools; ToolSearch loads them.
+    pytest.param({"tool_name": "ToolSearch"}, id="claude-tool-search"),
 ]
 
 
@@ -692,10 +694,18 @@ async def test_armed_retry_gate_allows_handoff_prerequisites(
     assert allowed.decision == "allow"
 
 
+@pytest.mark.parametrize(
+    "tool_event",
+    [
+        pytest.param({"mcp_server": "gobby-tasks", "mcp_tool": "create_task"}, id="mcp-work"),
+        pytest.param({"tool_name": "Edit"}, id="native-work"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_armed_retry_gate_still_blocks_ordinary_work(
     handler: WorkflowHookHandler,
     temp_db: HubDatabase,
+    tool_event: dict[str, str],
 ) -> None:
     """The carve-outs are prerequisites, not an amnesty: the gate still gates."""
     SessionVariableManager(temp_db).merge_variables(
@@ -711,8 +721,9 @@ async def test_armed_retry_gate_still_blocks_ordinary_work(
 
     blocked = await handler._evaluate_rules(
         _arbitrary_tool_event(
-            mcp_server="gobby-tasks",
-            mcp_tool="create_task",
+            tool_name=tool_event.get("tool_name", "Bash"),
+            mcp_server=tool_event.get("mcp_server"),
+            mcp_tool=tool_event.get("mcp_tool"),
         )
     )
 

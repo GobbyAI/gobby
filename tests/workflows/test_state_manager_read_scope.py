@@ -21,6 +21,34 @@ from gobby.workflows.state_manager import SessionVariableManager
 pytestmark = pytest.mark.unit
 
 VARIABLES_SELECT = "SELECT sv.session_id IS NOT NULL AS stored"
+
+
+def test_subset_scope_cache_and_mutations_preserve_unrelated_state(
+    variables: SessionVariableManager,
+    session_id: str,
+    reads: list[str],
+) -> None:
+    variables.merge_variables(
+        session_id, {"selected": {"items": []}, "nullable": None, "large": "x" * 100_000}
+    )
+    reads.clear()
+    with hub_read_scope():
+        first = variables.get_variable_subset(session_id, ("selected", "nullable", "missing"))
+        first["selected"]["items"].append("local")
+        assert variables.get_variable_subset(session_id, ("missing", "nullable", "selected")) == {
+            "selected": {"items": []},
+            "nullable": None,
+        }
+        assert variables.get_variable_subset(session_id, ("nullable",)) == {"nullable": None}
+        assert variables.get_variables(session_id)["large"] == "x" * 100_000
+        variables.set_variable(session_id, "selected", {"items": ["stored"]})
+        assert variables.get_variable_subset(session_id, ("selected",)) == {
+            "selected": {"items": ["stored"]}
+        }
+        assert variables.get_variables(session_id)["large"] == "x" * 100_000
+    assert sum(VARIABLES_SELECT in sql for sql in reads) == 5
+
+
 PROJECT_ID_SELECT = "SELECT project_id FROM sessions"
 
 

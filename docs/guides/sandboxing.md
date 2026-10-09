@@ -45,14 +45,14 @@ does not gain write access.
 
 The default-enabled `block-direct-provider-launch` rule checks every
 Gobby-observed shell call, including top-level sessions. It recognizes `codex`,
-`claude`, `droid`, `grok`, `qwen`, and `agy`, including absolute executable
+`claude`, `droid`, `grok`, and `agy`, including absolute executable
 paths. Interactive launches, prompts, `exec`, `resume`, and unknown forms are
 blocked. Use `gobby-agents:spawn_agent` for managed launches; request external
 workspace writes with `extra_write_paths` and `write_paths_reason` above.
 Daemon-owned provider launches continue through their managed launch path.
 
 The shell allowlist is deliberately literal: a single `--help`, `-h`, or
-`--version` argument; `codex -V`; `-v` for Claude, Droid, Grok, or Qwen;
+`--version` argument; `codex -V`; `-v` for Claude, Droid, or Grok;
 bare `help` for Codex, Droid, Grok, or Antigravity; `grok version`/`grok v`;
 `codex login status`; and `claude auth status` (optionally `--json` or `--text`).
 Recognized subcommand help, such as `codex exec --help`, `codex help login`,
@@ -250,7 +250,7 @@ explicit network/socket and environment-token policies are separate boundaries.
 
 Hook and trust write denials cover Claude `settings.json`,
 `settings.local.json` and `~/.claude.json`; Codex `hooks.json` and
-`config.toml`; Qwen `settings.json` and `trustedFolders.json`; Droid
+`config.toml`; Droid
 `hooks.json` and fallback settings files; Grok's `hooks`, `hooks-paths`,
 `config.toml`, `managed_config.toml`, `requirements.toml`, `trusted_folders.toml`,
 legacy trust registries, `sandbox.toml`, and installed `bin` directory;
@@ -263,18 +263,17 @@ Gobby provider.
 
 Executable configuration is protected even when its directory does not exist:
 Codex `rules`; Claude `agents`, `skills`, `commands` and project `.mcp.json`;
-Qwen `agents`, `skills` and `commands`; Droid `droids`, `commands` and `mcp.json`;
+Droid `droids`, `commands` and `mcp.json`;
 and legacy Gemini `agents`, `commands` and `policies`. These surfaces can install
 hooks, start MCP commands, run shell preprocessing or grant tool approvals.
-Claude and Qwen skill directories carry executable frontmatter. Droid and Gemini
+Claude skill directories carry executable frontmatter. Droid and Gemini
 native skills carry model instructions and supporting scripts, without automatic
 hook registration or shell preprocessing; their settings and plugin/extension
 controls remain protected. Ordinary skill execution still uses the managed sandbox.
 
 Plugin installation and activation surfaces are also immutable: Claude's
 `plugins/{cache,marketplaces,synced}` and installed/known marketplace registries;
-Codex's `plugins/cache` and portable marketplace manifests; Qwen's `extensions`
-and `extension-store`; Droid's plugin cache, marketplaces and registries; and
+Codex's `plugins/cache` and portable marketplace manifests; Droid's plugin cache, marketplaces and registries; and
 legacy Gemini extensions. Claude's plugin data, directory-cache and install-count
 cache remain writable. Provider settings already protect plugin enablement and
 MCP commands. Installation and marketplace updates require an operator outside
@@ -403,7 +402,7 @@ definition change does not alter a run that is already going.
 
 ## Launch And Lifecycle
 
-Gobby constructs the complete Claude, Codex, Qwen, Grok, Droid, or Antigravity command first,
+Gobby constructs the complete Claude, Codex, Grok, Droid, or Antigravity command first,
 preflights SRT, and then wraps that argv exactly once before tmux creation.
 Provider-native OS sandbox flags are omitted in SRT mode, while provider approval
 policies, tool permissions, MCP/browser/computer-use controls, authentication,
@@ -412,7 +411,7 @@ worktree/clone isolation, resource limits, and hooks remain independent.
 Hook delivery is fail-open for every tool-use event. No CLI treats `PreToolUse`
 as critical, so a PreToolUse denial degrades to allow when the daemon is
 unreachable. Lifecycle failure policy is provider-specific: Claude uses kebab-case lifecycle
-names, Codex/Qwen/Droid use PascalCase, and Grok uses snake_case names. Those
+names, Codex/Droid use PascalCase, and Grok uses snake_case names. Those
 registered lifecycle hooks fail closed. Antigravity has no critical hooks and fails open
 for delivery failure. Turn-level `Stop` is never critical. The authoritative
 registry is `crates/ghook/src/cli_config.rs`.

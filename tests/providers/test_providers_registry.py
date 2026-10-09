@@ -35,7 +35,6 @@ def test_provider_metadata_preserves_order_and_live_api_metadata() -> None:
         "codex",
         "droid",
         "grok",
-        "qwen",
         "agy",
     )
     assert {entry.provider: entry.user_directory for entry in entries} == {
@@ -43,7 +42,6 @@ def test_provider_metadata_preserves_order_and_live_api_metadata() -> None:
         "codex": ".codex",
         "droid": ".factory",
         "grok": ".grok",
-        "qwen": ".qwen",
         "agy": ".gemini",
     }
     with patch("gobby.providers.registry.shutil.which", return_value="/usr/bin/claude"):

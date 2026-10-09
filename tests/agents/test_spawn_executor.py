@@ -829,93 +829,6 @@ class TestExecuteSpawn:
             assert request.prepared_spawn is not None
 
     @pytest.mark.asyncio
-    async def test_qwen_terminal_calls_prepare_terminal_spawn(self) -> None:
-        """Qwen direct spawn passes GOBBY_SESSION_ID env vars to the terminal."""
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            provider="qwen",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-            prepared_spawn=prepared_spawn(),
-        )
-
-        mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123",
-                env_vars={
-                    "GOBBY_SESSION_ID": "gobby-sess-123",
-                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
-                },
-            )
-        )
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(
-            success=True,
-            pid=12345,
-        )
-
-        with (
-            patch(
-                "gobby.agents.spawn.prepare_terminal_spawn",
-                mock_prepare,
-            ),
-            patch(
-                "gobby.agents.spawn_executor_providers.build_cli_command",
-                return_value=(["qwen", "--approval-mode", "yolo", "-i", "prompt"], {}),
-            ),
-        ):
-            request.prepared_spawn = mock_prepare.return_value
-            result = await execute_spawn(request)
-
-            mock_prepare.assert_not_called()
-            assert _runtime_of(request).last_request is not None
-            # Env vars ARE passed to spawn now (for hook dispatcher to read)
-            call_kwargs = _spawn_kwargs(request)
-            assert call_kwargs.get("env") is not None
-            assert "GOBBY_SESSION_ID" in call_kwargs["env"]
-            assert result.success is True
-            assert result.child_session_id == "gobby-sess-123"
-            assert result.pid == 12345
-
-    async def test_qwen_spawn_preparation_keeps_event_loop_responsive(self) -> None:
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            provider="qwen",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=MagicMock(),
-            prepared_spawn=prepared_spawn(),
-        )
-        request.prepared_spawn = prepared_spawn(
-            session_id="gobby-sess-123",
-            agent_run_id="run-abc123",
-            env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
-        )
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
-        with (
-            patch(
-                "gobby.agents.spawn_executor_providers.build_cli_command",
-                return_value=(["qwen"], {}),
-            ),
-        ):
-            result = await execute_spawn(request)
-
-        assert result.success is True
-        assert result.pid == 12345
-        assert _runtime_of(request).create_calls == 1
-
-    @pytest.mark.asyncio
     async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery: MagicMock) -> None:
         """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
         mock_session_manager = MagicMock()
@@ -1288,12 +1201,13 @@ class TestExecuteSpawn:
         assert "session_manager is required" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_unknown_terminal_spawn_is_rejected(self) -> None:
+    @pytest.mark.parametrize("provider", ["unknown", "qwen"])
+    async def test_unknown_terminal_spawn_is_rejected(self, provider: str) -> None:
         """Unsupported providers must not fall through to Claude."""
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            provider="unknown",
+            provider=provider,
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
@@ -1305,59 +1219,7 @@ class TestExecuteSpawn:
         result = await execute_spawn(request)
 
         assert result.success is False
-        assert "Unsupported spawn provider: unknown" in (result.error or "")
-
-    @pytest.mark.asyncio
-    async def test_qwen_terminal_spawn_failure_propagates_error(self) -> None:
-        """Qwen spawn failure is properly propagated to SpawnResult."""
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            provider="qwen",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-            prepared_spawn=prepared_spawn(),
-        )
-
-        mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123",
-                env_vars={
-                    "GOBBY_SESSION_ID": "gobby-sess-123",
-                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
-                },
-            )
-        )
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(
-            success=False,
-            error="Terminal not found",
-            message=None,
-        )
-
-        with (
-            patch(
-                "gobby.agents.spawn.prepare_terminal_spawn",
-                mock_prepare,
-            ),
-            patch(
-                "gobby.agents.spawn_executor_providers.build_cli_command",
-                return_value=(["qwen", "--approval-mode", "yolo", "-i", "prompt"], {}),
-            ),
-        ):
-            request.prepared_spawn = mock_prepare.return_value
-            _runtime_of(request).typed_fail = True
-            _runtime_of(request).spawn_error = "Terminal not found"
-            result = await execute_spawn(request)
-
-            assert result.success is False
-            assert "Terminal not found" in (result.error or "")
+        assert f"Unsupported spawn provider: {provider}" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_grok_terminal_spawn_constructs_headless_command(self) -> None:
@@ -2038,119 +1900,6 @@ class TestExecuteSpawnSandbox:
         assert "SEATBELT_PROFILE" not in call_kwargs.get("env", {})
         assert result.success is True
 
-    @pytest.mark.asyncio
-    async def test_qwen_terminal_spawn_with_sandbox_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """Qwen terminal spawn applies sandbox config correctly."""
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        git_dir = tmp_path / "repo" / ".git"
-        git_worktree_dir = git_dir / "worktrees" / "agent"
-        extra_write_path = tmp_path / "extra" / "path"
-        uv_cache_dir = tmp_path / "gobby" / "uv-cache" / "gobby-sess-123"
-        monkeypatch.setattr(
-            "gobby.agents.sandbox._git_metadata_write_paths",
-            lambda _workspace: [str(git_dir), str(git_worktree_dir)],
-        )
-        sandbox_config = SandboxConfig(
-            enabled=True,
-            mode="permissive",
-            extra_write_paths=[str(extra_write_path)],
-        )
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test with sandbox",
-            cwd=str(workspace),
-            provider="qwen",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-            sandbox_config=sandbox_config,
-            prepared_spawn=prepared_spawn(),
-        )
-
-        mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123",
-                env_vars={
-                    "GOBBY_SESSION_ID": "gobby-sess-123",
-                    UV_CACHE_DIR: str(uv_cache_dir),
-                },
-            )
-        )
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(
-            success=True,
-            pid=12345,
-        )
-
-        with (
-            patch(
-                "gobby.agents.spawn.prepare_terminal_spawn",
-                mock_prepare,
-            ),
-        ):
-            request.prepared_spawn = mock_prepare.return_value
-            result = await execute_spawn(request)
-
-        assert _runtime_of(request).last_request is None
-        assert result.success is False
-        assert "qwen cannot prove the sensitive-root contract" in (result.error or "")
-
-    @pytest.mark.asyncio
-    async def test_qwen_terminal_spawn_uses_qwen_resolver_for_sandbox_config(self) -> None:
-        """Qwen uses its own resolver and passes sandbox args before the prompt."""
-        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test with sandbox",
-            cwd="/path",
-            provider="qwen",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-            sandbox_config=sandbox_config,
-            prepared_spawn=prepared_spawn(),
-        )
-
-        mock_prepare = MagicMock(
-            return_value=MagicMock(
-                session_id="gobby-sess-123",
-                agent_run_id="run-abc123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
-            )
-        )
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
-        mock_resolver = MagicMock()
-        mock_resolver.resolve.return_value = (
-            ["-s", "--include-directories", "/tmp/qwen-git"],
-            {"SEATBELT_PROFILE": "permissive-open"},
-        )
-
-        with (
-            patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
-            patch(
-                "gobby.agents.spawn_executor_providers.get_sandbox_resolver",
-                return_value=mock_resolver,
-            ) as mock_get_resolver,
-        ):
-            request.prepared_spawn = mock_prepare.return_value
-            result = await execute_spawn(request)
-
-        mock_get_resolver.assert_called_once_with("qwen")
-        mock_resolver.resolve.assert_not_called()
-        assert _runtime_of(request).last_request is None
-        assert result.success is False
-        assert "qwen cannot prove the sensitive-root contract" in (result.error or "")
-
 
 class TestExecuteSpawnErrorPaths:
     """Tests for spawn execution error paths and edge cases."""
@@ -2706,6 +2455,22 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     )
     parent_env["GOBBY_HOME"] = str(tmp_path)
     parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")
+    # Managed launches publish a private, daemon-owned capability envelope before
+    # the scrubbed MCP subprocess starts. It must remain readable without bootstrap.yaml.
+    grant_path = tmp_path / "grant.json"
+    grant_path.write_text(
+        json.dumps(
+            {
+                "managed_api_token": parent_env["GOBBY_AGENT_API_TOKEN"],
+                "principal": {
+                    "execution_id": run_id,
+                    "session_id": child_session_id,
+                    "project_id": "project-uuid",
+                },
+            }
+        )
+    )
+    grant_path.chmod(0o600)
 
     overrides = _codex_mcp_config_overrides("/main/repo", managed_identity_env=parent_env)
 

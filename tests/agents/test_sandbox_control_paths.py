@@ -8,16 +8,13 @@ from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, compute_sa
 
 pytestmark = pytest.mark.unit
 
-PROVIDERS = ("claude", "codex", "qwen", "droid", "grok", "agy", "gemini")
+PROVIDERS = ("claude", "codex", "droid", "grok", "agy", "gemini")
 CONTROL_FILES = (
     ".codex/rules/default.rules",
     ".claude/agents/worker.md",
     ".claude/skills/example/SKILL.md",
     ".claude/commands/example.md",
     ".mcp.json",
-    ".qwen/agents/worker.md",
-    ".qwen/skills/example/SKILL.md",
-    ".qwen/commands/example.toml",
     ".factory/droids/worker.md",
     ".factory/commands/example.sh",
     ".factory/mcp.json",
@@ -29,8 +26,6 @@ CONTROL_FILES = (
     ".claude.json",
     ".codex/hooks.json",
     ".codex/config.toml",
-    ".qwen/settings.json",
-    ".qwen/trustedFolders.json",
     ".factory/hooks.json",
     ".factory/settings.json",
     ".factory/settings.local.json",
@@ -55,8 +50,6 @@ CONTROL_FILES = (
     ".claude/plugins/installed_plugins.json",
     ".claude/plugins/known_marketplaces.json",
     ".codex/plugins/cache/public/.mcp.json",
-    ".qwen/extensions/public/qwen-extension.json",
-    ".qwen/extension-store/state.json",
     ".gemini/extensions/public/gemini-extension.json",
     ".agents/plugins/marketplace.json",
     ".claude-plugin/marketplace.json",
@@ -112,7 +105,7 @@ async def test_provider_control_files_cannot_be_written(
     # Workspace grants must not enable persistent project-local hooks either.
     for relative in CONTROL_FILES:
         if relative == ".mcp.json" or relative.startswith(
-            (".claude/", ".codex/", ".qwen/", ".factory/", ".gemini/", ".grok/", ".cursor/")
+            (".claude/", ".codex/", ".factory/", ".gemini/", ".grok/", ".cursor/")
         ):
             assert _contains(paths.deny_write_paths, workspace / relative), relative
 
@@ -169,7 +162,6 @@ async def test_foreign_provider_credentials_denied(
     credentials = {
         "claude": ".claude/.credentials.json",
         "codex": ".codex/auth.json",
-        "qwen": ".qwen/oauth_creds.json",
         "droid": ".factory/auth.json",
         "grok": ".grok/auth.json",
         "gemini": ".gemini/oauth_creds.json",

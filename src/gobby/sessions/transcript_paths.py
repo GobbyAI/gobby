@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -206,29 +205,6 @@ def _hook_candidates(
     return [home.joinpath(*Path(relative).parts)]
 
 
-def _qwen_tmp_hook_candidates(
-    *,
-    home: Path,
-    cwd: str | None,
-    external_id: str,
-    session_id: str,
-) -> list[Path]:
-    if not cwd:
-        return []
-    project_hash = hashlib.sha256(cwd.encode()).hexdigest()
-    chats_dir = home / ".qwen" / "tmp" / project_hash / "chats"
-    if not _safe_is_dir(chats_dir):
-        return []
-    prefix = (session_id or external_id)[:8]
-    if not prefix:
-        return []
-    return [
-        path
-        for path in _safe_glob(chats_dir, f"session-*-{prefix}.json", reverse=True)
-        if _is_readable_file(path)
-    ]
-
-
 def _claude_hook_candidates(
     *,
     home: Path,
@@ -361,24 +337,6 @@ def _recover_codex(home: Path, external_id: str, escaped: str, max_days: int) ->
     return None
 
 
-def _recover_qwen(home: Path, external_id: str, escaped: str, max_days: int) -> str | None:
-    del external_id
-    qwen_projects = home / ".qwen" / "projects"
-    if not _safe_exists(qwen_projects):
-        return None
-    for proj_dir in _safe_iterdir(qwen_projects):
-        chats_dir = proj_dir / "chats"
-        if not _safe_is_dir(chats_dir):
-            continue
-        match = _first_recent_file(
-            _safe_glob(chats_dir, f"*{escaped}*.jsonl", reverse=True),
-            max_days,
-        )
-        if match:
-            return str(match)
-    return None
-
-
 def _recover_grok(home: Path, external_id: str, escaped: str, max_days: int) -> str | None:
     del external_id
     grok_sessions = home / ".grok" / "sessions"
@@ -439,12 +397,6 @@ PROVIDER_TRANSCRIPT_SPECS: tuple[TranscriptProviderSpec, ...] = (
             _PathDetectRule(name_prefix="rollout-", name_suffix=".jsonl"),
         ),
         recover=_recover_codex,
-    ),
-    TranscriptProviderSpec(
-        source="qwen",
-        detect_rules=(_PathDetectRule(parts=(".qwen",)),),
-        hook_search=_qwen_tmp_hook_candidates,
-        recover=_recover_qwen,
     ),
     TranscriptProviderSpec(
         source="grok",

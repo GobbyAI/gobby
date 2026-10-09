@@ -26,7 +26,7 @@ from gobby.cli.installers import (
     install_claude,
     install_embedding,
     uninstall_claude,
-    uninstall_qwen,
+    uninstall_droid,
 )
 from gobby.config.bootstrap import BootstrapConfigError
 
@@ -58,7 +58,6 @@ class TestRegistry:
             "claude",
             "codex",
             "grok",
-            "qwen",
             "droid",
             "agy",
             "git-hooks",
@@ -186,15 +185,15 @@ class TestRunInstallComponents:
             patch.object(components, "_run_git_hooks_install", side_effect=git_hooks),
         ):
             results = run_install_components(
-                ["rtk", "qwen", "git-hooks"],
+                ["rtk", "codex", "git-hooks"],
                 project_path=tmp_path,
                 no_interactive=True,
                 embedding=None,
                 runtime=runtime,
             )
 
-        assert order == ["rtk", "qwen", "git-hooks"]
-        assert set(results) == {"rtk", "qwen", "git-hooks"}
+        assert order == ["rtk", "codex", "git-hooks"]
+        assert set(results) == {"rtk", "codex", "git-hooks"}
         rtk.assert_called_once_with(
             runtime.require_database.return_value, True, no_interactive=True
         )
@@ -355,16 +354,16 @@ class TestRunUninstallComponents:
             components, "_run_standard_cli_uninstall", side_effect=fake_uninstall
         ) as run_uninstall:
             results = run_uninstall_components(
-                ["claude", "qwen"], project_path=tmp_path, runtime=runtime
+                ["claude", "droid"], project_path=tmp_path, runtime=runtime
             )
 
         assert [call.args[:3] for call in run_uninstall.call_args_list] == [
             ("claude", uninstall_claude, Path.home()),
-            ("qwen", uninstall_qwen, Path.home()),
+            ("droid", uninstall_droid, Path.home()),
         ]
         assert results == {
             "claude": {"success": True, "kwargs": {}},
-            "qwen": {"success": True, "kwargs": {"mode": "global"}},
+            "droid": {"success": True, "kwargs": {"mode": "global"}},
         }
 
     def test_git_hooks_component_removes_hooks_for_the_repo(

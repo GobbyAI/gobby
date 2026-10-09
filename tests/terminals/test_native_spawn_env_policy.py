@@ -132,7 +132,7 @@ async def test_explicit_auth_cli_selects_the_policy(monkeypatch: pytest.MonkeyPa
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command",
-    [["claude"], ["codex"], ["grok"], ["qwen"], ["droid"], ["agy"], ["/bin/zsh"]],
+    [["claude"], ["codex"], ["grok"], ["droid"], ["agy"], ["/bin/zsh"]],
 )
 async def test_every_spawn_blanks_the_daemon_virtualenv(
     monkeypatch: pytest.MonkeyPatch, command: list[str]

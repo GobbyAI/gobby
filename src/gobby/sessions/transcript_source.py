@@ -52,8 +52,6 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
         return "codex"
 
     if isinstance(message, dict):
-        if isinstance(message.get("parts"), list):
-            return "qwen"
         if "role" in message:
             return "claude"
         if "content" in message:
@@ -62,10 +60,7 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     if line_type in {"assistant", "summary", "system"}:
         return "claude"
     if line_type == "user":
-        return "claude" if isinstance(message, dict) else "qwen"
-
-    if line_type in {"init", "message", "tool_use", "tool_result", "result", "model"}:
-        return "qwen"
+        return "claude" if isinstance(message, dict) else None
 
     return None
 

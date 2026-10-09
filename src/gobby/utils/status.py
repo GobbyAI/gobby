@@ -32,7 +32,6 @@ _CODING_CLI_LABELS = (
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
     ("grok", "Grok CLI"),
-    ("qwen", "Qwen CLI"),
 )
 
 

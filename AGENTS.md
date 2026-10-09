@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Gobby is fleet management for AI coding agents, a local-first daemon that unifies
-them: session tracking and handoffs across Claude Code, Codex, Droid, Grok, Qwen,
-and AGY; an MCP proxy with progressive discovery; task management with
+them: session tracking and handoffs across Claude Code, Codex, Droid, Grok, and
+AGY; an MCP proxy with progressive discovery; task management with
 dependencies and validation gates; agent spawning with worktree isolation;
 persistent memory, rules, workflows, and pipelines.
 

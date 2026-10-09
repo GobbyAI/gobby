@@ -813,7 +813,7 @@ def test_rotation_race_creates_one_successor_and_drains_the_predecessor(
                 "WHERE managed_execution_id = %s ORDER BY credential_generation",
                 (execution_id,),
             ).fetchall()
-        assert bindings == [(1, True, True), (2, False, None)]
+        assert bindings == [(1, False, True), (2, False, None)]
     finally:
         manager.revoke(execution_id, reason="test-cleanup")
         manager.close()
@@ -1255,6 +1255,17 @@ def test_live_run_rotated_in_its_window_survives_restart_and_re_handshakes(
             restarted_daemon.get_live_binding_generation(execution_id)
             == rotated.credential_generation
         )
+        # The restart preserves the still-live predecessor drain. A later
+        # re-handshake rotates once that bounded window has elapsed.
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET revocation_requested_at = NOW() - INTERVAL '1 minute', "
+                "predecessor_drain_deadline = NOW() - INTERVAL '1 second' "
+                "WHERE managed_execution_id = %s AND predecessor_drain_deadline IS NOT NULL",
+                (execution_id,),
+            )
+        restarted_daemon.rotate_due()
 
         def read_bootstrap_dsn(bootstrap_path: object) -> str:
             payload = json.loads(Path(str(bootstrap_path)).read_text(encoding="utf-8"))

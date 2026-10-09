@@ -430,7 +430,8 @@ async def test_task_lookup_failure_does_not_invent_success(
     assert current.terminal_reason is None
     successful_terminalizer.assert_not_awaited()
     stuck_detector.is_stuck.assert_called_once_with(
-        run.child_session_id or run.claimed_session_id or run.parent_session_id
+        run.child_session_id or run.claimed_session_id or run.parent_session_id,
+        progress_since=run.started_at or run.created_at,
     )
     assert unavailable_task_manager.get_task.call_args.args == (run.task_id,)
 

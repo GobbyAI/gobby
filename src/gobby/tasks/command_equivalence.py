@@ -305,7 +305,11 @@ def _path_scope(
         return None
     tokens, _locations = _drop_neutral_uv_options(list(parsed.segments[0]))
     start = 2 if tokens[:2] == ["uv", "run"] else 0
-    if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
+    if (
+        len(tokens) > start + 1
+        and posixpath.basename(tokens[start]) in {"python", "python3"}
+        and tokens[start + 1] == "-m"
+    ):
         start += 2
     runner = _path_scope_runner(tokens, start)
     if runner is None:

@@ -2,14 +2,39 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import SimpleNamespace
+from typing import Any
+
+from gobby.storage.agents._constants import TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES, TERMINAL_SESSION_STATUSES
 from gobby.storage.tasks._models import Task
+from gobby.terminal_ownership import recorded_process_exited
+from gobby.utils.machine_id import get_machine_id
 
 
 def _session_ref(seq_num: int | None, session_id: str) -> str:
     """Audit name for a session: its #seq, or its stored UUID when it has no seq."""
     return f"#{seq_num}" if seq_num is not None else session_id
+
+
+def _holds_authority(row: Mapping[str, Any], slot: str) -> bool:
+    """Whether the task's creator or delegator (*slot*) can still use its authority."""
+    status = row[f"{slot}_status"]
+    if status not in LIVE_SESSION_STATUSES:
+        return False
+    if status != "paused":
+        return True
+    # A paused session can lose its terminal and keep working, so only positive evidence
+    # that it is gone releases its authority (#23885): every agent run linked to it ended,
+    # or the provider process it recorded on this machine exited.
+    if row[f"{slot}_run_ended"]:
+        return False
+    context = Session.parse_terminal_context(row[f"{slot}_terminal_context"])
+    recorded = SimpleNamespace(terminal_context=context)
+    return not (row[f"{slot}_machine_id"] == get_machine_id() and recorded_process_exited(recorded))
 
 
 def delegate_task(
@@ -114,7 +139,17 @@ def transfer_task_authority(
                    t.claimed_by_session_id::text AS claimed_by_session_id,
                    t.closed_at, t.delegation_reason, t.project_id,
                    creator.status AS creator_status, creator.seq_num AS creator_seq,
+                   creator.machine_id::text AS creator_machine_id,
+                   creator.terminal_context AS creator_terminal_context,
+                   (SELECT bool_and(r.status::text = ANY(%s)) FROM agent_runs r
+                    WHERE r.child_session_id = creator.id OR r.id = creator.agent_run_id)
+                       AS creator_run_ended,
                    delegator.status AS delegator_status, delegator.seq_num AS delegator_seq,
+                   delegator.machine_id::text AS delegator_machine_id,
+                   delegator.terminal_context AS delegator_terminal_context,
+                   (SELECT bool_and(r.status::text = ANY(%s)) FROM agent_runs r
+                    WHERE r.child_session_id = delegator.id OR r.id = delegator.agent_run_id)
+                       AS delegator_run_ended,
                    actor.status AS actor_status, actor.project_id AS actor_project_id,
                    actor.seq_num AS actor_seq
             FROM tasks t
@@ -124,7 +159,12 @@ def transfer_task_authority(
             WHERE t.id = %s
             FOR UPDATE OF t
             """,
-            (caller_session_id, task_id),
+            (
+                list(TERMINAL_AGENT_RUN_STATUSES),
+                list(TERMINAL_AGENT_RUN_STATUSES),
+                caller_session_id,
+                task_id,
+            ),
         ).fetchone()
         if row is None:
             raise ValueError("Task not found")
@@ -159,10 +199,10 @@ def transfer_task_authority(
         # A creator that claimed its own task cannot record receipts for it (the claimant
         # is refused), so it has no authority to keep (#23624).
         creator_holds = (
-            row["creator_status"] in LIVE_SESSION_STATUSES
+            _holds_authority(row, "creator")
             and row["created_in_session_id"] != row["claimed_by_session_id"]
         )
-        if creator_holds or row["delegator_status"] in LIVE_SESSION_STATUSES:
+        if creator_holds or _holds_authority(row, "delegator"):
             raise ValueError(
                 "the task's creator or delegator is still live and keeps its authority"
             )

@@ -1,6 +1,6 @@
 name: default
 description: Baseline agent — bootstraps core guidance and loads other skills on demand
-sources: [claude, qwen, codex, droid]
+sources: [claude, codex, droid]
 surfaces: [spawn, persona]
 provider: inherit
 timeout: 0

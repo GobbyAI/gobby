@@ -4,7 +4,7 @@
 
 ## Overview
 
-**Gobby** is fleet management for AI coding agents. It unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
+**Gobby** is fleet management for AI coding agents. It unifies AI coding assistants (Claude Code, Codex, AGY, Droid, and Grok) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
 
 ### Key Characteristics
 
@@ -58,7 +58,7 @@
 │  │    Adapters     │  │  LLMService     │  │ MCPClientManager│        │
 │  │ Claude/Codex/   │  │  (multi-prov)   │  │ (conn pooling)  │        │
 │  │ AGY/Droid/      │  │                 │  │                 │        │
-│  │ Qwen/Grok       │  │                 │  │                 │        │
+│  │ Grok            │  │                 │  │                 │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │
@@ -113,7 +113,6 @@
 | **AgyAdapter** | `adapters/agy.py` | AGY CLI |
 | **CodexAdapter** | `adapters/codex_impl/app_server_adapter.py` | Codex CLI |
 | **DroidAdapter** | `adapters/droid.py` | Droid |
-| **QwenAdapter** | `adapters/qwen.py` | Qwen Code |
 | **GrokAdapter** | `adapters/grok.py` | Grok CLI |
 
 ### Data Layer
@@ -199,7 +198,7 @@ Hook event fired (e.g., before_tool)
 2. **CLI-Agnostic**: Adapter pattern normalizes different CLI hook formats to unified events
 3. **Rules-First Enforcement**: Declarative rules enforce behavior without relying on prompt compliance
 4. **Progressive Discovery**: MCP tools loaded on-demand to reduce token usage
-5. **Multi-Provider LLM**: Abstraction layer supports Claude (API + CLI), Codex, AGY, Qwen, and Droid providers plus local endpoints
+5. **Multi-Provider LLM**: Abstraction layer supports Claude (API + CLI), Codex, AGY, and Droid providers plus local endpoints
 6. **Event-Driven Hooks**: Hook events feed into RuleEngine for enforcement and context injection
 7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access

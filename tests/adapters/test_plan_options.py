@@ -24,7 +24,6 @@ pytestmark = pytest.mark.unit
 _SOURCES = [
     SessionSource.CLAUDE,
     SessionSource.CODEX,
-    SessionSource.QWEN,
     SessionSource.GROK,
     SessionSource.DROID,
     SessionSource.AGY,

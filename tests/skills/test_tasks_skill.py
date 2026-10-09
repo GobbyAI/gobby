@@ -70,7 +70,7 @@ def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
         assert expected in closing
     assert "claiming, closing, and worked-on sessions" in closing
     assert "link windows" in closing
-    for provider in ("Claude Code", "Qwen", "Droid", "Grok", "Codex"):
+    for provider in ("Claude Code", "Droid", "Grok", "Codex"):
         assert provider not in implementation + closing
 
 

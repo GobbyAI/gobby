@@ -97,11 +97,7 @@ async def test_remote_sessions_skipped() -> None:
 
 
 def test_fallback_scan_refuses_remote_sessions() -> None:
-    handler = SimpleNamespace(
-        _find_qwen_transcript=MagicMock(
-            side_effect=AssertionError("remote qwen transcript was scanned")
-        )
-    )
+    handler = SimpleNamespace()
     with patch(
         "gobby.sessions.transcript_paths.Path.home",
         side_effect=AssertionError("remote home directory was scanned"),
@@ -119,7 +115,7 @@ def test_fallback_scan_refuses_remote_sessions() -> None:
     assert (
         derive_transcript_path(
             handler,
-            "qwen",
+            "codex",
             {},
             "remote-external",
             owner_machine_id=REMOTE_MACHINE_ID,
@@ -127,7 +123,6 @@ def test_fallback_scan_refuses_remote_sessions() -> None:
         )
         is None
     )
-    handler._find_qwen_transcript.assert_not_called()
 
 
 @pytest.mark.asyncio

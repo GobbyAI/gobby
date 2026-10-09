@@ -21,7 +21,7 @@ from gobby.providers.capabilities.local_context_config import LocalContextRoute
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_messages import ChatSessionMessagesMixin
 from gobby.servers.websocket.chat import runtime_manager as runtime_manager_module
-from gobby.servers.websocket.chat.backends import CodexManagedChatSession, QwenManagedChatSession
+from gobby.servers.websocket.chat.backends import CodexManagedChatSession, GrokManagedChatSession
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
 pytestmark = pytest.mark.unit
@@ -265,15 +265,15 @@ async def test_generation_and_chat_refresh(monkeypatch: pytest.MonkeyPatch) -> N
     assert remote_session._local_context_route is None
     assert remote_session._local_context_observation is None
 
-    endpoint_shaped_qwen = await manager.create_session(
-        provider="qwen",
-        conversation_id="qwen",
+    endpoint_shaped_grok = await manager.create_session(
+        provider="grok",
+        conversation_id="grok",
         model="endpoint:first/same",
     )
-    assert isinstance(endpoint_shaped_qwen, QwenManagedChatSession)
+    assert isinstance(endpoint_shaped_grok, GrokManagedChatSession)
     assert len(service.events) == refresh_count
-    assert endpoint_shaped_qwen._local_context_route is None
-    assert endpoint_shaped_qwen._local_context_refresher is None
+    assert endpoint_shaped_grok._local_context_route is None
+    assert endpoint_shaped_grok._local_context_refresher is None
 
 
 @pytest.mark.asyncio

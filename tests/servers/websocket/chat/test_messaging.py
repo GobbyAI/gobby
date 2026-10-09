@@ -521,39 +521,6 @@ class TestFireLifecycle:
         assert captured_event.metadata["_platform_session_id"] == "db-session"
         assert captured_event.metadata["project_path"] == "/tmp/project"
 
-    @pytest.mark.asyncio
-    async def test_fire_lifecycle_accepts_qwen_provider(self) -> None:
-        mixin = DummyLifecycleMixin()
-        mixin._chat_sessions["conv-1"] = SimpleNamespace(
-            db_session_id="db-session",
-            provider="qwen",
-            project_id="project-123",
-            project_path="/tmp/project",
-            seq_num=None,
-        )
-        captured_event = None
-
-        def evaluate(event):
-            nonlocal captured_event
-            captured_event = event
-            return HookResponse(decision="allow")
-
-        async def fake_run_db(_owner, func):
-            return func()
-
-        mixin.workflow_handler.evaluate = evaluate
-
-        with patch("gobby.servers.websocket.chat._lifecycle.run_db", new=fake_run_db):
-            result = await mixin._fire_lifecycle(
-                "conv-1",
-                HookEventType.BEFORE_AGENT,
-                {"prompt": "hi"},
-            )
-
-        assert result is not None
-        assert captured_event is not None
-        assert captured_event.source is SessionSource.QWEN
-
 
 class TestHeartbeatScope:
     async def test_rebinds_connection_to_server_owned_project(

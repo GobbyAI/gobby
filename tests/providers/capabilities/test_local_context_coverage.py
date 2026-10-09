@@ -99,18 +99,18 @@ def _snapshot(provider: str, *models: str) -> ProviderSnapshot:
 def test_mixed_local_remote_coverage(caplog: pytest.LogCaptureFixture) -> None:
     local_namespace = local_provider_namespace("machine-1", "studio", "fingerprint")
     store = _SnapshotStore(
-        _snapshot("qwen", "LOCAL-MODEL", "remote-model"),
+        _snapshot("codex", "LOCAL-MODEL", "remote-model"),
         _snapshot(local_namespace, "reserved-local-unknown"),
     )
     auditor = ModelMetadataCoverageAuditor(
         store,
         _MetadataStore(),
         [],
-        excluded_models=lambda: frozenset({(" QWEN ", "local-model")}),
+        excluded_models=lambda: frozenset({(" CODEX ", "local-model")}),
     )
 
     with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
 
     messages = [record.getMessage() for record in caplog.records]
-    assert messages == ["Provider qwen has 1 models without context metadata: remote-model"]
+    assert messages == ["Provider codex has 1 models without context metadata: remote-model"]

@@ -58,7 +58,6 @@ def _event(
         SessionSource.CODEX,
         SessionSource.DROID,
         SessionSource.GROK,
-        SessionSource.QWEN,
     ],
 )
 def test_managed_web_chat_runtime_mode_is_authoritative_without_prompt_tags(
@@ -169,7 +168,7 @@ def test_turn_start_resolves_mode_before_context_pressure_accounting() -> None:
         context_window=1_000_000,
     )
     event = _event(
-        SessionSource.QWEN,
+        SessionSource.GROK,
         data={"prompt": "inspect the repository"},
         metadata={"session_type": "web_chat", "chat_mode": "plan"},
     )
@@ -191,7 +190,6 @@ def test_turn_start_resolves_mode_before_context_pressure_accounting() -> None:
         pytest.param(SessionSource.CODEX, None, id="codex"),
         pytest.param(SessionSource.DROID, "approvalMode", id="droid"),
         pytest.param(SessionSource.GROK, "current_mode", id="grok"),
-        pytest.param(SessionSource.QWEN, "mode", id="qwen"),
         pytest.param(SessionSource.CLAUDE, "web_chat", id="managed-web-chat"),
     ],
 )

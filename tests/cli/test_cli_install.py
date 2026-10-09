@@ -22,7 +22,6 @@ from gobby.cli.install import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_droid_cli_installed,
-    _is_qwen_cli_installed,
     _resolve_ide_settings_consent,
 )
 from gobby.cli.install_components import COMPONENTS, UNINSTALLABLE_COMPONENTS
@@ -144,13 +143,6 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _mock_qwen_detector() -> Iterator[None]:
-    """Keep Qwen detection deterministic unless a test overrides it."""
-    with patch("gobby.cli.install._is_qwen_cli_installed", return_value=False):
-        yield
-
-
-@pytest.fixture(autouse=True)
 def _mock_droid_detector() -> Iterator[None]:
     """Keep Droid detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_droid_cli_installed", return_value=False):
@@ -261,19 +253,6 @@ class TestCLIDetectionFunctions:
         assert _is_claude_code_installed() is False
 
     @patch("shutil.which")
-    def test_is_qwen_cli_installed_true(self, mock_which: MagicMock) -> None:
-        """Test Qwen CLI detection when installed."""
-        mock_which.return_value = "/usr/local/bin/qwen"
-        assert _is_qwen_cli_installed() is True
-        mock_which.assert_called_once_with("qwen")
-
-    @patch("shutil.which")
-    def test_is_qwen_cli_installed_false(self, mock_which: MagicMock) -> None:
-        """Test Qwen CLI detection when not installed."""
-        mock_which.return_value = None
-        assert _is_qwen_cli_installed() is False
-
-    @patch("shutil.which")
     def test_is_agy_cli_installed_true(self, mock_which: MagicMock) -> None:
         """Test AGY CLI detection when installed."""
         mock_which.return_value = "/usr/local/bin/agy"
@@ -348,7 +327,6 @@ class TestInstallCommand:
             "--claude",
             "--codex",
             "--grok",
-            "--qwen",
             "--droid",
             "--agy",
             "--hooks",
@@ -426,13 +404,13 @@ class TestInstallCommand:
         ("component", "label", "installer_result", "expected_lines"),
         [
             (
-                "qwen",
-                "Qwen CLI",
+                "grok",
+                "Grok CLI",
                 {
                     "success": True,
                     "hooks_installed": ["SessionStart"],
                     "workflows_installed": [],
-                    "commands_installed": ["qwen-cmd"],
+                    "commands_installed": ["grok-cmd"],
                     "plugins_installed": ["plugin1"],
                     "mcp_configured": True,
                 },
@@ -750,16 +728,6 @@ class TestUninstallCommand:
                     "config_updated": True,
                 },
                 ("Removed 1 files",),
-            ),
-            (
-                "qwen",
-                "Qwen CLI",
-                {
-                    "success": True,
-                    "hooks_removed": ["SessionStart"],
-                    "files_removed": ["validate_settings.py"],
-                },
-                ("Removed 1 hooks",),
             ),
             (
                 "droid",

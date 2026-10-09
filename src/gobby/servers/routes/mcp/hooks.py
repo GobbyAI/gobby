@@ -81,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
-SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
+SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "codex", "droid", "agy")
 
 
 _PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
@@ -452,12 +452,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
             from gobby.adapters.grok import GrokAdapter
-            from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
                 adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-            elif source == "qwen":
-                adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "grok":
                 adapter = GrokAdapter(hook_manager=hook_manager)
             elif source == "codex":

@@ -532,12 +532,12 @@ describe("SessionsTab", () => {
     expect(
       providerNamesFromRegistry({
         providers: [
-          { name: "qwen", available: false },
+          { name: "droid", available: false },
           { name: "agy", available: false },
           { name: "codex", available: true },
         ],
       }),
-    ).toEqual(["qwen", "codex"]);
+    ).toEqual(["droid", "codex"]);
   });
 
   it("names the scoped project in the unfiltered empty state", async () => {
@@ -558,7 +558,7 @@ describe("SessionsTab", () => {
     mockAttentionRoster();
     mockFetch.mockJsonResponse("/api/providers", {
       providers: [
-        { name: "qwen", available: false },
+        { name: "droid", available: false },
         { name: "codex", available: true },
         { name: "agy", available: true },
         { name: "cron", available: true },
@@ -586,7 +586,7 @@ describe("SessionsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
     expect(screen.getByLabelText("Codex")).toBeInTheDocument();
-    expect(screen.getByLabelText("Qwen")).toBeInTheDocument();
+    expect(screen.getByLabelText("Droid")).toBeInTheDocument();
     expect(screen.queryByLabelText("Cron")).toBeNull();
     expect(screen.queryByLabelText("Pipeline")).toBeNull();
     expect(screen.queryByLabelText("System")).toBeNull();
@@ -600,7 +600,7 @@ describe("SessionsTab", () => {
       />,
     );
     expect(screen.getByLabelText("Codex")).toBeInTheDocument();
-    expect(screen.getByLabelText("Qwen")).toBeInTheDocument();
+    expect(screen.getByLabelText("Droid")).toBeInTheDocument();
   });
 
   it("preserves running agents and surfaces polling errors until recovery", async () => {
@@ -1913,7 +1913,7 @@ describe("SessionsTab", () => {
         id: "acp-1",
         ref: "#301",
         external_id: "acp-ext-1",
-        source: "qwen",
+        source: "grok",
         title: "ACP Session",
         status: "active",
         session_type: "web_chat",

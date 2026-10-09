@@ -13,7 +13,6 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_enrichment import EventEnricher
 from gobby.hooks.events import HookResponse
 from gobby.storage.hub.protocol import HubDatabase
@@ -26,7 +25,6 @@ RECIPIENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 CONTEXT_PROVIDER_CASES: tuple[tuple[type[Any], str], ...] = (
     (ClaudeCodeAdapter, "user-prompt-submit"),
     (CodexHooksAdapter, "UserPromptSubmit"),
-    (QwenAdapter, "UserPromptSubmit"),
     (DroidAdapter, "UserPromptSubmit"),
     (AgyAdapter, "PreInvocation"),
 )

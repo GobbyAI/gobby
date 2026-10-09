@@ -18,7 +18,6 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.servers.routes.mcp.hook_responses import _graceful_error_response
 
@@ -48,9 +47,6 @@ def test_capability_registry_covers_current_http_adapters() -> None:
     assert get_provider_capabilities(SessionSource.CODEX).hook_events.keys() == (
         CodexHooksAdapter.EVENT_MAP.keys()
     )
-    assert get_provider_capabilities(SessionSource.QWEN).hook_events.keys() == (
-        QwenAdapter.EVENT_MAP.keys()
-    )
     assert get_provider_capabilities(SessionSource.GROK).hook_events.keys() == (
         GrokAdapter.EVENT_MAP.keys()
     )
@@ -69,7 +65,6 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     codex_subagent_start = get_provider_capabilities("codex").get_hook("SubagentStart")
     codex_subagent_stop = get_provider_capabilities("codex").get_hook("SubagentStop")
     codex_interrupt = get_provider_capabilities("codex").get_hook("Interrupt")
-    qwen_pre_tool = get_provider_capabilities("qwen").get_hook("PreToolUse")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     agy_pre_tool = get_provider_capabilities("agy").get_hook("PreToolUse")
     droid_pre_tool = get_provider_capabilities("droid").get_hook("PreToolUse")
@@ -95,10 +90,6 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_interrupt.decision_style is ProviderDecisionStyle.NONE
     assert codex_interrupt.supports_response_field("system_message")
     assert not codex_interrupt.supports_response_field("context")
-
-    assert qwen_pre_tool is not None
-    assert qwen_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
-    assert qwen_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert grok_pre_tool is not None
     assert grok_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
@@ -341,13 +332,13 @@ def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
 ) -> None:
     calls = _capture_degradations(monkeypatch)
 
-    result = QwenAdapter().translate_from_hook_response(
+    result = GrokAdapter().translate_from_hook_response(
         HookResponse(
             decision="allow",
             elicitation_action="accept",
             elicitation_content={"answer": "yes"},
         ),
-        hook_type="PreToolUse",
+        hook_type="pre_tool_use",
     )
 
     assert result == {"continue": True}
@@ -394,34 +385,6 @@ def test_claude_reason_passthrough_records_no_degradation(
     assert calls == []
 
 
-def test_qwen_tool_block_preserves_native_recoverable_reason(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = _capture_degradations(monkeypatch)
-    reason = (
-        "Rule enforced by Gobby: [require-code-index-skill]\n"
-        'Call get_skill(name="code-index") on gobby-skills directly through '
-        "mcp__gobby__call_tool"
-    )
-
-    result = QwenAdapter().translate_from_hook_response(
-        HookResponse(decision="block", reason=reason),
-        hook_type="PreToolUse",
-    )
-
-    assert result == {
-        "continue": True,
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        },
-    }
-    assert "permissionDecision" not in result
-    assert "permissionDecisionReason" not in result
-    assert calls == []
-
-
 def test_empty_block_sentinel_records_degradation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -460,10 +423,10 @@ def test_graceful_error_uses_provider_capability_shape(
 ) -> None:
     calls = _capture_degradations(monkeypatch)
 
-    qwen_result = _graceful_error_response(
-        "PreToolUse",
+    grok_result = _graceful_error_response(
+        "pre_tool_use",
         "database unavailable",
-        source="qwen",
+        source="grok",
     )
     droid_result = _graceful_error_response(
         "PreToolUse",
@@ -471,8 +434,8 @@ def test_graceful_error_uses_provider_capability_shape(
         source="droid",
     )
 
-    assert "database unavailable" in qwen_result["hookSpecificOutput"]["additionalContext"]
-    assert "systemMessage" not in qwen_result
+    assert "database unavailable" in grok_result["hookSpecificOutput"]["additionalContext"]
+    assert "systemMessage" not in grok_result
     assert droid_result["continue"] is True
     assert "database unavailable" in droid_result["systemMessage"]
     assert any(call["kind"] == "graceful_error" for call in calls)
@@ -483,7 +446,6 @@ def test_graceful_error_uses_provider_capability_shape(
     [
         (ClaudeCodeAdapter(), "session-start"),
         (CodexHooksAdapter(), "SessionStart"),
-        (QwenAdapter(), "SessionStart"),
         (DroidAdapter(), "SessionStart"),
     ],
 )

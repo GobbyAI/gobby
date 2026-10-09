@@ -24,12 +24,11 @@ from gobby.servers.provider_model_discovery import (
     is_loopback_model_endpoint,
     load_claude_settings,
     load_codex_config,
-    load_qwen_settings,
 )
 
 logger = logging.getLogger(__name__)
 
-_CLI_PROVIDERS = frozenset({"claude", "codex", "droid", "grok", "qwen"})
+_CLI_PROVIDERS = frozenset({"claude", "codex", "droid", "grok"})
 _NATIVE_PATH_SUFFIXES: Mapping[GenerationEndpointProtocol, tuple[str, ...]] = {
     "openai-compatible": ("/v1",),
     "lmstudio": ("/api/v1", "/v1"),
@@ -202,7 +201,6 @@ def configured_local_routes(
     environment: Mapping[str, str] | None = None,
     codex_config: Mapping[str, Any] | None = None,
     claude_settings: Mapping[str, Any] | None = None,
-    qwen_settings: Mapping[str, Any] | None = None,
 ) -> tuple[LocalContextRoute, ...]:
     """Read current endpoint and CLI settings and return exact local routes."""
     endpoints = config.ai.generation.endpoints
@@ -226,15 +224,6 @@ def configured_local_routes(
     claude_route = _claude_route(machine_id, endpoints, loaded_claude, env)
     if claude_route is not None:
         routes.append(claude_route)
-
-    loaded_qwen = (
-        load_qwen_settings(deep_merge=deep_merge, logger=logger)
-        if qwen_settings is None
-        else dict(qwen_settings)
-    )
-    qwen_route = _qwen_route(machine_id, endpoints, loaded_qwen, env)
-    if qwen_route is not None:
-        routes.append(qwen_route)
 
     unique = {route: None for route in routes if route.is_local}
     return tuple(unique)
@@ -323,50 +312,6 @@ def _claude_route(
         api_base=api_base,
         api_key=api_key,
         endpoints=endpoints,
-    )
-
-
-def _qwen_route(
-    machine_id: str,
-    endpoints: Mapping[str, GenerationEndpointConfig],
-    settings: Mapping[str, Any],
-    environment: Mapping[str, str],
-) -> LocalContextRoute | None:
-    selected = settings.get("model")
-    providers = settings.get("modelProviders")
-    if not isinstance(selected, Mapping) or not isinstance(providers, Mapping):
-        return None
-    model_id = _optional_text(selected.get("name"))
-    openai_entries = providers.get("openai")
-    if model_id is None or not isinstance(openai_entries, list):
-        return None
-    entry = next(
-        (
-            value
-            for value in openai_entries
-            if isinstance(value, Mapping) and value.get("id") == model_id
-        ),
-        None,
-    )
-    if entry is None:
-        return None
-    api_base = _optional_text(entry.get("baseUrl"))
-    if api_base is None:
-        return None
-    env_key = _optional_text(entry.get("envKey"))
-    api_key = _optional_text(entry.get("apiKey"))
-    if api_key is None and env_key is not None:
-        api_key = _optional_text(environment.get(env_key))
-    if api_key is None:
-        api_key = _first_env(environment, "QWEN_API_KEY", "OPENAI_API_KEY")
-    return _safe_cli_route(
-        machine_id=machine_id,
-        provider="qwen",
-        model_id=model_id,
-        api_base=api_base,
-        api_key=api_key,
-        endpoints=endpoints,
-        endpoint_scope=f"openai:{model_id}",
     )
 
 
@@ -478,13 +423,6 @@ def _effective_env(
     configured: Mapping[str, Any],
 ) -> str | None:
     return _optional_text(environment.get(key)) or _optional_text(configured.get(key))
-
-
-def _first_env(environment: Mapping[str, str], *keys: str) -> str | None:
-    return next(
-        (value for key in keys if (value := _optional_text(environment.get(key))) is not None),
-        None,
-    )
 
 
 def _optional_text(value: object) -> str | None:

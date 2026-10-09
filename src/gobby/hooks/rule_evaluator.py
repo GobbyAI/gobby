@@ -170,7 +170,7 @@ class WorkflowRuleEvaluator:
         if event.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(prompt):
             if self.database is not None and session_id:
                 manager = SessionVariableManager(self.database)
-                variables = manager.get_variables(session_id)
+                variables = manager.get_variable_subset(session_id, ("_agent_context_injected",))
                 updates = {"_current_user_prompt": prompt}
                 if not variables.get("_agent_context_injected"):
                     # Help itself becomes transcript activity; explicitly retain
@@ -184,7 +184,9 @@ class WorkflowRuleEvaluator:
             and self.database is not None
             and session_id
         ):
-            variables = SessionVariableManager(self.database).get_variables(session_id)
+            variables = SessionVariableManager(self.database).get_variable_subset(
+                session_id, ("_current_user_prompt",)
+            )
             return gobby_help_prefix(variables.get("_current_user_prompt")) is not None
         return False
 

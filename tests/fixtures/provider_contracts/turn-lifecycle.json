@@ -75,24 +75,6 @@
       }
     },
     {
-      "provider": "qwen",
-      "version": "0.23.0",
-      "official_source": "Qwen Code hook contract and installed release source, tag v0.23.0",
-      "capture_command": "qwen --debug",
-      "cases": {
-        "normal_answer": {"raw_events": ["BeforeAgent(turn=q1)", "Stop(turn=q1)"], "evidence": "bounded hook sequence", "required_absent": ["PostToolUseFailure(is_interrupt=true)"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "normal_completion"}},
-        "prose_question": {"raw_events": ["assistant: Which package?", "Stop(turn=q2)"], "evidence": "plain text followed by Stop", "required_absent": ["PermissionRequest"], "expected": {"disposition": "completed", "wait_kind": null, "status": "paused", "distinction": "prose_question"}},
-        "structured_question": {"raw_events": ["Notification(type=question,tool_use_id=q9)"], "evidence": "displayed notification correlated to current tool", "required_absent": ["Stop"], "expected": {"disposition": "unknown", "wait_kind": "input", "status": "awaiting_input", "distinction": "displayed_interaction"}},
-        "permission_wait": {"raw_events": ["PermissionRequest(tool_use_id=p9)", "Notification(type=permission,tool_use_id=p9)"], "evidence": "request and displayed notification", "required_absent": ["PostToolUse"], "expected": {"disposition": "unknown", "wait_kind": "approval", "status": "awaiting_approval", "distinction": "displayed_interaction"}},
-        "approval": {"raw_events": ["PermissionRequest(tool_use_id=p10)", "PostToolUse(tool_use_id=p10)"], "evidence": "matching resumed tool", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "approved_resolution"}},
-        "denial": {"raw_events": ["PermissionRequest(tool_use_id=p11)", "PostToolUseFailure(tool_use_id=p11,is_interrupt=false)"], "evidence": "boolean false is tool-local cancellation", "required_absent": ["PostToolUseFailure(is_interrupt=true)"], "expected": {"disposition": "unknown", "wait_kind": null, "status": "paused", "distinction": "tool_local_cancellation"}},
-        "user_interruption": {"raw_events": ["PostToolUseFailure(tool_use_id=t12,is_interrupt=true)"], "evidence": "exact boolean true", "required_absent": [], "expected": {"disposition": "user_interrupted", "wait_kind": null, "status": "interrupted", "distinction": "whole_turn_interruption"}},
-        "non_user_failure": {"raw_events": ["PostToolUseFailure(tool_use_id=t13,is_interrupt=false,is_timeout=true)", "StopFailure"], "evidence": "false interrupt bit and failure", "required_absent": ["is_interrupt=true"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "failure"}},
-        "replacement_prompt_race": {"raw_events": ["PermissionRequest(tool_use_id=old)", "BeforeAgent(turn=q10)", "PostToolUseFailure(tool_use_id=old,is_interrupt=true)"], "evidence": "old tool id and cursor", "required_absent": [], "expected": {"disposition": "unknown", "wait_kind": null, "status": "active", "distinction": "stale_event", "stale_ignored": true}},
-        "session_exit": {"raw_events": ["SessionEnd(reason=exit)"], "evidence": "bounded process exit", "required_absent": ["is_interrupt=true"], "expected": {"disposition": "ended_non_user", "wait_kind": null, "status": "paused", "distinction": "session_exit"}}
-      }
-    },
-    {
       "provider": "agy",
       "version": "1.1.27",
       "official_source": "AGY hook and interactive terminal characterization, release 1.1.27",

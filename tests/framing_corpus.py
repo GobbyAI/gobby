@@ -150,7 +150,9 @@ TRUE_RESTRICTION_RULES = frozenset(
         "review-closed-task-memories-before-handoff",
         "scope-spawned-agent-send-message",
         "seat-no-launch-cli",
+        "seat-no-pipeline-cli",
         "seat-no-pipeline-launch",
+        "seat-no-project-create",
         "seat-no-spawn",
     }
 )

@@ -63,19 +63,10 @@ CLAUDE_SPEC = SandboxRunnerSpec(
     expected_critical=True,
     expects_terminal_context=True,
 )
-QWEN_SPEC = SandboxRunnerSpec(
-    cli_name="qwen",
-    cli_binary_name="qwen",
-    hook_type="SessionStart",
-    sandbox_summary="Qwen runs with -s and the daemon-selected Seatbelt profile.",
-    expected_critical=True,
-    expects_terminal_context=True,
-)
 
 ALL_SANDBOX_SPECS = (
     CODEX_SPEC,
     CLAUDE_SPEC,
-    QWEN_SPEC,
 )
 
 

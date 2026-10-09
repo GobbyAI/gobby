@@ -78,9 +78,6 @@ _DROID_PLAN_MENU_PANE = (
     "1. Proceed with the proposal\n4. No and explain why\nup/down navigate   1-4 select\n"
 )
 _GROK_PLAN_MENU_PANE = "1 [*] Yes, and don't ask again\n4 [ ] No, reject (type to add feedback)\n"
-_QWEN_PLAN_MENU_PANE = (
-    "Apply this change?\n1. Yes, allow once\n2. Yes, allow always\n3. No, suggest changes (esc)\n"
-)
 _AGY_PLAN_MENU_PANE = "Action required\n1. Approve\n2. Reject\n"
 
 
@@ -831,105 +828,6 @@ class TestAttachedPlanApprovalGrok:
         # request-changes is the stable reject digit "4" (literal) -- grok's "No,
         # reject" item is identical across menu shapes; Esc only unselects.
         tmux_manager.send_keys.assert_awaited_once_with("native-1", "4", literal=True)
-        assert ws.send.await_count == 1
-        msg = json.loads(ws.send.await_args.args[0])
-        assert msg == {
-            "type": "plan_approval_dispatched",
-            "target_session_id": "term-1",
-            "decision": "request_changes",
-            "option_id": REQUEST_CHANGES_OPTION_ID,
-            "ok": True,
-        }
-        cast(AsyncMock, server._send_error).assert_not_awaited()
-
-
-class TestAttachedPlanApprovalQwen:
-    """Qwen Code's guarded static approval-menu path:
-    distinct approve digits (1 vs 2) and a shape-independent Esc key for reject."""
-
-    @pytest.mark.asyncio
-    async def test_approve_act_dispatches_digit_one_with_menu_guard(self) -> None:
-        server = ConcreteSessionControl()
-        ws = _make_ws()
-        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            source="qwen"
-        )
-
-        tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-
-        with _wire_native(server, tmux_manager):
-            await handle_attached_plan_approval(
-                server,
-                ws,
-                "term-1",
-                {"decision": "approve", "option_id": "approve_act"},
-                registry=build_default_plan_keystroke_registry(),
-            )
-
-        tmux_manager.capture_pane.assert_awaited_once()
-        # approve_act ("Yes, allow once", single approval) maps to "1", digit only.
-        tmux_manager.send_keys.assert_awaited_once_with("native-1", "1", literal=True)
-        msg = json.loads(ws.send.await_args.args[0])
-        assert msg["option_id"] == "approve_act"
-        assert msg["ok"] is True
-        cast(AsyncMock, server._send_error).assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_approve_yolo_dispatches_digit_two_with_menu_guard(self) -> None:
-        server = ConcreteSessionControl()
-        ws = _make_ws()
-        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            source="qwen"
-        )
-
-        tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-
-        with _wire_native(server, tmux_manager):
-            await handle_attached_plan_approval(
-                server,
-                ws,
-                "term-1",
-                {"decision": "approve", "option_id": "approve_yolo"},
-                registry=build_default_plan_keystroke_registry(),
-            )
-
-        tmux_manager.capture_pane.assert_awaited_once()
-        # approve_yolo ("Yes, allow always", bypass) maps to "2".
-        tmux_manager.send_keys.assert_awaited_once_with("native-1", "2", literal=True)
-        msg = json.loads(ws.send.await_args.args[0])
-        assert msg["option_id"] == "approve_yolo"
-        assert msg["ok"] is True
-        cast(AsyncMock, server._send_error).assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_request_changes_dispatches_named_escape_key(self) -> None:
-        server = ConcreteSessionControl()
-        ws = _make_ws()
-        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            source="qwen"
-        )
-
-        tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-
-        with _wire_native(server, tmux_manager):
-            await handle_attached_plan_approval(
-                server,
-                ws,
-                "term-1",
-                {"decision": "request_changes"},
-                registry=build_default_plan_keystroke_registry(),
-            )
-
-        tmux_manager.capture_pane.assert_awaited_once()
-        # request-changes is the named Esc key (literal=False) -- the reject digit
-        # varies by tool type, and "(esc)" always rejects.
-        tmux_manager.send_keys.assert_awaited_once_with("native-1", "Escape", literal=False)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {

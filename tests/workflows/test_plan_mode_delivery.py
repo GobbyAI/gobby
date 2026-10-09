@@ -15,7 +15,6 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks import grok_pending_context
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.grok_pending_context import PendingContextHandler
@@ -35,14 +34,11 @@ from tests.workflows.test_plan_mode_rules import SESSION_ID, _create_session, _s
 
 pytestmark = pytest.mark.integration
 
-type NativeAdapter = (
-    ClaudeCodeAdapter | CodexHooksAdapter | QwenAdapter | GrokAdapter | DroidAdapter | AgyAdapter
-)
+type NativeAdapter = ClaudeCodeAdapter | CodexHooksAdapter | GrokAdapter | DroidAdapter | AgyAdapter
 
 PROVIDERS: list[tuple[type[NativeAdapter], str]] = [
     (ClaudeCodeAdapter, "UserPromptSubmit"),
     (CodexHooksAdapter, "UserPromptSubmit"),
-    (QwenAdapter, "UserPromptSubmit"),
     (GrokAdapter, "user_prompt_submit"),
     (DroidAdapter, "UserPromptSubmit"),
     (AgyAdapter, "PreInvocation"),

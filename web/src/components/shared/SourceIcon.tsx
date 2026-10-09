@@ -1,6 +1,5 @@
 import claudeLogo from "../../assets/provider-logos/claude-symbol.svg";
 import droidLogo from "../../assets/provider-logos/droid-logo.svg";
-import qwenLogo from "../../assets/provider-logos/qwen-logo.svg";
 import { getSourceColorVar } from "./sourceTheme";
 import type { SourceType } from "./sourceIconUtils";
 
@@ -12,7 +11,6 @@ interface SourceIconProps {
 const PROVIDER_LOGOS = {
   claude: claudeLogo,
   droid: droidLogo,
-  qwen: qwenLogo,
 } as const;
 
 export function SourceIcon({ source, size = 14 }: SourceIconProps) {

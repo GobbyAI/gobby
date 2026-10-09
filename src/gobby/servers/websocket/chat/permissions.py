@@ -6,7 +6,7 @@ tool-approval gating, plan-mode prompt injection, and the plan-pending /
 approve / request-changes pipeline. That UX is identical regardless of the
 underlying wire protocol, so it lives here in one place:
 
-- ACP CLIs (Grok, Qwen) via ``ACPManagedChatSession``
+- ACP CLIs (Grok) via ``ACPManagedChatSession``
 - Codex via the Codex app-server JSON-RPC (``CodexManagedChatSession``)
 - Droid via stream-jsonrpc (``DroidManagedChatSession``)
 

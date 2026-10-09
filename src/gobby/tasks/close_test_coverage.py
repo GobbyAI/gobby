@@ -439,6 +439,26 @@ def drop_foreign_runs(
     return scoped, foreign
 
 
+def candidate_pytest_paths(
+    run: TranscriptValidationRun,
+    paths: Sequence[str],
+    changed_paths: Sequence[str],
+    candidate: CloseCandidate,
+) -> frozenset[str]:
+    """Paths targeted by a run whose inputs match the candidate, even in its own tree."""
+    root = os.path.realpath(candidate.root)
+    targets = _resolved_pytest_targets(run, root)
+    return frozenset(
+        path
+        for path in paths
+        if any(
+            all(_same_bytes(tree, root, item, candidate) for item in (path, *changed_paths))
+            for target in targets
+            for tree in _target_trees(target, path)
+        )
+    )
+
+
 def identical_copy_run(
     run: TranscriptValidationRun,
     changed_python_tests: tuple[str, ...],

@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 # Spawned-CLI feature lanes never carry image payloads.
-FEATURE_CLI_PROVIDERS: frozenset[str] = frozenset({"agy", "droid", "grok", "qwen"})
+FEATURE_CLI_PROVIDERS: frozenset[str] = frozenset({"agy", "droid", "grok"})
 IMAGE_ELIGIBLE_PROTOCOLS: frozenset[str] = frozenset(
     {"openai-compatible", "vllm", "lmstudio", "ollama"}
 )

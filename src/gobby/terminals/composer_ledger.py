@@ -355,12 +355,15 @@ def bind_composer_ledger(ledger: ComposerLedger | None) -> None:
 
 
 def read_composer(terminal_id: str) -> ComposerRead:
-    """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``."""
+    """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``.
+
+    A blocked or untracked entry carries its block reason; an unbound ledger has none.
+    """
     if _bound is None:
         return ComposerRead("unknown")
     read = _bound.read(terminal_id)
     if read.state == "blocked":
-        return ComposerRead("unknown")
+        return ComposerRead("unknown", reason=read.reason)
     return ComposerRead(read.state, read.pending)
 
 

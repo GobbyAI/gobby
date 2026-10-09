@@ -55,7 +55,7 @@ def mixin() -> DummyMixin:
 @pytest.fixture
 def web_activation(mixin: DummyMixin) -> tuple[DummyMixin, AsyncMock]:
     session = AsyncMock()
-    session.provider = "qwen"
+    session.provider = "grok"
     session.chat_mode = "normal"
     session.db_session_id = None
     session.resume_session_id = None
@@ -75,7 +75,7 @@ def web_activation(mixin: DummyMixin) -> tuple[DummyMixin, AsyncMock]:
     mixin.session_manager.db = MagicMock()
     mixin.session_manager.register.return_value = row
     mixin.session_manager.get.return_value = None
-    mixin._pending_providers["seat-chat"] = "qwen"
+    mixin._pending_providers["seat-chat"] = "grok"
     mixin._pending_projects["seat-chat"] = "proj-seat"
     mixin._fire_lifecycle = AsyncMock()
     return mixin, session
@@ -106,7 +106,7 @@ async def test_web_chat_launch_uses_apply_agent_definition(
         agent="planner",
         db=owner.session_manager.db,
         session_id="db-id-seat",
-        cli_source="qwen",
+        cli_source="grok",
         relaunch=True,
     )
     assert session.system_prompt_override == "Planner instructions"
@@ -184,7 +184,7 @@ async def test_agent_switch_relaunches_through_activation(
         agent=target,
         db=owner.session_manager.db,
         session_id=sid,
-        cli_source="qwen",
+        cli_source="grok",
         relaunch=True,
     )
     assert created is session
@@ -745,7 +745,7 @@ class TestCreateChatSessionInner:
             assert mixin.session_manager.update_model.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_create_qwen_default_agent_defers_prompt_to_first_lifecycle(
+    async def test_create_grok_default_agent_defers_prompt_to_first_lifecycle(
         self, mixin: DummyMixin
     ) -> None:
         with (
@@ -753,12 +753,12 @@ class TestCreateChatSessionInner:
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
         ):
             agent_body = MagicMock()
-            agent_body.provider = "qwen"
+            agent_body.provider = "grok"
             agent_body.prompt_for.return_value = "DEFAULT PERSONA PROMPT"
             mock_resolve_agent.return_value = agent_body
 
             mock_session = AsyncMock()
-            mock_session.provider = "qwen"
+            mock_session.provider = "grok"
             mock_session.chat_mode = "plan"
             mock_session.db_session_id = None
             mock_session.resume_session_id = None
@@ -769,7 +769,7 @@ class TestCreateChatSessionInner:
             mixin.web_chat_runtime_manager.create_session.return_value = mock_session
 
             mock_db_sess = MagicMock()
-            mock_db_sess.id = "db-id-qwen"
+            mock_db_sess.id = "db-id-grok"
             mock_db_sess.seq_num = 42
             mock_db_sess.usage_output_tokens = 0
             mock_db_sess.chat_mode = "plan"
@@ -779,13 +779,13 @@ class TestCreateChatSessionInner:
             mixin.session_manager.db = MagicMock()
             mixin.session_manager.register.return_value = mock_db_sess
 
-            await mixin._create_chat_session_inner("conv-qwen", provider="qwen")
+            await mixin._create_chat_session_inner("conv-grok", provider="grok")
 
             assert mock_resolve_agent.call_args is not None
             assert mock_resolve_agent.call_args.args[0] == "default"
             mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
-                provider="qwen",
-                conversation_id="conv-qwen",
+                provider="grok",
+                conversation_id="conv-grok",
                 model=None,
                 reasoning_effort=None,
             )
@@ -798,7 +798,7 @@ class TestCreateChatSessionInner:
     ) -> None:
         mixin._pending_agents["conv-persona"] = "planner"
         mixin._pending_projects["conv-persona"] = "proj-queued"
-        mixin._pending_providers["conv-persona"] = "qwen"
+        mixin._pending_providers["conv-persona"] = "grok"
 
         with (
             patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
@@ -818,7 +818,7 @@ class TestCreateChatSessionInner:
             mock_resolve_agent.return_value = agent_body
 
             mock_session = AsyncMock()
-            mock_session.provider = "qwen"
+            mock_session.provider = "grok"
             mock_session.chat_mode = "plan"
             mock_session.db_session_id = None
             mock_session.resume_session_id = None
@@ -844,10 +844,10 @@ class TestCreateChatSessionInner:
             await drain_asyncio_tasks()
 
             assert mock_resolve_agent.call_args is not None
-            assert mock_resolve_agent.call_args.kwargs["cli_source"] == "qwen"
+            assert mock_resolve_agent.call_args.kwargs["cli_source"] == "grok"
             assert mock_resolve_agent.call_args.kwargs["project_id"] == "proj-queued"
             mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
-                provider="qwen",
+                provider="grok",
                 conversation_id="conv-persona",
                 model=None,
                 reasoning_effort=None,

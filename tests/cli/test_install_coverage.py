@@ -720,7 +720,6 @@ class TestInstallCommand:
                 _is_claude_code_installed=MagicMock(return_value=False),
                 _is_grok_cli_installed=MagicMock(return_value=False),
                 _is_agy_cli_installed=MagicMock(return_value=False),
-                _is_qwen_cli_installed=MagicMock(return_value=False),
                 _is_codex_cli_installed=MagicMock(return_value=False),
                 _is_droid_cli_installed=MagicMock(return_value=False),
             ),
@@ -806,7 +805,6 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_claude", return_value=claude_result),
@@ -868,7 +866,6 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_claude_code_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=True),
-            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_agy", return_value=agy_result) as mock_agy,
@@ -907,7 +904,6 @@ class TestInstallCommand:
                 _is_claude_code_installed=MagicMock(return_value=True),
                 _is_grok_cli_installed=MagicMock(return_value=False),
                 _is_agy_cli_installed=MagicMock(return_value=False),
-                _is_qwen_cli_installed=MagicMock(return_value=False),
                 _is_codex_cli_installed=MagicMock(return_value=False),
                 _is_droid_cli_installed=MagicMock(return_value=False),
             ),
@@ -965,7 +961,6 @@ class TestInstallCommand:
                 _is_claude_code_installed=MagicMock(return_value=True),
                 _is_grok_cli_installed=MagicMock(return_value=False),
                 _is_agy_cli_installed=MagicMock(return_value=False),
-                _is_qwen_cli_installed=MagicMock(return_value=False),
                 _is_codex_cli_installed=MagicMock(return_value=False),
                 _is_droid_cli_installed=MagicMock(return_value=False),
             ),
@@ -1030,7 +1025,6 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_claude_code_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
@@ -1173,13 +1167,13 @@ class TestUninstallCommand:
 
             return MagicMock(side_effect=run)
 
-        with _cli_uninstallers(codex=uninstaller("codex"), qwen=uninstaller("qwen")):
+        with _cli_uninstallers(codex=uninstaller("codex"), grok=uninstaller("grok")):
             result = runner.invoke(
-                uninstall, ["qwen", "codex", "qwen", "--yes"], catch_exceptions=False
+                uninstall, ["grok", "codex", "grok", "--yes"], catch_exceptions=False
             )
 
         assert result.exit_code == 0, result.output
-        assert order == ["qwen", "codex"]
+        assert order == ["grok", "codex"]
 
     def test_uninstall_git_hooks_targets_the_given_repository(
         self, runner: CliRunner, tmp_path: Path

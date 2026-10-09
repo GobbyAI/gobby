@@ -15,7 +15,6 @@ from .git_hooks import install_git_hooks
 from .grok import install_grok, uninstall_grok
 from .postgres import install_postgres
 from .qdrant import install_qdrant
-from .qwen import install_qwen, uninstall_qwen
 from .service import get_service_status, install_service, uninstall_service
 from .shared import (
     clean_project_hooks,
@@ -39,9 +38,6 @@ __all__ = [
     # Grok
     "install_grok",
     "uninstall_grok",
-    # Qwen
-    "install_qwen",
-    "uninstall_qwen",
     # Droid
     "install_droid",
     "uninstall_droid",

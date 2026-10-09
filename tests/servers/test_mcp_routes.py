@@ -39,7 +39,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
-from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -3617,129 +3616,6 @@ class TestHooksEndpoints:
             "_enqueued_at": "2026-04-16T12:00:00Z",
         }
 
-    @pytest.mark.parametrize(
-        ("hook_type", "hook_response", "expected"),
-        [
-            (
-                "PreToolUse",
-                HookResponse(decision="block", reason="tool policy"),
-                {
-                    "continue": True,
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": "tool policy",
-                    },
-                },
-            ),
-            (
-                "PermissionRequest",
-                HookResponse(decision="block", reason="permission policy"),
-                {
-                    "continue": True,
-                    "hookSpecificOutput": {
-                        "hookEventName": "PermissionRequest",
-                        "decision": {
-                            "behavior": "deny",
-                            "message": "permission policy",
-                            "interrupt": True,
-                        },
-                    },
-                },
-            ),
-            (
-                "Stop",
-                HookResponse(decision="block", reason="finish the task"),
-                {"continue": True, "decision": "block", "reason": "finish the task"},
-            ),
-            (
-                "TodoCompleted",
-                HookResponse(decision="block", reason="dependency incomplete"),
-                {
-                    "continue": True,
-                    "decision": "block",
-                    "reason": "dependency incomplete",
-                },
-            ),
-        ],
-    )
-    def test_execute_hook_qwen_returns_exact_native_response_shapes(
-        self,
-        session_storage: SessionManager,
-        hook_type: str,
-        hook_response: HookResponse,
-        expected: dict[str, Any],
-    ) -> None:
-        server = create_http_server(
-            port=60887,
-            test_mode=True,
-            session_manager=session_storage,
-        )
-        hook_manager = _mock_hook_manager()
-        hook_manager.handle.return_value = hook_response
-        server.app.state.hook_manager = hook_manager
-        adapter = QwenAdapter(hook_manager=hook_manager)
-
-        with (
-            patch(
-                "gobby.adapters.qwen.QwenAdapter",
-                return_value=adapter,
-            ) as adapter_constructor,
-            TestClient(server.app) as client,
-        ):
-            response = client.post(
-                "/api/hooks/execute",
-                json=_hook_envelope(
-                    hook_type=hook_type,
-                    source="qwen",
-                    input_data={
-                        "session_id": "qwen-native-shape",
-                        "phase": "validation",
-                    },
-                ),
-            )
-
-        assert response.status_code == 200
-        assert response.json() == expected
-        adapter_constructor.assert_called_once_with(hook_manager=hook_manager)
-
-    def test_execute_hook_qwen_stop_evaluation_failure_returns_structured_block(
-        self,
-        session_storage: SessionManager,
-    ) -> None:
-        server = create_http_server(
-            port=60887,
-            test_mode=True,
-            session_manager=session_storage,
-        )
-        hook_manager = _mock_hook_manager()
-        hook_manager.handle.side_effect = RuntimeError("rule engine unavailable")
-        server.app.state.hook_manager = hook_manager
-        adapter = QwenAdapter(hook_manager=hook_manager)
-
-        with (
-            patch(
-                "gobby.adapters.qwen.QwenAdapter",
-                return_value=adapter,
-            ) as adapter_constructor,
-            TestClient(server.app) as client,
-        ):
-            response = client.post(
-                "/api/hooks/execute",
-                json=_hook_envelope(
-                    hook_type="Stop",
-                    source="qwen",
-                    critical=True,
-                    input_data={"session_id": "qwen-stop-failure"},
-                ),
-            )
-
-        assert response.status_code == 200
-        assert response.json()["continue"] is True
-        assert response.json()["decision"] == "block"
-        assert "blocking this critical hook for safety" in response.json()["reason"]
-        adapter_constructor.assert_called_once_with(hook_manager=hook_manager)
-
     def test_execute_hook_droid_adapter_error_is_graceful(
         self,
         session_storage: SessionManager,
@@ -4476,7 +4352,6 @@ class TestHooksEndpoints:
         ("source", "hook_type", "adapter_patch"),
         [
             ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
-            ("qwen", "PreToolUse", "gobby.adapters.qwen.QwenAdapter"),
             ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter"),
         ],
     )

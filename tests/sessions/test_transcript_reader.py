@@ -847,57 +847,10 @@ class TestTranscriptReaderRendered:
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_rederives_qwen_transcript_from_projects_layout(self, tmp_path: Path) -> None:
-        external_id = "ext-qwen-123"
-        transcript_path = (
-            tmp_path / ".qwen" / "projects" / "project-slug" / "chats" / f"{external_id}.jsonl"
-        )
-        _write_jsonl_file(
-            transcript_path,
-            [
-                {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "parts": [{"text": "hello from qwen"}],
-                    },
-                },
-                {
-                    "type": "assistant",
-                    "message": {
-                        "role": "model",
-                        "parts": [{"text": "qwen reply"}],
-                    },
-                },
-            ],
-        )
-
-        session = MagicMock()
-        session.external_id = external_id
-        session.source = "qwen"
-        session.transcript_path = None
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        reader = TranscriptReader(session_manager)
-
-        with patch.object(Path, "home", return_value=tmp_path):
-            rendered = await reader.get_rendered_messages("sess-1")
-
-        assert len(rendered) == 2
-        assert "hello from qwen" in rendered[0].content
-        assert session_manager.update.call_count >= 1
-        assert session_manager.update.call_args_list[-1] == (
-            ("sess-1",),
-            {"transcript_path": str(transcript_path)},
-        )
-
-    @pytest.mark.asyncio
     async def test_rederives_transcript_path_in_thread(self) -> None:
         session = MagicMock()
         session.external_id = "ext-thread"
-        session.source = "qwen"
+        session.source = "codex"
         session.transcript_path = None
 
         session_manager = MagicMock()
@@ -921,13 +874,13 @@ class TestTranscriptReaderRendered:
             result = await reader._ensure_transcript_path(
                 "sess-1",
                 session,
-                "qwen",
+                "codex",
                 None,
             )
 
         assert result == "/tmp/derived.jsonl"
         find_transcript.assert_called_once_with(
-            "qwen",
+            "codex",
             "ext-thread",
             owner_machine_id=LOCAL_MACHINE_ID,
             local_machine_id=LOCAL_MACHINE_ID,
@@ -935,7 +888,7 @@ class TestTranscriptReaderRendered:
         )
         assert to_thread.await_args_list[0].args == (
             find_transcript,
-            "qwen",
+            "codex",
             "ext-thread",
         )
         assert to_thread.await_args_list[1].args == (session_manager.update, "sess-1")
@@ -1217,39 +1170,3 @@ class TestTranscriptReaderWindowed:
         result = await reader.get_rendered_messages("sess-1", limit=None, offset=0)
 
         assert [g.content for g in result] == ["msg 0", "msg 1", "msg 2"]
-
-    @pytest.mark.asyncio
-    async def test_qwen_json_uses_indexed_windows_counts_and_status(self, tmp_path: Path) -> None:
-        transcript = tmp_path / "qwen-session.json"
-        fixture = (
-            Path(__file__).parents[1]
-            / "fixtures"
-            / "transcripts"
-            / "qwen"
-            / "current_envelope.jsonl"
-        )
-        transcript.write_text(fixture.read_text())
-        session = MagicMock()
-        session.source = "qwen"
-        session.transcript_path = str(transcript)
-        session.external_id = None
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-        reader = TranscriptReader(session_manager)
-
-        rows = await reader.get_messages("sess-1", limit=3, offset=1)
-        window = await reader.get_rendered_window("sess-1", limit=2, offset=0, order="head")
-        count = await reader.count_messages("sess-1")
-        activity = await reader.get_activity_counts("sess-1")
-        status = await reader.get_transcript_status("sess-1")
-
-        assert len(rows) == 3
-        assert window.returned_count == 2
-        assert count == 7
-        assert activity["message_count"] == 7
-        assert activity["tool_call_count"] == 1
-        assert status["raw_record_count"] == 7
-        assert status["parsed_message_count"] == 7
-        assert status["content_state"] == "messages"
-        assert status["detected_source"] == "qwen"
-        assert status["source_mismatch"] is False

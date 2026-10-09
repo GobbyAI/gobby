@@ -760,9 +760,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
 
         assert result.exit_code == 0
-        assert "no Anthropic/OpenAI/Qwen API/provider credential env vars detected" in (
-            result.output
-        )
+        assert "no Anthropic/OpenAI API/provider credential env vars detected" in (result.output)
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")

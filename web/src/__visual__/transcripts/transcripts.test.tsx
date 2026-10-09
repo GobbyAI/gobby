@@ -4,7 +4,6 @@ import { render } from "@testing-library/react";
 import claudeFixture from "./fixtures/claude.json";
 import codexFixture from "./fixtures/codex.json";
 import droidFixture from "./fixtures/droid.json";
-import qwenFixture from "./fixtures/qwen.json";
 
 // LazyHighlighter waits for IntersectionObserver to mark a code block as
 // visible before mounting Prism. jsdom never fires intersections, so we
@@ -79,7 +78,6 @@ const FIXTURES: Record<string, Fixture> = {
   claude: loadFixture(claudeFixture),
   codex: loadFixture(codexFixture),
   droid: loadFixture(droidFixture),
-  qwen: loadFixture(qwenFixture),
 };
 
 const THEMES = ["dark", "light"] as const;

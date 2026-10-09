@@ -282,15 +282,22 @@ def encode_page(
             "snapshot": None if snapshot is None else dict(snapshot),
         }
 
+    def encoded_size(value: object) -> int:
+        return len(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+
     if not items:
         empty = payload(0, next_cursor)
-        if len(json.dumps(empty, separators=(",", ":")).encode("utf-8")) > (
-            TERMINAL_LIST_MAX_ENCODED_BYTES
-        ):
+        if encoded_size(empty) > TERMINAL_LIST_MAX_ENCODED_BYTES:
             raise TerminalPageTooLargeError()
         return empty
 
-    selected: dict[str, Any] | None = None
+    # Re-encoding every candidate page was quadratic in the row count (#23359), so
+    # each row is encoded once: a candidate is the empty page plus its rows, their
+    # separating commas, and its cursor in place of the empty page's null.
+    empty_size = encoded_size(payload(0, None)) - encoded_size(None)
+    rows_size = 0
+    selected_count = 0
+    selected_cursor: str | None = None
     cursor: str | None
     for count in range(1, len(items) + 1):
         more_input = count < len(items)
@@ -300,13 +307,10 @@ def encode_page(
             cursor = item_cursors[count - 1]
         else:
             cursor = next_cursor
-        candidate = payload(count, cursor)
-        encoded_size = len(json.dumps(candidate, separators=(",", ":")).encode("utf-8"))
-        if encoded_size > TERMINAL_LIST_MAX_ENCODED_BYTES:
-            if selected is None:
-                raise TerminalPageTooLargeError()
-            return selected
-        selected = candidate
-    if selected is None:
+        rows_size += encoded_size(items[count - 1]) + (1 if count > 1 else 0)
+        if empty_size + rows_size + encoded_size(cursor) > TERMINAL_LIST_MAX_ENCODED_BYTES:
+            break
+        selected_count, selected_cursor = count, cursor
+    if selected_count == 0:
         raise TerminalPageTooLargeError()
-    return selected
+    return payload(selected_count, selected_cursor)

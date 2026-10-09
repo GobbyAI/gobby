@@ -250,7 +250,7 @@ def test_local_context_public_resolution(caplog: pytest.LogCaptureFixture) -> No
             resolved = resolve_context_window_with_source(
                 local_model,
                 overrides={"model": 65_536},
-                provider="qwen",
+                provider="codex",
                 provider_reported_context_window=48_000,
                 local_route=route,
                 local_observation=observation,
@@ -259,7 +259,7 @@ def test_local_context_public_resolution(caplog: pytest.LogCaptureFixture) -> No
             plain = resolve_context_window(
                 local_model,
                 overrides={"model": 65_536},
-                provider="qwen",
+                provider="codex",
                 provider_reported_context_window=48_000,
                 local_route=route,
                 local_observation=observation,
@@ -267,7 +267,7 @@ def test_local_context_public_resolution(caplog: pytest.LogCaptureFixture) -> No
             )
             local_unknown = resolve_context_window_with_source(
                 local_model,
-                provider="qwen",
+                provider="codex",
                 local_route=route,
                 local_observation=failed_observation,
                 db=fake_db,
@@ -619,12 +619,6 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(model, None)
         assert result == expected
-
-    def test_qwen_auth_suffix_stripped_for_registry_lookup(self) -> None:
-        """Qwen auth suffixes are removed before registry fallback lookup."""
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("qwen3-coder(openai)", None, provider="qwen")
-        assert result == 262_144
 
 
 def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDatabase) -> None:

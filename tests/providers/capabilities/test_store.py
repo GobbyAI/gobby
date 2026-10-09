@@ -152,12 +152,12 @@ def test_replace_bumps_generation_and_replaces_provider_rows(
 def test_all_snapshots_follow_provider_display_order(postgres_db: HubDatabase) -> None:
     store = ProviderCapabilityStore(postgres_db)
     store.replace_provider_snapshot(_snapshot(provider="extension", model_name="extension-model"))
-    store.replace_provider_snapshot(_snapshot(provider="qwen", model_name="qwen-model"))
+    store.replace_provider_snapshot(_snapshot(provider="grok", model_name="grok-model"))
     store.replace_provider_snapshot(_snapshot(provider="claude", model_name="claude-model"))
 
     snapshots = store.get_all_snapshots()
 
-    assert [snapshot.provider for snapshot in snapshots] == ["claude", "qwen", "extension"]
+    assert [snapshot.provider for snapshot in snapshots] == ["claude", "grok", "extension"]
 
 
 def test_store_round_trips_structured_local_context_provenance(

@@ -27,7 +27,6 @@ const PROVIDER_COMMANDS = new Set([
   "codex",
   "droid",
   "grok",
-  "qwen",
   "agy",
 ]);
 

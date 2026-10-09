@@ -9,7 +9,6 @@ import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
 const CHAT_PROVIDERS = new Set([
   "claude",
-  "qwen",
   "codex",
   "droid",
   "agy",

@@ -66,7 +66,7 @@ Top MCP Servers:
    - `tmux` on macOS/Linux
    - `uv` when installing from this source checkout
    - At least one supported coding CLI, such as Claude Code, Codex, Droid,
-     Gemini, or QwenCode
+     Grok, or AGY
 
 2. Clone, initialize, install, and start Gobby:
 

@@ -160,7 +160,7 @@ def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
     Also cleans up stale skill directories from removed skills (e.g., g/).
 
     Args:
-        target_skills_dir: Path to skills directory (e.g., .qwen/skills)
+        target_skills_dir: Path to skills directory (e.g., .claude/skills)
 
     Returns:
         List of installed skill names

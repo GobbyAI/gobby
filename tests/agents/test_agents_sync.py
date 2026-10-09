@@ -615,7 +615,7 @@ class TestSyncBundledAgents:
             "name: agent-a\nprovider: claude\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
         (agents_dir / "agent-b.yaml").write_text(
-            "name: agent-b\nprovider: qwen\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
+            "name: agent-b\nprovider: codex\nmode: interactive\nprompts:\n  agent: Run the assigned task.\nworkflows:\n  rule_selectors:\n    include: []\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):

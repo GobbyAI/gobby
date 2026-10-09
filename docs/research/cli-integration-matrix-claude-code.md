@@ -28,8 +28,8 @@ all three exist; anything less remains limbo or blocked.
 
 **ACP is a useful readiness lever, not a requirement.** The web-chat surface has
 a shared `ACPWebChatBackend` (`servers/websocket/chat/backends/acp.py`).
-ACP-speaking CLIs reuse it via a thin wrapper — `backends/grok.py` (1.1 KB) and
-`backends/qwen.py` (1.9 KB) are stubs over the shared backend, whereas the
+ACP-speaking CLIs reuse it via a thin wrapper — `backends/grok.py` (1.1 KB) is
+a stub over the shared backend (Qwen's was removed in #23769), whereas the
 non-ACP backends are large and custom: `codex.py` (26 KB), `droid.py` (30 KB),
 `claude.py` + helpers. AGY now adds a bounded custom stream-json backend to that
 second category.
@@ -100,7 +100,7 @@ when the provider does not expose an ACP server.
 | Codex | Full | JSONL parser | Custom (`codex.py`) | **FULL** |
 | Droid | Full | JSONL parser | Custom (`droid.py`) | **FULL** |
 | Grok | Full (real ACP event vocab) | JSONL parser | ACP (`grok.py` stub) | **FULL** |
-| Qwen | Full (real ACP event vocab) | JSONL parser | ACP (`qwen.py` stub) | **FULL** |
+| Qwen | Removed (#23769); was full (real ACP event vocab) | Removed | Removed | **REMOVED** |
 | **agy / Antigravity** | Full (5 events; 1.1.18 floor) | JSONL parser | Custom stream-json (`AgyWebChatBackend`) | **FULL** |
 
 ## Matrix — candidates (web research, directional)

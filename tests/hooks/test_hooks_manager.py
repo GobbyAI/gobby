@@ -1862,7 +1862,7 @@ class TestHookManagerSessionLookup:
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="acp-child-session",
-            source=SessionSource.QWEN,
+            source=SessionSource.GROK,
             timestamp=datetime.now(UTC),
             data={
                 "cwd": str(temp_dir),
@@ -1907,14 +1907,14 @@ class TestHookManagerSessionLookup:
         web_chat_parent = cast(SessionManager, manager._session_manager).register(
             external_id="acp-parent-session",
             machine_id="21000000-0000-4000-8000-000000000004",
-            source="qwen",
+            source="grok",
             project_id=project_id,
             session_type="web_chat",
         )
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="acp-parent-session",
-            source=SessionSource.QWEN,
+            source=SessionSource.GROK,
             timestamp=datetime.now(UTC),
             data={
                 "cwd": str(temp_dir),
@@ -1958,7 +1958,7 @@ class TestHookManagerSessionLookup:
         event = HookEvent(
             event_type=HookEventType.SESSION_END,
             session_id="orphaned-session-end",
-            source=SessionSource.QWEN,
+            source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={
                 "cwd": str(temp_dir),
@@ -3126,7 +3126,6 @@ def test_activation_failure_repairs_without_replaying_startup_packet(
     ("source", "native_hook", "delivery"),
     [
         (SessionSource.CLAUDE, "user-prompt-submit", "split"),
-        (SessionSource.QWEN, "UserPromptSubmit", "split"),
         (SessionSource.DROID, "UserPromptSubmit", "split"),
         (SessionSource.CODEX, "UserPromptSubmit", "combined"),
         (SessionSource.AGY, "PreInvocation", "agy"),
@@ -3145,11 +3144,9 @@ def test_first_activity_startup_context_provider_matrix(
     from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
     from gobby.adapters.droid import DroidAdapter
     from gobby.adapters.grok import GrokAdapter
-    from gobby.adapters.qwen import QwenAdapter
 
     adapters = {
         SessionSource.CLAUDE: ClaudeCodeAdapter(),
-        SessionSource.QWEN: QwenAdapter(),
         SessionSource.DROID: DroidAdapter(),
         SessionSource.CODEX: CodexHooksAdapter(),
         SessionSource.AGY: AgyAdapter(),

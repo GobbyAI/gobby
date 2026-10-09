@@ -335,7 +335,7 @@ class TestSessionEdgeCases:
         session_manager.register(
             external_id="all-filters-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 
@@ -364,7 +364,7 @@ class TestSessionEdgeCases:
         session_manager.register(
             external_id="list-all-filters-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 

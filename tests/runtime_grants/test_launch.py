@@ -28,6 +28,35 @@ def _grant() -> GrantBundle:
     return GrantBundle.model_validate_json(_GOLDEN.read_bytes())
 
 
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+def test_managed_child_identity_matches_its_grant(tmp_path: Path, kind: str) -> None:
+    from gobby.runtime_grants.schema import GrantPrincipal
+
+    principal = GrantPrincipal.model_validate(
+        {
+            "kind": kind,
+            "machine_id": "test-machine",
+            "project_id": "test-project",
+            "execution_id": "test-owner",
+            "session_id": "test-session",
+        }
+    )
+    launch = materialize_managed_launch(
+        _grant().model_copy(update={"principal": principal}),
+        dest_dir=tmp_path,
+        signing_key=b"test-key",
+        deadline_seconds=30,
+    )
+    env = merge_child_env(launch.env)
+    assert env is not None
+    assert env["GOBBY_PROJECT_ID"] == principal.project_id
+    assert env["GOBBY_SESSION_ID"] == principal.session_id
+    owner_key = "GOBBY_AGENT_RUN_ID" if kind == "agent_run" else "GOBBY_MANAGED_EXECUTION_ID"
+    other_key = "GOBBY_MANAGED_EXECUTION_ID" if kind == "agent_run" else "GOBBY_AGENT_RUN_ID"
+    assert env[owner_key] == principal.execution_id
+    assert other_key not in env
+
+
 def test_managed_launch_publishes_capability_in_existing_private_envelope(
     tmp_path: Path,
 ) -> None:
@@ -155,6 +184,38 @@ def test_merge_child_env_returns_none_for_missing_extra() -> None:
     assert merge_child_env(None) is None
 
 
+@pytest.mark.parametrize("configured_home", [None, "~/custom-gobby"])
+def test_launch_home_is_resolved_before_merging_parent_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_home: str | None
+) -> None:
+    user_home = tmp_path / "daemon-user"
+    monkeypatch.setenv("HOME", str(user_home))
+    if configured_home is None:
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        expected_home = user_home / ".gobby"
+    else:
+        monkeypatch.setenv("GOBBY_HOME", configured_home)
+        expected_home = user_home / "custom-gobby"
+    grant = _grant()
+    grant = grant.model_copy(
+        update={
+            "principal": grant.principal.model_copy(
+                update={"execution_id": "test-owner", "session_id": "test-session"}
+            )
+        }
+    )
+    launch = materialize_managed_launch(
+        grant, dest_dir=tmp_path, signing_key=b"test-key", deadline_seconds=30
+    )
+    # The explicit launch owns its home selection even if the ambient env changes.
+    monkeypatch.setenv("HOME", str(tmp_path / "other-user"))
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "other-daemon"))
+    env = merge_child_env(launch.env)
+    assert env is not None
+    assert env["HOME"] == launch.env["HOME"] == str(user_home.resolve())
+    assert env["GOBBY_HOME"] == launch.env["GOBBY_HOME"] == str(expected_home.resolve())
+
+
 def test_writer_preserves_envelope_capability(tmp_path: Path) -> None:
     grant = _grant().model_copy(update={"managed_api_token": "fixture-current"})
     path = write_grant_file(tmp_path / "grant.json", grant)
@@ -211,6 +272,59 @@ def test_managed_source_without_capability_fails_closed(
     monkeypatch.delenv("GOBBY_AGENT_API_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="managed capability"):
         daemon_auth_headers()
+
+
+def test_rotation_of_legacy_envelope_does_not_renew_launch_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refreshed Postgres binding cannot seed renewal in a pre-C28 envelope."""
+    from gobby.runtime_grants.launch import rewrite_managed_grant_file
+    from gobby.runtime_grants.schema import GrantPrincipal
+    from gobby.utils import local_token
+    from tests.runtime_grants.support import DEPLOYMENT_TOKEN
+
+    now = 1_800_000_000
+    monkeypatch.setattr("gobby.utils.local_token.time.time", lambda: now)
+    grant = _grant().model_copy(
+        update={
+            "principal": GrantPrincipal(
+                kind="agent_run",
+                machine_id="test-machine",
+                project_id="test-project",
+                execution_id="test-run",
+                session_id="test-session",
+            )
+        }
+    )
+    launch_token = local_token.issue_agent_api_token(
+        agent_run_id="test-run",
+        session_id="test-session",
+        project_id="test-project",
+        machine_id="test-machine",
+        signing_key=b"legacy-test-key",
+    )
+    path = write_grant_file(tmp_path / "grant.json", grant)
+    now += 23 * 3600
+    issued = datetime.fromtimestamp(now, UTC)
+    rewrite_managed_grant_file(
+        path,
+        managed_execution_id="test-run",
+        scoped_dsn="postgresql://fixture",
+        role_name="test-role",
+        credential_generation=2,
+        issued_at=issued,
+        expires_at=issued + timedelta(minutes=59),
+        deployment_token=DEPLOYMENT_TOKEN,
+        fencing_epoch=1,
+        signing_secret="test-grant-signing-secret",
+    )
+    assert "managed_api_token" not in json.loads(path.read_bytes())
+    now += 2 * 3600
+    assert local_token.verify_agent_api_token(launch_token, b"legacy-test-key") is None
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(path))
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", launch_token)
+    assert daemon_auth_headers()["Authorization"] == f"Bearer {launch_token}"
 
 
 @pytest.mark.parametrize(

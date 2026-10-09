@@ -19,7 +19,7 @@ from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
 
-type Provider = Literal["claude", "qwen", "codex", "droid"]
+type Provider = Literal["claude", "codex", "droid"]
 type PathFactory = Callable[[str, str | None], str]
 type SidecarWriter = Callable[[str | Path, str | Path], Awaitable[None]]
 type HookInstaller = Callable[[Provider | None, str | Path], bool]

@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-# Qwen now has a native terminal-hook contract; this file tests the shared ACP base.
-from gobby.adapters.acp_hook_adapter import ACPHookAdapter as QwenAdapter
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 
 pytestmark = pytest.mark.unit
@@ -213,7 +212,7 @@ class TestEdgeCases:
             "canonical_code_navigation_segments": [],
         }
 
-    def test_translate_none_values_in_event(self, adapter: QwenAdapter) -> None:
+    def test_translate_none_values_in_event(self, adapter: ACPHookAdapter) -> None:
         """Handles None values in event data."""
         native_event = {
             "hook_type": "SessionStart",

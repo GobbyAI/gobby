@@ -219,13 +219,6 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.MESSAGE_DISPLAY]["claude"] == "MessageDisplay"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.DIRECTORY_ADDED]["claude"] == "DirectoryAdded"
 
-    def test_qwen_support(self) -> None:
-        """Test Qwen support in mapping."""
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["qwen"] == "SessionStart"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["qwen"] == "PreToolUse"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP]["qwen"] == "Stop"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.TASK_CREATED]["qwen"] == "TodoCreated"
-
     def test_codex_support(self) -> None:
         """Test Codex CLI support in mapping."""
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["codex"] == "SessionStart"
@@ -249,12 +242,9 @@ class TestEventTypeCLISupport:
 
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""
-        # Qwen's current terminal contract no longer exposes legacy ACP model events.
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["claude"] is None
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["qwen"] is None
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["codex"] is None
 
-        # Claude, Qwen, and Codex expose subagent lifecycle events.
+        # Claude and Codex expose subagent lifecycle events.
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["claude"] == "SubagentStart"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["qwen"] == "SubagentStart"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["codex"] == "SubagentStart"

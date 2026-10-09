@@ -22,9 +22,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.base import TokenUsage
     from gobby.storage.hub.protocol import HubDatabase
 
-_SOURCES: frozenset[str] = frozenset(
-    {"claude", "codex", "qwen", "droid", "agy", "grok", "web_chat"}
-)
+_SOURCES: frozenset[str] = frozenset({"claude", "codex", "droid", "agy", "grok", "web_chat"})
 logger = logging.getLogger(__name__)
 _AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _GPT_OSS_CONTEXT_WINDOW = 131_072

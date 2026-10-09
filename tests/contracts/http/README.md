@@ -120,6 +120,11 @@ Masked fields in the first corpus:
 Every other grant field keeps its recorded value. `schema_identity` pins the
 migration set, so a new migration re-records `runtime_handshake`.
 
+The current schema identity is defined in
+[`src/gobby/storage/schema_expected_identity.json`](../../../src/gobby/storage/schema_expected_identity.json)
+and recorded in [`runtime_handshake.json`](runtime_handshake.json). These files
+are the source of truth for the migration version, checksum, and asset root.
+
 ## Re-recording
 
 From the worktree root, against the isolated test hub:

@@ -17,6 +17,8 @@ from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
+_AGY_INTERRUPTED = "⎿  Interrupted · What should Antigravity CLI do instead?"
+
 
 class _Terminals:
     def __init__(self, terminal_id: str, session_id: str) -> None:
@@ -34,7 +36,7 @@ def test_concurrent_output_waits_for_interrupt_candidate_recording(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     _sessions, session_id, _lifecycle, observer = _observer(
-        temp_db, sample_project["id"], provider="qwen"
+        temp_db, sample_project["id"], provider="agy"
     )
     entered = Event()
     release = Event()
@@ -49,7 +51,7 @@ def test_concurrent_output_waits_for_interrupt_candidate_recording(
     with ThreadPoolExecutor(max_workers=2) as pool:
         recorded = pool.submit(observer.record_mediated_input, "terminal-1", "\x03", "delivered")
         assert entered.wait(5)
-        observed = pool.submit(observer.observe_output, "terminal-1", "interrupted")
+        observed = pool.submit(observer.observe_output, "terminal-1", _AGY_INTERRUPTED)
         try:
             with pytest.raises(FutureTimeoutError):
                 observed.result(timeout=0.1)
@@ -64,7 +66,7 @@ async def test_async_observer_offloads_lookup_and_skips_idle_output(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     _sessions, session_id, _lifecycle, observer = _observer(
-        temp_db, sample_project["id"], provider="qwen"
+        temp_db, sample_project["id"], provider="agy"
     )
     lookup_threads: list[int] = []
 
@@ -80,8 +82,8 @@ async def test_async_observer_offloads_lookup_and_skips_idle_output(
 
     terminals.db = SimpleNamespace(fetchone=unexpected_query)
     observer.set_terminal_manager(terminals)
-    assert await observer.observe_output_async("terminal-1", "interrupted") is False
-    assert await observer.observe_run_output_async("run-1", "interrupted") is False
+    assert await observer.observe_output_async("terminal-1", _AGY_INTERRUPTED) is False
+    assert await observer.observe_run_output_async("run-1", _AGY_INTERRUPTED) is False
     with patch(
         "gobby.sessions.terminal_turn_observer.asyncio.to_thread",
         side_effect=AssertionError("ordinary input must not use a worker"),
@@ -90,14 +92,14 @@ async def test_async_observer_offloads_lookup_and_skips_idle_output(
     assert lookup_threads == []
     assert await observer.record_mediated_input_async("terminal-1", "\x03", "delivered") is True
     assert lookup_threads and lookup_threads[0] != get_ident()
-    assert await observer.observe_output_async("terminal-1", "interrupted") is True
+    assert await observer.observe_output_async("terminal-1", _AGY_INTERRUPTED) is True
 
 
 async def test_cancelled_input_keeps_worker_order_and_socket_loop_live(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     _sessions, session_id, _lifecycle, observer = _observer(
-        temp_db, sample_project["id"], provider="qwen"
+        temp_db, sample_project["id"], provider="agy"
     )
     entered = Event()
     release = Event()
@@ -124,7 +126,7 @@ async def test_cancelled_input_keeps_worker_order_and_socket_loop_live(
         input_task.cancel()
         await asyncio.sleep(0)
         output_task = asyncio.create_task(
-            observer.observe_output_async("terminal-1", "interrupted")
+            observer.observe_output_async("terminal-1", _AGY_INTERRUPTED)
         )
         asyncio.get_running_loop().call_soon(heartbeat.set)
         release_future = pool.submit(release_after_heartbeat)
@@ -170,41 +172,41 @@ def _observer(
 
 @pytest.mark.parametrize("payload", ["\x03", "\x1b"])
 @pytest.mark.parametrize("outcome", ["delivered", "indeterminate"])
-def test_qwen_requires_mediated_key_and_current_output(
+def test_mediated_key_and_current_output_interrupt_turn(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     payload: str,
     outcome: WriteOutcome,
 ) -> None:
-    sessions, session_id, _, observer = _observer(temp_db, sample_project["id"], provider="qwen")
+    sessions, session_id, _, observer = _observer(temp_db, sample_project["id"], provider="agy")
 
     assert observer.record_mediated_input("terminal-1", payload, outcome) is True
-    assert observer.observe_output("terminal-1", "\x1b[31minterrupted\x1b[0m") is True
+    assert observer.observe_output("terminal-1", f"\x1b[31m{_AGY_INTERRUPTED}\x1b[0m") is True
     updated = sessions.get(session_id)
     assert updated is not None
     assert updated.status == "interrupted"
 
 
-def test_qwen_rejects_refused_missing_stale_and_intervening_input(
+def test_rejects_refused_missing_stale_and_intervening_input(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     sessions, session_id, lifecycle, observer = _observer(
-        temp_db, sample_project["id"], provider="qwen"
+        temp_db, sample_project["id"], provider="agy"
     )
 
     assert observer.record_mediated_input("terminal-1", "\x03", "refused") is False
-    assert observer.observe_output("terminal-1", "interrupted") is False
+    assert observer.observe_output("terminal-1", _AGY_INTERRUPTED) is False
     assert observer.record_mediated_input("terminal-1", "\x03", "delivered") is True
     assert observer.record_mediated_input("terminal-1", "x", "delivered") is False
-    assert observer.observe_output("terminal-1", "interrupted") is False
+    assert observer.observe_output("terminal-1", _AGY_INTERRUPTED) is False
 
     assert observer.record_mediated_input("terminal-1", "\x1b", "delivered") is True
     lifecycle.begin_turn(
         session_id,
-        TurnEvidence(source="qwen", provider_turn_key="turn-2"),
+        TurnEvidence(source="agy", provider_turn_key="turn-2"),
     )
-    assert observer.observe_output("terminal-1", "cancelled") is False
+    assert observer.observe_output("terminal-1", _AGY_INTERRUPTED) is False
     updated = sessions.get(session_id)
     assert updated is not None
     assert updated.status == "active"
@@ -244,12 +246,12 @@ def test_candidate_expires_without_terminal_effect(
 ) -> None:
     clock = [10.0]
     sessions, session_id, _, observer = _observer(
-        temp_db, sample_project["id"], provider="qwen", clock=clock
+        temp_db, sample_project["id"], provider="agy", clock=clock
     )
     assert observer.record_mediated_input("terminal-1", "\x03", "delivered") is True
     clock[0] = 16.0
 
-    assert observer.observe_output("terminal-1", "interrupted") is False
+    assert observer.observe_output("terminal-1", _AGY_INTERRUPTED) is False
     updated = sessions.get(session_id)
     assert updated is not None
     assert updated.status == "active"

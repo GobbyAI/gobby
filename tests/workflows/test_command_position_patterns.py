@@ -304,7 +304,14 @@ RULE_CASES = (
     ),
     RuleCase(
         "no-pip-install",
-        blocked=("pip install requests", "pip3 install requests"),
+        blocked=(
+            "pip install requests",
+            "pip3 install requests",
+            # `uv run -m X` keeps X's own command beside its `python -m X` reading.
+            "uv run -m pip install requests",
+            "uv run --module pip install requests",
+            "uv run -qm pip install requests",
+        ),
         allowed=('echo "pip install requests"',),
     ),
     RuleCase(

@@ -47,11 +47,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         # ``grok --single`` (command_builder) is Grok's headless mode.
         headless_spawn=True,
     ),
-    "qwen": ProviderCapabilities(
-        reasoning_flag=None,
-        sandbox=True,
-        sensitive_path_enforcement=False,
-    ),
     "agy": ProviderCapabilities(
         reasoning_flag="claude-effort",
         sandbox=True,

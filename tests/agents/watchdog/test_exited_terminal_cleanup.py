@@ -52,7 +52,7 @@ async def test_exit_before_first_turn_releases_slot_and_delivers_parent_wait(
     child = session_manager.register(
         external_id=f"exit-child-{uuid4()}",
         machine_id=LOCAL_MACHINE_ID,
-        source="qwen",
+        source="codex",
         project_id=sample_project["id"],
         parent_session_id=parent.id,
         agent_depth=1,
@@ -65,7 +65,7 @@ async def test_exit_before_first_turn_releases_slot_and_delivers_parent_wait(
         parent.to_dict(),
         run_id=str(uuid4()),
         child_session_id=child.id,
-        provider="qwen",
+        provider="codex",
         backend=backend,
     )
     assert run.terminal_id is not None

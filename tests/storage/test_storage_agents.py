@@ -1464,7 +1464,7 @@ class TestLocalAgentRunManager:
         )
         agent_manager.create(
             parent_session_id=sample_session["id"],
-            provider="qwen",
+            provider="grok",
             prompt="Run 2",
         )
         agent_manager.create(
@@ -1589,12 +1589,12 @@ class TestLocalAgentRunManager:
         session2 = session_manager.register(
             external_id="session-2",
             machine_id=LOCAL_MACHINE_ID,
-            source="qwen",
+            source="grok",
             project_id=sample_project["id"],
         )
         run2 = agent_manager.create(
             parent_session_id=session2.id,
-            provider="qwen",
+            provider="grok",
             prompt="Run 2",
         )
         run3 = agent_manager.create(
@@ -2332,7 +2332,7 @@ class TestAgentRunEdgeCases:
         sample_session: dict[str, Any],
     ) -> None:
         """Test creating agent runs with different providers."""
-        providers = ["claude", "qwen", "codex", "openai"]
+        providers = ["claude", "grok", "codex", "openai"]
 
         for provider in providers:
             run = agent_manager.create(

@@ -152,7 +152,7 @@ class TestSourcesFilter:
     ) -> None:
         _register(session_manager, sample_project, external_id="a", source="claude")
         _register(session_manager, sample_project, external_id="b", source="codex")
-        _register(session_manager, sample_project, external_id="c", source="qwen")
+        _register(session_manager, sample_project, external_id="c", source="droid")
 
         results = session_manager.list(
             project_id=sample_project["id"],

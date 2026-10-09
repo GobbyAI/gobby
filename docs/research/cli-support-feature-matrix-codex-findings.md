@@ -42,7 +42,7 @@ Status meanings:
 | Codex CLI | Supported | hooks.json plus app-server JSON-RPC backend. |
 | Droid | Supported | Standalone adapter; no cross-CLI inheritance. |
 | Grok | Supported | ACP-backed live transport plus hook adapter. |
-| Qwen Code | Supported | ACP-backed live transport plus hook adapter. |
+| Qwen Code | Removed (#23769) | Provider support was removed; it had an ACP-backed live transport plus hook adapter. |
 | AGY | Installed-only / unavailable | Hook install parity exists, but no proven daemon-usable context channel, transcript path, stable streaming transport, or session resume surface. Keep unavailable until upstream exposes those surfaces. |
 
 ## Candidate Matrix

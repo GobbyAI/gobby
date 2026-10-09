@@ -4229,59 +4229,6 @@ async def test_grok_completed_status_with_runner_failures_is_failure(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_qwen_uses_tool_call_result_status(tmp_path: Path) -> None:
-    transcript = tmp_path / "qwen.jsonl"
-    _write_jsonl(
-        transcript,
-        [
-            {
-                "type": "assistant",
-                "timestamp": BASE_TIME.isoformat(),
-                "message": {
-                    "role": "assistant",
-                    "parts": [
-                        {
-                            "functionCall": {
-                                "id": "qwen-1",
-                                "name": "run_shell_command",
-                                "args": {"command": "pytest tests/qwen"},
-                            }
-                        }
-                    ],
-                },
-            },
-            {
-                "type": "tool_result",
-                "timestamp": (BASE_TIME + timedelta(seconds=1)).isoformat(),
-                "toolCallResult": {"callId": "qwen-1", "status": "success"},
-                "message": {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "functionResponse": {
-                                "id": "qwen-1",
-                                "name": "run_shell_command",
-                                "response": {"output": "passed"},
-                            }
-                        }
-                    ],
-                },
-            },
-        ],
-    )
-
-    evidence = await derive_transcript_evidence(
-        _session("qwen", transcript),
-        None,
-        default_validation_detection_config(),
-        set(),
-        str(tmp_path),
-    )
-
-    assert [run.outcome for run in evidence.validation_runs] == ["success"]
-
-
-@pytest.mark.asyncio
 async def test_configured_gzip_archive_is_used(tmp_path: Path) -> None:
     archive_dir = tmp_path / "archives"
     archive_dir.mkdir()

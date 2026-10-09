@@ -21,7 +21,6 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | --- | --- | --- | --- |
 | Claude Code | Settings hook names with Gobby kebab-case `ghook --type` values | `session_id` | HTTP hook command |
 | Antigravity CLI | PascalCase (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) | `session_id` | HTTP hook command |
-| Qwen CLI | Current PascalCase (`SessionStart`, `PreToolUse`, `Stop`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
 | Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `sessionId` normalized to `session_id` | HTTP hook command |
@@ -56,8 +55,8 @@ the older flat shape without `schema_version` is no longer accepted.
 }
 ```
 
-`source` is required and must be one of `claude`, `grok`, `qwen`, `agy`,
-`codex`, or `droid`. `hook_type` is the provider hook name that the selected
+`source` is required and must be one of `claude`, `grok`, `agy`, `codex`,
+or `droid`. `hook_type` is the provider hook name that the selected
 adapter understands.
 
 The request must also advertise `response_capability: "hook-response.v1"`.
@@ -100,7 +99,6 @@ closed:
 | --- | --- | --- |
 | `claude` | `stop` | Fail open; non-critical transport failure |
 | `agy` | `Stop` | Fail open; non-critical transport failure |
-| `qwen` | `Stop` | Fail open; non-critical transport failure |
 | `codex` | `Stop` | Fail open; non-critical transport failure |
 | `droid` | `Stop` | Fail open; non-critical transport failure |
 | `grok` | `stop` | Fail open; non-critical transport failure |
@@ -109,7 +107,7 @@ Non-critical transport failures use `ghook`'s fail-open path (exit 1 with an
 error JSON for most CLIs; Antigravity exits 0 with per-event skip JSON). Critical
 transport failures use exit 2 and do not emit a continue response. The
 critical set is session-lifecycle only: Claude `session-start`, `session-end`,
-and `pre-compact`; Codex, Qwen, and Droid `SessionStart`, `SessionEnd`, and
+and `pre-compact`; Codex and Droid `SessionStart`, `SessionEnd`, and
 `PreCompact`; Grok `session_start`, `session_end`, and `pre_compact`. Antigravity has
 no critical native event: PreInvocation, PreToolUse, PostToolUse,
 PostInvocation, and Stop are all non-critical.
@@ -211,29 +209,6 @@ and web chat through Antigravity's custom stream-json subprocess transport on 1.
 | `PreToolUse` | `before_tool` | `before_tool` |
 | `PostToolUse` | `after_tool` | `after_tool` |
 | `Stop` | `stop` | `turn_end` |
-
-### Qwen
-
-Qwen uses a dedicated Claude-shaped adapter with Qwen-specific contracts.
-
-| Native Hook | Raw Workflow Event | Semantic Event |
-| --- | --- | --- |
-| `SessionStart` | `session_start` | `session_start` |
-| `SessionEnd` | `session_end` | `session_end` |
-| `UserPromptSubmit` | `before_agent` | `turn_start` |
-| `PreToolUse` | `before_tool` | `before_tool` |
-| `PermissionRequest` | `permission_request` | `permission_request` |
-| `PostToolUse` | `after_tool` | `after_tool` |
-| `PostToolUseFailure` | `after_tool` | `after_tool` |
-| `Stop` | `stop` | `turn_end` |
-| `StopFailure` | `stop_failure` | `turn_end` |
-| `SubagentStart` | `subagent_start` | `subagent_start` |
-| `SubagentStop` | `subagent_stop` | `subagent_stop` |
-| `PreCompact` | `pre_compact` | `pre_compact` |
-| `PostCompact` | `post_compact` | `post_compact` |
-| `Notification` | `notification` | `notification` |
-| `TodoCreated` | `task_created` | `task_created` |
-| `TodoCompleted` | `task_completed` | `task_completed` |
 
 ### Codex
 
@@ -371,7 +346,7 @@ Hook input models set `extra="allow"` and emit no unknown-field warning, so a
 field the models do not declare still reaches `HookEvent.data` silently. Treat
 this table, not a model definition, as the statement of what arrives.
 
-Shell-like tools normalize to `Bash`. Common Qwen/Antigravity tool names also map to
+Shell-like tools normalize to `Bash`. Common Antigravity tool names also map to
 Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 
 ## Provider Payload Examples
@@ -455,23 +430,6 @@ scoping per-agent state across a `Task` subagent's tool calls.
     "cwd": "/path/to/project",
     "timestamp": "2026-05-07T15:00:00Z",
     "prompt": "Refresh the hook schema guide"
-  }
-}
-```
-
-### Qwen
-
-```json
-{
-  "source": "qwen",
-  "hook_type": "PreToolUse",
-  "input_data": {
-    "hook_event_name": "PreToolUse",
-    "session_id": "qwen-session-123",
-    "tool_name": "RunShellCommand",
-    "tool_input": {
-      "command": "git status --short"
-    }
   }
 }
 ```
@@ -637,10 +595,10 @@ Adapters translate these fields into the native response schema for each CLI.
 
 ### Context Fields
 
-| HookResponse Field | Claude Code | Qwen | Antigravity | Codex | Droid |
-| --- | --- | --- | --- | --- | --- |
-| `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | `injectSteps.ephemeralMessage` on `PreInvocation` and `PostInvocation` | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
-| `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | `injectSteps.userMessage` on `PreInvocation` and `PostInvocation` | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
+| HookResponse Field | Claude Code | Antigravity | Codex | Droid |
+| --- | --- | --- | --- | --- |
+| `context` | `hookSpecificOutput.additionalContext` when supported | `injectSteps.ephemeralMessage` on `PreInvocation` and `PostInvocation` | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
+| `system_message` | Top-level `systemMessage`, except startup context is injected once | `injectSteps.userMessage` on `PreInvocation` and `PostInvocation` | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
 
 ### Blocking And Tool Control
 
@@ -656,7 +614,7 @@ Adapters translate these fields into the native response schema for each CLI.
 | `worktree_path` | Claude `WorktreeCreate` output |
 | `elicitation_*` | Claude elicitation response fields |
 | `display_content` | Claude `MessageDisplay` replacement delta |
-| `modify_args` | ACP adapter `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig`; not Qwen's native terminal hook surface |
+| `modify_args` | ACP adapter `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig` |
 
 For Antigravity `PreToolUse`, the supported decisions are `allow`, `deny`, `ask`, and
 `deny_unless_prior_grant`; `modified_input` maps to `overwrite`.

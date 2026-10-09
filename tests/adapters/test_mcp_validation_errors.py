@@ -8,7 +8,6 @@ import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse
 
 pytestmark = pytest.mark.unit
@@ -88,15 +87,3 @@ def test_codex_permission_request_mcp_validation_error_has_no_unsupported_fields
     assert "interrupt" not in decision
     assert "decision" not in result
     assert "reason" not in result
-
-
-def test_qwen_mcp_validation_error_is_plain_block_context() -> None:
-    result = QwenAdapter().translate_from_hook_response(
-        _mcp_validation_response(),
-        hook_type="PreToolUse",
-    )
-
-    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "updatedInput" not in result
-    assert "Retry this tool call" not in str(result)
-    assert "invalid_arguments" in result["hookSpecificOutput"]["additionalContext"]

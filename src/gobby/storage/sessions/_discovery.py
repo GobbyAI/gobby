@@ -101,7 +101,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
         Args:
             external_id: External session identifier
             project_id: Project identifier
-            source: CLI source (claude, qwen, codex, droid)
+            source: CLI source (claude, codex, droid, grok, agy)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
@@ -140,7 +140,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
 
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
-            source: CLI source (claude, qwen, etc.)
+            source: CLI source (claude, codex, etc.)
 
         Returns:
             Most recently updated matching session, or None.
@@ -171,7 +171,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
 
         Args:
             external_id: External session identifier
-            source: CLI source (claude, qwen, codex, droid)
+            source: CLI source (claude, codex, droid, grok, agy)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:

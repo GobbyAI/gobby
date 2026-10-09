@@ -29,13 +29,6 @@ impl CliConfig {
                     .collect(),
                 json_error_exit_code: 2,
             }),
-            "qwen" => Some(Self {
-                source: "qwen",
-                critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
-                    .into_iter()
-                    .collect(),
-                json_error_exit_code: 1,
-            }),
             "codex" => Some(Self {
                 source: "codex",
                 critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
@@ -71,7 +64,7 @@ impl CliConfig {
     }
 
     pub fn malformed_input_exit_code(&self, hook_type: &str) -> u8 {
-        if self.source == "qwen" || self.source == "codex" {
+        if self.source == "codex" {
             if self.is_critical_hook(hook_type) {
                 2
             } else {
@@ -109,20 +102,6 @@ mod tests {
         assert_eq!(c.json_error_exit_code, 2);
         assert_eq!(c.malformed_input_exit_code("SessionStart"), 2);
         assert_eq!(c.malformed_input_exit_code("Stop"), 1);
-    }
-
-    #[test]
-    fn qwen_current_critical_hooks() {
-        let c = CliConfig::for_cli("qwen").unwrap();
-        assert_eq!(c.source, "qwen");
-        assert!(c.is_critical_hook("SessionStart"));
-        assert!(c.is_critical_hook("SessionEnd"));
-        assert!(c.is_critical_hook("PreCompact"));
-        assert!(!c.is_critical_hook("Stop"));
-        assert!(!c.is_critical_hook("PreToolUse"));
-        assert_eq!(c.malformed_input_exit_code("SessionStart"), 2);
-        assert_eq!(c.malformed_input_exit_code("Stop"), 1);
-        assert_eq!(c.malformed_input_exit_code("PreToolUse"), 1);
     }
 
     #[test]
@@ -181,6 +160,12 @@ mod tests {
     }
 
     #[test]
+    fn retired_qwen_cli_is_not_recognized() {
+        assert!(CliConfig::for_cli("qwen").is_none());
+        assert!(CliConfig::for_cli("QWEN").is_none());
+    }
+
+    #[test]
     fn cli_name_is_case_insensitive() {
         assert!(CliConfig::for_cli("CLAUDE").is_some());
         assert!(CliConfig::for_cli("Codex").is_some());
@@ -190,7 +175,7 @@ mod tests {
 
     #[test]
     fn installer_cli_names_are_recognized_with_matching_sources() {
-        for cli in ["claude", "grok", "agy", "qwen", "codex", "droid"] {
+        for cli in ["claude", "grok", "agy", "codex", "droid"] {
             let config = CliConfig::for_cli(cli).expect("installer CLI must be recognized");
             assert_eq!(config.source, cli, "{cli} must preserve its source");
         }

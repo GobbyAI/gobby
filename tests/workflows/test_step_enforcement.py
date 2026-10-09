@@ -3419,6 +3419,8 @@ def test_is_gobby_call_tool(spelling: str | None, expected: bool) -> None:
         ("list_tools", True),
         ("gobby__list_tools", True),
         ("mcp__gobby__list_tools", True),
+        ("ToolSearch", True),
+        ("search_tool", True),
         ("call_tool", False),
         ("gobby__call_tool", False),
         ("list_mcp_servers", False),

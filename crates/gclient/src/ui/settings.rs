@@ -229,11 +229,29 @@ impl ClientPrefs {
     pub fn theme_kind(&self) -> ThemeKind {
         match self.theme.to_ascii_lowercase().as_str() {
             "light" => ThemeKind::Light,
-            "system" if matches!(dark_light::detect(), Ok(dark_light::Mode::Light)) => {
+            "system"
+                if detect_system_light(|| {
+                    matches!(dark_light::detect(), Ok(dark_light::Mode::Light))
+                }) =>
+            {
                 ThemeKind::Light
             }
             _ => ThemeKind::Dark,
         }
+    }
+}
+
+fn detect_system_light(detect: impl FnOnce() -> bool + Send) -> bool {
+    // Linux's blocking D-Bus client cannot run on an entered Tokio thread.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::scope(|scope| {
+            scope
+                .spawn(detect)
+                .join()
+                .expect("system appearance detector panicked")
+        })
+    } else {
+        detect()
     }
 }
 
@@ -474,6 +492,30 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_detection_can_start_a_runtime_inside_either_tokio_flavor() {
+        for mut builder in [
+            tokio::runtime::Builder::new_current_thread(),
+            tokio::runtime::Builder::new_multi_thread(),
+        ] {
+            let runtime = builder.worker_threads(1).build().expect("outer runtime");
+            runtime.block_on(async {
+                for light in [true, false] {
+                    assert_eq!(
+                        detect_system_light(|| {
+                            // Model a blocking detector that starts its own runtime.
+                            tokio::runtime::Builder::new_current_thread()
+                                .build()
+                                .expect("detector runtime")
+                                .block_on(async { light })
+                        }),
+                        light,
+                    );
+                }
+            });
+        }
+    }
 
     #[test]
     fn row_values_follow_prefs() {

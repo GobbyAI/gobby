@@ -229,7 +229,6 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         "endpoint:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
         "endpoint:ollama": AIAdapterStyle.OPENAI_COMPATIBLE,
         "grok": AIAdapterStyle.CLI,
-        "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
     }
 
@@ -257,7 +256,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert codex.models == (
         "gpt-5.6-luna",
         "gpt-5.6-sol",
-        "gpt-5.6-terra",
+        "gpt-6-luna",
     )
     assert "default_model" not in codex.metadata
     assert "auth_mode" not in codex.metadata
@@ -339,15 +338,14 @@ def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
         DaemonConfig(),
         provider_installed=lambda _entry: True,
     )
-    # codex (daemon), droid (cli), grok (acp), and qwen (acp) all have
+    # codex (daemon), droid (cli), and grok (acp) all have
     # tool_chat spawn adapters that run gcode directly in-sandbox. With
-    # providers installed, all four are available, tool-capable, and
+    # providers installed, all three are available, tool-capable, and
     # selectable — provider-agnostic peers of claude/lm-studio.
     for provider, style in (
         ("codex", AIAdapterStyle.DAEMON),
         ("droid", AIAdapterStyle.CLI),
         ("grok", AIAdapterStyle.ACP),
-        ("qwen", AIAdapterStyle.ACP),
     ):
         binding = registry.binding(AICapability.TOOL_CHAT, provider)
         assert binding is not None, provider
@@ -360,7 +358,7 @@ def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
     status = registry.status(AICapability.TOOL_CHAT)
     assert status.capability == AICapability.TOOL_CHAT
     providers = {binding.provider for binding in status.bindings}
-    assert {"claude", "codex", "droid", "grok", "qwen"}.issubset(providers)
+    assert {"claude", "codex", "droid", "grok"}.issubset(providers)
 
 
 def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
@@ -449,7 +447,7 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     assert codex.reason is not None
     assert "proven image payload support" in codex.reason
 
-    for provider in ("droid", "grok", "qwen"):
+    for provider in ("droid", "grok"):
         binding = registry.binding(AICapability.VISION_EXTRACT, provider)
         assert binding is not None
         assert binding.available is False

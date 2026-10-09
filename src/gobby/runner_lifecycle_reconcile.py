@@ -53,8 +53,8 @@ async def _reconcile_agent_runs_after_restart(
     credential_manager = getattr(runner, "managed_credential_manager", None)
     if credential_manager is not None and run_ids is None:
         try:
-            await _run_db(runner, credential_manager.reconcile)
             await _run_db(runner, credential_manager.rotate_due)
+            await _run_db(runner, credential_manager.reconcile)
         except Exception:
             # Startup deliberately continues past this, but discarding the
             # reason leaves nothing in the log to act on -- the bare message

@@ -47,9 +47,7 @@ struct TestHost {
 
 impl TestHost {
     async fn spawn(extra: &[&str]) -> Self {
-        let binary = tokio::task::spawn_blocking(build_test_gterm)
-            .await
-            .expect("gterm build task");
+        let binary = prepared_test_gterm();
         let dir = temp_socket_dir();
         let control_token = dir.path().join("gterm-control.token");
         std::fs::write(&control_token, "control-token").expect("write control token");
@@ -205,31 +203,20 @@ impl Drop for TestTmux {
     }
 }
 
-fn build_test_gterm() -> PathBuf {
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+fn prepared_test_gterm() -> PathBuf {
     let binary = std::env::current_exe()
         .expect("current test binary")
         .parent()
         .and_then(Path::parent)
         .expect("target profile directory")
         .join("gterm");
-    // The profile directory belongs to this checkout. Let Cargo validate an
-    // existing binary against the current source before copying it to the host's
-    // private inode; incremental no-op builds keep that provenance check cheap.
-    let status = Command::new(env!("CARGO"))
-        .current_dir(&workspace)
-        .args([
-            "build",
-            "-p",
-            "gobby-terminal",
-            "--features",
-            "vt-engine",
-            "--bin",
-            "gterm",
-        ])
-        .status()
-        .expect("build test gterm");
-    assert!(status.success(), "test gterm build failed");
+    // Nextest's scoped setup validates this checkout's host before test clocks
+    // start. Each test still copies it to its own private inode below.
+    assert!(
+        binary.is_file(),
+        "run with cargo nextest: the gclient-test-gterm setup must prepare {}",
+        binary.display()
+    );
     binary
 }
 
@@ -671,11 +658,6 @@ async fn granted_direct_input_echoes_and_revoke_refuses() {
 
 #[tokio::test]
 async fn tmux_pane_attaches_through_host_observer() {
-    // Warm gterm before opening the tmux pane. TestHost::spawn may block on a
-    // cargo lock for minutes; the host must still inherit the live tmux env.
-    tokio::task::spawn_blocking(build_test_gterm)
-        .await
-        .expect("gterm build task");
     let tmux = TestTmux::start();
     tmux.send_hex(b"printf 'GCLIENT-TMUX-HISTORY\\n'\n");
     timeout(HOST_TIMEOUT, async {
