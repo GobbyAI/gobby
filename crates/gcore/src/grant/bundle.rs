@@ -269,7 +269,17 @@ pub fn parse_grant_json(raw: &[u8]) -> Result<GrantBundle, GrantError> {
             source: None,
         });
     }
-    let grant: GrantBundle = serde_json::from_slice(trimmed).map_err(|error| {
+    let mut payload: Value = serde_json::from_slice(trimmed)
+        .map_err(|_| GrantError::Malformed("invalid grant envelope".to_owned()))?;
+    if let Some(object) = payload.as_object_mut()
+        && let Some(token) = object.remove("managed_api_token")
+        && token.as_str().is_none_or(|token| token.trim().is_empty())
+    {
+        return Err(GrantError::Malformed(
+            "invalid managed capability envelope".to_owned(),
+        ));
+    }
+    let grant: GrantBundle = serde_json::from_value(payload).map_err(|error| {
         let message = error.to_string();
         if message.contains("unknown field") {
             GrantError::PayloadSkew { detail: message }
