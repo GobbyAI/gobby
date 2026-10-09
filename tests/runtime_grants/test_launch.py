@@ -184,6 +184,38 @@ def test_merge_child_env_returns_none_for_missing_extra() -> None:
     assert merge_child_env(None) is None
 
 
+@pytest.mark.parametrize("configured_home", [None, "~/custom-gobby"])
+def test_launch_home_is_resolved_before_merging_parent_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_home: str | None
+) -> None:
+    user_home = tmp_path / "daemon-user"
+    monkeypatch.setenv("HOME", str(user_home))
+    if configured_home is None:
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+        expected_home = user_home / ".gobby"
+    else:
+        monkeypatch.setenv("GOBBY_HOME", configured_home)
+        expected_home = user_home / "custom-gobby"
+    grant = _grant()
+    grant = grant.model_copy(
+        update={
+            "principal": grant.principal.model_copy(
+                update={"execution_id": "test-owner", "session_id": "test-session"}
+            )
+        }
+    )
+    launch = materialize_managed_launch(
+        grant, dest_dir=tmp_path, signing_key=b"test-key", deadline_seconds=30
+    )
+    # The explicit launch owns its home selection even if the ambient env changes.
+    monkeypatch.setenv("HOME", str(tmp_path / "other-user"))
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "other-daemon"))
+    env = merge_child_env(launch.env)
+    assert env is not None
+    assert env["HOME"] == launch.env["HOME"] == str(user_home.resolve())
+    assert env["GOBBY_HOME"] == launch.env["GOBBY_HOME"] == str(expected_home.resolve())
+
+
 def test_writer_preserves_envelope_capability(tmp_path: Path) -> None:
     grant = _grant().model_copy(update={"managed_api_token": "fixture-current"})
     path = write_grant_file(tmp_path / "grant.json", grant)
