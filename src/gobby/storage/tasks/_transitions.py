@@ -307,18 +307,30 @@ def release_task_claim(
     labels: MaybeUnset[list[str] | None] = UNSET,
 ) -> Task:
     """Clear ownership while optionally changing recovery metadata."""
-    update_task(
-        db,
-        task_id,
-        description=description,
-        claimed_by_session_id=None,
-        validation_fail_count=validation_fail_count,
-        dispatch_failure_count=dispatch_failure_count,
-        escalated_at=escalated_at,
-        escalation_reason=escalation_reason,
-        validation_override_reason=validation_override_reason,
-        labels=labels,
-    )
+    with db.transaction() as conn:
+        prior = conn.execute(
+            "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
+        ).fetchone()
+        prior_owner = prior["claimed_by_session_id"] if prior is not None else None
+        if prior_owner is not None:
+            conn.acquire_additional_lock(SessionVariableTransfer((str(prior_owner),)))
+        update_task(
+            db,
+            task_id,
+            description=description,
+            claimed_by_session_id=None,
+            validation_fail_count=validation_fail_count,
+            dispatch_failure_count=dispatch_failure_count,
+            escalated_at=escalated_at,
+            escalation_reason=escalation_reason,
+            validation_override_reason=validation_override_reason,
+            labels=labels,
+        )
+        if prior_owner is not None:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            # The former owner's step binding reads this projection on its next event.
+            SessionVariableManager(db).release_task_claim(str(prior_owner), task_id)
     return get_task(db, task_id)
 
 

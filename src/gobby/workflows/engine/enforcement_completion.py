@@ -17,6 +17,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.step_binding import BOUND_TASK_VARIABLE, bound_task_commits
 from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
     StaleStepInstanceWriteError,
@@ -309,6 +310,111 @@ class EnforcementCompletionMixin:
         variables[PENDING_STEP_TRANSITION_NOTICE] = ""
         return "\n\n".join(part for part in (pending, notice) if part)
 
+    async def _run_step_handlers(
+        self,
+        handlers: list[dict[str, Any]],
+        *,
+        session_id: str,
+        instance: AgentStepInstance,
+        step_name: str,
+        mcp_tool: tuple[str, str],
+        variables: dict[str, Any],
+        tool_input: dict[str, Any],
+        tool_output: Any,
+    ) -> bool:
+        """Run the step's handlers for ``mcp_tool``; return whether a variable changed."""
+        mcp_key = ":".join(mcp_tool)
+        vars_changed = False
+        for handler in handlers:
+            if (handler.get("server"), handler.get("tool")) != mcp_tool:
+                continue
+            handler_when = handler.get("when")
+            if handler_when:
+                handler_matches = await offload(
+                    self._evaluate_condition,
+                    handler_when,
+                    {
+                        # Instance variables last so workflow-local state wins
+                        # over session-wide observer/handoff state with
+                        # colliding names (e.g. task_claimed).
+                        "vars": {**variables, **instance.variables},
+                        "tool_input": tool_input,
+                        "tool_output": tool_output,
+                    },
+                    str(handler.get("action") or "set_variable"),
+                )
+                if not handler_matches:
+                    continue
+            if handler.get("action") == "set_variable":
+                var_name = handler.get("variable")
+                ctx = {
+                    # Instance variables last so workflow-local state wins
+                    # over session-wide observer/handoff state with
+                    # colliding names (e.g. task_claimed).
+                    "vars": {**variables, **instance.variables},
+                    "variables": {**variables, **instance.variables},
+                    "tool_input": tool_input,
+                    "tool_output": tool_output,
+                }
+                ok, var_value = await offload(
+                    self._evaluate_step_handler_value,
+                    handler.get("value"),
+                    ctx,
+                    str(handler.get("action") or "set_variable"),
+                )
+                if var_name is not None and ok:
+                    instance.variables[var_name] = var_value
+                    variables[var_name] = var_value
+                    vars_changed = True
+                    await offload(
+                        self._audit_step_set_variable,
+                        session_id,
+                        instance.agent_name,
+                        step_name,
+                        mcp_key,
+                        str(var_name),
+                        var_value,
+                    )
+        return vars_changed
+
+    async def _replay_bound_task_commits(
+        self,
+        session_id: str,
+        instance: AgentStepInstance,
+        old_step: str,
+        new_step: WorkflowStep,
+        variables: dict[str, Any],
+    ) -> bool:
+        """Apply a commit linked before the binding when a forward move enters its step.
+
+        A backward move (a bounce) never replays, so the seat implements again.
+        """
+        link_commit = ("gobby-tasks", "link_commit")
+        if not any(
+            (handler.get("server"), handler.get("tool")) == link_commit
+            for handler in new_step.on_mcp_success
+        ):
+            return False
+        names = [step.name for step in instance.snapshot.steps]
+        if old_step not in names or names.index(new_step.name) <= names.index(old_step):
+            return False
+        bound = {**variables, **instance.variables}.get(BOUND_TASK_VARIABLE)
+        if not bound:
+            return False
+        commits = await offload(bound_task_commits, self.db, str(bound))
+        if not commits:
+            return False
+        return await self._run_step_handlers(
+            new_step.on_mcp_success,
+            session_id=session_id,
+            instance=instance,
+            step_name=new_step.name,
+            mcp_tool=link_commit,
+            variables=variables,
+            tool_input={"task_id": bound},
+            tool_output={"task_id": bound, "commits": commits},
+        )
+
     async def _process_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> str | None:
@@ -400,55 +506,17 @@ class EnforcementCompletionMixin:
                 vars_changed = True
 
         # Execute handlers (on_mcp_success or on_mcp_error based on tool output)
-        for handler in handlers:
-            if handler.get("server") == mcp_server and handler.get("tool") == mcp_tool_name:
-                handler_when = handler.get("when")
-                if handler_when:
-                    handler_matches = await offload(
-                        self._evaluate_condition,
-                        handler_when,
-                        {
-                            # Instance variables last so workflow-local state wins
-                            # over session-wide observer/handoff state with
-                            # colliding names (e.g. task_claimed).
-                            "vars": {**variables, **instance.variables},
-                            "tool_input": handler_tool_input,
-                            "tool_output": tool_output,
-                        },
-                        str(handler.get("action") or "set_variable"),
-                    )
-                    if not handler_matches:
-                        continue
-                if handler.get("action") == "set_variable":
-                    var_name = handler.get("variable")
-                    ctx = {
-                        # Instance variables last so workflow-local state wins
-                        # over session-wide observer/handoff state with
-                        # colliding names (e.g. task_claimed).
-                        "vars": {**variables, **instance.variables},
-                        "variables": {**variables, **instance.variables},
-                        "tool_input": handler_tool_input,
-                        "tool_output": tool_output,
-                    }
-                    ok, var_value = await offload(
-                        self._evaluate_step_handler_value,
-                        handler.get("value"),
-                        ctx,
-                        str(handler.get("action") or "set_variable"),
-                    )
-                    if var_name is not None and ok:
-                        instance.variables[var_name] = var_value
-                        variables[var_name] = var_value
-                        vars_changed = True
-                        await offload(
-                            self._audit_step_set_variable,
-                            session_id,
-                            instance.agent_name,
-                            step.name,
-                            mcp_key,
-                            str(var_name),
-                            var_value,
-                        )
+        if await self._run_step_handlers(
+            handlers,
+            session_id=session_id,
+            instance=instance,
+            step_name=step.name,
+            mcp_tool=(mcp_server, mcp_tool_name),
+            variables=variables,
+            tool_input=handler_tool_input,
+            tool_output=tool_output,
+        ):
+            vars_changed = True
 
         # Skip transitions when tool failed and no error handlers modified state
         if tool_failed and not vars_changed:
@@ -517,6 +585,15 @@ class EnforcementCompletionMixin:
                 except StaleStepInstanceWriteError:
                     return None
                 cas_token = (str(instance.id), instance.updated_at)
+
+                if await self._replay_bound_task_commits(
+                    session_id, instance, old_step, new_step_def, variables
+                ):
+                    try:
+                        await offload(instance_mgr.save, instance, if_match=cas_token)
+                    except StaleStepInstanceWriteError:
+                        return None
+                    cas_token = (str(instance.id), instance.updated_at)
 
                 # Reset consecutive-tool-block counters so failures from the
                 # previous step don't bleed into the new one
