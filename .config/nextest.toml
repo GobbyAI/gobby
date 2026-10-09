@@ -1,5 +1,8 @@
 nextest-version = { required = "0.9.133" }
 
+[store]
+dir = ".nextest"
+
 [profile.default]
 fail-fast = false
 # Leaks still fail. On macOS a test child can inherit another test's capture
@@ -9,7 +12,7 @@ fail-fast = false
 # co-spawned; a genuinely leaked child holds the pipe forever and still fails.
 leak-timeout = { period = "10s", result = "fail" }
 
-# Every run leaves target/nextest/<profile>/junit.xml, which keeps each
+# Every run leaves .nextest/<profile>/junit.xml, which keeps each
 # failure's name and captured output after a terminal has truncated them.
 [profile.default.junit]
 path = "junit.xml"
