@@ -399,7 +399,7 @@ is promoted and nothing is stopped.
 ### `gobby auth`
 
 Reset the sole installed user's browser password, enroll a node with its hub,
-and manage the install-scoped daemon API token.
+and show which hub API key the node is enrolled with.
 
 ```bash
 gobby auth credentials

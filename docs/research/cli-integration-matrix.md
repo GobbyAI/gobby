@@ -120,7 +120,7 @@ Probe template: [task-15038 AGY/Grok contract probe](../../.gobby/plans/task-150
 | Claude Code | Full (12+ events, command + HTTP hooks, matchers, elicitation) | JSONL | Custom (`ClaudeWebChatBackend`) | **FULL** |
 | Codex CLI | Full (8 events, permission requests) | JSONL | Custom (`CodexWebChatBackend`) | **FULL** |
 | Grok CLI | Full (9 events, transport capabilities) | JSONL | ACP (`GrokWebChatBackend`) | **FULL** |
-| Qwen Code | Full (ACP, 11 events, enableHooks gate) | JSONL | ACP (`QwenWebChatBackend`) | **FULL** |
+| Qwen Code | Removed (#23769); was full (ACP, 11 events, enableHooks gate) | Removed | Removed | **REMOVED** |
 | Factory Droid | Full | JSONL | Custom (`DroidWebChatBackend`) | **FULL** |
 | **agy / Antigravity** | Full (5 events: PreInvocation, PreToolUse, PostToolUse, PostInvocation, Stop; 1.1.18 floor) | JSONL (`brain/<id>/.system_generated/logs/transcript_full.jsonl`) | Custom stream-json (`AgyWebChatBackend`) | **FULL** |
 
@@ -257,7 +257,7 @@ per invocation mode before integration.
 
 **Gobby integration path (when pursued):**
 
-1. ACP backend first (`agent acp`) — reuse `ACPWebChatBackend` pattern from Grok/Qwen
+1. ACP backend first (`agent acp`) — reuse `ACPWebChatBackend` pattern from Grok
 2. Hook adapter second — map Cursor stdio JSON; document which events fire per mode
 3. Transcript parser third — verify on-disk format from `transcript_path`; optional
    `stream-json` parser for headless observe-only paths
