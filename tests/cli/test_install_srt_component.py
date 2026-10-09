@@ -32,8 +32,11 @@ def _sha(data: bytes) -> str:
 
 
 def _write_installed_tree(root: Path, runner: bytes) -> None:
+    from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(root)
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-    package_dir.mkdir(parents=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "package.json").write_text(
         json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
         encoding="utf-8",
@@ -198,7 +201,20 @@ def _remove(name: str) -> Callable[[Path], None]:
     return lambda root: _in_writable_root(root, lambda directory: (directory / name).unlink())
 
 
+def _unpatch_proxy_and_rewrite_manifest(root: Path) -> None:
+    from gobby.agents.srt_package_patch import HTTP_PROXY_PATH
+    from tests.srt_fixture_helpers import upstream_proxy_bytes
+
+    proxy = root / HTTP_PROXY_PATH
+    proxy.chmod(0o644)
+    proxy.write_bytes(upstream_proxy_bytes())
+    (root / "content-manifest.json").chmod(0o644)
+    srt_runtime.write_srt_content_manifest(root)
+    srt_runtime.make_srt_installation_immutable(root)
+
+
 _INVALID_TREES: dict[str, Callable[[Path], None]] = {
+    "unpatched-proxy-rewritten-manifest": _unpatch_proxy_and_rewrite_manifest,
     "changed-package-content": _append_to_package_json,
     "missing-manifest": _remove("content-manifest.json"),
     "malformed-manifest": _replace_text("content-manifest.json", "{not json"),
