@@ -1567,7 +1567,7 @@ class TestReclassifyReconciliationPendingRuns:
         post = AsyncMock(side_effect=replay)
         with (
             patch.object(loop, "time", virtual_time),
-            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox_envelopes.get_hook_inbox_dir", return_value=inbox_dir),
             patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
             patch("gobby.hooks.inbox._post_envelope", new=post),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
@@ -1667,7 +1667,7 @@ class TestReclassifyReconciliationPendingRuns:
         post = AsyncMock(side_effect=replay)
         with (
             patch.object(loop, "time", virtual_time),
-            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox_envelopes.get_hook_inbox_dir", return_value=inbox_dir),
             patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
             patch("gobby.hooks.inbox._post_envelope", new=post),
             patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=observed_barrier),

@@ -54,7 +54,7 @@ pub fn run() -> Result<()> {
         .database_url
         .as_deref()
         .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
-    let auth = Arc::new(AuthState::new(secret, resolver, path)?);
+    let auth = Arc::new(AuthState::new(secret, resolver, path.clone())?);
     let (backend_http, backend_ws) =
         backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
     for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
@@ -78,21 +78,92 @@ pub fn run() -> Result<()> {
         .build()
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
+        let (retention_stop, retention_shutdown) = tokio::sync::watch::channel(false);
+        let retention_task = if let Some(database_url) = &bootstrap.database_url {
+            let home = path.parent().context("bootstrap has no parent directory")?;
+            let machine_id = gobby_core::machine::read_machine_id_from_home(home)?;
+            let pool = gobby_core::postgres_pool::Pool::build(
+                database_url,
+                gobby_core::postgres_pool::PoolSettings {
+                    max_size: 2,
+                    application_name: "gobby-gdaemon-retention".to_owned(),
+                    acquire_timeout: Duration::from_secs(2),
+                },
+            )?;
+            Some(tokio::spawn(crate::retention::run(
+                pool,
+                uuid::Uuid::parse_str(&machine_id)?,
+                retention_shutdown,
+            )))
+        } else {
+            None
+        };
+        let terminal_family =
+            if bootstrap.front_door.routes.get("terminal_ws") == Some(&RouteBackend::Native) {
+                let home = path.parent().context("bootstrap has no parent directory")?;
+                let pool = gobby_core::postgres_pool::Pool::build(
+                    bootstrap
+                        .database_url
+                        .as_deref()
+                        .context("Native terminal supervision requires database_url")?,
+                    gobby_core::postgres_pool::PoolSettings {
+                        max_size: 8,
+                        application_name: "gobby-gdaemon-terminals".to_owned(),
+                        acquire_timeout: Duration::from_secs(2),
+                    },
+                )?;
+                let machine_id = gobby_core::machine::read_machine_id_from_home(home)?;
+                let options =
+                    gobby_terminals::host::HostOptions::from_pool(&pool, home, machine_id).await?;
+                options.map(|options| {
+                    gobby_terminals::family::TerminalFamily::new(
+                        RouteBackend::Native,
+                        options,
+                        Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(pool)),
+                    )
+                })
+            } else {
+                None
+            };
+        if let Some(family) = &terminal_family
+            && let Err(error) = family.start().await
+        {
+            // Startup settles promptly; the single lifecycle retains bounded retry.
+            eprintln!("gdaemon terminal host: {error}");
+        }
         let host = bootstrap.bind_host.as_str();
         let mut listeners = bind(host, bootstrap.daemon_port, backend_http).await?;
         listeners.extend(bind(host, bootstrap.websocket_port, backend_ws).await?);
         let parent_gone = watch_parent_fd()?;
-        let shutdown = async move {
+        let drain = std::sync::atomic::AtomicBool::new(false);
+        let shutdown = async {
             match parent_gone {
                 Some(gone) => tokio::select! {
                     () = shutdown_signal() => {}
-                    _ = gone => {}
+                    intent = gone => {
+                        drain.store(intent.unwrap_or(false), std::sync::atomic::Ordering::Release);
+                    }
                 },
                 None => shutdown_signal().await,
             }
         };
         let tls = tls.map(|loaded| loaded.config);
-        serve(listeners, &bootstrap.front_door.routes, tls, auth, shutdown).await
+        let result = serve(listeners, &bootstrap.front_door.routes, tls, auth, shutdown).await;
+        retention_stop.send_replace(true);
+        if let Some(task) = retention_task {
+            task.await.context("token-event retention task failed")?;
+        }
+        if let Some(family) = &terminal_family {
+            if drain.load(std::sync::atomic::Ordering::Acquire) {
+                family
+                    .drain()
+                    .await
+                    .context("explicit terminal drain failed")?;
+            } else {
+                family.stop().await;
+            }
+        }
+        result
     })
 }
 
@@ -101,7 +172,7 @@ pub fn run() -> Result<()> {
 /// any cause, SIGKILL included. Without the variable there is no watch. The read
 /// runs on a detached thread, not the blocking pool, so a runtime drop never
 /// waits on it.
-fn watch_parent_fd() -> Result<Option<tokio::sync::oneshot::Receiver<()>>> {
+fn watch_parent_fd() -> Result<Option<tokio::sync::oneshot::Receiver<bool>>> {
     let Some(value) = std::env::var_os(PARENT_FD_ENV) else {
         return Ok(None);
     };
@@ -112,15 +183,28 @@ fn watch_parent_fd() -> Result<Option<tokio::sync::oneshot::Receiver<()>>> {
         .spawn(move || {
             use std::io::{ErrorKind, Read};
             let mut buf = [0u8; 64];
+            let mut line = Vec::with_capacity(2);
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(_) => {}
+                    Ok(count) => {
+                        for byte in &buf[..count] {
+                            if *byte == b'\n' {
+                                if line == b"D" {
+                                    let _ = gone.send(true);
+                                    return;
+                                }
+                                line.clear();
+                            } else if line.len() < 2 {
+                                line.push(*byte);
+                            }
+                        }
+                    }
                     Err(err) if err.kind() == ErrorKind::Interrupted => {}
                     Err(_) => break,
                 }
             }
-            let _ = gone.send(());
+            let _ = gone.send(false);
         })
         .context("failed to start the parent pipe watch")?;
     Ok(Some(watch))

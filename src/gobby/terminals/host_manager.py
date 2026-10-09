@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import secrets
-import signal
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
@@ -41,6 +40,7 @@ from gobby.terminals.host_protocol import (
 )
 from gobby.terminals.host_reap import reap_recorded_process
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
+from gobby.terminals.host_shutdown import HostShutdown
 from gobby.terminals.host_upgrade import HostUpgradeCoordinator
 from gobby.terminals.input_grants import HandoffKey, expire_native_input_handoffs
 from gobby.utils.machine_id import require_machine_id
@@ -61,7 +61,7 @@ class _Adopt(Enum):
     MISMATCH = "mismatch"
 
 
-class TerminalHostManager:
+class TerminalHostManager(HostShutdown):
     """Owns gterm lifecycle for one daemon composition root."""
 
     def __init__(
@@ -266,8 +266,8 @@ class TerminalHostManager:
         """Detach from the host; drain it only on explicit opt-in.
 
         The default leaves the gterm host and every terminal it owns running so
-        the next daemon adopts them. ``drain_host`` (or the
-        ``terminals.stop_host_on_shutdown`` config) takes the host down too.
+        the next daemon adopts them. Only explicit ``drain_host`` takes the
+        host down too.
         """
         self.begin_shutdown()
         async with self._restart_lock:
@@ -282,7 +282,7 @@ class TerminalHostManager:
             except (asyncio.CancelledError, HostManagerStopped):
                 pass
         await self.stop_producers()
-        if not (drain_host or self.terminal_config.stop_host_on_shutdown):
+        if not drain_host:
             await self.close_clients()
             return
         self.host_drained = True
@@ -735,120 +735,12 @@ class TerminalHostManager:
             )
         return hello, await client.ping()
 
-    async def _host_shutdown(self) -> None:
-        """Drain the host, escalating through TERM and KILL when needed.
-
-        ``self._client`` is already authenticated when this daemon adopted or
-        spawned the host. When it is not — the host is alive but was not
-        adoptable, which is the case `gobby stop --terminals` exists for — the
-        connection opened here has to handshake first, or the host refuses the
-        shutdown as ``unauthenticated`` and the drain silently does nothing
-        (#22232).
-        """
-        client = self._client
-        pid = self.host_pid
-        if client is None:
-            try:
-                client = await self._connect()
-            except (OSError, ConnectionError, HostUnavailableError) as exc:
-                logger.info("no gterm host answered the control socket: %s", exc)
-                client = None
-            if client is not None:
-                try:
-                    _, ping = await self._handshake(client)
-                except (
-                    OSError,
-                    ConnectionError,
-                    HostControlError,
-                    HostCommandError,
-                    PermissionError,
-                ) as exc:
-                    self.last_error = str(exc)
-                    logger.warning("cannot authenticate to the gterm host to drain it: %s", exc)
-                    await self._close_client(client)
-                    client = None
-                else:
-                    self._client = client
-                    pid = ping.host_pid
-        grace_ms = int(self.config.shutdown_grace_seconds * 1000)
-        if client is not None:
-            try:
-                await client.host_shutdown(grace_ms)
-            except (ConnectionError, HostControlError, HostCommandError, OSError) as exc:
-                logger.info("host_shutdown response lost; verifying death: %s", exc)
-        if pid is None:
-            pid = read_pidfile(self.socket_dir)
-        if pid is None:
-            return
-        if await self._await_host_exit(pid):
-            self.last_error = f"gterm host {pid} exited after host_shutdown"
-            return
-
-        previous_rung = "host_shutdown"
-        for rung, host_signal in (("SIGTERM", signal.SIGTERM), ("SIGKILL", signal.SIGKILL)):
-            if not self._pid_identity(pid):
-                self.last_error = f"gterm host {pid} exited after {previous_rung}"
-                return
-            try:
-                os.kill(pid, host_signal)
-            except ProcessLookupError:
-                self.last_error = f"gterm host {pid} exited after {previous_rung}"
-                return
-            except OSError as exc:
-                logger.warning("could not send %s to gterm host %s: %s", rung, pid, exc)
-            if await self._await_host_exit(pid):
-                self.last_error = f"gterm host {pid} exited after {rung}"
-                return
-            previous_rung = rung
-
-        self.last_error = f"gterm host {pid} is still running after SIGKILL"
-        logger.warning(
-            "gterm host %s did not exit after host_shutdown, SIGTERM, and SIGKILL",
-            pid,
-        )
-
-    def _host_exit_deadline_seconds(self) -> float:
-        return self.config.shutdown_grace_seconds
-
-    async def _await_host_exit(self, pid: int) -> bool:
-        """Poll for ``pid`` to leave before the drain gives up on it."""
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._host_exit_deadline_seconds()
-        while self._process_alive(pid):
-            if loop.time() >= deadline:
-                return False
-            await asyncio.sleep(0.05)
-        return True
-
-    def _process_alive(self, pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-
-    def _reap_process(self) -> None:
-        process = self._process
-        if process is None:
-            return
-        poll = getattr(process, "poll", None)
-        if callable(poll) and poll() is not None:
-            self._process = None
-
     async def _close_client(self, client: Any) -> None:
         close = getattr(client, "close", None)
         if callable(close):
             result = close()
             if asyncio.iscoroutine(result):
                 await result
-
-    async def _drain_host(self) -> None:
-        # Both rungs run for every host: the RPC is the only one that reaches a
-        # host this daemon did not spawn, and `_reap_process` is a no-op unless
-        # it did. The old name read as a condition and is why #22232 was first
-        # diagnosed as a drain that skips adopted hosts.
-        await self._host_shutdown()
-        self._reap_process()
 
     def _interrupt(self, run_id: str | None) -> None:
         if not run_id or self.run_manager is None:

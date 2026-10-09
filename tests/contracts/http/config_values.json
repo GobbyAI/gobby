@@ -862,8 +862,7 @@
         "terminals": {
           "hook_write_shutdown_timeout_seconds": 5.0,
           "hook_write_timeout_seconds": 5.0,
-          "spawn_in_doubt_seconds": 150.0,
-          "stop_host_on_shutdown": false
+          "spawn_in_doubt_seconds": 150.0
         },
         "tmux": {
           "agent_memory_limit_gb": 16.0,
@@ -1926,8 +1925,7 @@
         "terminals": {
           "hook_write_shutdown_timeout_seconds": 5.0,
           "hook_write_timeout_seconds": 5.0,
-          "spawn_in_doubt_seconds": 150.0,
-          "stop_host_on_shutdown": false
+          "spawn_in_doubt_seconds": 150.0
         },
         "tmux": {
           "agent_memory_limit_gb": 16.0,

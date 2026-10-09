@@ -176,6 +176,16 @@ def _routed_primary_surface(logger_name: str) -> LogSurface:
     return "daemon"
 
 
+class _ErrorsSurfaceFilter(logging.Filter):
+    """Keep designed pipeline guard refusals in their primary log only."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not (
+            record.levelno == logging.WARNING
+            and getattr(record, "pipeline_guard_refused", False) is True
+        )
+
+
 class _PrimarySurfaceFilter(logging.Filter):
     def __init__(self, surface: LogSurface) -> None:
         super().__init__()
@@ -494,14 +504,14 @@ def _create_formatted_handlers(
             )
             handler.addFilter(_PrimarySurfaceFilter(surface))
             handlers.append(handler)
-        handlers.append(
-            _create_rotating_handler(
-                config.logs_dir / ERRORS_LOG_FILENAME,
-                config,
-                level=logging.WARNING,
-                formatter=formatter,
-            )
+        errors_handler = _create_rotating_handler(
+            config.logs_dir / ERRORS_LOG_FILENAME,
+            config,
+            level=logging.WARNING,
+            formatter=formatter,
         )
+        errors_handler.addFilter(_ErrorsSurfaceFilter())
+        handlers.append(errors_handler)
     except Exception:
         for created_handler in handlers:
             created_handler.close()

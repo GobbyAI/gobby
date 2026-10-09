@@ -468,7 +468,7 @@
     },
     {
       "finding": "Selectors were described as controlling loaded variables without distinguishing materialization and ordinary effective reads.",
-      "implementation": "src/gobby/mcp_proxy/tools/apply_persona.py::build_persona_changes; src/gobby/workflows/state_manager.py::SessionVariableManager._apply_variable_defaults",
+      "implementation": "src/gobby/mcp_proxy/tools/apply_agent_definition.py::build_definition_changes; src/gobby/workflows/state_manager.py::SessionVariableManager._apply_variable_defaults",
       "resolution": "Explicitly separate activation payload filtering from read-layer defaults/access control.",
       "evidence": [
         "source-audit",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Protocol, cast
 
@@ -169,6 +170,13 @@ class _RecordBatchDb:
     def __init__(self, existing: set[tuple[str, str]] | None = None) -> None:
         self.existing: set[tuple[str, str]] = set(existing or set())
         self.statements: list[tuple[str, tuple[object, ...]]] = []
+
+    def transaction(self) -> nullcontext[None]:
+        return nullcontext()
+
+    def execute(self, sql: str, params: tuple[object, ...]) -> None:
+        assert sql == "SELECT pg_advisory_xact_lock_shared(hashtext(%s))"
+        assert params == ("hub-retention:token-events",)
 
     def fetchall(
         self, sql: str, params: tuple[object, ...] | list[object] = ()

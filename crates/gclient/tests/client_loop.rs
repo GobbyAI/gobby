@@ -8098,10 +8098,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
-        // (its sixth row) re-reads the prefs file.
+        // (its seventh row) re-reads the prefs file.
         press(MouseButton::Right, bare_cell).await;
-        hover(item_cell(bare_cell, 5)).await;
-        press(MouseButton::Left, item_cell(bare_cell, 5)).await;
+        hover(item_cell(bare_cell, 6)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 6)).await;
         settle_live_event().await;
 
         // The tab's menu: `close tab` (its fourth row) runs the confirm-close path.

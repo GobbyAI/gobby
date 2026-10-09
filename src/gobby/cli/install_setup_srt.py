@@ -263,6 +263,7 @@ def _download_verified_tarball(destination: Path) -> None:
         raise SrtRuntimeError("managed SRT tarball URL must use HTTPS")
 
     headers = {"User-Agent": f"gobby-srt/{SRT_RELEASE.version}"}
+    mismatch_details = "no download attempts"
     for _attempt in range(_MAX_TARBALL_REQUESTS):
         # Every attempt starts from scratch: partial data from a truncated
         # transfer is discarded rather than resumed.
@@ -293,9 +294,16 @@ def _download_verified_tarball(destination: Path) -> None:
         complete = expected_total is None or total >= expected_total
         if complete and digest.hexdigest() == SRT_RELEASE.tarball_sha256:
             return
+        mismatch_details = (
+            f"artifact={destination.name}, source={SRT_RELEASE.tarball_url}, "
+            f"expected_sha256={SRT_RELEASE.tarball_sha256}, actual_sha256={digest.hexdigest()}, "
+            f"downloaded_bytes={total}, content_length={expected_total}"
+        )
         destination.unlink(missing_ok=True)
 
-    raise SrtRuntimeError("SRT tarball checksum mismatch")
+    raise SrtRuntimeError(
+        f"SRT tarball checksum mismatch after {_MAX_TARBALL_REQUESTS} attempts: {mismatch_details}"
+    )
 
 
 def _cleanup_install_tree(path: Path) -> None:

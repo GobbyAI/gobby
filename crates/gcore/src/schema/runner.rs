@@ -293,10 +293,16 @@ fn recognized_baseline_receipt(
         if row.get::<_, Option<String>>(0) != Some(baseline_filename()) {
             return Ok(None);
         }
-        return Ok(
-            (row.get::<_, Option<String>>(1).as_deref() == Some(BASELINE_CHECKSUM))
-                .then_some(BaselineState::AlreadyBaselined),
-        );
+        let checksum: Option<String> = row.get(1);
+        let known_receipt = checksum.as_deref().is_some_and(|checksum| {
+            checksum == BASELINE_CHECKSUM
+                || PRIOR_RECEIPT_CHECKSUMS
+                    .iter()
+                    .any(|(version, prior_checksum)| {
+                        *version == BASELINE_VERSION && *prior_checksum == checksum
+                    })
+        });
+        return Ok(known_receipt.then_some(BaselineState::AlreadyBaselined));
     }
     let rows = client.query(
         &format!(

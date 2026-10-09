@@ -4305,16 +4305,6 @@
           "default": 150.0,
           "description": "Age below which a pending spawn is in doubt, not dead."
         },
-        "terminals.stop_host_on_shutdown": {
-          "type": "boolean",
-          "namespace": "terminals",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": false,
-          "description": "Drain the gterm host (and every native terminal it owns) whenever the daemon stops or restarts. Off by default: the host outlives the daemon and is adopted again on the next start; `gobby stop --terminals` drains it for one shutdown."
-        },
         "test_mode": {
           "type": "boolean",
           "namespace": "test_mode",

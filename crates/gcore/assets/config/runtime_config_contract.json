@@ -4374,17 +4374,6 @@
       "visibility": "public"
     },
     {
-      "activation": "live",
-      "default": false,
-      "description": "Drain the gterm host (and every native terminal it owns) whenever the daemon stops or restarts. Off by default: the host outlives the daemon and is adopted again on the next start; `gobby stop --terminals` drains it for one shutdown.",
-      "key": "terminals.stop_host_on_shutdown",
-      "machineExport": false,
-      "namespace": "terminals",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
       "activation": "restart_required",
       "default": false,
       "description": "Run daemon in test mode (enables test endpoints)",

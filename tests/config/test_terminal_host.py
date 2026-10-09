@@ -15,6 +15,15 @@ from gobby.config.tmux import TmuxConfig
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("drain", [True, False])
+def test_ordinary_config_cannot_request_host_drain(drain: bool) -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        TerminalConfig.model_validate({"stop_host_on_shutdown": drain})
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        DaemonConfig.model_validate({"terminals": {"stop_host_on_shutdown": drain}})
+    assert "stop_host_on_shutdown" not in TerminalConfig.model_fields
+
+
 def test_terminal_host_config_defaults_and_shared_keys() -> None:
     host = TerminalHostConfig()
     assert host.enabled is True

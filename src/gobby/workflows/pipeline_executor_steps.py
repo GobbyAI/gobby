@@ -17,6 +17,7 @@ from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
     PipelineStepError,
+    PipelineStepRefusal,
 )
 
 logger = logging.getLogger("gobby.workflows.pipeline_executor")
@@ -235,7 +236,8 @@ class PipelineExecutorStepMixin:
         except Exception as e:
             if pipeline is None or not pipeline.enabled:
                 raise
-            logger.exception("Failed to resume execution after approval: %s", e)
+            if not isinstance(e, PipelineStepRefusal):
+                logger.exception("Failed to resume execution after approval: %s", e)
             refreshed = await cast(Any, self)._run_db(
                 self.execution_manager.get_execution, execution.id
             )
@@ -333,7 +335,7 @@ class PipelineExecutorStepMixin:
                     pass
             return step_output
 
-        except ApprovalRequired:
+        except (ApprovalRequired, PipelineStepRefusal):
             raise
         except Exception as e:
             logger.exception("Nested pipeline execution failed: %s", e)

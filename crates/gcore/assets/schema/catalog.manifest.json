@@ -5173,6 +5173,26 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "token_event_retention_totals.cache_creation_tokens",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "token_event_retention_totals.cache_read_tokens",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "token_event_retention_totals.input_tokens",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "token_event_retention_totals.output_tokens",
+      "definition": "bigint|int8|NO|0|NEVER"
+    },
+    {
+      "name": "token_event_retention_totals.session_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "token_events.api_calls",
       "definition": "integer|int4|YES||NEVER"
     },
@@ -7539,6 +7559,30 @@
       "definition": "CHECK (title IS NULL OR octet_length(title) <= 1024)"
     },
     {
+      "name": "token_event_retention_totals.token_event_retention_totals_cache_creation_tokens_check",
+      "definition": "CHECK (cache_creation_tokens >= 0)"
+    },
+    {
+      "name": "token_event_retention_totals.token_event_retention_totals_cache_read_tokens_check",
+      "definition": "CHECK (cache_read_tokens >= 0)"
+    },
+    {
+      "name": "token_event_retention_totals.token_event_retention_totals_input_tokens_check",
+      "definition": "CHECK (input_tokens >= 0)"
+    },
+    {
+      "name": "token_event_retention_totals.token_event_retention_totals_output_tokens_check",
+      "definition": "CHECK (output_tokens >= 0)"
+    },
+    {
+      "name": "token_event_retention_totals.token_event_retention_totals_pkey",
+      "definition": "PRIMARY KEY (session_id)"
+    },
+    {
+      "name": "token_event_retention_totals.token_event_retention_totals_session_id_fkey",
+      "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE"
+    },
+    {
       "name": "token_events.token_events_api_calls_check",
       "definition": "CHECK (api_calls >= 0)"
     },
@@ -9155,6 +9199,10 @@
       "definition": "CREATE UNIQUE INDEX idx_token_events_dedup ON $schema.token_events USING btree (session_id, message_id) WHERE (message_id IS NOT NULL)"
     },
     {
+      "name": "idx_token_events_event_at",
+      "definition": "CREATE INDEX idx_token_events_event_at ON $schema.token_events USING btree (event_at, id)"
+    },
+    {
       "name": "idx_token_events_session",
       "definition": "CREATE INDEX idx_token_events_session ON $schema.token_events USING btree (session_id, event_at)"
     },
@@ -9577,6 +9625,10 @@
     {
       "name": "terminals_pkey",
       "definition": "CREATE UNIQUE INDEX terminals_pkey ON $schema.terminals USING btree (id)"
+    },
+    {
+      "name": "token_event_retention_totals_pkey",
+      "definition": "CREATE UNIQUE INDEX token_event_retention_totals_pkey ON $schema.token_event_retention_totals USING btree (session_id)"
     },
     {
       "name": "token_events_pkey",

@@ -728,7 +728,7 @@ async def test_host_shutdown_escalates(
         wait_for_exit = AsyncMock(side_effect=exit_results)
         monkeypatch.setattr(host, "_await_host_exit", wait_for_exit)
 
-        with patch("gobby.terminals.host_manager.os.kill") as kill:
+        with patch("gobby.terminals.host_shutdown.os.kill") as kill:
             await host._host_shutdown()
 
         assert client.shutdown_calls == [200]
@@ -756,7 +756,7 @@ async def test_host_shutdown_escalates_when_the_control_socket_is_not_bound(
     )
     monkeypatch.setattr(host, "_await_host_exit", AsyncMock(side_effect=[False, True]))
 
-    with patch("gobby.terminals.host_manager.os.kill") as kill:
+    with patch("gobby.terminals.host_shutdown.os.kill") as kill:
         await host._host_shutdown()
 
     assert [args.args for args in kill.call_args_list] == [(pid, signal.SIGTERM)]
@@ -1053,7 +1053,7 @@ async def test_drain_reports_a_host_that_outlived_the_rpc(
     monkeypatch.setattr(host, "_process_alive", lambda _pid: True)
     signals: list[int] = []
     monkeypatch.setattr(
-        "gobby.terminals.host_manager.os.kill",
+        "gobby.terminals.host_shutdown.os.kill",
         lambda _pid, host_signal: signals.append(host_signal),
     )
     await host.stop(drain_host=True)

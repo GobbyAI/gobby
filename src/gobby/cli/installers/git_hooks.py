@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # Markers for identifying Gobby hook sections
 GOBBY_HOOK_START = "# >>> GOBBY HOOK START >>>"
 GOBBY_HOOK_END = "# <<< GOBBY HOOK END <<<"
+# sed address for the end marker. A bracketed "<" keeps both the literal marker,
+# which the installer searches for, and here-document syntax out of sections.
+_HOOK_END_PATTERN = GOBBY_HOOK_END.replace("<", "[<]")
 
 _CODE_INDEX_REINDEX_BODY = r"""
 if [ -n "$CHANGED_FILES" ]; then
@@ -48,16 +51,28 @@ def _code_index_reindex_hook(event_name: str, changed_files_script: str) -> str:
 
 
 def _restore_stdin(variable: str) -> str:
-    """Return sh that restores stdin captured in ``variable`` for chained hook content."""
+    """Return sh that hands stdin captured in ``variable`` to chained hook content.
+
+    No here-documents: bash 3.2 writes them to /tmp, /var/tmp or the working
+    directory, which a sandboxed seat may not write. The chained content runs
+    once on the read side of a pipe instead, after this section has passed. It
+    is this file's own text, which the shell would otherwise run directly.
+    """
     return f"""
-# Restore the captured stdin for hook content chained after this section.
-if [ -n "${variable}" ]; then
-    exec 0<<GOBBY_STDIN_EOF
-${variable}
-GOBBY_STDIN_EOF
-else
-    exec 0</dev/null
+# Hand the captured stdin to hook content chained after this section through a
+# pipe. The PID check runs the replay once even if the end marker is misplaced.
+if [ -n "${variable}" ] && [ "${{GOBBY_CHAINED_PID:-}}" != "$$" ]; then
+    GOBBY_CHAINED=$(sed '1,/^{_HOOK_END_PATTERN}$/d' "$0") || exit 1
+    if [ -n "$GOBBY_CHAINED" ]; then
+        printf '%s\\n' "${variable}" | {{
+            GOBBY_CHAINED_PID=$$
+            eval "$GOBBY_CHAINED
+"
+        }}
+        exit
+    fi
 fi
+exec 0</dev/null
 """
 
 
@@ -92,7 +107,9 @@ if [ "$1" = "prepared" ] && [ "${GOBBY_LAND_COMMIT:-}" != "1" ]; then
     esac
 fi
 if [ -n "$GOBBY_PROTECTED_REF" ]; then
-    while read -r gobby_old gobby_new gobby_ref; do
+    # Pipes, not here-documents (see _restore_stdin). gobby_refuse exits only its
+    # pipeline's subshell, so each pipeline passes the refusal on.
+    printf '%s\n' "$GOBBY_REF_LINES" | while read -r gobby_old gobby_new gobby_ref; do
         [ "$gobby_ref" = "$GOBBY_PROTECTED_REF" ] || continue
         case $gobby_new in
         *[!0]*) ;;
@@ -116,7 +133,7 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
         gobby_paths=$(git -c core.quotePath=false diff --name-only --no-renames \
             "$gobby_old" "$gobby_new") ||
             gobby_refuse "cannot list the paths changed by $gobby_old..$gobby_new"
-        while IFS= read -r gobby_path; do
+        printf '%s\n' "$gobby_paths" | while IFS= read -r gobby_path; do
             case $gobby_path in
             ""|"""
         + allowed
@@ -125,12 +142,8 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
             *.md) ;;
             *) gobby_refuse "$gobby_path is not a direct-commit path" ;;
             esac
-        done <<GOBBY_PATHS_EOF
-$gobby_paths
-GOBBY_PATHS_EOF
-    done <<GOBBY_REF_LINES_EOF
-$GOBBY_REF_LINES
-GOBBY_REF_LINES_EOF
+        done || exit 1
+    done || exit 1
 fi
 """
         + _restore_stdin("GOBBY_REF_LINES")
@@ -237,20 +250,16 @@ PUSH_REFS=$(cat)
 ZERO_SHA="0000000000000000000000000000000000000000"
 
 DELETE_ONLY=false
-if [ -n "$PUSH_REFS" ]; then
+# A pipe, not a here-document (see _restore_stdin). The loop exits 1 at the
+# first ref that pushes a commit.
+if [ -n "$PUSH_REFS" ] && printf '%s\\n' "$PUSH_REFS" |
+    while read -r local_ref local_sha _; do
+        if [ -n "$local_ref" ] && [ "$local_sha" != "$ZERO_SHA" ]; then
+            exit 1
+        fi
+    done
+then
     DELETE_ONLY=true
-    while read -r local_ref local_sha remote_ref remote_sha; do
-        if [ -z "$local_ref" ]; then
-            continue
-        fi
-
-        if [ "$local_sha" != "$ZERO_SHA" ]; then
-            DELETE_ONLY=false
-        fi
-
-    done <<GOBBY_PUSH_REFS_EOF
-$PUSH_REFS
-GOBBY_PUSH_REFS_EOF
 fi
 if [ "$DELETE_ONLY" != true ]; then
     # Gobby backup — snapshot tasks and memories outside the repository before push
