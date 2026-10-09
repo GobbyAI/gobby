@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -74,9 +75,14 @@ class _StallClassifier(Protocol):
 
 
 class _Task(Protocol):
-    id: str
-    seq_num: int | None
-    dispatch_failure_count: int | None
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def seq_num(self) -> int | None: ...
+
+    @property
+    def dispatch_failure_count(self) -> int | None: ...
 
 
 def _stage_name(stage: Any) -> str | None:
@@ -137,6 +143,9 @@ class TaskRecoveryHandler:
         if not self._task_manager:
             return None
 
+        if not await self._run_db(self._run_owns_session, db_run):
+            return None
+
         task_id = db_run.task_id
         owner_session_id = db_run.child_session_id
 
@@ -174,6 +183,8 @@ class TaskRecoveryHandler:
         if not self._task_manager:
             return False
         try:
+            if not await self._run_db(self._run_owns_session, db_run):
+                return False
             resolved = await self.resolve_claimed_task_for_run(db_run)
             if resolved is None:
                 if outcome == "cancelled" and db_run.task_id:
@@ -195,129 +206,165 @@ class TaskRecoveryHandler:
 
             task_id, task = resolved
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
-            lifecycle_stage = projected_task_state(task)
-
             if not await self._verify_agent_dead_before_recovery(db_run, task_ref):
                 return False
 
-            if outcome == "cancelled":
-                await self._release_dispatch_mutex_for_run(db_run)
-                await self._run_db(
-                    self._release_task_claim_with_mutex,
-                    task_id,
-                )
-                await self._run_db(self._clear_claim_session_variables, db_run, task_id)
-                logger.info(
-                    "Recovered task %s after agent %s cancelled (status=%s)",
-                    task_ref,
-                    db_run.id,
-                    lifecycle_stage,
-                )
-                return True
+            return bool(await self._run_db(self._recover_verified_task, db_run, task_id, outcome))
+        except Exception as e:
+            logger.warning("Failed to recover task for agent %s: %s", db_run.id, type(e).__name__)
+            return False
 
-            is_provider = self._stall_classifier.for_provider(db_run.provider).is_provider_error(
-                db_run.error
+    def _run_owns_session(self, db_run: _AgentRun) -> bool:
+        """An old run cannot recover a session rebound to another run."""
+        if not self._task_manager or not db_run.child_session_id:
+            return True
+        db = getattr(self._task_manager, "db", None)
+        if db is None:
+            return True
+        row = db.fetchone(
+            "SELECT agent_run_id FROM sessions WHERE id = %s", (db_run.child_session_id,)
+        )
+        # Unbound sessions retain their existing terminal-recovery behavior.
+        return row is None or row["agent_run_id"] in (None, db_run.id)
+
+    def _recover_verified_task(
+        self, db_run: _AgentRun, task_id: str, outcome: Literal["failed", "cancelled"]
+    ) -> bool:
+        """Fence all recovery writes against both session rebind and task reclaim."""
+        if not self._task_manager:
+            return False
+        db = getattr(self._task_manager, "db", None)
+        with db.transaction() if db is not None else nullcontext() as conn:
+            if conn is not None:
+                conn.execute(
+                    "SELECT id FROM sessions WHERE id = %s FOR UPDATE",
+                    (db_run.child_session_id,),
+                ).fetchone()
+                conn.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
+            if not self._run_owns_session(db_run):
+                return False
+            task = self._task_manager.get_task(task_id)
+            if not task or not is_task_actively_claimed(task, db_run.child_session_id):
+                return False
+            return self._recover_owned_task(db_run, task_id, task, outcome)
+
+    def _recover_owned_task(
+        self, db_run: _AgentRun, task_id: str, task: _Task, outcome: Literal["failed", "cancelled"]
+    ) -> bool:
+        assert self._task_manager is not None
+        db = getattr(self._task_manager, "db", None)
+        if db is not None:
+            self._clear_dispatch_mutex_by_run_id(db, db_run.id)
+        task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
+        lifecycle_stage = projected_task_state(task)
+        if outcome == "cancelled":
+            self._release_task_claim_with_mutex(
+                task_id,
             )
-            is_bootstrap_stall = self._is_bootstrap_stall(db_run.error)
-            if is_provider:
-                logger.info(
-                    "Agent %s failed with provider error (provider=%s): %s",
-                    db_run.id,
-                    db_run.provider,
-                    db_run.error,
-                )
-
-            if lifecycle_stage != "in_progress":
-                await self._release_dispatch_mutex_for_run(db_run)
-                await self._run_db(self._release_task_claim_with_mutex, task_id)
-                await self._run_db(self._clear_claim_session_variables, db_run, task_id)
-                logger.info(
-                    "Released stale ownership on task %s after agent %s failed (status=%s)",
-                    task_ref,
-                    db_run.id,
-                    lifecycle_stage,
-                )
-                return True
-
-            await self._release_dispatch_mutex_for_run(db_run)
-            failure_count = task.dispatch_failure_count or 0
-            counts_dispatch_failure = (not is_provider) or is_bootstrap_stall
-            if counts_dispatch_failure:
-                failure_count += 1
-
-            failure_reason = (
-                "bootstrap_accounting_stall"
-                if is_bootstrap_stall
-                else "provider_startup_failed"
-                if is_provider
-                else "agent_run_failed"
+            self._clear_claim_session_variables(db_run, task_id)
+            logger.info(
+                "Recovered task %s after agent %s cancelled (status=%s)",
+                task_ref,
+                db_run.id,
+                lifecycle_stage,
             )
-            if is_provider and not is_bootstrap_stall:
-                await self._fail_current_stage(
-                    task_id,
-                    task,
-                    reason=failure_reason,
-                    by_session_id=db_run.child_session_id or db_run.claimed_session_id,
-                )
-                await self._run_db(
-                    self._release_task_claim_with_mutex,
-                    task_id,
-                    dispatch_failure_count=failure_count,
-                )
-                await self._run_db(self._clear_claim_session_variables, db_run, task_id)
-                logger.info(
-                    "Released stale ownership on task %s after provider startup failure",
-                    task_ref,
-                )
-                return True
+            return True
 
-            if counts_dispatch_failure and failure_count >= self._failure_threshold:
-                await self._fail_current_stage(
-                    task_id,
-                    task,
-                    reason=failure_reason,
-                    by_session_id=db_run.child_session_id or db_run.claimed_session_id,
-                )
-                await self._run_db(
-                    self._release_task_claim_with_mutex,
-                    task_id,
-                    dispatch_failure_count=0,
-                    escalated_at=datetime.now(UTC).isoformat(),
-                    escalation_reason=(
-                        f"Bootstrap/accounting stalled {failure_count} dispatch attempts"
-                        if is_bootstrap_stall
-                        else f"Failed {failure_count} dispatch attempts"
-                    ),
-                )
-                await self._run_db(self._clear_claim_session_variables, db_run, task_id)
-                logger.warning(
-                    "Task %s escalated after %s dispatch attempts",
-                    task_ref,
-                    failure_count,
-                )
-                return True
+        is_provider = self._stall_classifier.for_provider(db_run.provider).is_provider_error(
+            db_run.error
+        )
+        is_bootstrap_stall = self._is_bootstrap_stall(db_run.error)
+        if is_provider:
+            logger.info(
+                "Agent %s failed with provider error (provider=%s): %s",
+                db_run.id,
+                db_run.provider,
+                db_run.error,
+            )
 
-            await self._fail_current_stage(
+        if lifecycle_stage != "in_progress":
+            self._release_task_claim_with_mutex(task_id)
+            self._clear_claim_session_variables(db_run, task_id)
+            logger.info(
+                "Released stale ownership on task %s after agent %s failed (status=%s)",
+                task_ref,
+                db_run.id,
+                lifecycle_stage,
+            )
+            return True
+
+        failure_count = task.dispatch_failure_count or 0
+        counts_dispatch_failure = (not is_provider) or is_bootstrap_stall
+        if counts_dispatch_failure:
+            failure_count += 1
+
+        failure_reason = (
+            "bootstrap_accounting_stall"
+            if is_bootstrap_stall
+            else "provider_startup_failed"
+            if is_provider
+            else "agent_run_failed"
+        )
+        if is_provider and not is_bootstrap_stall:
+            self._fail_current_stage(
                 task_id,
                 task,
                 reason=failure_reason,
                 by_session_id=db_run.child_session_id or db_run.claimed_session_id,
             )
-            await self._run_db(
-                self._release_task_claim_with_mutex,
+            self._release_task_claim_with_mutex(
                 task_id,
                 dispatch_failure_count=failure_count,
             )
-            await self._run_db(self._clear_claim_session_variables, db_run, task_id)
+            self._clear_claim_session_variables(db_run, task_id)
             logger.info(
-                "Recovered task %s to open after agent %s failed",
+                "Released stale ownership on task %s after provider startup failure",
                 task_ref,
-                db_run.id,
             )
             return True
-        except Exception as e:
-            logger.warning("Failed to recover task for agent %s: %s", db_run.id, type(e).__name__)
-            return False
+
+        if counts_dispatch_failure and failure_count >= self._failure_threshold:
+            self._fail_current_stage(
+                task_id,
+                task,
+                reason=failure_reason,
+                by_session_id=db_run.child_session_id or db_run.claimed_session_id,
+            )
+            self._release_task_claim_with_mutex(
+                task_id,
+                dispatch_failure_count=0,
+                escalated_at=datetime.now(UTC).isoformat(),
+                escalation_reason=(
+                    f"Bootstrap/accounting stalled {failure_count} dispatch attempts"
+                    if is_bootstrap_stall
+                    else f"Failed {failure_count} dispatch attempts"
+                ),
+            )
+            self._clear_claim_session_variables(db_run, task_id)
+            logger.warning(
+                "Task %s escalated after %s dispatch attempts",
+                task_ref,
+                failure_count,
+            )
+            return True
+
+        self._fail_current_stage(
+            task_id,
+            task,
+            reason=failure_reason,
+            by_session_id=db_run.child_session_id or db_run.claimed_session_id,
+        )
+        self._release_task_claim_with_mutex(
+            task_id,
+            dispatch_failure_count=failure_count,
+        )
+        self._clear_claim_session_variables(db_run, task_id)
+        logger.info(
+            "Recovered task %s to open after agent %s failed",
+            task_ref,
+            db_run.id,
+        )
+        return True
 
     def _is_bootstrap_stall(self, error_string: str | None) -> bool:
         checker = getattr(self._stall_classifier, "is_bootstrap_stall", None)
@@ -358,7 +405,7 @@ class TaskRecoveryHandler:
         self._settled_run_ids &= swept
         return recovered
 
-    async def _fail_current_stage(
+    def _fail_current_stage(
         self,
         task_id: str,
         task: _Task,
@@ -373,8 +420,7 @@ class TaskRecoveryHandler:
         if stage_name is None:
             return
         try:
-            await self._run_db(
-                self._task_manager.stage_states.fail_stage,
+            self._task_manager.stage_states.fail_stage(
                 task_id,
                 stage_name,
                 reason=reason,
@@ -383,8 +429,7 @@ class TaskRecoveryHandler:
         except Exception as exc:
             if exc.__class__.__name__ != "IllegalStageTransitionError":
                 raise
-            fresh = await self._run_db(
-                self._task_manager.stage_states.get,
+            fresh = self._task_manager.stage_states.get(
                 task_id,
                 stage_name,
             )
@@ -392,6 +437,8 @@ class TaskRecoveryHandler:
                 raise
 
     async def _verify_agent_dead_before_recovery(self, db_run: _AgentRun, task_ref: str) -> bool:
+        if not await self._run_db(self._run_owns_session, db_run):
+            return False
         # Terminal spawners persist the tmux pane PID, not the provider child PID.
         # Once the managed tmux target is cleared, that PID is stale and must not
         # be treated as a safe signal target.
@@ -415,23 +462,6 @@ class TaskRecoveryHandler:
             result.get("error") or result.get("message"),
         )
         return False
-
-    async def _release_dispatch_mutex_for_run(self, db_run: _AgentRun) -> None:
-        if not self._task_manager:
-            return
-        db = getattr(self._task_manager, "db", None)
-        if db is None:
-            return
-        cleared = await self._run_db(
-            self._clear_dispatch_mutex_by_run_id,
-            db,
-            db_run.id,
-        )
-        if cleared:
-            logger.info(
-                "Released dispatch mutex for failed agent %s before task recovery",
-                db_run.id,
-            )
 
     @staticmethod
     def _clear_dispatch_mutex_by_run_id(db: Any, run_id: str) -> int:
@@ -478,6 +508,20 @@ class TaskRecoveryHandler:
             mutex.__exit__(None, None, None)
 
     def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> bool:
+        if not self._task_manager:
+            return True
+        db = getattr(self._task_manager, "db", None)
+        if db is None:
+            return True
+        with db.transaction() as conn:
+            conn.execute(
+                "SELECT id FROM sessions WHERE id = %s FOR UPDATE", (db_run.child_session_id,)
+            ).fetchone()
+            if not self._run_owns_session(db_run):
+                return False
+            return self._clear_claim_variables(db_run, task_id)
+
+    def _clear_claim_variables(self, db_run: _AgentRun, task_id: str) -> bool:
         """Release the recovered task's claim in any agent-owned session variables.
 
         Recovery reopens or escalates the task; it never finishes it, so the paths

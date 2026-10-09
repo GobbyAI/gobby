@@ -7,11 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.task_recovery import TaskRecoveryHandler
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.agents._models import AgentRunListRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -38,7 +40,7 @@ async def test_task_recovery_failure_does_not_log_exception_text(
     handler = TaskRecoveryHandler(
         LocalTaskManager(temp_db), _RunManager(), _Classifier(), run_db=_run_db
     )
-    run = _Run("run-1", "error", "task-1", "child-1", "child-1")
+    run = _Run("run-1", "error", "task-1", None, None)
 
     with (
         caplog.at_level("WARNING", logger="gobby.agents.task_recovery"),
@@ -108,6 +110,114 @@ class _Classifier:
 
 async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("taskless", [False, True], ids=["explicit-task", "taskless"])
+@pytest.mark.parametrize("status", ["error", "cancelled"])
+@pytest.mark.parametrize(
+    "binding", ["rebound", "same", "unbound", "rebind-during-kill", "reclaim-during-kill"]
+)
+@pytest.mark.parametrize("in_progress", [False, True], ids=["ready-stage", "running-stage"])
+async def test_restarted_recovery_preserves_rebound_session_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    taskless: bool,
+    status: str,
+    binding: str,
+    in_progress: bool,
+) -> None:
+    sessions = SessionManager(temp_db)
+    session = sessions.register(
+        external_id="rebound-recovery-owner",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    old_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee2391"
+    new_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee2392"
+    runs = LocalAgentRunManager(temp_db)
+    with patch(
+        "gobby.storage.agents._lifecycle.get_machine_id",
+        return_value="21000000-0000-4000-8000-000000000001",
+    ):
+        for run_id in (old_id, new_id):
+            runs.create(session.id, "codex", "Isolated recovery test", run_id=run_id)
+    if binding != "unbound":
+        sessions.update_terminal_pickup_metadata(session.id, agent_run_id=old_id)
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        sample_project["id"], "Live seat claim", validation_criteria="Claim survives restart."
+    )
+    tasks.claim_task(task.id, session.id)
+    tasks.stage_states.initialize_manifest(
+        task.id, [StageManifestSpec(stage_name="development", position=0)], by_session_id=session.id
+    )
+    if in_progress:
+        tasks.stage_states.start_stage(task.id, "development", by_session_id=session.id)
+    if binding == "rebound":
+        sessions.update_terminal_pickup_metadata(session.id, agent_run_id=new_id)
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id, holder="dispatcher", kind="spawn", ttl_seconds=30, run_id=old_id
+    )
+    variables = SessionVariableManager(temp_db)
+    variables.merge_existing_variables(
+        session.id, {"task_claimed": True, "claimed_tasks": {task.id: f"#{task.seq_num}"}}
+    )
+    replacement_owner = _register(temp_db, sample_project["id"], "replacement-claim-owner")
+
+    async def verify_terminal(run: Any) -> dict[str, bool]:
+        if binding == "rebind-during-kill":
+            sessions.update_terminal_pickup_metadata(session.id, agent_run_id=new_id)
+        if binding == "reclaim-during-kill":
+            tasks.release_task_claim(task.id)
+            tasks.claim_task(task.id, replacement_owner)
+        return {"success": True}
+
+    killer = AsyncMock(side_effect=verify_terminal)
+    run = _Run(
+        old_id,
+        status,
+        None if taskless else task.id,
+        session.id,
+        session.id,
+        terminal_id="old-pane",
+    )
+    # Startup reconstructs this handler; its settled-run cache is empty.
+    handler = TaskRecoveryHandler(
+        LocalTaskManager(temp_db),
+        _SweepRunManager(run),
+        _Classifier(),
+        terminal_agent_killer=killer,
+        run_db=_run_db,
+    )
+
+    recovered = await handler.recover_tasks_from_terminal_agents()
+    owns_recovery = binding in ("same", "unbound")
+    assert recovered == (1 if owns_recovery else 0)
+    assert killer.await_count == (0 if binding == "rebound" else 1)
+    expected_owner = (
+        None
+        if owns_recovery
+        else replacement_owner
+        if binding == "reclaim-during-kill"
+        else session.id
+    )
+    assert tasks.get_task(task.id).claimed_by_session_id == expected_owner
+    stage = tasks.stage_states.get(task.id, "development")
+    assert stage is not None
+    stage_failed = owns_recovery and status == "error"
+    assert stage.state == ("in_progress" if in_progress and not stage_failed else "ready")
+    assert tasks.get_task(task.id).dispatch_failure_count == (
+        1 if in_progress and stage_failed else 0
+    )
+    assert (mutexes.get_mutex(task.id) is None) == owns_recovery
+    if owns_recovery:
+        assert task.id not in variables.get_variables(session.id)["claimed_tasks"]
+        return
+    assert variables.get_variables(session.id)["claimed_tasks"] == {task.id: f"#{task.seq_num}"}
 
 
 @pytest.mark.asyncio
