@@ -27,9 +27,9 @@ seam adapters, the hooks route flip with its gates and GIL acceptance, the remai
 three consumers, and deleting the Python engine.
 
 Parent epic: #21567 (S2.9) under #21544. Planning task: #22946. The Orchestrator
-gobby#14972 approved decisions DR1-DR4 on 2026-10-08 at 19:46 CDT. Josh approves the
-exact reviewed revision before expansion, and nothing here is implemented before that
-approval.
+gobby#14972 approved decisions DR1-DR4 on 2026-10-08 at 19:46 CDT and later accepted
+the rewritten DR5. Josh approves the exact reviewed revision before expansion, and
+nothing here is implemented before that approval.
 
 ## Evidence and uncertainty
 `kind: framing`
@@ -79,8 +79,10 @@ Uncertainty, stated so no later section overclaims:
 ## Decision Record
 `kind: framing`
 
-The Orchestrator gobby#14972 approved DR1-DR4 on 2026-10-08 19:46 CDT. DR5-DR8 follow
-from them and from the task's correctness requirements.
+The Orchestrator gobby#14972 approved DR1-DR4 on 2026-10-08 19:46 CDT. It accepted the
+rewritten DR5, relayed by LM7 gobby#15389, and ruled that DR6 must keep every pass of a
+session in one engine. DR5-DR8 follow from those decisions and from the task's
+correctness requirements.
 
 - **DR1: Crate.** The engine is the first module of `crates/gworkflows`, package
   `gobby-workflows`: the one crate for the S2.9 family (rules, workflows, pipelines,
@@ -97,12 +99,18 @@ from them and from the task's correctness requirements.
   - The engine in the hooks family crate. Rules have four consumers, and the hooks
     route is only one of them.
 - **DR2: Flip boundary.** Rules leave Python only when `POST /api/hooks/execute`
-  moves to the Rust daemon at S2.11. There is no rules-only RPC. Evidence: rule work
-  is 6.3% of GIL samples per capture, against 22.6% for the rest of the hook path.
+  moves to the Rust daemon at S2.11. Hook events reach the Rust engine only through
+  that route; there is no rules-only RPC for them. The one forward from Python to Rust
+  is DR6's: from D2 until D3, the MCP proxy forwards its passes for Rust-owned
+  sessions. Evidence: rule work is 6.3% of GIL samples per capture, against 22.6% for
+  the rest of the hook path.
   Rejected alternatives:
   - **A rules-only RPC from Python to Rust.** The 22.6% hook-path share stays in
     Python. Every pass gains a process hop. The 44 seam-needing rules would need
     mid-pass callbacks into Python, including the `mcp_call` on 95% of turn starts.
+    DR6's forward avoids all three. The hook path has already left Python. It carries
+    only proxied MCP calls, which already cross the proxy. It needs no callback beyond
+    D1's adapters. It is transitional, and D3.2 deletes it.
   - **A Python worker process.** The task prohibits it, and it adds IPC around the
     same Python work.
   - **A no-match fast path in ghook.** ghook runs inside the SRT sandbox with no
@@ -172,14 +180,65 @@ from them and from the task's correctness requirements.
       every agent, the failure the ghook comment on the retry path guards against.
   - Changing ghook's availability-first edge is outside this plan. No decision here
     is less closed than Python's.
-- **DR6: Dual-engine window.** The Python engine keeps serving the MCP proxy, web
-  chat, and in-process agent runner until each flips (D3-D5). Until D6 deletes it,
-  every rule template change re-records the 1.1 corpus, and the change passes both
-  engines. Both engines take the same advisory locks: `SessionVariableMutation`
-  (priority 950) and `AgentStepInstanceMutation` (priority 875), in
-  `src/gobby/storage/hub/protocol.py`. gcore's `LockTarget` contract requires
-  Python's key strings, so a Rust pass and a Python pass on one session serialize
-  exactly as two Python passes do today.
+- **DR6: One engine per session.** Python serializes a session's passes in process,
+  not in the database (evidence `#pass-serialization-and-proxied-passes`).
+  - **Today.** `WorkflowHookHandler._evaluate_rules` (`src/gobby/workflows/hooks.py`)
+    holds the per-session `CrossLoopFifoLock` from `_reserve_eval_lock` for the whole
+    pass. The `SessionVariableMutation` advisory lock covers only the merge:
+    `SessionVariableManager.merge_variables` writes through `_mutate_variables`
+    (`src/gobby/workflows/state_manager.py`). A Rust pass cannot join the in-process
+    lock. With the advisory lock alone, a Rust pass and a Python pass on one session
+    could read the same variables and merge deltas computed from stale reads, losing
+    an update or consuming a one-shot flag twice. The pending tool context
+    (`WorkflowToolContextMixin.has_pending_tool_context` in
+    `src/gobby/workflows/tool_context.py`) is also in-process state, shared by a
+    session's hook pass and its MCP proxy pass.
+  - **Rule.** Exactly one engine owns every pass of a session at any instant, and it
+    owns that session's pending tool context. Ownership follows how the session's
+    hooks arrive:
+    - A session whose hooks arrive on `POST /api/hooks/execute` (a CLI through
+      ghook) is Rust-owned once that route is Native (D2).
+    - Web chat and in-process agent-runner sessions stay Python-owned until D4 and
+      D5 flip them.
+  - **Pass sites.** A session's passes come from its hook ingress and from the MCP
+    proxy. The proxy runs a full persisting pass before and after every proxied tool
+    call: `apply_before_tool_enforcement` and `apply_after_tool_workflow` in
+    `src/gobby/mcp_proxy/services/result_handling.py`. A CLI session therefore runs
+    two persisting passes per proxied call today. The `_mcp_proxy_duplicate_before_tool`
+    marker exempts the proxy's pass only from step-before-MCP processing. A pass site
+    in the engine that does not own the session forwards the pass to the owner:
+    - From D2 until D3, the Python proxy forwards the before- and after-tool passes of
+      a Rust-owned session to the Rust engine, through a backend-only gdaemon pass
+      endpoint. It applies the returned response, `modified_input` included, as it
+      applies Python's response today. D3.2 deletes the forward.
+    - From D3 until D4 and D5, the Rust MCP front door hands the passes of a
+      Python-owned session to the backend's existing evaluation, the strangler path.
+  - **Serialization in Rust.** The engine's owner holds a per-session whole-pass lock
+    with `_reserve_eval_lock`'s FIFO queueing. It cannot self-deadlock, because a
+    rule's `mcp_call` never starts a pass. Both dispatch sites call the proxy with
+    `enforce_workflow=False` (`HookManagerFactory._build_inline_mcp_dispatcher` in
+    `src/gobby/hooks/factory.py`, `dispatch_mcp_calls` in
+    `src/gobby/hooks/dispatchers/mcp.py`), and `tool_execution` then returns before
+    enforcement. D1.4 keeps that property.
+  - **Flip semantics.** Ownership is read once when a pass starts, and a pass finishes
+    in the engine that started it. Route values are read at process start, so a flip
+    happens only at a coordinated restart in which the front door and the backend
+    read the same `front_door.routes` value. In Compare only Python commits and Rust
+    shadows in record mode (D2.3), so Compare already satisfies the rule.
+  - **Locks still shared.** Rust's delta commit and step mutations take
+    `SessionVariableMutation` (priority 950) and `AgentStepInstanceMutation`
+    (priority 875) with Python's key strings (`src/gobby/storage/hub/protocol.py`, as
+    gcore's `LockTarget` requires), because Python code outside rule passes keeps
+    writing the same rows.
+  - **Template changes.** Until D6 deletes the Python engine, every rule template
+    change re-records the 1.1 corpus, and the change passes both engines.
+  - Rejected alternatives:
+    - **A whole-pass database lock taken by both engines.** It holds a lock across
+      external calls, keeps both engines live for one session's passes, and still
+      splits the in-process tool-context state.
+    - **Accepting a documented lost-update window.** It fails correctness first.
+    - **Holding the hooks route in Compare until D3.** It defers all GIL relief to
+      S2.12 and reverses ROADMAP's S2.11-before-S2.12 order.
 - **DR7: Definition cache.** The engine caches parsed rules and compiled patterns per
   `(events, project_id)`, alongside the `rules` revision they were loaded under.
   Every pass reads `definition_revisions` for `rules`, `agents`, and
@@ -203,9 +262,9 @@ from them and from the task's correctness requirements.
 
 - **Authorization.** Block decisions, rendered reasons, agent scoping
   (`rule_matches_agent` in `src/gobby/workflows/selectors.py`), audience filtering,
-  and active-rule-name filtering match Python through the 1.1 corpus. One deliberate
-  change: an event with no project id loads global rows only. That is the documented
-  contract of `RuleEngine._load_rules`, which Python currently breaks (#23866).
+  and active-rule-name filtering match Python through the 1.1 corpus. An event with
+  no project id loads global rows only, as Python has since #23866 (`0328276aa4`).
+- **Session ownership.** Every pass of a session runs in one engine (DR6).
 - **Effect order.** Rules run sorted by `(priority, trigger_index, name)`.
   - Each rule's effects run in order.
   - A `set_variable` is visible to later rules in the same pass, and so is an
@@ -219,7 +278,9 @@ from them and from the task's correctness requirements.
   bundled rule files.
   - Eager variable changes leave the pass as the delta of changed keys, which the
     caller merges exactly as `SessionVariableManager.merge_variables` does, including
-    claim reconciliation on session start and turn end.
+    claim reconciliation on session start and turn end. Since #23808 the merge is
+    key-scoped: it reads and writes only the delta's keys plus `active_task_id` and
+    `task_selection_history`, and a write to an undeclared key raises.
   - On_receipt changes leave as the `_gobby_staged_effects` payload
     (`STAGED_EFFECTS_FIELD` in `src/gobby/hooks/receipt_effects.py`). They apply only
     when the receipt is acknowledged, and the ledger owns that path (#21569).
@@ -271,12 +332,24 @@ Research context:
 - **Loading.** `RuleEngine._load_rules` calls `list_by_event` once per trigger event,
   with `enabled=True` and the event's project id. It dedupes rows by id, logs and
   skips parse failures, and sorts by `(priority, trigger_index, name)`.
-  `list_definition_rows` (`src/gobby/storage/definitions/_shared.py`) adds no project
-  condition when the project id is `None` (#23866).
+  Since #23866 (`0328276aa4`), an event with no project id loads global rows only.
 - **Filtering and effects.** Filtering is `_filter_by_agent_scope`,
   `_filter_by_audience`, and `_filter_by_active_rules`. The effect types are
   `block`, `set_variable`, `inject_context`, `mcp_call`, `load_skill`,
-  `run_command`, `observe`, and `proxy_hook`.
+  `run_command`, `observe`, and `proxy_hook`. `RuleEffect`
+  (`src/gobby/workflows/definitions.py`) accepts seven more, which no bundled rule
+  uses; whether each is ported or dropped awaits the Enhancer (V1).
+- **Response.** `EvaluationMixin._assemble_response`
+  (`src/gobby/workflows/engine/evaluation.py`) fills these `HookResponse` fields
+  (`src/gobby/hooks/events.py`): `decision`, `reason`, `context`, `context_parts`,
+  `system_message`, `display_content`, `modified_input`, `modify_args`,
+  `auto_approve`, `permission_decision`, `updated_permissions`, `retry`,
+  `watch_paths`, `worktree_path`, `elicitation_action`, `elicitation_content`,
+  `elicitation_error`, `trigger_action`, and `metadata`, which carries `mcp_calls`
+  and the staged payload. `modified_input` is live: `rtk-command-rewrite` rewrites
+  every Bash command through a `proxy_hook`.
+- **Hardcoded behavior.** `RuleEngine.evaluate` (`src/gobby/workflows/engine/core.py`)
+  runs fixed logic around the rule loop. 2.8 lists each item and ports it.
 - **Seam-backed names.** The helpers and effects that reach other families are
   listed in the evidence file's `#cross-family-seams-per-rule`.
 - **Bundled bodies.** `sync_bundled_rules` (`src/gobby/workflows/sync_rules.py`)
@@ -293,13 +366,13 @@ file per case, listed in `manifest.json`. A case carries:
 - the normalized event the engine receives;
 - an ordered seam script: each seam call with its arguments and recorded response or
   failure;
-- the `expect` block: decision, rendered reason, injected context, the eager variable
-  delta, the staged on_receipt payload, the ordered effect log, the audit records,
-  and the DR8 outcome.
+- the `expect` block: every response field listed above, the eager variable delta,
+  the staged on_receipt payload, the ordered effect log, the audit records, and the
+  DR8 outcome.
 
-A case whose Rust result is meant to differ from Python's also carries
-`expect_rust` and names its reason. Only #23866 may appear there; DR5 keeps Python's
-failure semantics, so seam-failure cases need no divergence.
+Every case expects the same result from both engines. DR5 keeps Python's failure
+semantics, and #23866 removed the one recorded divergence, so no case carries a
+Rust-only expectation.
 
 `rules_corpus.py` records cases. For each case it seeds rows through
 `RuleDefinitionManager` in the isolated test hub, then runs
@@ -326,17 +399,23 @@ Required scenario cases:
 - an `mcp_call` result read by a later rule;
 - agent-definition scoping, audience, and active-rule-name filtering;
 - two projects with different project rows;
-- an event with no project id (#23866);
+- an event with no project id;
 - a parse-failure row skipped;
 - a condition error in a block rule and in a non-block rule;
 - one failing seam call per seam kind (DR5);
 - on_receipt staging;
 - step-tool enforcement allow and block;
-- the blocking deadline.
+- the blocking deadline;
+- `rtk-command-rewrite` producing `modified_input` on a Bash call;
+- a turn end with `HANDOFF_TURN_END_PENDING_VARIABLE` set, which allows;
+- a block gate's `acknowledge_variable`, eager and on_receipt;
+- a hardcoded override with no rule installed for the event (`include_rule_outputs=False`);
+- one case per hardcoded behavior that 2.7 and 2.8 list.
 
 **Granularity:** one leaf with eight acceptance items. The case schema, the exporter
 that is its oracle, and the coverage checks are one artifact. A corpus without its
-exporter cannot be re-recorded, and DR6 needs re-recording.
+exporter cannot be re-recorded, and DR6 needs re-recording. The response-field and
+hardcoded-behavior cases add rows to that artifact, not new outcomes.
 
 **Acceptance:**
 
@@ -345,7 +424,7 @@ exporter cannot be re-recorded, and DR6 needs re-recording.
 - 1.1.3 - Every effect type and both delivery classes appear in some case's expected effect log. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_effect_types_and_delivery`.
 - 1.1.4 - Every required scenario case exists. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
 - 1.1.5 - The Python engine reproduces every case's `expect` block. test: `tests/contracts/test_rules_corpus.py::test_python_engine_replays_corpus`.
-- 1.1.6 - Every `expect_rust` block names #23866, and no other reason appears. test: `tests/contracts/test_rules_corpus.py::test_divergences_name_their_decision`.
+- 1.1.6 - Every hardcoded behavior 2.7 and 2.8 list has a case, and every response field appears set in some case. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_hardcoded_behavior_and_response_fields`.
 - 1.1.7 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
 - 1.1.8 - The README documents the record and replay commands and the DR6 re-record obligation. file: `tests/contracts/rules/README.md`.
 
@@ -412,7 +491,8 @@ Required envelope cases:
   runs on empty variables and persists nothing.
 
 `docs/contracts/hooks-execute.md` states:
-- the request fields and the response per adapter;
+- the request fields and the response per adapter, carrying the full response field
+  set the pass produces (1.1), which DR6's proxy forward also returns;
 - each status code and envelope;
 - duplicate and retry semantics, including that a retried envelope re-runs the
   pass and its external effects;
@@ -768,7 +848,7 @@ Research context:
 deadline. It returns a `PassResult` or a `PassError`.
 
 A `PassResult` carries:
-- the decision, rendered reason, and injected context;
+- every response field 1.1 lists, with `modified_input` among them;
 - the eager variable delta;
 - the staged on_receipt payload, in the `_gobby_staged_effects` shape;
 - the ordered effect log;
@@ -785,6 +865,11 @@ Pass behavior:
 - **External effects.** `mcp_call`, `load_skill`, `run_command`, and `proxy_hook`
   go through the effect seams `McpDispatch`, `SkillLoader`, and `CommandRunner`,
   which this deliverable adds to `seams`.
+- **Response assembly** follows `_assemble_response`. A turn end with
+  `HANDOFF_TURN_END_PENDING_VARIABLE` set allows. A block gate sets its
+  `acknowledge_variable`, and also stages it when its delivery is on_receipt. A
+  hardcoded override with no rule installed for the event returns only the override
+  decision, its reason, context, and metadata (`include_rule_outputs=False`).
 - **Persistence.** The pass persists nothing; the caller commits the delta (D1).
 - **Counters.** `engine::outcome` keeps per-event-type counters behind
   `RuleEngine::outcome_snapshot()` (DR8).
@@ -795,7 +880,7 @@ corpus replay can only test them together.
 
 **Acceptance:**
 
-- 2.6.1 - Every 1.1 case replays equal to `expect`, or to `expect_rust` where present: decision, reason, context, delta, staged payload, effect log, audit records, and outcome. test: `crates/gworkflows/tests/rule_pass_corpus.rs::every_case_replays_equal`.
+- 2.6.1 - Every 1.1 case replays equal to `expect`: every response field, delta, staged payload, effect log, audit records, and outcome. test: `crates/gworkflows/tests/rule_pass_corpus.rs::every_case_replays_equal`.
 - 2.6.2 - In aggregate blocking, only the first matching block runs sibling effects and records metrics, and the reason matches `format_aggregated_block_reason`. test: `crates/gworkflows/tests/rule_pass_corpus.rs::aggregate_block_runs_first_block_effects_only`.
 - 2.6.3 - A `set_variable` and an `mcp_call` result are visible to later rules in the same pass. test: `crates/gworkflows/tests/rule_pass_corpus.rs::in_pass_writes_are_visible_to_later_rules`.
 - 2.6.4 - A seam failure inside a `when` follows the per-rule rule and the pass continues. A failed definitions read returns `DefinitionsUnavailable` with no delta and no staged payload. test: `crates/gworkflows/tests/rule_pass_corpus.rs::seam_and_definition_failures_follow_dr5`.
@@ -840,8 +925,16 @@ Research context:
   5.5%.
 - **Lock contract.** gcore's `LockTarget`
   (`crates/gcore/src/postgres_pool/transaction.rs`) requires Python's key strings.
+- **Step lifecycle inside the pass.** `RuleEngine.evaluate` also runs
+  `_process_step_after_tool` for after-tool step transitions and
+  `_route_step_transition_notice`. Since #23886, the per-event step lookup rewinds a
+  seat whose task claim moved away to its binding step (`release_lost_binding` in
+  `src/gobby/workflows/step_binding.py`, called from `step_context.py`), and entering
+  a step with `link_commit` handlers replays the bound task's linked commits
+  (`EnforcementCompletionMixin._replay_bound_task_commits` in
+  `src/gobby/workflows/engine/enforcement_completion.py`).
 
-Port both checks as `step`:
+Port both checks and the step lifecycle as `step`; each item above gets a 1.1 case:
 - `step::repo` reads and updates step instances on the gcore pool, under a
   `LockTarget` with `AgentStepInstanceMutation`'s key string and priority 875 (DR6).
 - `step::enforcement` returns the same block response or continue decision.
@@ -855,8 +948,58 @@ Port both checks as `step`:
 - 2.7.2 - Every agent-level tool enforcement case replays equal. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::agent_tool_cases_replay_equal`.
 - 2.7.3 - Step mutations hold the advisory lock with Python's `AgentStepInstanceMutation` key and priority 875, and a concurrent Python holder blocks them. test: `crates/gworkflows/src/step/tests.rs::step_lock_matches_python_key`.
 - 2.7.4 - Step audit records match `_audit_step_tool_call` field for field. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::step_audit_records_match`.
+- 2.7.5 - After-tool step transitions, transition notices, the lost-binding rewind, and bound-commit replay replay equal. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::step_lifecycle_cases_replay_equal`.
 
-## D1 Seam adapters at the hooks family composition point (depends: 2.7)
+### 2.8 Hardcoded pass lifecycle [category: code] (depends: 2.7)
+`kind: deliverable`
+
+Targets:
+- `crates/gworkflows/src/engine.rs`
+- `crates/gworkflows/src/engine/pass.rs`
+- `crates/gworkflows/src/engine/lifecycle.rs`
+- `crates/gworkflows/tests/lifecycle_corpus.rs`
+
+Research context:
+
+- **Python surface.** `RuleEngine.evaluate` (`src/gobby/workflows/engine/core.py`)
+  runs this fixed logic before and after the rule loop, outside any rule definition:
+  - the config switches `rules.enforcement_enabled` (false allows every event and
+    runs no rule), `rules.aggregate_blocks`, and `inject_survey_active`, with project
+    resolution through `_resolve_project_info`;
+  - the Grok `POST_COMPACT` source fix and `_COMPACT_TURN_END_BYPASS_PENDING`;
+  - the turn-end commit-review default, read through the task manager;
+  - retry tracking after a blocked before-tool call: `_last_blocked_tool`,
+    `register_blocked_attempt`, and `max_consecutive_blocked_tool_attempts`;
+  - edit/write pending tracking, and `tool_block_pending` management after a tool
+    runs (`_manage_after_tool_recovery_state`);
+  - the `POST_TOOL_BATCH` reset of `stop_attempts` and `_block_reasons_shown`;
+  - auto-discover-servers on the first prompt (`servers_listed`), an `_proxy`
+    self-call;
+  - the turn-end `stop_attempts` increment, which durable waits do not consume;
+  - the `force_allow_stop`, `tool_block_pending`, and `edit_write_pending` stop
+    gates, where a claimed task suppresses `force_allow_stop`;
+  - `_deliver_late_mcp_injections`, `_flush_pending_terminal_denial`, and
+    `_finalize_block_response`.
+- **Disposition.** Every item is ported; none is deleted. Each is live behavior that
+  bundled rules and seat workflows rely on, and no-backcompat allows deletion only
+  with a reason, never silent loss.
+- **Not here.** The before-tool rewrite recheck and block-only replay
+  (`_run_proxy_hooks` and the replay after it) await the Enhancer (V1).
+
+Port the list as `engine::lifecycle`, called from `engine::pass` where
+`RuleEngine.evaluate` calls each item. The caller passes the three config values and
+the project id and path as pass inputs, so no new seam is needed. The commit-review
+default reads through `TaskQueries`, and the `_proxy` self-call goes through
+`McpDispatch` (D1.4).
+
+**Acceptance:**
+
+- 2.8.1 - Every hardcoded-behavior case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/lifecycle_corpus.rs::lifecycle_cases_replay_equal`.
+- 2.8.2 - With enforcement disabled every event allows and no rule runs, and with aggregate blocking off the pass stops at the first block, except on an interrupted turn end, which keeps every non-block effect live. test: `crates/gworkflows/tests/lifecycle_corpus.rs::config_switches_match_python`.
+- 2.8.3 - Stop gates, attempt counters, and the batch reset match Python, including a claimed task suppressing `force_allow_stop`. test: `crates/gworkflows/tests/lifecycle_corpus.rs::stop_gates_and_counters_match_python`.
+- 2.8.4 - Repeated blocked before-tool calls reach `max_consecutive_blocked_tool_attempts` as Python counts them. test: `crates/gworkflows/tests/lifecycle_corpus.rs::blocked_retry_tracking_matches_python`.
+
+## D1 Seam adapters at the hooks family composition point (depends: 2.8)
 `kind: deferred`
 
 D2 needs a native adapter behind every seam, composed in the hooks family crate. That
@@ -866,12 +1009,15 @@ acyclic (DR4).
 Deferred obligations, each with its owner:
 - **D1.1** `TaskQueries` over the tasks family service trait (S2.4, #21560).
 - **D1.2** `SessionQueries`, `TranscriptQueries`, and the eager-delta commit. The
-  commit runs under `SessionVariableMutation`'s key and priority 950 and keeps claim
-  reconciliation on session start and turn end. Owner: the sessions family (S2.5,
-  #21562).
+  commit runs under `SessionVariableMutation`'s key and priority 950, stays
+  key-scoped as `_mutate_variables` is, and keeps claim reconciliation on session
+  start and turn end. Owner: the sessions family (S2.5, #21562).
 - **D1.3** `AgentDefinitions` and the spawn and send-target checks, over the agents
   family (S2.7, #21564).
-- **D1.4** `McpDispatch` over the external-MCP multiplexer (S2.10, #21566).
+- **D1.4** `McpDispatch` over the external-MCP multiplexer (S2.10, #21566). It
+  dispatches with workflow enforcement off, as `enforce_workflow=False` does today,
+  so a rule's call never starts a pass (DR6). It serves `_proxy` self-calls as
+  `proxy_self_call` does (`src/gobby/hooks/dispatchers/mcp.py`).
   - Internal targets not yet native call the backend's existing MCP tool-call route:
     `gobby-memory` (5 rules), `gobby-review-learning` (5), `gobby-workflows`
     `run_pipeline` (1), and `gobby-skills` `list_hubs` (1).
@@ -894,7 +1040,7 @@ deferral:
     - D1.6
 ```
 
-## D2 Hooks route flip with the Stage 1 gates and GIL acceptance (depends: 1.2, 2.7)
+## D2 Hooks route flip with the Stage 1 gates and GIL acceptance (depends: 1.2, 2.8)
 `kind: deferred`
 
 The hooks family serves `POST /api/hooks/execute` natively, running the
@@ -924,6 +1070,13 @@ Deferred obligations, under #21543's per-boundary gates:
   `servers/routes/mcp/hooks` or `hooks/hook_manager` frames. It reports the remaining
   rule-bucket share against the 6.3% per-capture baseline; that residual belongs to
   D3-D5.
+- **D2.8** One engine per session (DR6). A test over every session kind, pass site,
+  and route value shows exactly one engine runs each pass. A second test shows a
+  Rust-owned session's proxied before- and after-tool passes forward to Rust, run
+  none in Python, and return every response field, `modified_input` included. The
+  Rust engine holds the pending tool context for Rust-owned sessions.
+- **D2.9** The 1.1 cases for every hardcoded behavior (2.7, 2.8) and every response
+  field replay equal in Rust at the commit that switches to Native.
 
 ```yaml
 deferral:
@@ -938,9 +1091,11 @@ deferral:
     - D2.5
     - D2.6
     - D2.7
+    - D2.8
+    - D2.9
 ```
 
-## D3 MCP proxy consumer (depends: 2.7)
+## D3 MCP proxy consumer (depends: 2.8)
 `kind: deferred`
 
 The MCP proxy evaluates rules for tool calls through
@@ -950,7 +1105,10 @@ When the MCP front door flips, those calls run the Rust pass.
 
 - **D3.1** The MCP family evaluates before- and after-tool rules with the
   `gobby-workflows` pass, and its corpus cases replay equal.
-- **D3.2** The Python MCP proxy no longer evaluates rules.
+- **D3.2** The Python MCP proxy evaluates rules only for Python-owned sessions, and
+  DR6's forward from the proxy to Rust is deleted.
+- **D3.3** The D2.8 ownership test passes with the MCP route Native: a Python-owned
+  session's MCP passes still run in Python until D4 and D5.
 
 ```yaml
 deferral:
@@ -960,9 +1118,10 @@ deferral:
   original_acceptance_items:
     - D3.1
     - D3.2
+    - D3.3
 ```
 
-## D4 Web chat consumer (depends: 2.7)
+## D4 Web chat consumer (depends: 2.8)
 `kind: deferred`
 
 Web chat evaluates rules in `src/gobby/servers/websocket/chat/_lifecycle.py` and
@@ -971,6 +1130,8 @@ applies acknowledged receipts there.
 - **D4.1** The WS chat family evaluates rules with the `gobby-workflows` pass and
   applies acknowledged receipts with the same staged-payload contract.
 - **D4.2** Python chat no longer calls `workflow_handler.evaluate`.
+- **D4.3** The D2.8 ownership test passes with web chat sessions Rust-owned: every
+  pass of such a session runs in Rust.
 
 ```yaml
 deferral:
@@ -980,9 +1141,10 @@ deferral:
   original_acceptance_items:
     - D4.1
     - D4.2
+    - D4.3
 ```
 
-## D5 In-process agent runner consumer (depends: 2.7)
+## D5 In-process agent runner consumer (depends: 2.8)
 `kind: deferred`
 
 The in-process agent runner reaches the rule engine through
@@ -991,6 +1153,8 @@ The in-process agent runner reaches the rule engine through
 - **D5.1** The agents family's runner evaluates rules with the `gobby-workflows`
   pass.
 - **D5.2** Python's runner wiring no longer passes a workflow handler.
+- **D5.3** The D2.8 ownership test passes with agent-runner sessions Rust-owned:
+  every pass of such a session runs in Rust.
 
 ```yaml
 deferral:
@@ -1000,9 +1164,10 @@ deferral:
   original_acceptance_items:
     - D5.1
     - D5.2
+    - D5.3
 ```
 
-## D6 Delete the Python rule engine (depends: 2.7)
+## D6 Delete the Python rule engine (depends: 2.8)
 `kind: deferred`
 
 After D2-D5, nothing in Python constructs `RuleEngine`.
@@ -1051,6 +1216,33 @@ deferral:
   - **File splits** for the two near-ceiling modules are fixed up front.
   - **Other fixes.** 2.6.7's ceiling is derived, 2.1, 2.2, and 2.3 have Granularity
     notes, and V2's planning-time check is recorded as observed.
+- 2026-10-09 CDT: Ruled revision before enhancement, by the Writer gobby#15677 on the
+  Orchestrator's rulings relayed by LM7 gobby#15389. Adv4 gobby#15471's preparatory
+  read raised the findings.
+  - **DR5** is recorded as accepted by the Orchestrator.
+  - **DR6 rewritten (F1).** The old text claimed shared advisory locks serialize a
+    Rust pass and a Python pass. They do not: Python's whole-pass lock is in process.
+    DR6 now keeps every pass of a session in one engine, forwards the MCP proxy's
+    passes for Rust-owned sessions to Rust from D2 until D3, and records the
+    re-entrancy analysis and flip semantics. DR2 names that forward. D2.8, D3.3, D4.3,
+    and D5.3 test ownership at each flip, and D1.4 keeps rule MCP calls from starting
+    a pass.
+  - **Response fields (F3).** The 1.1 `expect` block, `PassResult`, 2.6.1, and the
+    hooks contract carry every `HookResponse` field `_assemble_response` sets.
+    `modified_input` survives D2, and 2.6 states the three response-assembly
+    behaviors.
+  - **Hardcoded behavior (F5).** New 2.8 ports every fixed behavior in
+    `RuleEngine.evaluate`, 2.7 adds the step lifecycle including #23886's rewind, 1.1
+    requires a case per item, and D2.9 gates the flip on them. D1-D6 now depend on
+    2.8.
+  - **#23866 landed** (`0328276aa4`), so the Rust-only expectation is gone and the
+    no-project event is a plain parity case. 1.1.6 now checks hardcoded-behavior and
+    response-field coverage.
+  - **Landed since the draft.** #23808 made the variable merge key-scoped, which the
+    Constraints and D1.2 state.
+  - **Pending the Enhancer.** F2 (the seven `RuleEffect` types the plan does not
+    port) and F4 (the before-tool rewrite recheck and block-only replay) are open.
+    Each is to be ported or dropped with a reason.
 
 ## V2: Verification
 `kind: verification`
@@ -1062,8 +1254,8 @@ P1 and P2 leaves close.
 Observed on this draft:
 
 - `uv run gobby plans validate .gobby/plans/rust-rule-evaluation.md -p /Users/josh/Projects/gobby`
-  exited 0 in standard mode on 2026-10-08 CDT, run by the Writer gobby#15677. This is
-  the only planning-time check.
+  exited 0 in standard mode on 2026-10-09 CDT, run by the Writer gobby#15677 on this
+  revision. This is the only planning-time check.
 
 Implementation gates (not run; the files they test do not exist yet):
 

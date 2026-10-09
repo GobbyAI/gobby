@@ -687,3 +687,72 @@ delivery failures go to `action_from_failure` (`crates/ghook/src/action.rs`), wh
 blocks only critical hooks. Every CLI's `critical_hooks` set
 (`crates/ghook/src/cli_config.rs`) holds only session start, session end, and
 pre-compact, so tool hooks continue on every delivery failure.
+
+## Pass serialization and proxied passes
+
+Read on 2026-10-09 at commit `51c9f74bfe` with `gcode evidence` range reads, for
+example `gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"range","path":"src/gobby/workflows/hooks.py","start_line":358,"end_line":364}}'`.
+Each excerpt below is quoted as returned, with its `excerpt_hash`.
+
+The whole pass holds an in-process per-session lock
+(`src/gobby/workflows/hooks.py`, `2cd8912e9eb62d233b7b60754a2188425571d39b63ab12d272483d6f31c4ddb9`
+and `1c0e59a3978aec4db28b6fff27b98bb01a24e6197622be273af6f0197aa1e67a`):
+
+```text
+358|             eval_lock_state = self._reserve_eval_lock(session_id) if session_id else None
+364|                     await eval_lock_state.lock.acquire()
+779|                 if eval_lock_state:
+780|                     if eval_lock_acquired:
+781|                         eval_lock_state.lock.release()
+```
+
+The advisory lock covers only the key-scoped merge
+(`src/gobby/workflows/state_manager.py`, `1245c513b86fcf6ce9e13bf8f61c6b996023c0bd25000d6f76a516c63d116aea`
+and `b68e79a49c3c40dcf012f2701f1c2d1ba5c304dd7631a17f967295d4ac8c6fa9`):
+
+```text
+225|         scope = sorted(set(keys) | {"active_task_id", "task_selection_history"})
+227|         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+316|             variables.update(updates)
+319|         return self._mutate_variables(session_id, mutate, keys=updates)
+```
+
+The MCP proxy runs a full pass before and after a proxied call, and marks a pass
+whose CLI before-tool context is pending
+(`src/gobby/mcp_proxy/services/result_handling.py`, `6ae7eb7c2dd1c0087fd26eadde8fc0ccefc77d584e9238d06b3747580fc9bda2`
+and `c958b84eb4a5b6987895e6edc27bc88499f5b78a2afcaadf2f34d9ba4f0572ff`;
+`src/gobby/workflows/engine/enforcement_checks.py`, `f93351640f7e05101d2ce602e6c284dacf83b03868c50ae514eca6093fde2487`;
+`src/gobby/workflows/tool_context.py`, `38887c1a0712d2f189b853b5611e9c1e914a96b72eceb29f97c9d2cff43bebe4`):
+
+```text
+result_handling.py
+149|     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
+155|                 event.metadata["_mcp_proxy_duplicate_before_tool"] = True
+165|         response = await _evaluate_workflow_handler(workflow_handler, event)
+252|         response = await _evaluate_workflow_handler(workflow_handler, event)
+enforcement_checks.py
+886|                 if mcp_key:
+887|                     if event.metadata.get("_mcp_proxy_duplicate_before_tool") is True:
+888|                         return None
+tool_context.py
+217|         """Return whether a matching CLI BEFORE_TOOL context is still pending."""
+```
+
+A rule's `mcp_call` dispatches with workflow enforcement off, so it never starts a
+pass (`src/gobby/hooks/factory.py`, `b2710a646bb3653d310ed3b89be318f29456a40e5afe850fa21f0e0f50684f56`;
+`src/gobby/hooks/dispatchers/mcp.py`, `a4f31ddec0de3260d50e86909f2c600c40b329e317030d8482cd1f1b0c3705ea`;
+`src/gobby/mcp_proxy/services/tool_execution.py`, `e5a0628d7e175ed20e6b0b26a74a4fcb2cc2e069d5eb68bc97258c47552b6eb4`
+and `b263dd2183da3342f4d45dd9e43d388e44df3063eccf9b88fa4e7951ba1be6af`):
+
+```text
+factory.py
+465|                 result = await proxy.call_tool(
+471|                     enforce_workflow=False,
+dispatchers/mcp.py
+406|                     result = await proxy.call_tool(
+412|                         enforce_workflow=False,
+tool_execution.py
+207|     if not enforce_workflow:
+208|         return outcome.result
+404|     if enforce_workflow:
+```
