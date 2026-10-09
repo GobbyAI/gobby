@@ -38,6 +38,7 @@ REDIRECT_RULES = frozenset(
         "no-invalid-git-flags",
         "no-wrapped-validation-command",
         "prefer-gcode-for-source-read",
+        "refuse-task-outside-lane",
         "require-bash-skill",
         "require-build-coordinator-for-gobby-build",
         "require-c-skill",
@@ -81,6 +82,7 @@ REDIRECT_RULES = frozenset(
         "require-typescript-skill",
         "require-uv",
         "require-yaml-skill",
+        "seat-no-ask-user-question",
         "task-commit-project-path-allowlist-before-git",
     }
 )

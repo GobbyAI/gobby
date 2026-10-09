@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks import envelope_dedupe, inbox, replay_fence
+from gobby.hooks import envelope_dedupe, inbox, inbox_envelopes, replay_fence
 from gobby.hooks.replay_fence import archive_superseded_hook
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
@@ -101,7 +101,7 @@ async def test_old_stop_preserves_new_turn_effects(
         assert await inbox.drain_hook_inbox_once(app, pending, include_fresh=True) == 1
     post.assert_not_awaited()
     assert not path.exists()
-    archive = inbox.get_hook_quarantine_dir(pending)
+    archive = inbox_envelopes.get_hook_quarantine_dir(pending)
     assert json.loads((archive / path.name).read_text()) == envelope
     assert (
         json.loads((archive / f"{path.name}.meta.json").read_text())["reason"] == "superseded_hook"
@@ -215,7 +215,7 @@ async def test_failed_archive_retains_stale_hook_for_retry(
     )
     archive = Mock(return_value=False)
     post = AsyncMock()
-    monkeypatch.setattr(inbox, "_quarantine_file", archive)
+    monkeypatch.setattr(inbox_envelopes, "quarantine_file", archive)
     monkeypatch.setattr(inbox, "_post_envelope", post)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     monkeypatch.setattr(
@@ -246,7 +246,7 @@ def test_failed_archive_metadata_preserves_pending_file(
         return original_write(current, data, *args, **kwargs)
 
     monkeypatch.setattr(Path, "write_text", write_text)
-    assert inbox._quarantine_file(path, reason="superseded_hook", detail="test") is False
+    assert inbox_envelopes.quarantine_file(path, reason="superseded_hook", detail="test") is False
     assert path.read_text() == "{}"
 
 

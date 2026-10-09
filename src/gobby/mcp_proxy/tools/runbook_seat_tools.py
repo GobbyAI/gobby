@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from gobby.agents.crew_lane_inputs import resolve_crew_lane_inputs
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -34,17 +35,23 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "{name, title, agent}. Refuses when the same runbook is still launching for the "
             "same project in the same workspace on the same machine, or when a seat's agent "
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
-            "session ref; require_report_to also rejects omission. On success it returns "
-            "the checked seats."
+            "session ref; require_report_to rejects omission without lane inference. "
+            "For crew-lane, lane resolves omitted report_to, workspace, lane_pane and "
+            "worktree from the shared roster and live state; explicit names/UUIDs override. "
+            "Ambiguous state refuses with candidates. On success it returns the checked "
+            "seats and resolved launch inputs."
         ),
         read_only=True,
     )
     def check_runbook_seats_tool(
-        workspace: str,
         requested: str,
         catalogue: list[dict[str, Any]],
+        workspace: str | None = None,
         report_to: str | None = None,
         require_report_to: bool = False,
+        lane: str | int | None = None,
+        worktree: str | None = None,
+        lane_pane: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -53,16 +60,36 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 "error": "check_runbook_seats needs a database and a caller session",
             }
         try:
+            caller_session_id = ctx.resolve_session_id(caller_ref)
+            resolved: dict[str, Any] = {}
+            if lane is not None:
+                resolved = asdict(
+                    resolve_crew_lane_inputs(
+                        ctx.db,
+                        caller_session_id=caller_session_id,
+                        lane=lane,
+                        workspace=workspace,
+                        report_to=report_to,
+                        worktree=worktree,
+                        lane_pane=lane_pane,
+                    )
+                )
+                workspace = resolved["workspace"]
+                report_to = resolved["report_to"]
+            if workspace is None:
+                raise RunbookSeatRefusal("workspace is required without a lane")
             admitted = check_runbook_seats(
                 runbook_seat_stores(ctx.db),
-                caller_session_id=ctx.resolve_session_id(caller_ref),
+                caller_session_id=caller_session_id,
                 workspace=workspace,
                 requested=requested,
                 catalogue=catalogue,
                 report_to=report_to,
                 require_report_to=require_report_to,
             )
-        except (RunbookSeatRefusal, ValueError) as exc:
+        except RunbookSeatRefusal as exc:
+            return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}
+        except ValueError as exc:
             return {"success": False, "error": str(exc)}
         # No "error" key on success: execute_mcp_step fails any result that carries one.
-        return {"success": True, **asdict(admitted)}
+        return {"success": True, **asdict(admitted), **resolved}

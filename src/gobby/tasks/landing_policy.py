@@ -16,7 +16,7 @@ from pathlib import Path
 from gobby.sync.jsonl_io import atomic_write_text
 
 # Weakest first; the strongest class among a candidate's changed paths wins.
-ACTIVATION_CLASSES = ("none", "ui_build", "restart", "cutover")
+ACTIVATION_CLASSES = ("none", "sync", "reload", "ui_build", "restart", "cutover")
 
 _CUTOVER_PREFIXES = ("crates/",)
 _CUTOVER_FILES = frozenset(
@@ -39,6 +39,18 @@ UNREADABLE_FREEZE_REASON = "unreadable landing freeze file"
 def _path_class(path: str) -> str:
     if path in _CUTOVER_FILES or path.startswith(_CUTOVER_PREFIXES):
         return "cutover"
+    # Project pipeline files are authoring inputs; runtime reads their synced DB rows.
+    pipeline_file = path.removeprefix(".gobby/workflows/pipelines/")
+    if (
+        pipeline_file != path
+        and "/" not in pipeline_file
+        and pipeline_file.endswith((".yaml", ".yml"))
+    ):
+        return "sync"
+    # reload_cache syncs these definitions to the DB read by each new spawn.
+    agent_file = path.removeprefix("src/gobby/install/shared/workflows/agents/")
+    if agent_file != path and "/" not in agent_file and agent_file.endswith(".yaml"):
+        return "reload"
     if path in _RESTART_FILES or path.startswith(_RESTART_PREFIXES):
         return "restart"
     if path.startswith(_UI_BUILD_PREFIXES):
@@ -48,11 +60,20 @@ def _path_class(path: str) -> str:
 
 def classify_paths(paths: Iterable[str]) -> str:
     """Return the strongest activation class among repository-relative paths."""
+    classes = {_path_class(path) for path in paths}
+    if {"reload", "ui_build"} <= classes:
+        # Startup sync reloads agents; the UI still needs a separate gobby ui build.
+        classes.add("restart")
     return max(
-        (_path_class(path) for path in paths),
+        classes,
         key=ACTIVATION_CLASSES.index,
         default="none",
     )
+
+
+def requires_project_sync(paths: Iterable[str]) -> bool:
+    """Report imported pipeline changes independently of activation precedence."""
+    return any(_path_class(path) == "sync" for path in paths)
 
 
 def is_direct_commit_path(path: str) -> bool:

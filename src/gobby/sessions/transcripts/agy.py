@@ -162,10 +162,10 @@ class AgyTranscriptParser(BaseTranscriptParser):
     ) -> Iterator[ParseEvent]:
         current_index = start_index
         for raw in raw_lines:
-            if not raw.text.strip():
+            if raw.record is None and not raw.text.strip():
                 continue
             start_idx = current_index
-            record = self._decode_line(raw.text, current_index)
+            record = self._raw_record(raw, current_index)
             expanded = [] if record is None else self._expand_record(record, current_index)
             for item in expanded:
                 if isinstance(item, ParsedMessage):
@@ -234,20 +234,8 @@ class AgyTranscriptParser(BaseTranscriptParser):
         del turn
         return False
 
-    def _decode_line(self, line: str, index: int) -> dict[str, Any] | None:
-        """Return the JSON object on ``line``, or ``None`` for an undecodable line."""
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            self.error_log.log_decode_failure(index, self.session_id, line, exc)
-            return None
-        if not isinstance(record, dict):
-            self.error_log.log_decode_failure(index, self.session_id, line, None)
-            return None
-        return record
-
     def _expand_line(self, line: str, index: int) -> list[ParsedMessage | ParsedToolEvent]:
-        record = self._decode_line(line, index)
+        record = self._decode_record(line, index)
         return [] if record is None else self._expand_record(record, index)
 
     def _expand_record(

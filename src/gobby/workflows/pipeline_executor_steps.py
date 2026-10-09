@@ -12,7 +12,13 @@ from opentelemetry.trace import Status, StatusCode
 
 from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import PipelineDefinition
-from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, PipelineExecution
+from gobby.workflows.pipeline_state import (
+    ApprovalRequired,
+    ExecutionStatus,
+    PipelineExecution,
+    PipelineStepError,
+    PipelineStepRefusal,
+)
 
 logger = logging.getLogger("gobby.workflows.pipeline_executor")
 _FACADE_MODULE = "gobby.workflows.pipeline_executor"
@@ -230,7 +236,8 @@ class PipelineExecutorStepMixin:
         except Exception as e:
             if pipeline is None or not pipeline.enabled:
                 raise
-            logger.exception("Failed to resume execution after approval: %s", e)
+            if not isinstance(e, PipelineStepRefusal):
+                logger.exception("Failed to resume execution after approval: %s", e)
             refreshed = await cast(Any, self)._run_db(
                 self.execution_manager.get_execution, execution.id
             )
@@ -238,6 +245,8 @@ class PipelineExecutorStepMixin:
                 raise
             execution = refreshed
             # Preserve approval state when execution itself fails after resolution.
+            if isinstance(e, PipelineStepError):
+                raise
 
         return execution
 
@@ -326,7 +335,7 @@ class PipelineExecutorStepMixin:
                     pass
             return step_output
 
-        except ApprovalRequired:
+        except (ApprovalRequired, PipelineStepRefusal):
             raise
         except Exception as e:
             logger.exception("Nested pipeline execution failed: %s", e)

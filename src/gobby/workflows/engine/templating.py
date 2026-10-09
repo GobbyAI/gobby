@@ -47,6 +47,17 @@ from gobby.workflows.templates import TemplateEngine
 logger = logging.getLogger(__name__)
 
 
+def is_resolved_project(project: Any) -> bool:
+    """Return whether a session's ``project`` variable can stand in for resolution.
+
+    A failed resolution leaves ``id`` as ``unknown`` with the event cwd as its path.
+    Reusing it would pin the session to no project, so it is resolved again.
+    """
+    return (
+        isinstance(project, dict) and bool(project.get("path")) and project.get("id") != "unknown"
+    )
+
+
 class ToolInputUnavailableError(RuntimeError):
     """A rule read a tool input that arrived as invalid JSON, non-object JSON, or a non-object."""
 
@@ -82,7 +93,7 @@ class TemplatingMixin:
         project_from_vars: Any = None,
     ) -> dict[str, Any]:
         """Resolve project context once before evaluating an event's rules."""
-        if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
+        if is_resolved_project(project_from_vars):
             return dict(project_from_vars)
 
         project_info = (

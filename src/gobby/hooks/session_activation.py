@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import threading
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,10 +51,23 @@ _AGENT_KEYS = (
     "_agent_blocked_mcp_tools",
     "is_spawned_agent",
 )
+_RECONCILIATION_VARIABLE_KEYS = (
+    *_AGENT_KEYS,
+    MARKER_COMPLETED,
+    MARKER_VERSION,
+    MARKER_HASH,
+    "baseline_dirty_files",
+    "session_edited_files",
+    "active_task_id",
+    "task_edited_files",
+    "step_workflow_complete",
+)
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
-_ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS = 5.0
 _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES = 256
-_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[float, int, set[str]]] = {}
+# Resolution reads only agent and rule rows, so an entry stays valid until either
+# revision moves; writes from other processes arrive through the revision listener.
+# No expiry: re-resolving every few seconds rescanned every enabled rule (#23359).
+_ACTIVE_RULE_NAMES_CACHE: dict[tuple[str, str | None], tuple[tuple[int, int], set[str]]] = {}
 _ACTIVE_RULE_NAMES_CACHE_LOCK = threading.Lock()
 
 
@@ -89,28 +101,13 @@ def clear_active_rule_names_cache() -> None:
 
 
 register_revision_listener("rules", clear_active_rule_names_cache)
+register_revision_listener("agents", clear_active_rule_names_cache)
 
 
-def _purge_expired_active_rule_names_cache(now: float) -> None:
-    expired = [
-        cache_key
-        for cache_key, (cached_at, _, _) in _ACTIVE_RULE_NAMES_CACHE.items()
-        if now - cached_at >= _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
-    ]
-    for cache_key in expired:
-        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
-
-
-def _evict_active_rule_names_cache_to_limit(*, incoming: int = 0) -> None:
-    excess_count = len(_ACTIVE_RULE_NAMES_CACHE) + incoming - _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES
-    if excess_count <= 0:
-        return
-    oldest = sorted(
-        _ACTIVE_RULE_NAMES_CACHE.items(),
-        key=lambda item: item[1][0],
-    )
-    for cache_key, _ in oldest[:excess_count]:
-        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+def _evict_active_rule_names_cache_to_limit() -> None:
+    """Drop the oldest insertions until one more entry fits."""
+    while len(_ACTIVE_RULE_NAMES_CACHE) >= _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES:
+        _ACTIVE_RULE_NAMES_CACHE.pop(next(iter(_ACTIVE_RULE_NAMES_CACHE)))
 
 
 def reconcile_session_activation(
@@ -171,7 +168,7 @@ def _reconcile_session_activation(
     from gobby.workflows.state_manager import SessionVariableManager
 
     sv_mgr = SessionVariableManager(db)
-    variables = sv_mgr.get_variables(session_id)
+    variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
     missing = _missing_marker_keys(variables)
 
     agent_run_lookup = (
@@ -183,7 +180,7 @@ def _reconcile_session_activation(
     refreshed = _backfill_terminal_pickup(session_manager, session, agent_run)
     if refreshed is not None and refreshed is not session:
         session = refreshed
-        variables = sv_mgr.get_variables(session_id)
+        variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
         missing.append("terminal_pickup_metadata")
 
     activation_missing = [] if is_pipeline_session else _missing_agent_keys(variables)
@@ -200,7 +197,7 @@ def _reconcile_session_activation(
         override = _activation_agent_name(variables, agent_run, step_missing)
         activation_succeeded = _activate_agent(handler, session_id, session, override, log)
         if activation_succeeded:
-            variables = sv_mgr.get_variables(session_id)
+            variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
             step_missing = _missing_step_state(db, session_id, variables, session, agent_run)
             missing.extend(step_missing)
         elif activation_missing and override is not None:
@@ -351,17 +348,11 @@ def _resolve_active_rule_names(
     from gobby.workflows.selectors import resolve_rules_for_agent
 
     cache_key = (agent_name, project_id)
-    rules_revision = get_definitions_revision("rules")
-    now = time.monotonic()
+    revisions = (get_definitions_revision("agents"), get_definitions_revision("rules"))
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
         cached = _ACTIVE_RULE_NAMES_CACHE.get(cache_key)
-        if cached is not None:
-            cached_at, cached_revision, active_rules = cached
-            if (
-                cached_revision == rules_revision
-                and now - cached_at < _ACTIVE_RULE_NAMES_CACHE_TTL_SECONDS
-            ):
-                return set(active_rules)
+        if cached is not None and cached[0] == revisions:
+            return set(cached[1])
 
     agent_manager = AgentDefinitionManager(db)
     row = agent_manager.get_by_name(agent_name, project_id=project_id)
@@ -380,12 +371,10 @@ def _resolve_active_rule_names(
 
     rules = RuleDefinitionManager(db).list_all(project_id=project_id, enabled=True)
     active_rules = resolve_rules_for_agent(agent, rules)
-    now = time.monotonic()
     with _ACTIVE_RULE_NAMES_CACHE_LOCK:
-        _purge_expired_active_rule_names_cache(now)
-        incoming = 0 if cache_key in _ACTIVE_RULE_NAMES_CACHE else 1
-        _evict_active_rule_names_cache_to_limit(incoming=incoming)
-        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (now, rules_revision, set(active_rules))
+        _ACTIVE_RULE_NAMES_CACHE.pop(cache_key, None)
+        _evict_active_rule_names_cache_to_limit()
+        _ACTIVE_RULE_NAMES_CACHE[cache_key] = (revisions, set(active_rules))
     return active_rules
 
 
@@ -641,12 +630,13 @@ def _ensure_step_instance(
     lock = AgentStepInstanceMutation(session_id=session_id)
     recovered_ids: tuple[str, str | None] | None = None
     with db.transaction_immediate(lock):
+        # The common case: an instance exists, so skip decoding the variables blob (#23359).
+        if manager.get_for_session(session_id) is not None:
+            return False
         # A caller can be holding a snapshot from before an identity transition.
-        current = SessionVariableManager(db).get_variables(session_id)
+        current = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
         agent_name = _resolved_agent_name(current, None)
         if not agent_name:
-            return False
-        if manager.get_for_session(session_id) is not None:
             return False
         found = resolve_agent_with_row(
             agent_name,

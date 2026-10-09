@@ -82,16 +82,27 @@ Rulings of record, verbatim:
      `src/gobby/config/` change carries the crate contract
      `runtime_config_contract.json`, which makes a runtime flag a cutover.
    - Rejected: a hub table. It needs a schema migration for one row.
-4. **Path classes (Josh decision 5).** The strongest class among the
+4. **Path classes (Josh decision 5; reload/sync amendments: 2026-10-08 #23750).** The strongest class among the
    candidate's changed paths wins, in the order cutover, restart, ui_build,
-   none:
+   reload, sync, none. A candidate combining reload and ui_build uses restart:
+   startup sync reloads agents, and the UI still needs a separate `gobby ui
+   build`, as for any restart candidate that also changes `web/**`:
    - cutover: `crates/**`, `Cargo.toml`, `Cargo.lock`,
      `src/gobby/storage/schema_expected_identity.json`;
    - restart: `src/gobby/**` (the CLI included, because the daemon imports
      `gobby.cli`), `pyproject.toml`, `uv.lock`;
    - ui_build: `web/**` (the daemon serves `web/dist` from disk; `gobby ui
      build` activates it with no restart and no approval);
+   - reload: top-level `src/gobby/install/shared/workflows/agents/*.yaml`
+     definitions (reload_cache syncs them for new spawns; existing seats keep
+     their applied definitions);
+   - sync: top-level `.gobby/workflows/pipelines/*.yaml` and `*.yml` authoring
+     files (`gobby-workflows:reload_cache` from the main checkout syncs them
+     into the project's runtime DB; no restart approval is required);
    - none: everything else.
+   When a candidate also changes these files, run the project sync as well as any
+   UI build, restart or cutover. Startup does not sync imported project workflows.
+   Reload already performs that sync; verify the relevant DB rows before using them.
    cutover and restart both require a `restart` approval.
 5. **Landing record.** `land_commit` writes a daemon-only `landing` close
    receipt, authored by the landing reviewer and naming the candidate SHA. Its
@@ -232,6 +243,8 @@ Targets:
 - `tests/tasks/test_close_receipts.py::*` — scope-reason: add landing_approval, landing and prompt tests beside the existing receipt tests
 
 Consumers unchanged:
+- `tests/mcp_proxy/tools/tasks/test_handed_off_claims.py` — no-edit-reason: records independent review approvals; adding activation classes does not change receipt authority.
+- `tests/mcp_proxy/tools/tasks/test_commit_path_ownership.py` — no-edit-reason: exercises commit path ownership through the existing registry factory.
 - `tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py` — no-edit-reason: records activation receipts, whose rules do not change.
 - `src/gobby/servers/routes/tasks_comment_routes.py` — no-edit-reason: already refuses every close_receipt author type, new kinds included.
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_orchestration.py` — no-edit-reason: passes receipts through to the prompt builder unchanged.
@@ -320,6 +333,7 @@ Targets:
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: add a landing-operations tuple to the mutation list and the registry parity assertion
 
 Consumers unchanged:
+- `.gobby/plans/research/security-boundaries-22103/probe_control_plane.py` — no-edit-reason: reports mutation server names dynamically, with no tool-set snapshot.
 - `src/gobby/mcp_proxy/registries.py` — no-edit-reason: builds the ops registry through the same factory call.
 - `src/gobby/mcp_proxy/tools/__init__.py` — no-edit-reason: re-exports the factory.
 - `tests/build/test_build_surface_cleanup.py` — no-edit-reason: asserts absent build tools only.
@@ -351,7 +365,7 @@ checkout. Path classes and the direct-commit allowance follow Decision Record
 items 4 and 7.
 
 Implementation, new module `src/gobby/tasks/landing_policy.py`:
-- `ACTIVATION_CLASSES = ("none", "ui_build", "restart", "cutover")`, weakest
+- `ACTIVATION_CLASSES = ("none", "sync", "reload", "ui_build", "restart", "cutover")`, weakest
   first, and `classify_paths(paths) -> str` returning the strongest class per
   Decision Record item 4 (`none` for an empty set).
 - `DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", ".gobby/roles/", "docs/")`,
@@ -385,7 +399,8 @@ Planned verification:
 
 - 1.2.1 - `classify_paths` returns the strongest class: a `crates/` path or
   `src/gobby/storage/schema_expected_identity.json` is cutover, `src/gobby/cli/`
-  is restart, `web/` alone is ui_build, and `docs/` plus `tests/` is none.
+  is restart, `web/` alone is ui_build, top-level project pipeline YAML is sync,
+  bundled agent YAML is reload, and `docs/` plus `tests/` is none.
   test: `tests/tasks/test_landing_policy.py::test_classify_paths_strongest_class_wins`.
 - 1.2.2 - `is_direct_commit_path` accepts `*.md` at the root or under
   `.gobby/plans/`, `.gobby/roles/`, `docs/`, plus
@@ -418,6 +433,7 @@ Targets:
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: add land_commit to the landing-operations tuple
 
 Consumers unchanged:
+- `.gobby/plans/research/security-boundaries-22103/probe_control_plane.py` — no-edit-reason: reports mutation server names dynamically, with no tool-set snapshot.
 - `src/gobby/storage/hub/postgres.py` — no-edit-reason: imports advisory_lock_keys and passes any LockTarget through.
 - `tests/storage/test_manager_surface_parity.py` — no-edit-reason: asserts other targets' keys.
 
@@ -1032,7 +1048,8 @@ by the guard.
   depends_on: []
   validation_criteria: '1.2.1: `classify_paths` returns the strongest class: a `crates/`
     path or `src/gobby/storage/schema_expected_identity.json` is cutover, `src/gobby/cli/`
-    is restart, `web/` alone is ui_build, and `docs/` plus `tests/` is none. test:
+    is restart, `web/` alone is ui_build, top-level project pipeline YAML is sync,
+    bundled agent YAML is reload, and `docs/` plus `tests/` is none. test:
     `tests/tasks/test_landing_policy.py::test_classify_paths_strongest_class_wins`.
 
     1.2.2: `is_direct_commit_path` accepts `*.md` at the root or under `.gobby/plans/`,

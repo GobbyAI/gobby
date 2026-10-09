@@ -23,9 +23,11 @@ from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     build_handoff_continue_prompt,
 )
+from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
 from .agents import _seed_parent_turn_seq
 from .claims import (
+    MCP_PROXY_READY_VARIABLE,
     inherited_mcp_proxy_ready,
     preserve_task_claim_state,
     rehydrate_found_work_gate_arm,
@@ -52,6 +54,15 @@ from .terminal_runtime import (
 from .transcripts import replace_session_message_processor
 
 _CONTEXT_MODE_METADATA_KEY = "_session_start_context_mode"
+_CLEAR_SUCCESSOR_VARIABLE_KEYS = (
+    "task_claimed",
+    "claimed_tasks",
+    "active_task_id",
+    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+    MCP_PROXY_READY_VARIABLE,
+    "_agent_type",
+    "_agent_definition_hash",
+)
 
 
 def _compat_module() -> Any:
@@ -154,6 +165,30 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", exc)
 
 
+def _crossing_seat(
+    handler: Any, successor_id: str, predecessor_vars: dict[str, Any]
+) -> dict[str, Any]:
+    """The seat a clear successor keeps; the base agent is resolved afresh, as for any session."""
+    agent_type = predecessor_vars.get("_agent_type")
+    if not agent_type or agent_type == "default":
+        return {}
+    try:
+        from gobby.storage.config_repository import ConfigRepository
+
+        config = ConfigRepository(handler._session_manager.db).read(resolve_secrets=False)
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to read the default agent for clear successor %s: %s", successor_id, exc
+        )
+        return {}
+    if agent_type == config.values.get("default_agent"):
+        return {}
+    seat = {"_agent_type": agent_type}
+    if predecessor_vars.get("_agent_definition_hash"):
+        seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
+    return seat
+
+
 def _bind_clear_successor(
     handler: Any,
     resolution: SessionStartResolution | None,
@@ -198,7 +233,9 @@ def _bind_clear_successor(
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(handler._session_manager.db)
-            predecessor_vars = dict(sv_mgr.get_variables(predecessor_id) or {})
+            predecessor_vars = sv_mgr.get_variable_subset(
+                predecessor_id, _CLEAR_SUCCESSOR_VARIABLE_KEYS
+            )
         except Exception:
             predecessor_vars = {}
         preserve_task_claim_state(
@@ -214,7 +251,9 @@ def _bind_clear_successor(
             stale_vars: dict[str, Any] = {}
             try:
                 if sv_mgr is not None:
-                    stale_vars = dict(sv_mgr.get_variables(supersedes) or {})
+                    stale_vars = sv_mgr.get_variable_subset(
+                        supersedes, _CLEAR_SUCCESSOR_VARIABLE_KEYS
+                    )
             except Exception:
                 stale_vars = {}
             preserve_task_claim_state(handler, sv_mgr, successor_id, supersedes, stale_vars)
@@ -224,12 +263,17 @@ def _bind_clear_successor(
             successor_id,
             exc,
         )
+    seat = _crossing_seat(handler, successor_id, predecessor_vars)
     try:
         from gobby.workflows.state_manager import SessionVariableManager
 
         SessionVariableManager(handler._session_manager.db).merge_variables(
             successor_id,
-            {HANDOFF_PULL_PENDING_VARIABLE: True, **inherited_mcp_proxy_ready(predecessor_vars)},
+            {
+                HANDOFF_PULL_PENDING_VARIABLE: True,
+                **inherited_mcp_proxy_ready(predecessor_vars),
+                **seat,
+            },
         )
     except Exception as exc:
         handler.logger.warning(

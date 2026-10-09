@@ -210,6 +210,8 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
                 "gobby-sessions:set_title",
             }
         )
+    if name == "researcher":
+        expected.add("gobby-sessions:set_title")
     assert _allowed_mcp_tools(load_skills) == expected
     assert _transitions(load_skills)[0][1] == LOAD_SKILLS_WHEN
     assert _variables(name)["required_skills_loaded"] is False
@@ -266,8 +268,12 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`Landed #N ...` line" in prompt
     assert (
         "EVENT=LANDED TASK=#NNNNN TASK_TITLE= SHA= BRANCH= RECEIPT= MODE= LANDED_TIP= "
-        "ACTIVATION= PROVENANCE= RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
+        "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= "
+        "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
     ) in prompt
+    assert "project pipeline sync is also required" in prompt
+    assert "including when a stronger activation class is reported" in prompt
+    assert "If the field is absent, report unknown." in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
     # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
     new_sha = prompt.index("Review a new SHA for the same task")
@@ -406,6 +412,11 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
     assert "`MODE=merge` landing must carry `RETEST=PASS`" in prompt
     assert "`RETEST=FAIL` or `RETEST=UNAVAILABLE` withholds the release" in prompt
     assert "`ACTIVATION=unknown` withholds the release" in prompt
+    assert "`PROJECT_SYNC_REQUIRED=true` holds the release until project sync is verified" in prompt
+    assert (
+        "An absent or unknown `PROJECT_SYNC_REQUIRED` is treated like `ACTIVATION=unknown`"
+        in prompt
+    )
     assert "your release alone admits a close" in prompt
 
 

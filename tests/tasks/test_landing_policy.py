@@ -12,6 +12,7 @@ from gobby.tasks.landing_policy import (
     freeze_path,
     is_direct_commit_path,
     read_freeze,
+    requires_project_sync,
 )
 
 pytestmark = pytest.mark.unit
@@ -20,10 +21,54 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("paths", "expected"),
     [
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/example.py"], True),
+        ([".gobby/workflows/pipelines/crew-lane.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/pipelines/nested/example.yaml"], False),
+        ([".gobby/workflows/pipelines/README.md"], False),
+        (["src/gobby/install/shared/workflows/agents/example.yaml"], False),
+        ([], False),
+    ],
+)
+def test_project_sync_is_independent_of_strongest_class(paths: list[str], expected: bool) -> None:
+    assert requires_project_sync(iter(paths)) is expected
+
+
+@pytest.mark.parametrize(
+    ("paths", "expected"),
+    [
         (["crates/gobby-core/src/lib.rs", "web/src/App.tsx"], "cutover"),
         (["src/gobby/storage/schema_expected_identity.json", "docs/x.md"], "cutover"),
         (["src/gobby/cli/main.py", "web/src/App.tsx"], "restart"),
+        (["src/gobby/install/shared/workflows/agents/researcher.yaml"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/developer.yaml", "docs/x.md"], "reload"),
+        (["src/gobby/install/shared/workflows/agents/README.md"], "restart"),
+        (["src/gobby/install/shared/workflows/agents/nested/seat.yaml"], "restart"),
+        (
+            [
+                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+                "src/gobby/agents/sync.py",
+            ],
+            "restart",
+        ),
         (["web/src/App.tsx"], "ui_build"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml"], "sync"),
+        ([".gobby/workflows/pipelines/crew-lane.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/pipelines/README.md"], "none"),
+        ([".gobby/workflows/pipelines/nested/seat.yaml"], "none"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/cli/main.py"], "restart"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "crates/gcore/src/lib.rs"], "cutover"),
+        ([".gobby/workflows/pipelines/crew-lane.yaml", "web/src/App.tsx"], "ui_build"),
+        (
+            [
+                ".gobby/workflows/pipelines/crew-lane.yaml",
+                "src/gobby/install/shared/workflows/agents/researcher.yaml",
+            ],
+            "reload",
+        ),
+        (
+            ["src/gobby/install/shared/workflows/agents/researcher.yaml", "web/src/App.tsx"],
+            "restart",
+        ),
         (["docs/guides/x.md", "tests/test_x.py"], "none"),
         ([], "none"),
     ],

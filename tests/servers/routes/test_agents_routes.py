@@ -1626,13 +1626,14 @@ class TestListDefinitionsSourceFilter:
 
 
 class TestUpdateDefinitionNestedFields:
-    # Endpoint credentials, spawn/message authority and the sync-owned sandbox
-    # network are not editable through PUT.
+    # Endpoint credentials, spawn/message authority, run lifetime and the
+    # sync-owned sandbox network are not editable through PUT.
     IMMUTABLE_BODY_FIELDS = frozenset(
         {
             "api_base",
             "api_token",
             "execution_mode",
+            "idle_ttl_seconds",
             "network",
             "send_message_targets",
             "spawnable_agents",
@@ -1661,6 +1662,31 @@ class TestUpdateDefinitionNestedFields:
         assert match is not None
         refused = set(re.findall(r'"([a-z_]+)"', match.group(1)))
         assert refused == self.IMMUTABLE_BODY_FIELDS | {"is_local"}
+
+    @pytest.mark.parametrize(
+        "field, value", [("execution_mode", "interactive"), ("idle_ttl_seconds", 900)]
+    )
+    @pytest.mark.parametrize("method", ["post", "put"])
+    def test_run_lifetime_fields_are_not_api_editable(
+        self, client: TestClient, field: str, value: object, method: str
+    ) -> None:
+        name = "lifetime-immutable"
+        if method == "post":
+            response = client.post(
+                "/api/agents/definitions", json=_agent_request(name, **{field: value})
+            )
+            assert client.get(f"/api/agents/definitions/{name}").status_code == 404
+        else:
+            created = client.post("/api/agents/definitions", json=_agent_request(name)).json()[
+                "definition"
+            ]
+            response = client.put(f"/api/agents/definitions/{created['id']}", json={field: value})
+            stored = client.get(f"/api/agents/definitions/{name}").json()["definition"]
+            assert AgentDefinitionBody.model_validate(stored["definition"]) == (
+                AgentDefinitionBody.model_validate_json(created["definition_json"])
+            )
+        assert response.status_code == 422
+        assert field in response.text
 
     def test_create_stores_pre_commit_prewarm_opt_out(self, client: TestClient) -> None:
         response = client.post(

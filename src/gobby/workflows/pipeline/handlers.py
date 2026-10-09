@@ -9,6 +9,7 @@ from mcp.types import CallToolResult, TextContent
 
 from gobby.config.feature_base import FeatureDefaultConfig
 from gobby.utils import spawn
+from gobby.workflows.pipeline_state import PipelineStepError, PipelineStepRefusal
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -98,7 +99,7 @@ async def execute_mcp_step(
     if isinstance(result, CallToolResult):
         output = "\n".join(item.text for item in result.content if isinstance(item, TextContent))
         if result.is_error:
-            raise RuntimeError(
+            raise PipelineStepError(
                 f"MCP step {rendered_step.id} failed: "
                 f"{mcp_config.server}:{mcp_config.tool} returned error: {output}"
             )
@@ -116,7 +117,12 @@ async def execute_mcp_step(
         or (result.get("error") is not None and result.get("success") is not True)
     ):
         error_msg = result.get("error") or "Unknown MCP tool error"
-        raise RuntimeError(
+        error_type = (
+            PipelineStepRefusal
+            if result.get("error_code") == "runbook_seat_refused"
+            else PipelineStepError
+        )
+        raise error_type(
             f"MCP step {rendered_step.id} failed: "
             f"{mcp_config.server}:{mcp_config.tool} returned error: {error_msg}"
         )

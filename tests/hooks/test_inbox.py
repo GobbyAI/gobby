@@ -33,12 +33,18 @@ from gobby.hooks.inbox import (
     HookInboxBarrierResult,
     _get_hook_inbox_drain_lock,
     _get_hook_settle_listeners,
-    _load_envelope,
     _post_envelope,
-    _quarantine_file,
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
+)
+from gobby.hooks.inbox_envelopes import (
     get_hook_quarantine_dir,
+)
+from gobby.hooks.inbox_envelopes import (
+    load_envelope as _load_envelope,
+)
+from gobby.hooks.inbox_envelopes import (
+    quarantine_file as _quarantine_file,
 )
 from gobby.hooks.inbox_maintenance import _compute_sleep_seconds
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
@@ -952,7 +958,7 @@ def test_load_envelope_skips_quarantine_failure_without_raising(
     envelope_path.write_text("{invalid", encoding="utf-8")
 
     with caplog.at_level("WARNING"):
-        with patch("gobby.hooks.inbox.Path.write_text", side_effect=OSError("disk full")):
+        with patch("gobby.hooks.inbox_envelopes.Path.write_text", side_effect=OSError("disk full")):
             envelope = _load_envelope(envelope_path)
 
     assert envelope is None
@@ -1435,6 +1441,80 @@ def test_sweep_consumes_only_well_formed_delivery_receipts(tmp_path: Path) -> No
     assert not (inbox_dir / "quarantine").exists()
 
 
+def test_sweep_decodes_a_retained_hook_envelope_once(tmp_path: Path) -> None:
+    """A retained envelope is read once, not on every hook's sweep (#23359)."""
+    import gobby.hooks.inbox as inbox_module
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    hook_envelope = inbox_dir / "n-0000000000001-hook.json"
+    hook_envelope.write_text(
+        json.dumps({"schema_version": 1, "hook_type": "Stop", "source": "claude"}),
+        encoding="utf-8",
+    )
+    first_ack = inbox_dir / "n-0000000000002-ack1.json"
+    first_ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    reads: list[Path] = []
+    read_text = Path.read_text
+
+    def counting_read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+        reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    with (
+        patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None),
+        patch.object(Path, "read_text", counting_read_text),
+    ):
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+        second_ack = inbox_dir / "n-0000000000003-ack2.json"
+        second_ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+
+    assert [path for path in reads if path.parent == inbox_dir] == [
+        hook_envelope,
+        first_ack,
+        second_ack,
+    ]
+    assert hook_envelope.exists()
+    assert not first_ack.exists()
+    assert not second_ack.exists()
+
+    # Once the drain removes the envelope, its path leaves the memo.
+    hook_envelope.unlink()
+    assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 0
+    assert hook_envelope not in inbox_module._NON_RECEIPT_FILES
+
+
+def test_sweep_consumes_a_receipt_that_replaced_a_decoded_envelope(tmp_path: Path) -> None:
+    """ghook settles an envelope by replacing it with a receipt at the same path."""
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope = inbox_dir / "n-0000000000001-hook.json"
+    envelope.write_text(
+        json.dumps({"schema_version": 1, "hook_type": "Stop", "source": "claude"}),
+        encoding="utf-8",
+    )
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+
+    with patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None):
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 0
+        # The same replacement ghook's atomic_write makes: write aside, rename over.
+        staged = inbox_dir / "n-0000000000001-hook.json.tmp"
+        staged.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+        os.replace(staged, envelope)
+        assert consume_pending_delivery_receipts(app, inbox_dir=inbox_dir) == 1
+
+    assert not envelope.exists()
+
+
 def test_sweep_missing_inbox_dir_is_a_noop(tmp_path: Path) -> None:
     from gobby.hooks.inbox import consume_pending_delivery_receipts
 
@@ -1512,7 +1592,7 @@ async def test_drain_reads_and_acknowledges_receipts_off_the_event_loop(tmp_path
 
     with (
         patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
-        patch("gobby.hooks.inbox._load_envelope", side_effect=load),
+        patch("gobby.hooks.inbox_envelopes.load_envelope", side_effect=load),
         patch("gobby.storage.hook_receipts.acknowledge_receipt", side_effect=acknowledge),
     ):
         assert await drain_hook_inbox_once(app, inbox_dir=inbox_dir) == 1

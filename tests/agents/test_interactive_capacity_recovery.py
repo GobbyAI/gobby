@@ -99,6 +99,31 @@ async def test_external_capacity_failure_is_observable_in_one_poll(
 
 
 @pytest.mark.asyncio
+async def test_capacity_banner_with_control_bytes_is_detected(
+    session_manager: SessionManager,
+    placed_seat: tuple[Session, Path, LifecycleRuntime, AttentionStateManager],
+) -> None:
+    """Control bytes drawn inside the banner do not hide it, as in watchdog recovery."""
+    session, _transcript, runtime, attention = placed_seat
+    runtime.snapshot_text = runtime.snapshot_text.replace(
+        "Selected model", "\x1b]0;codex\x07Selected mo\x0fdel"
+    )
+    monitor = InteractiveAttentionMonitor(
+        detection_registry=BundledDetectionRegistry(),
+        session_manager=session_manager,
+        attention_manager=attention,
+        registry=runtime_registry(runtime),
+    )
+
+    await monitor._check_attention_panes(active_runs=[])
+
+    state = attention.get(session_attention_entry_id(session.id))
+    assert state is not None
+    assert state.reason == "provider_error"
+    assert runtime.write_log == []
+
+
+@pytest.mark.asyncio
 async def test_external_capacity_retries_are_bounded_and_deduplicated(
     temp_db: HubDatabase,
     session_manager: SessionManager,

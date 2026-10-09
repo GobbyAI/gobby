@@ -7,14 +7,18 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from gobby.events.wake import WakeDispatcher
+from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.terminal_handoff_delivery import (
     _compensate_delivery_failure,
     schedule_terminal_handoff_delivery,
@@ -30,6 +34,7 @@ from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
+    HANDOFF_TURN_END_PENDING_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     HandoffAttemptState,
     build_handoff_continue_prompt,
@@ -340,7 +345,7 @@ class TestRegisterTerminalTools:
                 gate["readiness_unconfirmed"] = True
                 variables.pop("failed_handoff_attempt")
                 variables["set_handoff_pending"] = {"attempt_id": attempt_id}
-            variable_manager.return_value.get_variables.return_value = variables
+            variable_manager.return_value.get_variable_subset.return_value = variables
             result = asyncio.run(
                 set_handoff(
                     current_state="New handoff",
@@ -1146,6 +1151,221 @@ def _delivery_count(temp_db: HubDatabase, attempt_id: str) -> int:
     )
     assert row is not None
     return int(row["count"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_status", ["active", "paused"])
+@pytest.mark.parametrize("race", ["none", "active", "receipt"])
+@pytest.mark.parametrize("queued", [False, True])
+async def test_web_chat_failed_compact_restores_precompact_status(
+    temp_db: HubDatabase, tmp_path: Path, prior_status: str, race: str, queued: bool
+) -> None:
+    """Idle and queued drains compensate PreCompact without overwriting newer state."""
+    from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
+
+    manager, session_id = _persistent_session(temp_db, tmp_path, session_type="web_chat")
+    manager.update_session_status(session_id, prior_status)
+    chat_registry = WebChatSessionRegistry()
+    chat_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    chat_registry.register("conversation", MagicMock(db_session_id=session_id))
+    registry = _feedback_registry(
+        temp_db, manager, survey="off", web_chat_session_registry=chat_registry
+    )
+    variables = SessionVariableManager(temp_db)
+    handlers = EventHandlers(session_manager=cast(HookSessionManager, manager))
+    release_turn = asyncio.Event()
+    marker: dict[str, Any] = {}
+
+    async def active_turn() -> None:
+        await release_turn.wait()
+
+    async def failed_drain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        marker.update(variables.get_variables(session_id)[PENDING_HANDOFF_VARIABLE])
+        staged_session = manager.get(session_id)
+        assert staged_session is not None
+        assert staged_session.status == prior_status
+        handlers.handle_pre_compact(
+            HookEvent(
+                event_type=HookEventType.PRE_COMPACT,
+                source=SessionSource.CODEX,
+                session_id=session_id,
+                timestamp=datetime.now(UTC),
+                data={"trigger": "manual"},
+                metadata={"_platform_session_id": session_id},
+            )
+        )
+        if race == "active":
+            manager.update_session_status(session_id, "active")
+        elif race == "receipt":
+            record_handoff_delivery(
+                temp_db,
+                handoff_id=marker["handoff_record_id"],
+                attempt_id=marker["attempt_id"],
+                boundary_kind="compact",
+                continuation_session_id=session_id,
+            )
+        return {"ok": False, "reason": "compact failed after PreCompact"}
+
+    active_task = asyncio.create_task(active_turn()) if queued else None
+    if active_task is not None:
+        chat_registry.track_active_task("conversation", active_task)
+    with (
+        session_context_for_test(session_id),
+        patch.object(chat_registry, "_drain_message_until_done", side_effect=failed_drain),
+        patch.object(handlers, "_watch_codex_compact"),
+    ):
+        result = await registry.call(
+            "set_handoff", {"current_state": "Web draft", "next_steps": ["Continue"]}
+        )
+        if active_task is not None:
+            assert result["queued"] is True
+            assert result["handoff_delivered"] is False
+            release_turn.set()
+            await active_task
+            queued_task = chat_registry._queued_compaction_tasks.get("conversation")
+            assert queued_task is not None
+            await queued_task
+        else:
+            assert result["compacted"] is False
+    settled = variables.get_variables(session_id)
+    session = manager.get(session_id)
+    assert session is not None
+    attempt_id = marker["attempt_id"]
+    if race == "receipt":
+        assert _delivery_count(temp_db, attempt_id) == 1
+        assert FAILED_HANDOFF_VARIABLE not in settled
+        assert session.status == "awaiting_handoff"
+        return
+    assert session.status == ("active" if race == "active" else prior_status)
+    assert marker["prior_status"] == prior_status
+    assert settled[FAILED_HANDOFF_VARIABLE]["attempt_id"] == attempt_id
+    assert not settled.get(HANDOFF_TURN_END_PENDING_VARIABLE)
+    assert _delivery_count(temp_db, attempt_id) == 0
+    dispatcher = WakeDispatcher(manager, MagicMock())
+    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
+    assert wake_failure is None
+    with session_context_for_test(session_id):
+        recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
+    assert recovered["found"] is True
+    assert recovered["attempt_id"] == attempt_id
+    assert "Web draft" in recovered["handoff"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_status", ["active", "paused"])
+@pytest.mark.parametrize("race", ["none", "active", "receipt"])
+async def test_compact_timeout_restores_precompact_status_and_releases_wake(
+    temp_db: HubDatabase, tmp_path: Path, prior_status: str, race: str
+) -> None:
+    """An undelivered compact releases the seat without losing its authored handoff."""
+    manager, session_id = _persistent_session(temp_db, tmp_path)
+    manager.update_session_status(session_id, prior_status)
+    registry = _feedback_registry(temp_db, manager, survey="off")
+    set_handoff = registry.get_tool("set_handoff")
+    assert set_handoff is not None
+    pane = MagicMock(backend="native", target="test-pane")
+    pane.snapshot = AsyncMock(return_value="Compacting...")
+    variables = SessionVariableManager(temp_db)
+    with (
+        session_context_for_test(session_id),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io", return_value=(pane, None)
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal._interrupt_observer",
+            return_value=(None, None),
+        ),
+    ):
+        staged = await set_handoff(current_state="Preserve this draft", next_steps=["Continue"])
+    attempt_id = staged["attempt_id"]
+    staged_session = manager.get(session_id)
+    assert staged_session is not None
+    assert staged_session.status == prior_status
+    staged_marker = variables.get_variables(session_id)[PENDING_HANDOFF_VARIABLE]
+    variables.merge_variables(session_id, {HANDOFF_DISPATCH_GATE_VARIABLE: staged})
+    claimed = claim_staged_handoff_delivery(temp_db, session_id, attempt_id)
+    assert claimed is not None
+    handlers = EventHandlers(session_manager=cast(HookSessionManager, manager))
+    dispatcher = WakeDispatcher(manager, MagicMock())
+    timeout_reason = "compact boundary was not observed before the confirmation deadline"
+
+    async def send_command(*_args: Any, **kwargs: Any) -> tuple[bool, None, bool, None]:
+        kwargs["on_command_submitting"]()
+        kwargs["mark_continuation_pending"]()
+        handlers.handle_pre_compact(
+            HookEvent(
+                event_type=HookEventType.PRE_COMPACT,
+                source=SessionSource.CODEX,
+                session_id=session_id,
+                timestamp=datetime.now(UTC),
+                data={"trigger": "manual"},
+                metadata={"_platform_session_id": session_id},
+            )
+        )
+        _, withheld = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
+        assert withheld is not None
+        assert withheld["skipped"] == "session_awaiting_handoff"
+        return True, None, True, None
+
+    async def boundary_timeout(*_args: Any, **_kwargs: Any) -> str:
+        if race == "active":
+            manager.update_session_status(session_id, "active")
+        elif race == "receipt":
+            record_handoff_delivery(
+                temp_db,
+                handoff_id=claimed.handoff_record_id,
+                attempt_id=attempt_id,
+                boundary_kind="compact",
+                continuation_session_id=session_id,
+            )
+        return timeout_reason
+
+    delivery_path = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
+    with (
+        patch(f"{delivery_path}._resolve_pane_io", return_value=(pane, None)),
+        patch(f"{delivery_path}._interrupt_observer", return_value=(None, None)),
+        patch(f"{delivery_path}._turn_settled_observer", return_value=None),
+        patch(f"{delivery_path}._send_terminal_compaction_command", side_effect=send_command),
+        patch(f"{delivery_path}._wait_for_compact_boundary", side_effect=boundary_timeout),
+        patch(f"{delivery_path}.composer_reader", return_value=None),
+        patch(
+            f"{delivery_path}.schedule_codex_handoff_compact_continuation_readiness",
+            return_value=True,
+        ),
+        patch.object(handlers, "_watch_codex_compact"),
+        patch("gobby.hooks.terminal_handoff_delivery._wake_failed_attempt", new_callable=AsyncMock),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+
+    settled = variables.get_variables(session_id)
+    session = manager.get(session_id)
+    assert session is not None
+    if race == "receipt":
+        assert _delivery_count(temp_db, attempt_id) == 1
+        assert FAILED_HANDOFF_VARIABLE not in settled
+        assert session.status == "awaiting_handoff"
+        return
+    assert session.status == ("active" if race == "active" else prior_status)
+    assert staged_marker["prior_status"] == prior_status
+    assert settled[FAILED_HANDOFF_VARIABLE]["attempt_id"] == attempt_id
+    assert settled[FAILED_HANDOFF_VARIABLE]["handoff_record_id"] == claimed.handoff_record_id
+    assert settled[HANDOFF_DISPATCH_GATE_VARIABLE]["error_code"] == "compact_unconfirmed"
+    assert not settled.get(HANDOFF_TURN_END_PENDING_VARIABLE)
+    assert _delivery_count(temp_db, attempt_id) == 0
+    _, wake_failure = await dispatcher._preflight_live_side_effect(session_id, priority="urgent")
+    assert wake_failure is None
+    with session_context_for_test(session_id):
+        recovered = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
+    assert recovered["found"] is True
+    assert recovered["attempt_id"] == attempt_id
+    assert recovered["delivery_state"] == "failed_not_deliverable"
+    assert "Preserve this draft" in recovered["handoff"]
 
 
 def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(

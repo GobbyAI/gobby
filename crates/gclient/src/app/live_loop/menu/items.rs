@@ -381,9 +381,9 @@ const THEMES: [(ThemeName, &str, (&str, &str)); ThemeName::ALL.len()] = [
     ),
     (ThemeName::Moss, "  Theme: Moss ▸", ("● Moss", "  Moss")),
     (
-        ThemeName::YourProposal,
-        "  Theme: Your proposal ▸",
-        ("● Your proposal", "  Your proposal"),
+        ThemeName::MidnightMoss,
+        "  Theme: Midnight moss ▸",
+        ("● Midnight moss", "  Midnight moss"),
     ),
     (
         ThemeName::Staircase,

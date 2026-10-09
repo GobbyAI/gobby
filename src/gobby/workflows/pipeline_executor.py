@@ -32,6 +32,8 @@ from gobby.workflows.pipeline_state import (
     ApprovalRequired,
     ExecutionStatus,
     PipelineExecution,
+    PipelineStepError,
+    PipelineStepRefusal,
     StepExecution,
     StepStatus,
 )
@@ -255,7 +257,7 @@ class PipelineExecutor(
                     execution_id,
                     exc.step_id,
                 )
-            elif exc:
+            elif exc and not isinstance(exc, PipelineStepRefusal):
                 logger.error("Detached pipeline run %s failed: %s", execution_id, exc)
 
         task.add_done_callback(_on_done)
@@ -500,6 +502,14 @@ class PipelineExecutor(
                         # Bare value (not a definition dict) — use as-is
                         resolved_defaults[key] = spec
                 merged_inputs = {**resolved_defaults, **inputs}
+                string_inputs = [
+                    key
+                    for key, spec in pipeline.inputs.items()
+                    if isinstance(spec, dict) and spec.get("type") == "string"
+                ]
+                for key in string_inputs:
+                    if merged_inputs[key] is not None:
+                        merged_inputs[key] = str(merged_inputs[key])
                 # Inject parent_session_id into inputs so ${{ inputs.parent_session_id }} resolves
                 if parent_session_id and not inputs.get("parent_session_id"):
                     merged_inputs["parent_session_id"] = parent_session_id
@@ -528,6 +538,7 @@ class PipelineExecutor(
 
                 context: dict[str, Any] = {
                     "inputs": merged_inputs,
+                    "_string_inputs": string_inputs,
                     "steps": {},  # Will hold step outputs as they complete
                     "session_id": pipeline_session_id,
                     "parent_session_id": parent_session_id,
@@ -684,8 +695,9 @@ class PipelineExecutor(
                             output_json=json_dumps(step_output),
                             error=f"Exit code {step_output['exit_code']}: {error_msg}",
                         )
-                        raise RuntimeError(
-                            f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
+                        raise PipelineStepError(
+                            f"Step '{step.id}' failed with exit code {step_output['exit_code']}: "
+                            f"{error_msg}"
                         )
 
                     # A null error is no error: spawn_agent's success reply carries one.
@@ -699,7 +711,7 @@ class PipelineExecutor(
                             output_json=json_dumps(step_output),
                             error=error_msg,
                         )
-                        raise RuntimeError(f"Step '{step.id}' failed: {error_msg}")
+                        raise PipelineStepError(f"Step '{step.id}' failed: {error_msg}")
 
                     # For exec steps with JSON stdout, merge parsed data into output
                     if isinstance(step_output, dict) and "stdout" in step_output:
@@ -749,7 +761,7 @@ class PipelineExecutor(
                         status=ExecutionStatus.FAILED,
                         outputs_json=json_dumps(outputs),
                     )
-                    raise RuntimeError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
+                    raise PipelineStepError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
 
                 # Mark execution as completed
                 outputs = self._build_outputs(pipeline, context)
@@ -806,7 +818,15 @@ class PipelineExecutor(
                     span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 if execution:
-                    logger.exception("Pipeline execution failed: %s", e)
+                    if isinstance(e, PipelineStepRefusal):
+                        if _depth == 0:
+                            logger.warning(
+                                "Pipeline guard refused: %s",
+                                " ".join(str(e).split()),
+                                extra={"pipeline_guard_refused": True},
+                            )
+                    else:
+                        logger.exception("Pipeline execution failed: %s", e)
 
                     # Mark the currently-running step as FAILED
                     if (

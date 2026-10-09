@@ -43,7 +43,9 @@ def test_homebrew_distribution_detects_env(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("GOBBY_NATIVE_BIN_DIR", raising=False)
     with (
         patch.object(Path, "home", return_value=tmp_path),
         patch("gobby.install.distribution.shutil.which", return_value=None),

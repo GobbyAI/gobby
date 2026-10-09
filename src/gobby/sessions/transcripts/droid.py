@@ -307,15 +307,11 @@ class DroidTranscriptParser(BaseTranscriptParser):
 
     def _expand_line(self, line: str, index: int) -> list[ParsedMessage]:
         """Expand one Droid JSONL line into zero or more ParsedMessage records."""
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            self.error_log.log_decode_failure(index, self.session_id, line, exc)
-            return []
-        if not isinstance(record, dict):
-            self.error_log.log_decode_failure(index, self.session_id, line, None)
-            return []
+        record = self._decode_record(line, index)
+        return [] if record is None else self._expand_record(record, index)
 
+    def _expand_record(self, record: dict[str, Any], index: int) -> list[ParsedMessage]:
+        """Expand one decoded Droid record into zero or more ParsedMessage records."""
         timestamp_raw = record.get("timestamp")
         timestamp = _parse_timestamp(timestamp_raw if isinstance(timestamp_raw, str) else None)
         message_id_raw = record.get("id")
@@ -524,10 +520,11 @@ class DroidTranscriptParser(BaseTranscriptParser):
 
         current_index = start_index
         for raw in raw_lines:
-            if not raw.text.strip():
+            record = self._raw_record(raw, current_index)
+            if record is None:
                 continue
             start_idx = current_index
-            expanded = self._expand_line(raw.text, current_index)
+            expanded = self._expand_record(record, current_index)
             for msg in expanded:
                 msg.index = current_index
                 raw_type = msg.raw_json.get("type") if isinstance(msg.raw_json, dict) else None

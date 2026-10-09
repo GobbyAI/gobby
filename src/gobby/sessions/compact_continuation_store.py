@@ -130,10 +130,18 @@ def _restore_session_variable_if_absent(
         return True
 
 
-def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
+def _load_session_variables(
+    db: HubDatabase,
+    session_id: str,
+    *,
+    variable_name: str = HANDOFF_COMPACT_CONTINUE_VARIABLE,
+) -> dict[str, Any]:
+    """Read one continuation marker without materializing unrelated session state."""
     row = db.fetchone(
-        "SELECT variables::text AS variables FROM session_variables WHERE session_id = %s",
-        (session_id,),
+        "SELECT CASE WHEN variables ? %s THEN "
+        "jsonb_build_object(%s::text, variables -> %s::text) ELSE '{}'::jsonb END"
+        "::text AS variables FROM session_variables WHERE session_id = %s",
+        (variable_name, variable_name, variable_name, session_id),
     )
     return _load_variables(_row_variables(row))
 
@@ -145,7 +153,9 @@ def pending_compact_attempt(db: HubDatabase, session_id: str) -> str | None:
     deliver qualifies; a ``set_handoff`` retry reuses it instead of staging a
     sibling that would race it for the same compact boundary (#23495).
     """
-    marker = _load_session_variables(db, session_id).get(PENDING_HANDOFF_VARIABLE)
+    marker = _load_session_variables(db, session_id, variable_name=PENDING_HANDOFF_VARIABLE).get(
+        PENDING_HANDOFF_VARIABLE
+    )
     if not isinstance(marker, Mapping) or marker.get("clear_session") is not False:
         return None
     attempt_id = marker.get("attempt_id")

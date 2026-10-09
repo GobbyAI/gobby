@@ -32,6 +32,68 @@ class LayoutSplit(TypedDict):
 
 type LayoutNode = LayoutLeaf | LayoutSplit
 
+MIN_PANE_COLUMNS = 80
+MIN_PANE_ROWS = 12
+
+
+def balanced_layout(
+    layout: LayoutNode, columns: int = MIN_PANE_COLUMNS, rows: int | None = None
+) -> LayoutNode:
+    """Keep pane order and IDs, filling columns of evenly sized rows.
+
+    Reserve a cell for every column divider. A narrow viewport uses one column
+    rather than shrinking panes below the width needed by interactive agents.
+    """
+    if not isinstance(columns, int) or isinstance(columns, bool) or columns < MIN_PANE_COLUMNS:
+        raise InvalidWorkspaceOpError(f"A lane tab needs at least {MIN_PANE_COLUMNS} columns")
+    if not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS:
+        raise InvalidWorkspaceOpError(f"Supply the tab viewport rows (at least {MIN_PANE_ROWS})")
+    panes = layout_pane_ids(layout)
+    count = min(len(panes), (columns + 1) // (MIN_PANE_COLUMNS + 1))
+    width, extra = divmod(columns - count + 1, count)
+    widths = [width + (index < extra) for index in range(count)]
+    per_column, remainder = divmod(len(panes), count)
+    largest = per_column + bool(remainder)
+    minimum_rows = largest * (MIN_PANE_ROWS + 1) - 1
+    if rows < minimum_rows:
+        raise InvalidWorkspaceOpError(
+            f"{len(panes)} panes cannot fit {columns}x{rows} at an {MIN_PANE_COLUMNS}x{MIN_PANE_ROWS} floor; "
+            f"{count} columns need at least {minimum_rows} rows. Enlarge the tab before retrying."
+        )
+    groups: list[LayoutNode] = []
+    offset = 0
+
+    def stack(ids: list[str], height: int) -> LayoutNode:
+        if len(ids) == 1:
+            return _leaf(ids[0])
+        middle = len(ids) // 2
+        cell_height, extra_height = divmod(height - len(ids) + 1, len(ids))
+        first = middle * cell_height + min(middle, extra_height) + middle - 1
+        return _split(
+            "vertical",
+            first / (height - 1),
+            [stack(ids[:middle], first), stack(ids[middle:], height - first - 1)],
+        )
+
+    for index in range(count):
+        size = per_column + (index < remainder)
+        groups.append(stack(panes[offset : offset + size], rows))
+        offset += size
+
+    def join(nodes: list[LayoutNode], sizes: list[int]) -> LayoutNode:
+        if len(nodes) == 1:
+            return nodes[0]
+        middle = len(nodes) // 2
+        left = sum(sizes[:middle]) + middle - 1
+        right = sum(sizes[middle:]) + len(nodes) - middle - 1
+        return _split(
+            "horizontal",
+            left / (left + right),
+            [join(nodes[:middle], sizes[:middle]), join(nodes[middle:], sizes[middle:])],
+        )
+
+    return join(groups, widths)
+
 
 def validate_layout(value: object) -> LayoutNode:
     """Return ``value`` as a tab's split tree, or raise when it is not one.

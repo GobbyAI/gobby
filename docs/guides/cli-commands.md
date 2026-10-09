@@ -116,8 +116,7 @@ The `gterm host` process and every terminal it owns survive a stop by default:
 the daemon closes its control connection and leaves the host running, and the
 next `gobby start` adopts it, so attached `gclient` panes keep their shells.
 Pass `--terminals` to drain the host and its terminals as part of the stop.
-Setting `terminals.stop_host_on_shutdown: true` in config makes every stop
-drain; the admin `POST /shutdown?terminals=true` and
+Only explicit shutdown intent drains terminals; the admin `POST /shutdown?terminals=true` and
 `POST /restart?terminals=true` routes are the HTTP equivalents.
 
 #### `gterm host`

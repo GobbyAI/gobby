@@ -14,7 +14,12 @@ from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.transcripts import get_parser
 from gobby.storage.sessions import SessionManager
-from gobby.storage.token_events import TokenEvent, TokenEventStore
+from gobby.storage.token_events import (
+    TokenEvent,
+    TokenEventStore,
+    token_event_retention_cutoff,
+    token_event_retention_transaction,
+)
 
 
 @click.group()
@@ -192,16 +197,17 @@ def audit_tokens(
                 click.echo(f"  {_format_totals('session', cached_totals)}")
 
                 if fix:
-                    with db.transaction():
-                        store.delete_session_events(session_id)
-                        for event in transcript_events:
-                            store.record(event)
+                    with token_event_retention_transaction(db):
+                        cutoff = token_event_retention_cutoff()
+                        store.delete_session_events(session_id, retention_cutoff=cutoff)
+                        store.record_batch(transcript_events, retention_cutoff=cutoff)
+                        repaired_totals = store.get_session_totals(session_id)
                         session_manager.update_usage(
                             session_id=session_id,
-                            input_tokens=transcript_totals["input_tokens"],
-                            output_tokens=transcript_totals["output_tokens"],
-                            cache_creation_tokens=transcript_totals["cache_creation_tokens"],
-                            cache_read_tokens=transcript_totals["cache_read_tokens"],
+                            input_tokens=repaired_totals["input_tokens"],
+                            output_tokens=repaired_totals["output_tokens"],
+                            cache_creation_tokens=repaired_totals["cache_creation_tokens"],
+                            cache_read_tokens=repaired_totals["cache_read_tokens"],
                             context_window=(
                                 session.context_window
                                 if isinstance(session.context_window, int)

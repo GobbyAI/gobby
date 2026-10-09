@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.storage.session_resolution import resolve_session_reference
 
 if TYPE_CHECKING:
@@ -17,25 +18,31 @@ logger = logging.getLogger(__name__)
 
 
 def _bound_session_id(server: HTTPServer, request: Request, session_id: str) -> str:
-    """Agent tokens may only read/write their claimed session."""
+    """Agent tokens may only read/write the session their run is bound to now.
+
+    That is the claimed session, or its /clear successor once the run moved.
+    """
     claims = server.auth_service.verified_agent_claims(request)
     if claims is None:
         return session_id
-    if session_id == claims.session_id:
-        return claims.session_id
     if server.session_manager is None:
         raise HTTPException(status_code=503, detail="Session manager not available")
+    db = server.session_manager.db
+    bound = current_run_session_id(
+        db,
+        agent_run_id=claims.agent_run_id,
+        session_id=claims.session_id,
+        project_id=claims.project_id,
+    )
+    if session_id in (claims.session_id, bound):
+        return bound
     try:
-        resolved = resolve_session_reference(
-            server.session_manager.db,
-            session_id,
-            claims.project_id,
-        )
+        resolved = resolve_session_reference(db, session_id, claims.project_id)
     except Exception:
         resolved = None
-    if resolved != claims.session_id:
+    if resolved not in (claims.session_id, bound):
         raise HTTPException(status_code=403, detail="Session does not match agent capability")
-    return claims.session_id
+    return bound
 
 
 class SetVariableRequest(BaseModel):

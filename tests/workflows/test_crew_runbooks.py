@@ -56,8 +56,10 @@ def test_crew_lane_contains_only_approved_seats() -> None:
         },
     ]
     assert definition.inputs["seats"]["default"] == "developer"
-    assert definition.inputs["workspace"]["required"]
-    assert definition.inputs["worktree_id"]["required"]
+    for name in ("workspace", "lane_pane", "worktree", "report_to"):
+        assert definition.inputs[name]["default"] is None
+        assert not definition.inputs[name].get("required", False)
+    assert "worktree_id" not in definition.inputs
     assert [
         definition.inputs[f"reviewer_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort", "role_file")
@@ -173,9 +175,11 @@ def test_crew_lane_renders_operator_inputs(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         lane=lane,
+        lane_columns=160,
+        lane_rows=100,
         seats=seat,
         workspace="pilot-workspace",
-        worktree_id="pilot-worktree",
+        worktree="pilot-worktree",
         report_to="gobby#14972",
     )
     inputs.update(
@@ -196,6 +200,16 @@ def test_crew_lane_renders_operator_inputs(
     catalogued = next(entry for entry in guarded["catalogue"] if entry["name"] == seat)
     assert catalogued["title"] == f"Lane {lane} {title}"
     assert catalogued["agent"] == seat
+    assert guarded["worktree"] == "pilot-worktree"
+    context["steps"]["guard"] = {
+        "output": {
+            "workspace": "pilot-workspace",
+            "lane_pane": "pilot:resolved-pane",
+            "worktree": "pilot-worktree",
+            "report_to": "gobby#14972",
+            "project_path": "/pilot/project",
+        }
+    }
     step = next(step for step in definition.steps if step.id == seat)
     assert renderer.should_run_step(step, context)
     assert step.mcp is not None and step.mcp.arguments is not None
@@ -206,13 +220,21 @@ def test_crew_lane_renders_operator_inputs(
     assert args["checkout_mode"] == "none"
     assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
     assert args["reserved_run_id"] == "pilot-run"
-    assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": f"Lane {lane}"}}
+    assert args["placement"] == {
+        "split": {
+            "pane": "pilot:resolved-pane",
+            "axis": "balanced",
+            "columns": 160,
+            "rows": 100,
+            "title": f"Lane {lane} {title}",
+        }
+    }
     assert f".gobby/roles/{role_file}" in args["prompt"]
     assert ".gobby/roles/_common.md first" in args["prompt"]
     assert f"Explicit lane assignment: Lane {lane}" in args["prompt"]
     assert 'target="session", target_id="gobby#14972"' in args["prompt"]
     assert 'owner_session="gobby#14972"' in args["prompt"]
-    assert definition.inputs["report_to"]["required"]
+    assert "/pilot/project/.gobby/roles/" in args["prompt"]
     inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
 
@@ -263,15 +285,25 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         lane="6",
+        lane_rows=100,
         seats=",".join(reversed(seats)),
         lane_pane=lane_pane,
         workspace="pilot-workspace",
-        worktree_id="pilot-worktree",
+        worktree="pilot-worktree",
         report_to="gobby#14972",
     )
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
     renderer = StepRenderer(TemplateEngine())
-    anchor_pane = lane_pane
+    anchor_pane = lane_pane or "pilot:inferred-pane"
+    context["steps"]["guard"] = {
+        "output": {
+            "workspace": "pilot-workspace",
+            "lane_pane": anchor_pane,
+            "worktree": "pilot-worktree",
+            "report_to": "gobby#14972",
+            "project_path": "/pilot/project",
+        }
+    }
     titles = {
         "developer": "developer",
         "code-reviewer": "code reviewer",
@@ -286,17 +318,15 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
         args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
         placement = args["placement"]
         placements.append(placement)
-        if anchor_pane is None:
-            assert placement == {"tab": {"workspace": "pilot-workspace", "title": "Lane 6"}}
-            anchor_pane = f"pilot:{step.id}"
-        else:
-            assert placement == {
-                "split": {
-                    "pane": anchor_pane,
-                    "axis": "right",
-                    "title": f"Lane 6 {titles[step.id]}",
-                }
+        assert placement == {
+            "split": {
+                "pane": anchor_pane,
+                "axis": "balanced",
+                "columns": 80,
+                "rows": 100,
+                "title": f"Lane 6 {titles[step.id]}",
             }
+        }
         context["steps"][step.id] = {"output": {"pane_ref": f"pilot:{step.id}"}}
     assert len(placements) == len(seats)
-    assert sum("tab" in placement for placement in placements) == (0 if lane_pane else 1)
+    assert all("split" in placement for placement in placements)

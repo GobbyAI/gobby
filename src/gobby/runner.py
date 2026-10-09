@@ -242,7 +242,7 @@ class GobbyRunner:
     frame_client: Any
     lease_registry: Any
     write_coordinator: Any
-    terminal_services: TerminalServices
+    terminal_services: TerminalServices | None
     workspace_manager: WorkspaceManager
     terminal_effect_bridge: Any
     attention_manager: AttentionStateManager
@@ -537,7 +537,14 @@ async def run_gobby(
 
             drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
         if front_door is not None:
-            front_door.stop()
+            drain_terminals = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
+            if drain_terminals and runner is not None:
+                front_door.stop(
+                    drain_terminals=True,
+                    drain_grace_seconds=runner.terminal_host_config.shutdown_grace_seconds,
+                )
+            else:
+                front_door.stop()
         lease.release()
         ownership_resolution.release()
 

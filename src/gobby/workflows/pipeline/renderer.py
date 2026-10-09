@@ -1,5 +1,6 @@
 """Rendering logic for pipeline steps."""
 
+import ast
 import logging
 import os
 import re
@@ -79,6 +80,7 @@ _RESERVED_CONTEXT_KEYS = frozenset(
         "project_path",
         "current_branch",
         "invocation_id",
+        "_string_inputs",
     }
 )
 
@@ -114,6 +116,7 @@ class StepRenderer:
             "project_path": context.get("project_path"),
             "current_branch": context.get("current_branch"),
             "invocation_id": context.get("invocation_id"),
+            "_string_inputs": context.get("_string_inputs", ()),
         }
         # Flatten step outputs as top-level names for direct template access
         for step_id, step_data in steps.items():
@@ -249,7 +252,24 @@ class StepRenderer:
             # A pure expression carries the source value's type through rendering.
             m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value.strip(), re.DOTALL)
             if m:
-                resolved = self._resolve_expression(m.group(1), context)
+                expression = m.group(1).strip()
+                resolved = self._resolve_expression(expression, context)
+                node = SafeExpressionEvaluator._parse_normalized_expr(
+                    SafeExpressionEvaluator._normalize_expr(expression)
+                ).body
+                input_name: str | None = None
+                if isinstance(node, ast.Attribute):
+                    input_name = node.attr
+                elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+                    if isinstance(node.slice.value, str):
+                        input_name = node.slice.value
+                if (
+                    input_name in context.get("_string_inputs", ())
+                    and isinstance(node, (ast.Attribute, ast.Subscript))
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "inputs"
+                ):
+                    return str(resolved) if resolved is not None else None
                 return self._coerce_value(resolved) if coerce_strings else resolved
             return self.render_string(value, context)
         if isinstance(value, dict):

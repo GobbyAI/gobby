@@ -1027,6 +1027,20 @@
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
+        "symbol": "create_workspaces_registry.rebalance_tab"
+      },
+      "verification": [
+        "workspaces-registry"
+      ],
+      "audience": "agent",
+      "server": "gobby-workspaces",
+      "tool": "rebalance_tab"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
         "symbol": "create_workspaces_registry.split_pane"
       },
       "verification": [
@@ -1173,6 +1187,19 @@
       ],
       "audience": "operator/client",
       "command": "gobby workspaces show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
+      "implementation": {
+        "path": "src/gobby/cli/workspaces.py",
+        "symbol": "rebalance_tab"
+      },
+      "verification": [
+        "workspaces-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby workspaces rebalance-tab"
     },
     {
       "surface": "cli",

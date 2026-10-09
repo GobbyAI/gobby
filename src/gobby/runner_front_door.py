@@ -156,18 +156,30 @@ class FrontDoorChild:
         if monitor is not None and not monitor.done():
             monitor.get_loop().call_soon_threadsafe(monitor.cancel)
 
-    def stop(self) -> None:
-        """Disarm respawn, then SIGTERM, wait, SIGKILL, and close the liveness pipe."""
+    def stop(self, *, drain_terminals: bool = False, drain_grace_seconds: float = 10.0) -> None:
+        """Forward explicit drain intent before closing the parent liveness pipe."""
         self.disarm()
         with self._lock:
             proc, self._proc = self._proc, None
             write_fd, self._write_fd = self._write_fd, None
         try:
-            if proc is not None:
-                _terminate(proc)
+            if write_fd is not None and drain_terminals:
+                try:
+                    os.write(write_fd, b"D\n")
+                except BrokenPipeError:
+                    logger.warning("gdaemon exited before receiving explicit terminal drain")
         finally:
             if write_fd is not None:
                 os.close(write_fd)
+        if proc is not None:
+            if drain_terminals:
+                try:
+                    # The host drain can escalate through three bounded exit waits.
+                    proc.wait(timeout=3 * drain_grace_seconds + STOP_GRACE_SECONDS)
+                    return
+                except subprocess.TimeoutExpired:
+                    logger.warning("gdaemon terminal drain exceeded its shutdown deadline")
+            _terminate(proc)
 
     def _wait_for_public_ports_free(self) -> None:
         # A previous child may still be draining after its parent pipe closed.

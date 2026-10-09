@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,8 +14,7 @@ from typing import Any, Final
 
 import httpx
 
-from gobby.cli.utils import get_gobby_home
-from gobby.hooks import grok_pending_context
+from gobby.hooks import grok_pending_context, inbox_envelopes
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     clear_stale_envelope_processing_marker,
@@ -30,11 +30,9 @@ from gobby.hooks.inbox_lifecycle import replay_stopping, start_replay
 from gobby.hooks.receipt_effects import apply_acknowledged_receipt
 from gobby.hooks.replay_fence import archive_superseded_hook, defer_live_hook
 from gobby.hooks.runtime_compat import (
-    SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     envelope_has_hook_response_capability,
 )
 from gobby.utils import daemon_url as daemon_address
-from gobby.utils.datetime import utc_now
 from gobby.utils.local_token import daemon_bootstrap_path, read_local_api_token
 
 logger = logging.getLogger(__name__)
@@ -48,16 +46,21 @@ _SETTLE_LISTENERS_STATE_KEY = "_gobby_hook_inbox_settle_listeners"
 _RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
 _RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
 
+# The per-hook receipt sweep skips files it already decoded as some other kind
+# instead of decoding them again on every hook (#23359). An entry holds the file's
+# stat signature: ghook settles a delivered envelope by atomically replacing it
+# with a delivery receipt at the same path, and the changed signature makes the
+# sweep read it again. Each sweep keeps only paths still listed.
+_NON_RECEIPT_FILES: dict[Path, tuple[int, int, int]] = {}
+_NON_RECEIPT_FILES_LOCK = threading.Lock()
 
-def get_hook_inbox_dir() -> Path:
-    """Return the daemon hook inbox directory."""
-    return get_gobby_home() / "hooks" / "inbox"
 
-
-def get_hook_quarantine_dir(inbox_dir: Path | None = None) -> Path:
-    """Return the daemon hook inbox quarantine directory."""
-    root = inbox_dir or get_hook_inbox_dir()
-    return root / "quarantine"
+def _file_signature(path: Path) -> tuple[int, int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
 
 def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
@@ -69,57 +72,6 @@ def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
         for path in inbox_dir.iterdir()
         if path.is_file() and path.suffix == ".json" and not path.name.endswith(".tmp")
     )
-
-
-def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
-    """Move an unreadable or invalid inbox file into quarantine with metadata."""
-    quarantine_dir = get_hook_quarantine_dir(path.parent)
-    target = quarantine_dir / path.name
-    meta_path = quarantine_dir / f"{path.name}.meta.json"
-
-    try:
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(path.read_bytes())
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "reason": reason,
-                    "detail": detail,
-                    "quarantined_at": utc_now().isoformat(),
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        path.unlink(missing_ok=True)
-    except FileNotFoundError:
-        logger.debug(
-            "Hook inbox file %s disappeared before quarantine (reason=%s)",
-            path,
-            reason,
-        )
-        return True
-    except Exception as exc:
-        logger.exception(
-            "Failed to quarantine hook inbox file %s (reason=%s, detail=%s): %s",
-            path,
-            reason,
-            detail,
-            exc,
-        )
-        return False
-    return True
-
-
-def _quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
-    """Best-effort quarantine with a warning when quarantine itself fails."""
-    if not _quarantine_file(path, reason=reason, detail=detail):
-        logger.warning(
-            "Skipping hook inbox file %s after quarantine failed (reason=%s)",
-            path,
-            reason,
-        )
 
 
 def _consume_inbox_delivery_receipt(
@@ -241,18 +193,31 @@ def consume_pending_delivery_receipts(app: Any, inbox_dir: Path | None = None) -
     Only files whose parsed body is a well-formed delivery receipt are touched;
     every other file is left for the drain and its quarantine rules.
     """
-    pending_dir = inbox_dir or get_hook_inbox_dir()
+    pending_dir = inbox_dir or inbox_envelopes.get_hook_inbox_dir()
     if not pending_dir.exists():
         return 0
     _restore_orphaned_receipt_claims(pending_dir)
     consumed = 0
     processed_dir = get_processed_envelope_dir(pending_dir)
-    for path in _iter_inbox_files(pending_dir):
+    paths = _iter_inbox_files(pending_dir)
+    with _NON_RECEIPT_FILES_LOCK:
+        for gone in _NON_RECEIPT_FILES.keys() - set(paths):
+            del _NON_RECEIPT_FILES[gone]
+        known_non_receipts = dict(_NON_RECEIPT_FILES)
+    for path in paths:
+        # Taken before the read, so a replacement after it changes the signature.
+        signature = _file_signature(path)
+        if signature is None or known_non_receipts.get(path) == signature:
+            continue
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if not isinstance(raw, dict) or raw.get("kind") != "delivery-receipt":
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("kind") != "delivery-receipt":
+            with _NON_RECEIPT_FILES_LOCK:
+                _NON_RECEIPT_FILES[path] = signature
             continue
         receipt_id = raw.get("receipt_id")
         generation = raw.get("delivery_generation")
@@ -319,61 +284,6 @@ def _terminalize_below_floor_receipts(app: Any, envelope_id: str) -> None:
             envelope_id,
             exc,
         )
-
-
-def _load_envelope(path: Path) -> dict[str, Any] | None:
-    """Load and minimally validate a replay envelope from disk."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        _quarantine_or_warn(path, reason="invalid_json", detail=str(exc))
-        return None
-
-    if not isinstance(raw, dict):
-        _quarantine_or_warn(
-            path, reason="invalid_envelope", detail="Envelope must be a JSON object"
-        )
-        return None
-
-    if raw.get("schema_version") != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
-        _quarantine_or_warn(
-            path,
-            reason="invalid_envelope",
-            detail=(
-                "Unsupported schema_version: "
-                f"{raw.get('schema_version')}. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
-            ),
-        )
-        return None
-
-    if raw.get("kind") == "delivery-receipt":
-        receipt_id = raw.get("receipt_id")
-        generation = raw.get("delivery_generation")
-        if not isinstance(receipt_id, str) or not receipt_id:
-            _quarantine_or_warn(
-                path,
-                reason="invalid_envelope",
-                detail="Delivery receipt must include receipt_id",
-            )
-            return None
-        if not isinstance(generation, int) or generation < 1:
-            _quarantine_or_warn(
-                path,
-                reason="invalid_envelope",
-                detail="Delivery receipt must include a positive delivery_generation",
-            )
-            return None
-        return raw
-
-    if not raw.get("hook_type") or not raw.get("source"):
-        _quarantine_or_warn(
-            path,
-            reason="invalid_envelope",
-            detail="Envelope must include hook_type and source",
-        )
-        return None
-
-    return raw
 
 
 async def _post_envelope(
@@ -479,7 +389,7 @@ async def _drain_hook_inbox_once_locked(
     does every app-scoped settle listener. Delivery receipts are bookkeeping,
     not replay progress, and never reach either.
     """
-    pending_dir = inbox_dir or get_hook_inbox_dir()
+    pending_dir = inbox_dir or inbox_envelopes.get_hook_inbox_dir()
     if not pending_dir.exists():
         return 0
 
@@ -515,7 +425,7 @@ async def _drain_hook_inbox_once_locked(
         envelope_id = envelope_id_from_inbox_path(path)
         # Reading, parsing and any quarantine move are disk work; keep them off
         # the event loop.
-        envelope = await asyncio.to_thread(_load_envelope, path)
+        envelope = await asyncio.to_thread(inbox_envelopes.load_envelope, path)
         if envelope is None:
             continue
 
@@ -565,7 +475,7 @@ async def _drain_hook_inbox_once_locked(
         ) and defer_live_hook(path, envelope_id, processed_dir, include_fresh):
             continue
         archived = await asyncio.to_thread(
-            archive_superseded_hook, app, envelope, path, _quarantine_file
+            archive_superseded_hook, app, envelope, path, inbox_envelopes.quarantine_file
         )
         if archived is not None:
             if archived:
@@ -576,7 +486,7 @@ async def _drain_hook_inbox_once_locked(
             if envelope_id:
                 release_envelope_processing_claim(envelope_id, processed_dir=processed_dir)
                 _terminalize_below_floor_receipts(app, envelope_id)
-            _quarantine_or_warn(
+            inbox_envelopes.quarantine_or_warn(
                 path,
                 reason="below_floor_response_capability",
                 detail="request-carried response_capability is below hook-response.v1",
@@ -601,7 +511,7 @@ async def _drain_hook_inbox_once_locked(
                 # The event was processed but cannot be marked in the
                 # dedupe ledger; retaining it would replay it forever and
                 # keep the startup barrier from ever settling.
-                _quarantine_or_warn(
+                inbox_envelopes.quarantine_or_warn(
                     path,
                     reason="missing_envelope_id",
                     detail="Replay succeeded but the file name carries no envelope ID",
@@ -635,7 +545,7 @@ async def _drain_hook_inbox_once_locked(
 
         if response.status_code == 401:
             quarantined = await asyncio.to_thread(
-                _quarantine_file,
+                inbox_envelopes.quarantine_file,
                 path,
                 reason="replay_auth_rejected",
                 detail="Hook replay returned HTTP 401",
@@ -725,7 +635,7 @@ def _classify_inbox_files(
     live_hooks = 0
     receipts = 0
     for path in paths:
-        envelope = _load_envelope(path)
+        envelope = inbox_envelopes.load_envelope(path)
         if envelope is not None and envelope.get("kind") == "delivery-receipt":
             receipts += 1
             continue
@@ -772,7 +682,7 @@ async def drain_hook_inbox_barrier(
     including a pass that holds the drain lock while this barrier waits for
     it. A stalled replay or a stalled lock holder still times out.
     """
-    pending_dir = inbox_dir or get_hook_inbox_dir()
+    pending_dir = inbox_dir or inbox_envelopes.get_hook_inbox_dir()
     budget = max(0.0, timeout_seconds)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + budget
@@ -856,7 +766,7 @@ def _unresolved_envelope_identities(paths: list[Path]) -> tuple[set[str], set[st
     run_ids: set[str] = set()
     session_ids: set[str] = set()
     for path in paths:
-        envelope = _load_envelope(path)
+        envelope = inbox_envelopes.load_envelope(path)
         if envelope is None:
             continue
         input_data = envelope.get("input_data")

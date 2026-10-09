@@ -38,7 +38,7 @@ prompts:
       - a seat request
       - a decision only the Orchestrator can make: lane placement, contract rulings, queue order
       - a reviewer LAND that needs activation or a restart
-      - a close backlog above 5
+      - a close backlog above 10
       - anything from Josh
 
       Everything else waits for the digest.
