@@ -24,6 +24,7 @@ from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon import _do_stop
 from gobby.cli.daemon_start import start
 from gobby.cli.runtime import CliRuntime
+from gobby.config.logging import LoggingSettings
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import (
     FailOpenPidOwnership,
@@ -935,7 +936,7 @@ class TestStartStopBarriers:
         config.daemon_port = 60888
         config.websocket.port = 60889
         config.bind_host = "127.0.0.1"
-        config.logging = MagicMock()
+        config.logging = LoggingSettings(dir=str(tmp_path / "logs"))
         config.ui.enabled = False
         # Both sandbox flags gate the real SRT preflight in `gobby start` (#21034).
         config.agent_sandbox.enabled = False
@@ -963,6 +964,7 @@ class TestStartStopBarriers:
             (tmp_path / "logs").mkdir()
             result = _cli_runtime().invoke(start, [])
         assert result.exit_code == 0
+        assert (tmp_path / "logs" / "runtime.log").is_file()
         kwargs = popen.call_args.kwargs
         assert "GOBBY_SINGLETON_LOCK_FD" in kwargs["env"]
         assert kwargs.get("pass_fds")
