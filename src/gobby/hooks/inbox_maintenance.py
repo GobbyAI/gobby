@@ -19,8 +19,8 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.inbox import (
     _RECEIPT_CLAIM_SUFFIX,
     drain_hook_inbox_once,
-    get_hook_inbox_dir,
 )
+from gobby.hooks.inbox_envelopes import get_hook_inbox_dir
 
 logger = logging.getLogger(__name__)
 _JITTER_RANDOM = SystemRandom()

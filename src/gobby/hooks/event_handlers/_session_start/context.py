@@ -226,7 +226,10 @@ def _load_session_variables(handler: Any, session_id: str | None) -> dict[str, A
     try:
         from gobby.workflows.state_manager import SessionVariableManager
 
-        variables = SessionVariableManager(handler._session_manager.db).get_variables(session_id)
+        variables = SessionVariableManager(handler._session_manager.db).get_variable_subset(
+            session_id,
+            ("pending_context_reset", "_agent_context_injected", "_help_deferred_activation"),
+        )
     except Exception as e:
         handler.logger.debug("Failed to load session variables for %s: %s", session_id, e)
         return {}

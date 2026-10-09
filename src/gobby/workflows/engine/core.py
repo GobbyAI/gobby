@@ -77,7 +77,7 @@ from gobby.workflows.engine.event_utils import (
     _resolve_rule_events,
 )
 from gobby.workflows.engine.proxy_hooks import ProxyHooksMixin
-from gobby.workflows.engine.templating import TemplatingMixin
+from gobby.workflows.engine.templating import TemplatingMixin, is_resolved_project
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.session_feedback_survey import inject_survey_active
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -292,7 +292,7 @@ class RuleEngine(
                     return HookResponse(decision="allow")
 
                 project_from_vars = variables.get("project")
-                if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
+                if not is_resolved_project(project_from_vars):
                     variables["project"] = await offload(
                         self._resolve_project_info,
                         event,

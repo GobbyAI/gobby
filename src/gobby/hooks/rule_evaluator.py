@@ -337,7 +337,7 @@ class WorkflowRuleEvaluator:
 
 
 def _committed_set_values(sv_mgr: Any, session_id: str, name: str) -> set[str]:
-    existing = sv_mgr.get_variables(session_id).get(name) or []
+    existing = sv_mgr.get_variable_subset(session_id, (name,)).get(name) or []
     if not isinstance(existing, list):
         return set()
     return {str(value) for value in existing if str(value)}

@@ -188,11 +188,15 @@ def _successor_status(h: _Harness, run_id: str | None) -> tuple[str, str | None]
     return run.status, run.terminal_reason
 
 
-@pytest.mark.parametrize("kind", ["tab", "split"])
+@pytest.mark.parametrize("kind", ["tab", "split", "balanced"])
 async def test_snapshot_carries_validated_placement(placed: _Harness, kind: str) -> None:
     h = placed
     beside = _held_seat(h, "beside", state="exited")
     raw = _tab(h) if kind == "tab" else _split(beside.id)
+    if kind == "balanced":
+        raw["split"]["axis"] = "balanced"
+        raw["split"]["columns"] = 323
+        raw["split"]["rows"] = 100
 
     placed_reply = await _spawn(h, raw)
     unplaced_reply = await _spawn(h, None)
@@ -201,13 +205,17 @@ async def test_snapshot_carries_validated_placement(placed: _Harness, kind: str)
     assert placed_reply["success"] is True, placed_reply
     run = h.runs.get(placed_reply["run_id"])
     assert run is not None and run.resume_metadata_json is not None
-    assert run.resume_metadata_json["placement"] == {
-        "kind": kind,
+    expected: dict[str, Any] = {
+        "kind": "split" if kind == "balanced" else kind,
         "workspace_id": h.workspace.id,
         "title": SEAT,
         "beside_pane_id": None if kind == "tab" else beside.id,
-        "axis": None if kind == "tab" else "horizontal",
+        "axis": None if kind == "tab" else "balanced" if kind == "balanced" else "horizontal",
     }
+    if kind == "balanced":
+        expected["columns"] = 323
+        expected["rows"] = 100
+    assert run.resume_metadata_json["placement"] == expected
     unplaced = h.runs.get(unplaced_reply["run_id"])
     assert unplaced is not None and unplaced.resume_metadata_json is not None
     assert "placement" not in unplaced.resume_metadata_json

@@ -51,6 +51,17 @@ _AGENT_KEYS = (
     "_agent_blocked_mcp_tools",
     "is_spawned_agent",
 )
+_RECONCILIATION_VARIABLE_KEYS = (
+    *_AGENT_KEYS,
+    MARKER_COMPLETED,
+    MARKER_VERSION,
+    MARKER_HASH,
+    "baseline_dirty_files",
+    "session_edited_files",
+    "active_task_id",
+    "task_edited_files",
+    "step_workflow_complete",
+)
 _AGENT_RUN_ROW_KEYS = ("id", "workflow_name", "agent_name", "prompt")
 _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES = 256
 # Resolution reads only agent and rule rows, so an entry stays valid until either
@@ -157,7 +168,7 @@ def _reconcile_session_activation(
     from gobby.workflows.state_manager import SessionVariableManager
 
     sv_mgr = SessionVariableManager(db)
-    variables = sv_mgr.get_variables(session_id)
+    variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
     missing = _missing_marker_keys(variables)
 
     agent_run_lookup = (
@@ -169,7 +180,7 @@ def _reconcile_session_activation(
     refreshed = _backfill_terminal_pickup(session_manager, session, agent_run)
     if refreshed is not None and refreshed is not session:
         session = refreshed
-        variables = sv_mgr.get_variables(session_id)
+        variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
         missing.append("terminal_pickup_metadata")
 
     activation_missing = [] if is_pipeline_session else _missing_agent_keys(variables)
@@ -186,7 +197,7 @@ def _reconcile_session_activation(
         override = _activation_agent_name(variables, agent_run, step_missing)
         activation_succeeded = _activate_agent(handler, session_id, session, override, log)
         if activation_succeeded:
-            variables = sv_mgr.get_variables(session_id)
+            variables = sv_mgr.get_variable_subset(session_id, _RECONCILIATION_VARIABLE_KEYS)
             step_missing = _missing_step_state(db, session_id, variables, session, agent_run)
             missing.extend(step_missing)
         elif activation_missing and override is not None:
@@ -623,7 +634,7 @@ def _ensure_step_instance(
         if manager.get_for_session(session_id) is not None:
             return False
         # A caller can be holding a snapshot from before an identity transition.
-        current = SessionVariableManager(db).get_variables(session_id)
+        current = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
         agent_name = _resolved_agent_name(current, None)
         if not agent_name:
             return False

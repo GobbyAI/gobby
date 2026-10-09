@@ -16,7 +16,7 @@ from gobby import runner_lifecycle_shutdown as shutdown
 from gobby import runner_lifecycle_subsystems as lifecycle
 from gobby import runner_rollback as rollback
 from gobby.agents.readiness import spawn_readiness_blocker
-from gobby.hooks import inbox
+from gobby.hooks import inbox, inbox_envelopes
 from gobby.hooks.inbox_lifecycle import stop_hook_inbox_replays
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.runner import GobbyRunner
@@ -157,7 +157,7 @@ async def test_two_thousand_retained_hooks_do_not_hold_health_or_readiness(
     diagnostic = SimpleNamespace(is_degraded=False, to_dict=lambda: {})
     monkeypatch.setattr(health, "read_ghook_runtime_diagnostic", lambda: diagnostic)
     app.include_router(health.create_health_router(cast(HTTPServer, runner.http_server)))
-    monkeypatch.setattr(inbox, "get_hook_inbox_dir", lambda: tmp_path)
+    monkeypatch.setattr(inbox_envelopes, "get_hook_inbox_dir", lambda: tmp_path)
     monkeypatch.setattr(inbox, "read_local_api_token", lambda: "isolated-test-token")
     entered = asyncio.Event()
 

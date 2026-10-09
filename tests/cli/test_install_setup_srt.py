@@ -59,14 +59,25 @@ def test_download_verified_tarball_rejects_checksum_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    rejected = b"not-the-pinned-tarball"
     monkeypatch.setattr(
         install_setup_srt,
         "urlopen",
-        lambda *_args, **_kwargs: FakeDownloadResponse(b"not-the-pinned-tarball"),
+        lambda *_args, **_kwargs: FakeDownloadResponse(rejected),
     )
 
-    with pytest.raises(SrtRuntimeError, match="checksum mismatch"):
-        install_setup_srt._download_verified_tarball(tmp_path / "runtime.tgz")
+    destination = tmp_path / "runtime.tgz"
+    with pytest.raises(SrtRuntimeError, match="checksum mismatch") as error:
+        install_setup_srt._download_verified_tarball(destination)
+
+    message = str(error.value)
+    assert "artifact=runtime.tgz" in message
+    assert f"source={SRT_RELEASE.tarball_url}" in message
+    assert f"expected_sha256={SRT_RELEASE.tarball_sha256}" in message
+    assert f"actual_sha256={hashlib.sha256(rejected).hexdigest()}" in message
+    assert f"downloaded_bytes={len(rejected)}" in message
+    assert "content_length=None" in message
+    assert not destination.exists()
 
 
 def test_download_verified_tarball_retries_checksum_mismatch(

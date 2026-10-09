@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 420;
 pub const BASELINE_CHECKSUM: &str =
-    "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
+    "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -314,15 +314,28 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/464_preserve_rotated_credential_drain.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 465,
+        filename: "465_token_event_retention.sql",
+        checksum: "b9ce19c5bc0b15a9f14e4bc29ea9ccb03babf3cb50303f0e126125ecc562c23d",
+        sql: include_str!("../../assets/schema/migrations/465_token_event_retention.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
-/// Schema-equivalent receipts written before an identity-only baseline refresh.
-pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[(
-    419,
-    "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
-)];
+/// Earlier baseline receipts whose numbered migrations converge to the current schema.
+pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
+    (
+        419,
+        "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81",
+    ),
+    // Migration 465 adds the same event_at index to already-applied baseline@420.
+    (
+        420,
+        "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+    ),
+];
 
 pub(crate) fn is_prior_baseline_receipt(version: i32, filename: &str, checksum: &str) -> bool {
     version < BASELINE_VERSION

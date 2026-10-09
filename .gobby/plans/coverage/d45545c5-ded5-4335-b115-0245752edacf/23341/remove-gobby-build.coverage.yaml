@@ -1,0 +1,948 @@
+header:
+  plan_id: remove-gobby-build
+  plan_hash: f6d2a86b5515bf392715ef24cb7a0d02e5ef1253515c7c16db693296b9abb191
+  root_task_ref: '23341'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-08T23:34:33Z'
+  task_tree_source: db
+  task_tree_source_hash: ab46128590b0583495ec62ad68b83b213a91240ebc76d6f3e8a514c5109aae9a
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 0ed79c9bd2f73771375eb2515f9c075bd5069b60bf994f520f05a61dbe29e846
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: DaemonConfig
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 1e00804f232611a1ebc713d7d2d0970d07cdd3b4ce7e720708f37b850d999029
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: configured_max_active_agents
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 667d96bc9eba91c6c3947e6c684ca784a80a923f2aaaf908a1fc31cd021fe156
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 11ac7478d3c18dd9a110f40f8135b00a3571130ef743bc4b4d8e8ec25a9c0eb4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: register_dispatch_batch
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 40b800a827de716a6efda42448e76fee5f01cd89c0f11cddee1a5107f615e59e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: max_active_agents
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: a1fcd5141ae9c0ac05d82cb29106abb0218d0e8beb3b65914ca90aa038d855ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23845'
+    validation_criteria_snippet: '1.1.1: `DaemonConfig` has a `max_active_agents`
+      field with default 20 and minimum 1, and the regenerated contract lists the
+      key. symbol: `DaemonConfig`. test: ...'
+    matched_artifact_ref: tests/contracts/test_http_corpus.py::test_case_replays_equal
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: ecabd12329f219328a2a119df265b9e2ed501d52ab158d03c65e76d65c090095
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23846'
+    validation_criteria_snippet: '1.2.1: A second active run on the same task is refused
+      even when the requester is a `merge-worker` spawned by that run''s session.
+      test: `tests/mcp_proxy/tools/...'
+    matched_artifact_ref: tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py::test_merge_worker_spawn_refuses_active_same_task_run
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: a33f0635003aeb2a9b6703963051f377259a54e2e850976d6efcdb117bbe29c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23846'
+    validation_criteria_snippet: '1.2.1: A second active run on the same task is refused
+      even when the requester is a `merge-worker` spawned by that run''s session.
+      test: `tests/mcp_proxy/tools/...'
+    matched_artifact_ref: PLANNING_AGENTS
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: c7fa420524f356c3954e84f6cf018d80d78ed24a099a6abb7c2d71f69ea48ae6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23846'
+    validation_criteria_snippet: '1.2.1: A second active run on the same task is refused
+      even when the requester is a `merge-worker` spawned by that run''s session.
+      test: `tests/mcp_proxy/tools/...'
+    matched_artifact_ref: tests/tasks/test_plan_gate.py::test_plan_adversary_spawn_against_malformed_plan_returns_structured_failure
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 215ea8d2318f235e97f9177f9c459d7ca11da9555e37f515bf8b3d531c262bd3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23846'
+    validation_criteria_snippet: '1.2.1: A second active run on the same task is refused
+      even when the requester is a `merge-worker` spawned by that run''s session.
+      test: `tests/mcp_proxy/tools/...'
+    matched_artifact_ref: code_index_preflight_mode
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: bfcb2266794ddbed6e4934f626220d26b36b7342cb248832d95e942408846d57
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23847'
+    validation_criteria_snippet: '2.1.1: The Activity panel offers no Stages tab,
+      and no web source imports the stage-registry hook. file: `web/src/components/activity/ActivityPanelTabs.tsx`.
+      b...'
+    matched_artifact_ref: web/src/components/activity/ActivityPanelTabs.tsx
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 1d903dd4884019668c02000a147bf66cb47cc2ad9b2ce36015404212314d2df6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23847'
+    validation_criteria_snippet: '2.1.1: The Activity panel offers no Stages tab,
+      and no web source imports the stage-registry hook. file: `web/src/components/activity/ActivityPanelTabs.tsx`.
+      b...'
+    matched_artifact_ref: web/src/components/activity/TaskQuickMenu.tsx
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: e98a335c3c4bbb2ce82f9322e970e80b93dfeb651070450aedaf47543450b812
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23847'
+    validation_criteria_snippet: '2.1.1: The Activity panel offers no Stages tab,
+      and no web source imports the stage-registry hook. file: `web/src/components/activity/ActivityPanelTabs.tsx`.
+      b...'
+    matched_artifact_ref: web/src/types/tasks.ts
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 5d13e4d4568e0bd8730f1383bf4d31328b6aab2f8e8702ce87b3316cfb9f16a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23847'
+    validation_criteria_snippet: '2.1.1: The Activity panel offers no Stages tab,
+      and no web source imports the stage-registry hook. file: `web/src/components/activity/ActivityPanelTabs.tsx`.
+      b...'
+    matched_artifact_ref: web/src/__tests__/styleRatchet.test.ts
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 2d1adbba527c8a7679fcec06702c9d29b9566b52188d536d8bd5ce23dc0deac0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23848'
+    validation_criteria_snippet: '2.2.1: The bundled definitions no longer include
+      `merge-orchestrator`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_a...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 67c18854d786d124ec7021deeef8c98673cffa6d88f6ab9089e8db1c78fc55fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23848'
+    validation_criteria_snippet: '2.2.1: The bundled definitions no longer include
+      `merge-orchestrator`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_a...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_merge_landscape.py::test_verify_in_worktree_rejects_unscoped_test_commands
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 1054845a50a4258f3b5ba9c2b4a723eb3e776681e34dd1384038cde185e6f366
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23848'
+    validation_criteria_snippet: '2.2.1: The bundled definitions no longer include
+      `merge-orchestrator`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_a...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/merge_landscape.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 443ea0352996cf6bba7f0ddbc4712e4cc7178f8c1d167fb182873abaa1007f19
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23849'
+    validation_criteria_snippet: '2.3.1: The CLI has no `build`, `profiles` or `tasks
+      repair-lifecycle` command, and `gobby cron` and `gobby pipelines` still report
+      daemon errors. symbol: `_dae...'
+    matched_artifact_ref: _daemon_error_message
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 16aeb42d375e1dd5854fa262568eed8cce15eca682e0d59bf2d21d13324ac4be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23849'
+    validation_criteria_snippet: '2.3.1: The CLI has no `build`, `profiles` or `tasks
+      repair-lifecycle` command, and `gobby cron` and `gobby pipelines` still report
+      daemon errors. symbol: `_dae...'
+    matched_artifact_ref: src/gobby/mcp_proxy/registries.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 82f3d56e86dc83c11114d61ca8aeb17aea92135d35a756f21f2f133753e8338e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23849'
+    validation_criteria_snippet: '2.3.1: The CLI has no `build`, `profiles` or `tasks
+      repair-lifecycle` command, and `gobby cron` and `gobby pipelines` still report
+      daemon errors. symbol: `_dae...'
+    matched_artifact_ref: src/gobby/servers/_app_routes.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: fa769e022c755350fe6cc7d10d68eb2b2d5f97df0c618d155fb6544d880f2ad1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23849'
+    validation_criteria_snippet: '2.3.1: The CLI has no `build`, `profiles` or `tasks
+      repair-lifecycle` command, and `gobby cron` and `gobby pipelines` still report
+      daemon errors. symbol: `_dae...'
+    matched_artifact_ref: src/gobby/install/shared/skills/gobby/catalog.json
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 58dc4a1897a5dd74758cf51e6bade9247bb6a1682271a655e6869cd3f776d325
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23849'
+    validation_criteria_snippet: '2.3.1: The CLI has no `build`, `profiles` or `tasks
+      repair-lifecycle` command, and `gobby cron` and `gobby pipelines` still report
+      daemon errors. symbol: `_dae...'
+    matched_artifact_ref: gobby build
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 3a320e454cb27aea88f97053b32c1da389881f0785c3b03baba0d9ad61467718
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: SystemAutomationLoop
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 2c609f34e21774f08725c5facf78b357dcde77a2687d3bd5dca36ee63898fad3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: src/gobby/storage/cron_models.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: b3d9137901610f612a0a1317013c3375dcac41222b911631e2eadd134afdeecc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: close_task
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: db759bd0aa2c7ffcd6c4f3e1ee1376935479397f56d7534152f1b3c6945fc74c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: src/gobby/system_automation.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: e08516b99021cf63f453c2ff8b8a7ba89bc834278b4243ac4fd122b849fd6206
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: tests/sessions/test_mailbox.py::TestMailboxBroadcast::test_rejects_unknown_target
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.6
+  plan_node_hash: ff9b57408a412d4d069daa850a6d6c6b7a51d4b0cc0bba245e6ecbf081b49f45
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23850'
+    validation_criteria_snippet: '2.4.1: The automation loop sweeps stale claims and
+      runs pipeline maintenance without dispatching projects, and its snapshot has
+      no dispatch keys. symbol: `Syst...'
+    matched_artifact_ref: automation dispatch
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 06f757a1d3e0dbb02de059dbfe57d4e807ce94d53a024e8ff8767f43981dedff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23851'
+    validation_criteria_snippet: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`,
+      `src/gobby/config/build.py` and `src/gobby/storage/build_history.py` no longer
+      exist, and the daemon modules im...'
+    matched_artifact_ref: src/gobby/runner_init/storage.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: d7cd669a7dafa7c49eb910249da3efa002daa1818d744467991c37ffbe11135a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23851'
+    validation_criteria_snippet: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`,
+      `src/gobby/config/build.py` and `src/gobby/storage/build_history.py` no longer
+      exist, and the daemon modules im...'
+    matched_artifact_ref: tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: a4ee34db7fdbad223e59b4d39db745a96f3b249a628ec403392183f3b05b4801
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23851'
+    validation_criteria_snippet: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`,
+      `src/gobby/config/build.py` and `src/gobby/storage/build_history.py` no longer
+      exist, and the daemon modules im...'
+    matched_artifact_ref: tests/storage/tasks/test_runtime_dispatch_mutex.py::test_acquire_link_release_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 74be2759e3f1e5ba2d63f9315c94b73dee276565e6c9c078175e724527e458f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23851'
+    validation_criteria_snippet: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`,
+      `src/gobby/config/build.py` and `src/gobby/storage/build_history.py` no longer
+      exist, and the daemon modules im...'
+    matched_artifact_ref: src/gobby/sync/integrity.py
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: 1296c82ee60803304939671d48c9e8dea5b7ca0d5c4a2acdaf3540577043e5d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23851'
+    validation_criteria_snippet: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`,
+      `src/gobby/config/build.py` and `src/gobby/storage/build_history.py` no longer
+      exist, and the daemon modules im...'
+    matched_artifact_ref: CLAUDE.md
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 915256f9f6beb59fff658b3d594c773f83bb2f5e4154c28013508881cfe2523d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23852'
+    validation_criteria_snippet: '3.1.1: No bundled definition named `merge-worker`
+      exists, and the bundled agent contract passes without it. test: `tests/workflows/test_retired_bundled_definit...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: b50288f0e66b896f9a987f5b9c61123346130580b4e2317d4107d59a93c1f88e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23852'
+    validation_criteria_snippet: '3.1.1: No bundled definition named `merge-worker`
+      exists, and the bundled agent contract passes without it. test: `tests/workflows/test_retired_bundled_definit...'
+    matched_artifact_ref: src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 974fa7e71f3c2d62457ed8f158c9aadb6def9399d06dd5a485a3c35e85f50d2e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23852'
+    validation_criteria_snippet: '3.1.1: No bundled definition named `merge-worker`
+      exists, and the bundled agent contract passes without it. test: `tests/workflows/test_retired_bundled_definit...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 52055fe2336559be4b91bb53c8162cc0e5d2783709f246e923a19d05fb428369
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23853'
+    validation_criteria_snippet: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
+      `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
+      exists. ...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 740f27fe1af91a2a5ec4ae07bfcfc99a182835361efa6e9278c16b619cb38f58
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23853'
+    validation_criteria_snippet: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
+      `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
+      exists. ...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 29122d3e472c47a62b3f1fd319d9049eea3c1da15b0f67192ee6cd6234d4b069
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23853'
+    validation_criteria_snippet: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
+      `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
+      exists. ...'
+    matched_artifact_ref: tests/mcp_proxy/test_plans_tools.py::test_plan_tool_schemas_and_happy_path
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: c29d5f9f7fab5b4abe896263129b055b29a8098dfed82831e96352fa48eaaa35
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23853'
+    validation_criteria_snippet: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
+      `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
+      exists. ...'
+    matched_artifact_ref: plan-adversary-taskless-old
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: c521bd50ae4ae642bb9e2a112da57785c1f26bcdf85fa3739d9158b85ca0f44b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23853'
+    validation_criteria_snippet: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
+      `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
+      exists. ...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 48e475343dcb4177f8e8a31a228585cd6a2598f7a7f3b433e15fc3c4aa40e0dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23854'
+    validation_criteria_snippet: '3.3.1: No bundled definition named `analyst`, `architect`,
+      `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
+      or `qa-dev` e...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: d4ade8cb430e53042338b208c360f8157c56192ce9c68ced6802efdcdadf29cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23854'
+    validation_criteria_snippet: '3.3.1: No bundled definition named `analyst`, `architect`,
+      `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
+      or `qa-dev` e...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 2d42b853f61dd436a5057b81ed9c4897349772158f253fb04e3b64a61be6b4d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23854'
+    validation_criteria_snippet: '3.3.1: No bundled definition named `analyst`, `architect`,
+      `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
+      or `qa-dev` e...'
+    matched_artifact_ref: tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_with_real_bundled_agents
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 920987bf71a5b88d19268a9f4c92d464c1a747bd9d300c3419e8f925fd65e56b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23854'
+    validation_criteria_snippet: '3.3.1: No bundled definition named `analyst`, `architect`,
+      `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
+      or `qa-dev` e...'
+    matched_artifact_ref: tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.5
+  plan_node_hash: 46f25d19c0185c2182060f09570871e8bce63f6550299c8cf6e4ce26f7d52b97
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23854'
+    validation_criteria_snippet: '3.3.1: No bundled definition named `analyst`, `architect`,
+      `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
+      or `qa-dev` e...'
+    matched_artifact_ref: tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: 3b23ef9088b1bbe3ddd8e5f570531ebd24401d6d357f51f121873ac5a421e7ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23855'
+    validation_criteria_snippet: '3.4.1: `epic-reviewer` reviews open and closed epics
+      on one `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
+      test: `tests/agents...'
+    matched_artifact_ref: tests/agents/test_epic_reviewer_definition.py::test_review_step_ends_the_run_without_stage_tools
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.2
+  plan_node_hash: d5ee5ece5adc8a01c69a6785237a32e8f534500d8d1d92a65e58f07b8bc96c00
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23855'
+    validation_criteria_snippet: '3.4.1: `epic-reviewer` reviews open and closed epics
+      on one `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
+      test: `tests/agents...'
+    matched_artifact_ref: tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.3
+  plan_node_hash: 15115534ba1640467aced5906fcba0c241de098f84b2129ce5e2bb0fae415e93
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23855'
+    validation_criteria_snippet: '3.4.1: `epic-reviewer` reviews open and closed epics
+      on one `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
+      test: `tests/agents...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.4
+  plan_node_hash: d7a5490805561a24bd0f0445312c066d21ef0c888318ade262f946458cdcd0b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23855'
+    validation_criteria_snippet: '3.4.1: `epic-reviewer` reviews open and closed epics
+      on one `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
+      test: `tests/agents...'
+    matched_artifact_ref: tests/agents/test_tech_writer_definition.py::test_handoff_transitions_to_end_agent_run_termination
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.5
+  plan_node_hash: 00c438965b698d562a61098059d2923e008f5bf909cfa17d7efe3639b71e5635
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23855'
+    validation_criteria_snippet: '3.4.1: `epic-reviewer` reviews open and closed epics
+      on one `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
+      test: `tests/agents...'
+    matched_artifact_ref: complete_stage
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: c047f9a1737410fa6fc3c2a9fae6702cbb12af53866316c6686cd00b09b461a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: f9586372277b185443dcf1df48b54c44a3ca496264e7f67c375b7ba45a2e263c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: tests/agents/test_bundled_agent_contract.py::test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: a67acb4570ba95e625a49f5db337eb595088ae799230cb3ef8bd319f1866b990
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: create_stages_router
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: e4c62d351c06e2c0997a82bb01ab9a6b065e00d397fa5d78c90eecc722847439
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.5
+  plan_node_hash: 033a13ef92f1cb7eb6e913a64eabeb559555311665afc955982d0d3cb3c7c168
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.6
+  plan_node_hash: 56822dc82d634a6f5d94be114751106d58f841e60bb4d5f1bbc0cebe44f9c25a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23856'
+    validation_criteria_snippet: '3.5.1: gobby-tasks and gobby-tasks-ops register
+      none of the 20 removed tools, and their registered inventory matches the independent
+      classification. test: `tes...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: ef346f2f6a72db6c1b9838e4c45c78f39bb4380bdff4153aaa8b17d6260d365b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23857'
+    validation_criteria_snippet: '4.1.1: The task projection has no current stage,
+      merge readiness or automation column, and projected state is closed, escalated
+      or ready. test: `tests/tasks/te...'
+    matched_artifact_ref: tests/tasks/test_serialize_task_state.py::test_new_shape
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: dbe5bb1bbdd93b1262c525611be5cdc44b28f72a0c9c4e306b0259f41fd5fe7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23857'
+    validation_criteria_snippet: '4.1.1: The task projection has no current stage,
+      merge readiness or automation column, and projected state is closed, escalated
+      or ready. test: `tests/tasks/te...'
+    matched_artifact_ref: current_stage_state
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 2a0f691b4388ab32d74a4d75930c1da1a2323ee98b97b20e1b8fe6f5f034b98c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23857'
+    validation_criteria_snippet: '4.1.1: The task projection has no current stage,
+      merge readiness or automation column, and projected state is closed, escalated
+      or ready. test: `tests/tasks/te...'
+    matched_artifact_ref: tests/workflows/test_pipeline_heartbeat.py::test_stale_task_with_terminal_agent_run_recovered
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 1c2b92957274b222613b6e34ac31d48b7a8d212a61654c7f6058d89b20f34c26
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23857'
+    validation_criteria_snippet: '4.1.1: The task projection has no current stage,
+      merge readiness or automation column, and projected state is closed, escalated
+      or ready. test: `tests/tasks/te...'
+    matched_artifact_ref: web/src/types/tasks.ts
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 3025ceb27d15d2f68d590646cd9b9273563ef7b119ba56db18d0804fae5daec7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23858'
+    validation_criteria_snippet: '4.2.1: Task storage has no stage modules, stage
+      managers or bundled stage registry, and startup syncs none. behavior: "stages_registry"
+      absent from `src/gobby/...'
+    matched_artifact_ref: stages_registry
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 3a2dc8e475503b45c4bd933ec88a1a38d3c51b53f5697f6e953dfd8aafd63fe3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23858'
+    validation_criteria_snippet: '4.2.1: Task storage has no stage modules, stage
+      managers or bundled stage registry, and startup syncs none. behavior: "stages_registry"
+      absent from `src/gobby/...'
+    matched_artifact_ref: src/gobby/storage/tasks/_close.py
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 6268f33d0e5eb43fbf8ba1c775cd3582c2853e8fbdd918757b1bf4ecfe8c6669
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23858'
+    validation_criteria_snippet: '4.2.1: Task storage has no stage modules, stage
+      managers or bundled stage registry, and startup syncs none. behavior: "stages_registry"
+      absent from `src/gobby/...'
+    matched_artifact_ref: allow_automation
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 46aea99e6aeaac890c3f71fa7ba9254578b5f58a9eeb27c1c8957e172dafd181
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23858'
+    validation_criteria_snippet: '4.2.1: Task storage has no stage modules, stage
+      managers or bundled stage registry, and startup syncs none. behavior: "stages_registry"
+      absent from `src/gobby/...'
+    matched_artifact_ref: gobby build stop
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: c80058d31ac73406d7393428d674e83ac82b880d3ad90e17a8d17675df6134de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23859'
+    validation_criteria_snippet: '5.1.1: The tasks capability has no `reviews` topic,
+      and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby...'
+    matched_artifact_ref: reviews.md
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: d4c9a421c6110fba7b87b071bf148418362b3da9da5b250bc8ea91551ee3aadf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23859'
+    validation_criteria_snippet: '5.1.1: The tasks capability has no `reviews` topic,
+      and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby...'
+    matched_artifact_ref: allow_automation
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 0ead9e602827f9655f504de27f29145394f414aeb2144b1316dc4b4a83a2ff91
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23859'
+    validation_criteria_snippet: '5.1.1: The tasks capability has no `reviews` topic,
+      and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby...'
+    matched_artifact_ref: gobby build
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: aaa9a0fd7f24cdeca72f77b1ded38f868029c1cbc81999ac8a56a094bba373e1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23859'
+    validation_criteria_snippet: '5.1.1: The tasks capability has no `reviews` topic,
+      and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby...'
+    matched_artifact_ref: gobby build
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: 71e75289da5a6b52c1c7e181ab7d730144d43b6b2394f713cca07874474a7a1c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23859'
+    validation_criteria_snippet: '5.1.1: The tasks capability has no `reviews` topic,
+      and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby...'
+    matched_artifact_ref: build capability
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: cdf0ba1806ae4a1d61b40156028927453200ce2f45135524619e2c166c6eb16b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23860'
+    validation_criteria_snippet: '5.2.1: The dispatch guide is gone, and the reference
+      library passes with every audit anchor following its renamed or removed heading.
+      behavior: "dispatch.md" a...'
+    matched_artifact_ref: dispatch.md
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 01429e91dd99dd3de2351793b4064125a4c37a361b436fd8e0376432f55d5c27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23860'
+    validation_criteria_snippet: '5.2.1: The dispatch guide is gone, and the reference
+      library passes with every audit anchor following its renamed or removed heading.
+      behavior: "dispatch.md" a...'
+    matched_artifact_ref: let the build loop run
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 5783c234f5e957b0d7cf97f4069ff0c4091e2f999a443df75a9e9be33ab5a2de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23860'
+    validation_criteria_snippet: '5.2.1: The dispatch guide is gone, and the reference
+      library passes with every audit anchor following its renamed or removed heading.
+      behavior: "dispatch.md" a...'
+    matched_artifact_ref: '## Stage Manifests'
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: a172f5dd6e7cb5038ba48d9d65f3f63db92a8ee67888d65d0fcd53f0033544e5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23860'
+    validation_criteria_snippet: '5.2.1: The dispatch guide is gone, and the reference
+      library passes with every audit anchor following its renamed or removed heading.
+      behavior: "dispatch.md" a...'
+    matched_artifact_ref: max_active_agents
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 4bd4f38baac7480a18d864cf4d70e8a8bf1114a031449c82351734b8d1e444d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23860'
+    validation_criteria_snippet: '5.2.1: The dispatch guide is gone, and the reference
+      library passes with every audit anchor following its renamed or removed heading.
+      behavior: "dispatch.md" a...'
+    matched_artifact_ref: taskless-old
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: 4219e2bcf05136d1bcece38be510e26cdb8a7e46875b8fb45edf7aee27d6d5a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23861'
+    validation_criteria_snippet: '6.1.1: Migration 465 drops the six build and stage
+      tables, the four automation columns and the stage bucket function, and re-buckets
+      stage-derived tasks to `re...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/465_retire_build_and_stages.sql
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: d9e2375edccb4f9997fc4ee8b7cb0abe1e6480be09027a14fd39761fc88b1e87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23861'
+    validation_criteria_snippet: '6.1.1: Migration 465 drops the six build and stage
+      tables, the four automation columns and the stage bucket function, and re-buckets
+      stage-derived tasks to `re...'
+    matched_artifact_ref: crates/gcore/src/schema/runner_tests.rs::checkout_mode_migration_preserves_modes_and_agent_settings
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 06609c61b58cc205d252da8377402a447e44e269e83bc0469c2a53c380ce5b70
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23861'
+    validation_criteria_snippet: '6.1.1: Migration 465 drops the six build and stage
+      tables, the four automation columns and the stage bucket function, and re-buckets
+      stage-derived tasks to `re...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.4
+  plan_node_hash: e5aa933d66acbcd0b9b17c35dc9872c42a2f3ec02552a8bade14e98e6d9b3ca9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23861'
+    validation_criteria_snippet: '6.1.1: Migration 465 drops the six build and stage
+      tables, the four automation columns and the stage bucket function, and re-buckets
+      stage-derived tasks to `re...'
+    matched_artifact_ref: task_stages_registry
+  deferral_target: null
+  detail: ''

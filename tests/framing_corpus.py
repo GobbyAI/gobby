@@ -38,6 +38,7 @@ REDIRECT_RULES = frozenset(
         "no-invalid-git-flags",
         "no-wrapped-validation-command",
         "prefer-gcode-for-source-read",
+        "refuse-task-outside-lane",
         "require-bash-skill",
         "require-build-coordinator-for-gobby-build",
         "require-c-skill",
