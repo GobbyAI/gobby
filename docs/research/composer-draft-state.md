@@ -282,6 +282,14 @@ compaction sender.
   classification and the ledger block cover the limit.
 - The unknown-composer refusal and the usage-limit attention message name
   `release_composer`.
+- A wake withheld by a `gap` or `interrupt` block (for example a host ring that
+  overflowed while the daemon was down) raises one `composer_blocked` attention
+  item on the seat's session entry. It names the seat and `release_composer`
+  (`src/gobby/terminals/composer_attention.py`), and the next wake that finds the
+  block gone retires it. The interactive monitor keeps the item while the ledger
+  still blocks. Interactive seats only: the monitor sweeps spawned agents' session
+  items every pass. A wake retry whose attempt raises keeps retrying under the
+  same backoff cap.
 - The host computes `submit` without per-slot paste state. gclient sends a paste
   as `Paste`, never as `Input` wrapped in paste markers, and web input reaches
   the ledger as an operator write, not a frame. An `Input` submits on a CR or on

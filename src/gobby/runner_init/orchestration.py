@@ -456,6 +456,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
         activity_probe=probe_terminal_activity,
+        attention_manager=runner.attention_manager,
     )
     runner.wake_replay_coordinator = WakeReplayCoordinator(
         message_manager=ism_manager,

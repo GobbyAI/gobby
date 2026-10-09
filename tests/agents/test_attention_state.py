@@ -21,6 +21,7 @@ from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.discovery import seed_external_terminal
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
 from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
@@ -724,3 +725,55 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     recovered = manager.get(f"session:{session.id}")
     assert recovered is not None
     assert recovered.state is None
+
+
+@pytest.mark.asyncio
+async def test_monitor_keeps_a_composer_block_item_until_the_ledger_clears(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+) -> None:
+    """A quiet pane does not retire the item a withheld wake raised for a blocked composer."""
+    manager = _attention_manager(temp_db)
+    session = _interactive_session(session_manager, sample_project)
+    terminal = TerminalManager(temp_db).get_live_for_session(session.id)
+    assert terminal is not None
+    composer_ledger.record_spawn(str(terminal.id), "")
+    composer_ledger.block(str(terminal.id), "gap")
+    raised = manager.transition(
+        f"session:{session.id}",
+        state="blocked",
+        session_id=session.id,
+        reason="composer_blocked",
+        kind="non_actionable",
+        fingerprint="composer_blocked:gap",
+        payload={"message": "release_composer"},
+    )
+    assert raised.current is not None
+    sessions = MagicMock()
+    sessions.db = temp_db
+    sessions.get.side_effect = session_manager.get
+    sessions.list.return_value = [session]
+    monitor = InteractiveAttentionMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        session_manager=sessions,
+        attention_manager=manager,
+        prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
+        registry=runtime_registry(LifecycleRuntime(snapshot_text="Working normally")),
+    )
+
+    await monitor._check_attention_panes(active_runs=[])
+
+    kept = manager.get(f"session:{session.id}")
+    assert kept is not None
+    assert kept.state == "blocked"
+    assert kept.attention_id == raised.current.attention_id
+
+    composer_ledger.release(str(terminal.id))
+    await monitor._check_attention_panes(active_runs=[])
+
+    retired = manager.get(f"session:{session.id}")
+    assert retired is not None
+    assert retired.state is None
