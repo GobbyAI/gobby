@@ -14,6 +14,7 @@ from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -154,6 +155,8 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
     ctx.db = mock_db
     ctx.get_current_session_id.return_value = caller
     ctx.resolve_session_id.return_value = caller
+    leases = TerminalLeaseRegistry()
+    ctx.lease_registry_resolver = lambda: leases
     register_runbook_seat_tools(registry, ctx)
     proxy = GuardProxy(registry)
     execution = cast(MagicMock, mock_execution_manager.create_execution.return_value)
@@ -201,4 +204,7 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
         report_to=None,
         worktree=None,
         lane_pane=None,
+        lane_columns=None,
+        lane_rows=None,
+        viewports=leases.viewports,
     )

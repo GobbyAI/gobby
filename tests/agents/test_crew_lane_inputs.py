@@ -1,7 +1,8 @@
 """Resolve crew-lane against isolated roster, session, workspace and worktree state."""
 
+import asyncio
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -18,8 +19,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
@@ -39,6 +42,23 @@ class LaneEnv:
     workspace: str
     pane: str
     worktree: str
+    terminal: str
+    # (rows, cols) each live gclient window shows a terminal at.
+    shown: dict[str, set[tuple[int, int]]] = field(default_factory=dict)
+
+
+def bind_terminal(db: HubDatabase, project: str, pane: str) -> str:
+    terminal = str(uuid4())
+    TerminalManager(db).create_pending(
+        terminal_id=terminal,
+        project_id=project,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal,
+        machine_id=AGENT_TEST_MACHINE_ID,
+    )
+    WorkspaceManager(db).set_pane_terminal(pane, terminal, owns_terminal=True)
+    return terminal
 
 
 @pytest.fixture
@@ -76,19 +96,37 @@ def lane_env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Pat
     workspace = workspaces.create(AGENT_TEST_MACHINE_ID, "crew")[0]
     pane = str(uuid4())
     workspaces.create_tab(workspace.id, pane_id=pane, project_id=project, title="Lane 3")
+    terminal = bind_terminal(temp_db, project, pane)
+    workspaces.set_focus_hints(
+        workspace.id,
+        project_id=project,
+        tab_id=workspaces.list_tabs(workspace.id)[0].id,
+        pane_id=pane,
+    )
     sessions.update(managers[2], terminal_context={"pane_ref": pane})
     worktree_path = tmp_path / "lane-3-idle"
     worktree_path.mkdir()
     worktree = LocalWorktreeManager(temp_db).create(project, "lane-3-idle", str(worktree_path))
     return LaneEnv(
-        temp_db, project, root, caller.id, managers[2], managers, workspace.id, pane, worktree.id
+        temp_db,
+        project,
+        root,
+        caller.id,
+        managers[2],
+        managers,
+        workspace.id,
+        pane,
+        worktree.id,
+        terminal,
+        {terminal: {(59, 205)}},
     )
 
 
-def resolve(env: LaneEnv, **overrides: str) -> dict[str, Any]:
+def resolve(env: LaneEnv, **overrides: Any) -> dict[str, Any]:
     # Import in the test body so the initial RED proves the missing resolver behavior.
     from gobby.agents.crew_lane_inputs import resolve_crew_lane_inputs
 
+    overrides.setdefault("viewports", lambda terminal: env.shown.get(terminal, set()))
     return asdict(
         resolve_crew_lane_inputs(
             env.db, caller_session_id=env.caller, lane=overrides.pop("lane", "3"), **overrides
@@ -105,6 +143,64 @@ def test_two_inputs_resolve_lane_state(lane_env: LaneEnv) -> None:
     assert manager is not None
     assert values["report_to"] == manager.ref
     assert values["project_path"] == str(lane_env.root)
+    assert (values["lane_columns"], values["lane_rows"]) == (205, 59)
+
+
+def test_viewport_sums_the_shown_tabs_panes(lane_env: LaneEnv) -> None:
+    """Every tab in a window shares its content area; only the shown tab's sizes are live."""
+    workspaces = WorkspaceManager(lane_env.db)
+    shown = str(uuid4())
+    workspaces.create_tab(lane_env.workspace, pane_id=shown, project_id=lane_env.project)
+    beside = str(uuid4())
+    workspaces.add_pane(beside, beside=shown, axis="horizontal")
+    tab = workspaces.list_tabs(lane_env.workspace)[1]
+    workspaces.set_focus_hints(
+        lane_env.workspace, project_id=lane_env.project, tab_id=tab.id, pane_id=shown
+    )
+    for pane, size in ((shown, (47, 93)), (beside, (47, 92))):
+        lane_env.shown[bind_terminal(lane_env.db, lane_env.project, pane)] = {size}
+    # The hidden Lane 3 tab's stale size never counts.
+    lane_env.shown[lane_env.terminal] = {(12, 80)}
+    values = resolve(lane_env)
+    assert (values["lane_pane"], values["lane_columns"], values["lane_rows"]) == (
+        lane_env.pane,
+        186,
+        47,
+    )
+
+
+def test_explicit_viewport_overrides_inference(lane_env: LaneEnv) -> None:
+    values = resolve(lane_env, lane_rows=40)
+    assert (values["lane_columns"], values["lane_rows"]) == (205, 40)
+    values = resolve(lane_env, lane_columns=160, lane_rows=40, viewports=None)
+    assert (values["lane_columns"], values["lane_rows"]) == (160, 40)
+
+
+@pytest.mark.parametrize("case", ["no-window", "no-focus", "unsized", "two-windows"])
+def test_unresolvable_viewport_refuses_with_candidates(lane_env: LaneEnv, case: str) -> None:
+    overrides: dict[str, Any] = {"lane_rows": 59} if case == "no-window" else {}
+    if case == "no-window":
+        overrides["viewports"] = None
+    elif case == "no-focus":
+        WorkspaceManager(lane_env.db).set_focus_hints(
+            lane_env.workspace, project_id=None, tab_id=None, pane_id=None
+        )
+    elif case == "unsized":
+        lane_env.shown.clear()
+    else:
+        lane_env.shown[lane_env.terminal].add((47, 186))
+    with pytest.raises(RunbookSeatRefusal, match="viewport.*candidates") as failure:
+        resolve(lane_env, **overrides)
+    assert "lane_rows and lane_columns" in str(failure.value)
+    if case == "two-windows":
+        assert "205x59" in str(failure.value) and "186x47" in str(failure.value)
+
+
+@pytest.mark.parametrize("size", [(11, 205), (59, 79)])
+def test_viewport_under_pane_floor_refuses(lane_env: LaneEnv, size: tuple[int, int]) -> None:
+    lane_env.shown[lane_env.terminal] = {size}
+    with pytest.raises(RunbookSeatRefusal, match="under the 80x12 pane floor"):
+        resolve(lane_env)
 
 
 @pytest.mark.parametrize("by_name", [False, True], ids=["uuid", "human-name"])
@@ -125,12 +221,17 @@ def test_explicit_overrides_replace_all_inference(lane_env: LaneEnv, by_name: bo
         worktree="custom-branch" if by_name else tree.id,
         lane_pane=pane,
         report_to=manager,
+        lane_columns=160,
+        lane_rows=48,
+        viewports=None,
     )
-    assert (values["workspace"], values["lane_pane"], values["worktree"]) == (
-        workspace.id,
-        pane,
-        tree.id,
-    )
+    assert (
+        values["workspace"],
+        values["lane_pane"],
+        values["worktree"],
+        values["lane_columns"],
+        values["lane_rows"],
+    ) == (workspace.id, pane, tree.id, 160, 48)
     report_target = SessionManager(lane_env.db).get(manager)
     assert report_target is not None
     assert values["report_to"] == report_target.ref
@@ -331,7 +432,15 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     arguments = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
-    registry = create_agents_registry(MagicMock(), session_manager=sessions, db=lane_env.db)
+    leases = TerminalLeaseRegistry()
+    window = asyncio.run(leases.attach(lane_env.terminal))
+    leases.set_viewport(window.attachment_id, 59, 205)
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=sessions,
+        db=lane_env.db,
+        lease_registry_resolver=lambda: leases,
+    )
     with session_context_for_test(child.id):
         result = registry.call_sync("check_runbook_seats", arguments)
     if ambiguous:
@@ -349,4 +458,8 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     launch = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert launch["worktree_id"] == lane_env.worktree
     assert launch["placement"]["split"]["pane"] == lane_env.pane
+    assert (launch["placement"]["split"]["columns"], launch["placement"]["split"]["rows"]) == (
+        205,
+        59,
+    )
     assert str(lane_env.root) in launch["prompt"]
