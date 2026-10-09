@@ -120,6 +120,11 @@ Masked fields in the first corpus:
 Every other grant field keeps its recorded value. `schema_identity` pins the
 migration set, so a new migration re-records `runtime_handshake`.
 
+The current handshake records migration 466 (`466_bounded_managed_rotation_drain.sql`),
+matching `src/gobby/storage/schema_expected_identity.json`. Its migration checksum is
+`54b6d53ceb2c903e1089861d250138aecf9bc6b319fc35bc11c86494e3e884e4` and its asset root is
+`fb5de6ac597d0f6f41a15a4d24480f3237db398f3a6f74325ad799693237d2e2`.
+
 ## Re-recording
 
 From the worktree root, against the isolated test hub:
