@@ -206,22 +206,25 @@ step_workflow:
         - "gobby-tasks:record_close_receipt"
         - "gobby-tasks-ops:land_commit"
         - "gobby-agents:wait_for_coordination"
-      # A message that starts with the candidate's EVENT=LANDED line, or with its
-      # CANDIDATE_VERDICT line carrying VERDICT=BOUNCE, ends the unit. Only the
-      # fields of the first line before NOTE= count, and the TASK field must name
-      # candidate_task exactly, so prose mentions of these tokens or of the task
-      # keep the unit open, as does EVENT=LAND_PENDING.
+      # A message whose first line is the candidate's EVENT=LANDED line, or its
+      # CANDIDATE_VERDICT line with VERDICT=BOUNCE as the field after SHA=, ends
+      # the unit. Fields split on single spaces: EVENT and TASK must be the first
+      # two and match exactly, and TASK_TITLE and NOTE values are never read as
+      # fields. Prose, title words, EVENT=LAND_PENDING and a message that does
+      # not start with the line keep the unit open, as does a bounce whose title
+      # contains ' SHA='.
       # candidate_task clears last because every condition reads it.
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
           when: &unit_done >-
-            [head for head in [str(tool_input.get('content')).strip()
-              .partition('\n')[0].partition(' NOTE=')[0]]
-              if 'TASK=' + str(vars.get('candidate_task')) in head.split()
-              and (head.startswith('EVENT=LANDED ')
-                or (head.startswith('EVENT=CANDIDATE_VERDICT ')
-                  and 'VERDICT=BOUNCE' in head.split()))]
+            [fields for fields in [str(tool_input.get('content'))
+              .partition('\n')[0].split(' ', 2) + ['', '']]
+              if fields[1] == 'TASK=' + str(vars.get('candidate_task'))
+              and (fields[0] == 'EVENT=LANDED'
+                or (fields[0] == 'EVENT=CANDIDATE_VERDICT'
+                  and ((' ' + fields[2]).partition(' SHA=')[2]
+                    .split(' ', 2) + ['', ''])[1] == 'VERDICT=BOUNCE'))]
           action: set_variable
           variable: candidate_received
           value: false
