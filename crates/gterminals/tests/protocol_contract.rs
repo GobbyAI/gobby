@@ -379,6 +379,7 @@ async fn event_epoch_and_cursor_are_fail_closed() -> Result<()> {
                 kind: InputKind::Input,
                 bytes: 1,
                 interrupt: None,
+                submit: false,
                 ..
             }
         ),

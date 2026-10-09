@@ -368,6 +368,8 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
     assert consumed is not None
     assert consumed.session_id == predecessor_id
     mock_schedule.assert_not_called()
+    # Only a /clear start was submitted from the composer.
+    handler._record_composer_submit.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -674,6 +676,8 @@ def test_native_bind_retries_after_clear_predecessor_expiry(
     rebound = terminals.get_live_for_session(successor_id)
     assert rebound is not None
     assert rebound.id == terminal_id
+    # The /clear submit is recorded for the successor once it holds the pane.
+    handler._record_composer_submit.assert_called_once_with(successor_id)
 
 
 def test_awaiting_handoff_row_survives_context_reuse_expiry(

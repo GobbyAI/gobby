@@ -12,6 +12,7 @@ import pytest
 from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
     NativeBatchResult,
@@ -21,6 +22,7 @@ from gobby.terminals.pane_io import (
     ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
     SUBMIT_UNVERIFIED_ERROR_CODE,
     TEXT_NOT_SUBMITTED_ERROR_CODE,
+    DrainResult,
     PaneIO,
     RuntimePaneIO,
     SubmitResult,
@@ -312,20 +314,123 @@ class _RecordingPane:
 
 
 @pytest.mark.asyncio
-async def test_clear_composer_sends_the_drain_blind() -> None:
+async def test_clear_composer_without_a_reader_drains_blind_and_records_it(
+    composer_ledger: ComposerLedger,
+) -> None:
     pane = _RecordingPane()
+    composer_ledger.record_spawn(pane.target, "")
+    composer_ledger.observe_write(pane.target, origin="daemon", kind="key", payload="escape")
 
-    assert await clear_composer(pane, "claude") == (True, None)
-    assert pane.keys == list(composer_clear_sequence("claude"))
+    assert await clear_composer(pane, "grok") == DrainResult(True)
+    assert pane.keys == list(composer_clear_sequence("grok"))
     assert pane.snapshots == 0
+    assert composer_ledger.read(pane.target).state == "empty"
 
 
 @pytest.mark.asyncio
-async def test_clear_composer_stops_at_the_first_failed_key() -> None:
+async def test_clear_composer_stops_at_the_first_failed_key(
+    composer_ledger: ComposerLedger,
+) -> None:
     pane = _RecordingPane(fail_key="ctrl_k")
+    composer_ledger.record_spawn(pane.target, "")
+    composer_ledger.observe_write(pane.target, origin="daemon", kind="text", payload="go")
 
-    assert await clear_composer(pane, "codex") == (False, "ctrl_k failed")
-    assert pane.keys == ["ctrl_u", "ctrl_k"]
+    assert await clear_composer(pane, "codex") == DrainResult(False, "ctrl_k failed")
+    assert pane.keys == ["backspace", "backspace", "ctrl_u", "ctrl_k"]
+    assert composer_ledger.read(pane.target).state == "held"
+
+
+class _CodexComposerPane:
+    """A Codex composer: a backspace removes one character, and ctrl_u, ctrl_k and
+    delete leave the text (ctrl_u on a held ``/compact`` opens the slash popup)."""
+
+    backend = "fake"
+    target = "codex-pane"
+
+    def __init__(self, ledger: ComposerLedger, *, frame: str | None = None) -> None:
+        self.ledger = ledger
+        self.text = ""
+        self.frame = frame
+        self.keys: list[str] = []
+        ledger.record_spawn(self.target, "")
+
+    async def send_key(self, key: str) -> tuple[bool, str | None]:
+        self.ledger.observe_write(self.target, origin="daemon", kind="key", payload=key)
+        self.keys.append(key)
+        if key == "backspace":
+            self.text = self.text[:-1]
+        return True, None
+
+    async def type_text(self, text: str) -> tuple[bool, str | None]:
+        self.ledger.observe_write(self.target, origin="daemon", kind="text", payload=text)
+        self.text += text
+        return True, None
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        return self.text if self.frame is None else self.frame
+
+
+def _codex_read(snapshot: str | None) -> ComposerRead:
+    if snapshot == "unclassifiable":
+        return ComposerRead("unknown")
+    line = " ".join((snapshot or "").split())
+    return ComposerRead("draft", line) if line else ComposerRead("empty")
+
+
+_WRAPPED_PROMPT = (
+    "Call get_handoff() on gobby-sessions, follow the returned handoff,\n"
+    "then continue. The previous set_handoff succeeded and compacted this\n"
+    "session even if the transcript shows that call as cancelled.\n"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["/compact\n", _WRAPPED_PROMPT])
+async def test_clear_composer_sizes_the_drain_to_held_codex_text(
+    composer_ledger: ComposerLedger, held: str
+) -> None:
+    pane = _CodexComposerPane(composer_ledger)
+    await pane.type_text(held)
+
+    result = await clear_composer(pane, "codex", _codex_read, verify_seconds=0)
+
+    assert result == DrainResult(True, verdict="left")
+    assert pane.text == ""
+    assert pane.keys == ["backspace"] * len(held) + list(composer_clear_sequence("codex"))
+    assert composer_ledger.read(pane.target).state == "empty"
+
+
+@pytest.mark.asyncio
+async def test_clear_composer_refuses_a_draft_left_by_an_unsized_drain(
+    composer_ledger: ComposerLedger,
+) -> None:
+    # An interrupt makes the held length unknown; the standard pass's eight
+    # backspaces leave most of a Codex prompt, and that positive draft refuses.
+    pane = _CodexComposerPane(composer_ledger)
+    await pane.type_text(_WRAPPED_PROMPT)
+    await pane.send_key("escape")
+
+    result = await clear_composer(pane, "codex", _codex_read, verify_seconds=0)
+
+    assert result == DrainResult(False, "the composer still shows a draft after the drain", "held")
+    assert pane.text == _WRAPPED_PROMPT[: -composer_clear_sequence("codex").count("backspace")]
+    assert composer_ledger.read(pane.target).state == "held"
+
+
+@pytest.mark.asyncio
+async def test_clear_composer_records_an_unsized_drain_on_an_unclassifiable_frame(
+    composer_ledger: ComposerLedger,
+) -> None:
+    # The gobby#15866 stall: an unknown frame after the drain proceeds; only a
+    # positive draft refuses.
+    pane = _CodexComposerPane(composer_ledger, frame="unclassifiable")
+    await pane.type_text("/compact\n")
+    await pane.send_key("escape")
+
+    result = await clear_composer(pane, "codex", _codex_read, verify_seconds=0)
+
+    assert result == DrainResult(True, verdict="unreadable")
+    assert composer_ledger.read(pane.target).state == "empty"
 
 
 #: Longer than COMPOSER_MATCH_CHARS, so a held draft matches on its first row only.

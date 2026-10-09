@@ -1,9 +1,10 @@
 # Terminal diagnostics and control
 
-Load when inspecting a terminal prompt, sending deliberate terminal input, or
-explicitly terminating a daemon-tracked terminal. Fetch the applicable
-`gobby-sessions:capture_output`, `send_keys`, or `terminate_terminal` schema. For
-cross-session messages, use `gobby-agents:send_message` instead.
+Load when inspecting a terminal prompt, sending deliberate terminal input,
+releasing a held composer, or explicitly terminating a daemon-tracked terminal.
+Fetch the applicable `gobby-sessions:capture_output`, `send_keys`,
+`release_composer`, or `terminate_terminal` schema. For cross-session messages,
+use `gobby-agents:send_message` instead.
 
 Capture once to inspect a permission prompt, trust dialog, or stalled terminal.
 Managed terminal runtimes are preferred, with tmux and then transcript-tail
@@ -21,6 +22,16 @@ Literal input defaults to true. Trailing newlines request one Enter after paste;
 nonliteral input selects named keys such as `Enter` or `C-c`. A `/fast` first
 token is refused: ask the user to run the provider speed toggle. Managed writes
 can be indeterminate; inspect the resulting state before risking duplicate input.
+
+Automatic writes (wakes, compaction, continuations, watchdog reprompts) type only
+into a composer the input ledger reads empty. `release_composer` takes another
+session's reference and starts its live terminal clean in that ledger. Call it
+only after `capture_output` shows no draft and no provider menu: a seat spawned
+before the ledger existed reads unknown until released, and a usage-limit stop
+holds the composer until a prompt is submitted in the pane or a release. A
+session cannot release its own composer. Operators can use
+`POST /api/sessions/{session_id}/release-composer`, which refuses a request whose
+`X-Gobby-Session-Id` is the target.
 
 `terminate_terminal` accepts a terminal ID or root-session reference. It applies
 the caller's project and session-tree scope before using the terminal row's

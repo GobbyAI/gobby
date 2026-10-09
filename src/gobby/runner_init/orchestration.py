@@ -14,7 +14,6 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stuck_detector import StuckDetector
-from gobby.events.live_wake import TerminalActivity
 from gobby.runner_init.project_purge import init_project_purge
 from gobby.runner_init.services import mark_service_degraded
 from gobby.runner_init.terminal_wiring import init_terminal_wiring, wake_write_services
@@ -42,7 +41,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     """Send complete composer-clear/wake sequences in one native-host request."""
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
     from gobby.events.wake import CONTINUE_WAKE_MESSAGE
-    from gobby.terminals.composer import composer_clear_sequence
+    from gobby.terminals.composer_ledger import composer_drain_keys
     from gobby.terminals.native_runtime import NativeBatchFailure, NativeBatchOperation
     from gobby.terminals.runtime import (
         AutomaticWriteQuarantined,
@@ -63,7 +62,11 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     for target in targets:
         operations = [
             NativeBatchOperation(kind="key", payload=key)
-            for key in (composer_clear_sequence(target.cli_source) if target.drain else ())
+            for key in (
+                composer_drain_keys(str(target.terminal_id), target.cli_source)
+                if target.drain
+                else ()
+            )
         ]
         operations.extend(
             [
@@ -278,7 +281,7 @@ async def _drain_composer_before_wake(
     reply did. This mirrors the watchdog's ``idle-reprompt-clear`` before
     ``idle-reprompt``.
     """
-    from gobby.terminals.composer import composer_clear_sequence
+    from gobby.terminals.composer_ledger import composer_drain_keys
     from gobby.terminals.write_coordinator import WriteRequest
 
     clear_key = f"wake-clear:{terminal.id}"
@@ -295,7 +298,7 @@ async def _drain_composer_before_wake(
                 kind="key",
                 payload=key,
             )
-            for key in composer_clear_sequence(cli_source)
+            for key in composer_drain_keys(str(terminal.id), cli_source)
         ],
         latch=False,
     )
@@ -444,9 +447,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         if processor is not None:
             await processor.flush_session(session_id)
 
-    async def probe_activity(session: Any, terminal: Any | None) -> TerminalActivity:
-        return await probe_terminal_activity(runner, session, terminal)
-
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
@@ -455,7 +455,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,
-        activity_probe=probe_activity,
+        activity_probe=probe_terminal_activity,
     )
     runner.wake_replay_coordinator = WakeReplayCoordinator(
         message_manager=ism_manager,

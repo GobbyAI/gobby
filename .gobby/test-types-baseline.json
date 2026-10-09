@@ -511,26 +511,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/watchdog/test_droid_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 155,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, object]]\"; expected \"list[dict[str, object] | str | bytes]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_droid_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/watchdog/test_qwen_reader.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 151,
-      "message": "Argument 2 to \"_write\" has incompatible type \"list[dict[str, object]]\"; expected \"list[dict[str, object] | str | bytes]\"",
-      "occurrences": 1,
-      "path": "tests/agents/watchdog/test_qwen_reader.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/ai/test_audio_capabilities.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 286,
