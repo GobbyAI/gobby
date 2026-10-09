@@ -208,8 +208,9 @@ step_workflow:
         - "gobby-agents:wait_for_coordination"
       # A message that starts with the candidate's EVENT=LANDED line, or with its
       # CANDIDATE_VERDICT line carrying VERDICT=BOUNCE, ends the unit. Only the
-      # fields of the first line before NOTE= count, so prose mentions of these
-      # tokens or of the task keep the unit open, as does EVENT=LAND_PENDING.
+      # fields of the first line before NOTE= count, and the TASK field must name
+      # candidate_task exactly, so prose mentions of these tokens or of the task
+      # keep the unit open, as does EVENT=LAND_PENDING.
       # candidate_task clears last because every condition reads it.
       on_mcp_success:
         - server: gobby-agents
@@ -217,7 +218,7 @@ step_workflow:
           when: &unit_done >-
             [head for head in [str(tool_input.get('content')).strip()
               .partition('\n')[0].partition(' NOTE=')[0]]
-              if str(vars.get('candidate_task')) in head
+              if 'TASK=' + str(vars.get('candidate_task')) in head.split()
               and (head.startswith('EVENT=LANDED ')
                 or (head.startswith('EVENT=CANDIDATE_VERDICT ')
                   and 'VERDICT=BOUNCE' in head.split()))]

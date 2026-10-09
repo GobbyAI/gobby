@@ -248,6 +248,8 @@ async def _code_reviewer(run: SeatRun) -> None:
             f"NOTE=EVENT=LANDED follows; no VERDICT=BOUNCE needed",
             f"Reviewer note: EVENT=LANDED TASK={task} follows",
             f"EVENT=LANDED TASK=#999 SHA=abc NOTE=landed after TASK={task}",
+            f"EVENT=LANDED TASK=#999 TASK_TITLE='Follow-up to {task}' SHA=abc",
+            f"EVENT=LANDED TASK={task}9 SHA=abc",
         ):
             await run.call(*SEND, {"content": content})
             assert run.step == "verdict"
