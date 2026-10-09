@@ -419,7 +419,8 @@ def safe_gobby_home_dir() -> Iterator[Path]:
     """Session-scoped temp directory for safe Gobby home.
 
     The home is seeded with the machine identity the process resolved before
-    home isolation. Collection-time ``require_machine_id()`` calls and the
+    home isolation, or an identity created only in this temporary home.
+    Collection-time ``require_machine_id()`` calls and the
     schema seed's machines row both use that identity; without the file, any
     ``clear_cache()`` (e.g. tests/adapters/test_codex_machine_id.py) makes the
     next derivation mint a fresh uuid under this empty home, orphaning every
@@ -429,10 +430,11 @@ def safe_gobby_home_dir() -> Iterator[Path]:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         home = Path(tmpdir)
-        machine_id = get_machine_id()
-        if machine_id:
-            (home / "machine_id").write_text(f"{machine_id}\n")
-        yield home
+        with patch.dict(os.environ, {"GOBBY_HOME": str(home)}):
+            machine_id = get_machine_id()
+            if machine_id:
+                (home / "machine_id").write_text(f"{machine_id}\n")
+            yield home
 
 
 @pytest.fixture
@@ -715,7 +717,7 @@ def mock_daemon_config() -> "MagicMock":
 
 
 @pytest.fixture(scope="session")
-def _session_machine_identity() -> str | None:
+def _session_machine_identity(safe_gobby_home_dir: Path) -> str | None:
     """The machine identity resolved once for the whole test session."""
     from gobby.utils.machine_id import get_machine_id
 
