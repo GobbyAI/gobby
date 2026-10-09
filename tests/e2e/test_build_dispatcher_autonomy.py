@@ -30,6 +30,7 @@ from gobby.storage.tasks._stage_types import StageManifestSpec
 from gobby.storage.terminals import TerminalManager
 from gobby.system_automation import SystemAutomationLoop
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
@@ -923,6 +924,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
 async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_reprompt(
     temp_db: Any,
     sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
 ) -> None:
     """A stalled planner still gets Enter nudges and later a semantic handoff prompt."""
     from gobby.agents.sync import sync_bundled_agents
@@ -977,7 +979,10 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     run_manager.update_runtime(run.id, pid=12345)
     _live_run = run_manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=run_manager.db, session_name="gobby-idle-planner")
+    live = make_live_terminal(_live_run, db=run_manager.db, session_name="gobby-idle-planner")
+    # The daemon records each spawn clean in its bound ledger; the watchdog's composer
+    # gate refuses automatic writes to a terminal the ledger never tracked.
+    composer_ledger.record_spawn(live.id, "")
 
     stored_run = run_manager.get(run.id)
     assert stored_run is not None
