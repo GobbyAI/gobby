@@ -317,13 +317,18 @@ def restore_hub_backup(
                 backup_root,
                 expected_sha256=consumed_artifacts[FILES_ARCHIVE_RELPATH].sha256,
             )
-            restore_postgres_globals(database_url, backup_root / GLOBALS_DUMP_RELPATH)
+            restore_postgres_globals(
+                database_url,
+                backup_root / GLOBALS_DUMP_RELPATH,
+                expected_sha256=consumed_artifacts[GLOBALS_DUMP_RELPATH].sha256,
+            )
             result = restore_postgres_backup(
                 backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
                 clean=clean,
                 allow_unverified=True,
                 gobby_home=get_gobby_home(),
                 database_url=database_url,
+                expected_sha256=consumed_artifacts[POSTGRES_DUMP_RELPATH].sha256,
             )
             reconcile_restored_principals(database_url)
     except FilesHomeArchiveError as exc:
@@ -534,7 +539,15 @@ def _archive_volumes(
                     )
         except Exception as exc:
             if archive_error is not None:
-                raise click.ClickException(f"{archive_error}; {exc}") from archive_error
+                if isinstance(archive_error, KeyboardInterrupt):
+                    archive_detail = "Volume archive interrupted (KeyboardInterrupt)"
+                    if str(archive_error):
+                        archive_detail += f": {archive_error}"
+                else:
+                    archive_detail = f"Volume archive failed: {archive_error}"
+                raise click.ClickException(
+                    f"{archive_detail}; Service restart also failed: {exc}"
+                ) from archive_error
             raise
 
 

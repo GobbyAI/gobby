@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,7 +16,9 @@ import jsonschema
 import pytest
 from click.testing import CliRunner, Result
 
+from gobby.cli import postgres_backup
 from gobby.cli._daemon_services import ServiceStartResult
+from gobby.cli.hub_backup import _stores as stores
 from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._manifest import (
     HUB_BACKUP_MANIFEST_SCHEMA_V3,
@@ -155,7 +158,9 @@ def test_restore_accepts_complete_manifest(restore_fixture: RestoreFixture, tmp_
         restore_fixture.root, expected_sha256=files_artifact.sha256
     )
     restore_fixture.globals.assert_called_once_with(
-        _TEST_DATABASE_URL, restore_fixture.root / GLOBALS_DUMP_RELPATH
+        _TEST_DATABASE_URL,
+        restore_fixture.root / GLOBALS_DUMP_RELPATH,
+        expected_sha256=restore_fixture.manifest.artifacts[1].sha256,
     )
     restore_fixture.postgres.assert_called_once_with(
         restore_fixture.root / Path(POSTGRES_DUMP_RELPATH).parent,
@@ -163,8 +168,43 @@ def test_restore_accepts_complete_manifest(restore_fixture: RestoreFixture, tmp_
         allow_unverified=True,
         gobby_home=tmp_path / "home",
         database_url=_TEST_DATABASE_URL,
+        expected_sha256=restore_fixture.manifest.artifacts[2].sha256,
     )
     restore_fixture.reconcile.assert_called_once_with(_TEST_DATABASE_URL)
+
+
+@pytest.mark.parametrize("relative_path", [GLOBALS_DUMP_RELPATH, POSTGRES_DUMP_RELPATH])
+def test_restore_rechecks_dump_changed_after_confirmation(
+    restore_fixture: RestoreFixture, monkeypatch: pytest.MonkeyPatch, relative_path: str
+) -> None:
+    def corrupt_before_restore(_prompt: str) -> bool:
+        (restore_fixture.root / relative_path).write_bytes(b"changed after verification")
+        return True
+
+    restore_fixture.confirm.side_effect = corrupt_before_restore
+    docker = Mock(return_value=subprocess.CompletedProcess([], 0, b"", b""))
+    verify_dump = Mock(side_effect=click.ClickException("unverified dump reached pg_restore"))
+    monkeypatch.setattr(subprocess, "run", docker)
+    monkeypatch.setattr(postgres_backup, "_require_managed_docker_postgres", Mock())
+    monkeypatch.setattr(
+        postgres_backup, "_managed_postgres_container", Mock(return_value="fixture")
+    )
+    monkeypatch.setattr(postgres_backup, "_verify_dump_with_pg_restore", verify_dump)
+    if relative_path == GLOBALS_DUMP_RELPATH:
+        monkeypatch.setattr(hub_cli, "restore_postgres_globals", stores.restore_postgres_globals)
+    else:
+        monkeypatch.setattr(
+            hub_cli, "restore_postgres_backup", postgres_backup.restore_postgres_backup
+        )
+
+    result = restore_fixture.invoke()
+
+    assert result.exit_code != 0, result.output
+    assert "checksum mismatch" in result.output
+    restore_fixture.confirm.assert_called_once()
+    docker.assert_not_called()
+    verify_dump.assert_not_called()
+    restore_fixture.reconcile.assert_not_called()
 
 
 @pytest.mark.parametrize("store_key", STORE_KEYS)
@@ -290,6 +330,26 @@ def test_interrupted_archive_still_restarts_services(
     assert exc.value is interruption
     stop.assert_called_once_with(tmp_path / "home")
     archive.assert_called_once_with(tmp_path / "backup", HUB_VOLUMES)
+    restart.assert_called_once_with(tmp_path / "home")
+
+
+@pytest.mark.parametrize("interrupt_text", ["", "interrupted"])
+def test_interrupted_archive_and_failed_restart_have_clear_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt_text: str
+) -> None:
+    interruption = KeyboardInterrupt(interrupt_text)
+    monkeypatch.setattr(hub_cli, "_services_stop", Mock(return_value=True))
+    monkeypatch.setattr(hub_cli, "tar_volumes", Mock(side_effect=interruption))
+    restart = Mock(return_value=ServiceStartResult("failed", "fixture restart failure"))
+    monkeypatch.setattr(hub_cli, "_services_start", restart)
+
+    with pytest.raises(click.ClickException) as exc:
+        hub_cli._archive_volumes(tmp_path / "home", tmp_path / "backup")
+
+    assert "Volume archive interrupted (KeyboardInterrupt)" in str(exc.value)
+    assert "Service restart also failed:" in str(exc.value)
+    assert "fixture restart failure" in str(exc.value)
+    assert exc.value.__cause__ is interruption
     restart.assert_called_once_with(tmp_path / "home")
 
 
