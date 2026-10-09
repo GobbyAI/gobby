@@ -4,7 +4,6 @@
 | --- | --- |
 | assistant.md | gobby#15070 |
 | orchestrator.md | gobby#14972 |
-| monitor.md | gobby#15379 |
 | archivist.md | gobby#15380 |
 | merge-manager.md | gobby#15406 |
 | inbox-manager.md | gobby#15407 |
