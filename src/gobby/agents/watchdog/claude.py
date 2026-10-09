@@ -162,7 +162,11 @@ class _ClaudeScanState:
     last_malformed_line_num: int | None = None
 
     def resumes(self, handle: BinaryIO, stat: os.stat_result) -> bool:
-        """Whether the open file is the one scanned so far, changed only by appends."""
+        """Whether the open file is the one scanned so far, changed only by appends.
+
+        Only the bytes just before the kept offset are compared, so an in-place rewrite
+        of the same inode that keeps them resumes wrongly; transcripts are append-only.
+        """
         if (self.device, self.inode) != (stat.st_dev, stat.st_ino) or self.offset > stat.st_size:
             return False
         handle.seek(self.guard_start)

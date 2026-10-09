@@ -89,12 +89,13 @@ _SNAPSHOT_ATOMS = frozenset({str, int, float, bool, type(None), bytes})
 
 
 def snapshot_variables(variables: dict[str, Any]) -> dict[str, Any]:
-    """Copy session variables for the change diff, as deepcopy would.
+    """Copy session variables for the change diff with the same equality as deepcopy.
 
     deepcopy of every hook's variables held the GIL for ~116 samples/min (#23359).
     Exact dicts and lists, the shapes decoded from the store, are walked directly;
     other values go to deepcopy with the same memo, so cycles and shared references
-    copy as they would there.
+    copy as they would there. Dict keys are shared with the source; being hashable,
+    they compare the same in the diff.
     """
     copied: dict[str, Any] = _snapshot_value(variables, {})
     return copied
