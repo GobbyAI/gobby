@@ -1,8 +1,10 @@
 """Owner-controlled task path attribution release."""
 
 import logging
+from pathlib import Path
 from typing import Any
 
+from gobby.hooks._path_scope import checkout_root
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
@@ -75,6 +77,34 @@ def _lifecycle_checkout_root(
     return ctx.get_project_repo_path(project_id, machine_id)
 
 
+def _path_operation_checkout_root(
+    ctx: RegistryContext,
+    *,
+    session_id: str,
+    project_id: str,
+    checkout_path: str | None = None,
+    fallback_path: str | None = None,
+) -> str | None:
+    """Select explicit, assigned, workspace, artifact, then primary checkout."""
+    overlay = checkout_path or _claimed_session_worktree_path(
+        ctx, session_id=session_id, project_id=project_id
+    )
+    if not overlay:
+        session = ctx.session_manager.get(session_id)
+        workspace = session.workspace_path if session is not None else None
+        if workspace:
+            # Refuse foreign machines before examining their workspace on disk.
+            ctx.session_checkout_machine_id(project_id, session, session_ref=session_id)
+            root = checkout_root(Path(workspace).resolve())
+            overlay = str(root) if root is not None else workspace
+    return _lifecycle_checkout_root(
+        ctx,
+        session_id=session_id,
+        project_id=project_id,
+        overlay_path=overlay or fallback_path,
+    )
+
+
 async def _dirty_repo_paths(repo_path: str, paths: list[str]) -> list[str]:
     result = await daemon_git.status(repo_path, paths, timeout=10)
     if not isinstance(result, GitOk):
@@ -141,18 +171,10 @@ def register_release_task_paths(
         try:
             session_id = ctx.resolve_session_id(session_ref)
             project_id = ctx.resolve_project_from_session(session_ref)
-            session = ctx.session_manager.get(session_id)
-            workspace = session.workspace_path if session is not None else None
-            checkout_root = _lifecycle_checkout_root(
+            checkout_root = _path_operation_checkout_root(
                 ctx,
                 session_id=session_id,
                 project_id=project_id,
-                overlay_path=workspace
-                or _claimed_session_worktree_path(
-                    ctx,
-                    session_id=session_id,
-                    project_id=project_id,
-                ),
             )
         except CHECKOUT_RESOLUTION_ERRORS as exc:
             return checkout_unresolved_error(exc)
@@ -272,14 +294,12 @@ def register_release_task_paths(
 
         artifacts = ctx.task_manager.artifacts.get_artifacts(resolved_task_id)
         try:
-            session_worktree_path = checkout_path or _claimed_session_worktree_path(
-                ctx, session_id=session_id, project_id=task.project_id
-            )
-            repo_path = _lifecycle_checkout_root(
+            repo_path = _path_operation_checkout_root(
                 ctx,
                 session_id=session_id,
                 project_id=task.project_id,
-                overlay_path=session_worktree_path or artifacts.worktree_path,
+                checkout_path=checkout_path,
+                fallback_path=artifacts.worktree_path,
             )
         except CHECKOUT_RESOLUTION_ERRORS as exc:
             return checkout_unresolved_error(exc)
