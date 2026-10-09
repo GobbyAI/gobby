@@ -1,6 +1,7 @@
 """Explicit crew relaunch refuses invalid targets before allocating a seat."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -107,6 +108,9 @@ async def test_resume_binds_existing_identity_and_passes_native_thread() -> None
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "Can spawn", 0)
     runner.run_storage.has_active_run_for_task.return_value = False
+    runner.run_storage.get.return_value = SimpleNamespace(
+        status="expired", worktree_id=None, clone_id=None
+    )
     handler = MagicMock()
     handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/workspace"))
     handler.build_context_prompt.return_value = "Continue"
@@ -162,6 +166,90 @@ async def test_resume_binds_existing_identity_and_passes_native_thread() -> None
     assert request.resume_session_id == "native-thread"
     assert request.cwd == "/workspace"
     persist.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_srt_verifier")
+async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path) -> None:
+    target = SimpleNamespace(
+        id="existing",
+        project_id="project",
+        source="codex",
+        external_id="native-thread",
+        status="expired",
+        agent_run_id="old-run",
+        parent_session_id="old-parent",
+        workflow_name=None,
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = target.id
+    sessions.get.return_value = target
+    runner = MagicMock()
+    runner.can_spawn.return_value = (True, "Can spawn", 0)
+    runner.run_storage.has_active_run_for_task.return_value = False
+    runner.run_storage.get.return_value = SimpleNamespace(
+        status="expired", worktree_id="lane-worktree", clone_id=None
+    )
+    lane = SimpleNamespace(
+        id="lane-worktree",
+        worktree_path=str(tmp_path),
+        branch_name="lane-3",
+        project_id="project",
+    )
+    worktrees = MagicMock()
+    worktrees.resolve_reference.return_value = lane.id
+    worktrees.get.return_value = lane
+    reused = IsolationContext(
+        cwd=lane.worktree_path,
+        branch_name=lane.branch_name,
+        worktree_id=lane.id,
+        isolation_type="worktree",
+    )
+    handler = MagicMock()
+    handler.build_context_prompt.return_value = "Continue"
+    prepared = PreparedSpawn(
+        session_id="existing",
+        agent_run_id="new-run",
+        parent_session_id="parent",
+        project_id="project",
+        workflow_name=None,
+        agent_depth=1,
+        env_vars={},
+    )
+    with (
+        patch.object(
+            implementation,
+            "get_project_context",
+            return_value={"id": "project", "project_path": "/workspace"},
+        ),
+        patch.object(implementation, "get_machine_id", return_value="machine"),
+        patch.object(
+            implementation, "prepare_reused_worktree", AsyncMock(return_value=(reused, handler))
+        ) as reuse,
+        patch.object(implementation, "WorktreeIsolationHandler", return_value=handler),
+        patch.object(implementation, "provider_mcp_config_error", return_value=None),
+        patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared),
+        patch.object(implementation, "execute_spawn", AsyncMock()) as execute,
+        patch.object(implementation, "finalize_executed_spawn", AsyncMock()),
+        patch.object(implementation, "persist_initial_step_instance_if_resolved"),
+    ):
+        result = await spawn_agent_impl(
+            prompt="Continue",
+            runner=runner,
+            session_manager=sessions,
+            parent_session_id="parent",
+            target_project_id="project",
+            resume_session_id="gobby#123",
+            reserved_run_id="new-run",
+            agent_body=make_agent_definition(name="developer", prompts={"agent": "Continue"}),
+            worktree_storage=worktrees,
+            git_manager=MagicMock(),
+            db=MagicMock(),
+        )
+        await asyncio.gather(*implementation._spawn_background_tasks.values())
+    assert result["success"] is True, result
+    assert reuse.call_args.kwargs["existing_worktree"] is lane
+    assert execute.call_args.args[0].cwd == lane.worktree_path
 
 
 @pytest.mark.asyncio

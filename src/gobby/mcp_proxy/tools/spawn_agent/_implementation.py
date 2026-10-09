@@ -61,7 +61,7 @@ from ._provider_resolution import (
     spawning_session_provider,
 )
 from ._request import build_spawn_request
-from ._resume import resolve_resume_target
+from ._resume import resolve_resume_target, resume_isolation
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import (
     _normalize_optional_model,
@@ -157,6 +157,11 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         provider = resume_target.source
+        if checkout_mode is None and not worktree_id and not clone_id:
+            # A resumed seat returns to the checkout its last run worked in.
+            worktree_id, clone_id = await asyncio.to_thread(
+                resume_isolation, resume_target, runner.run_storage
+            )
     try:
         run_lifetime = resolve_run_lifetime(agent_body, execution_mode)
     except ValueError as exc:
