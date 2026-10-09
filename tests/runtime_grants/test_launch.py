@@ -28,6 +28,35 @@ def _grant() -> GrantBundle:
     return GrantBundle.model_validate_json(_GOLDEN.read_bytes())
 
 
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+def test_managed_child_identity_matches_its_grant(tmp_path: Path, kind: str) -> None:
+    from gobby.runtime_grants.schema import GrantPrincipal
+
+    principal = GrantPrincipal.model_validate(
+        {
+            "kind": kind,
+            "machine_id": "test-machine",
+            "project_id": "test-project",
+            "execution_id": "test-owner",
+            "session_id": "test-session",
+        }
+    )
+    launch = materialize_managed_launch(
+        _grant().model_copy(update={"principal": principal}),
+        dest_dir=tmp_path,
+        signing_key=b"test-key",
+        deadline_seconds=30,
+    )
+    env = merge_child_env(launch.env)
+    assert env is not None
+    assert env["GOBBY_PROJECT_ID"] == principal.project_id
+    assert env["GOBBY_SESSION_ID"] == principal.session_id
+    owner_key = "GOBBY_AGENT_RUN_ID" if kind == "agent_run" else "GOBBY_MANAGED_EXECUTION_ID"
+    other_key = "GOBBY_MANAGED_EXECUTION_ID" if kind == "agent_run" else "GOBBY_AGENT_RUN_ID"
+    assert env[owner_key] == principal.execution_id
+    assert other_key not in env
+
+
 def test_managed_launch_publishes_capability_in_existing_private_envelope(
     tmp_path: Path,
 ) -> None:
