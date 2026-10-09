@@ -77,6 +77,8 @@ pub struct SidebarRow {
     pub last_child: bool,
     /// Ancestors with a later sibling, from the outermost branch inward.
     pub ancestor_branches: Vec<bool>,
+    /// A visible child starts below this row; continue its rule through details.
+    pub has_children: bool,
     pub selected: bool,
     /// A project card: the focused project. An agent row: the focused pane
     /// of the active tab shows its terminal (herdr "active workspace": bold
@@ -262,7 +264,8 @@ fn nest_prefix(row: &SidebarRow) -> Cow<'static, str> {
 }
 
 fn continuation_indent(row: &SidebarRow, width: u16, palette: &Palette) -> Span<'static> {
-    let indent = format!(" {}  ", tree_prefix(row, true));
+    let child_rule = if row.has_children { "│" } else { " " };
+    let indent = format!(" {}{child_rule} ", tree_prefix(row, true));
     let style = if indent.contains('│') {
         Style::default().fg(palette.overlay0)
     } else {

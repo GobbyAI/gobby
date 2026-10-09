@@ -491,6 +491,53 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
+fn parents_connect_to_their_first_child_on_both_continuation_lines() {
+    let chrome = Chrome::dark();
+    let parent = SidebarRow {
+        kind: RowKind::Agent,
+        model_slug: "codex".into(),
+        has_children: true,
+        ..SidebarRow::default()
+    };
+    let nested_parent = SidebarRow {
+        nested: true,
+        last_child: true,
+        ..parent.clone()
+    };
+    let branching_parent = SidebarRow {
+        ancestor_branches: vec![true],
+        ..nested_parent.clone()
+    };
+    for (row, prefix) in [
+        (&parent, " │ "),
+        (&nested_parent, "    │ "),
+        (&branching_parent, " │     │ "),
+    ] {
+        assert_eq!(
+            line_text(&row_second_line(row, 60, &chrome)),
+            format!("{prefix}No assigned task")
+        );
+        assert_eq!(
+            line_text(&row_third_line(row, 60, &chrome)),
+            format!("{prefix}codex")
+        );
+        for width in 0..12 {
+            for line in [
+                row_second_line(row, width, &chrome),
+                row_third_line(row, width, &chrome),
+            ] {
+                assert!(
+                    line.width() <= usize::from(width),
+                    "width {width}: {line:?}"
+                );
+                let visible_prefix: String = prefix.chars().take(usize::from(width)).collect();
+                assert!(line_text(&line).starts_with(&visible_prefix));
+            }
+        }
+    }
+}
+
+#[test]
 fn marquee_shares_one_period_and_rests_shorter_titles_at_the_start() {
     assert_eq!(
         ticker_window("abcdefghij", 12, 500, 0, TitleScrolling::Left),

@@ -287,6 +287,9 @@ fn push_children(
         .filter_map(Option::take)
         .collect();
     let count = own.len();
+    if let Some(parent) = rows.last_mut() {
+        parent.has_children = count > 0;
+    }
     for (index, mut child) in own.into_iter().enumerate() {
         child.row.nested = true;
         child.row.last_child = index + 1 == count;
@@ -412,6 +415,10 @@ mod tests {
         assert!(rows[2].nested && rows[2].last_child);
         assert_eq!(rows[1].ancestor_branches, Vec::<bool>::new());
         assert_eq!(rows[2].ancestor_branches, [false]);
+        assert!(rows[0].has_children, "parent connects to its only child");
+        assert!(rows[1].has_children, "nested parent connects to grandchild");
+        assert!(!rows[2].has_children);
+        assert!(!rows[3].has_children);
         assert!(!rows[3].nested);
         // Priority keeps the flattened order.
         let rows = arrange(
@@ -423,6 +430,7 @@ mod tests {
         );
         assert_eq!(rows[0].id, "run:c");
         assert!(!rows[0].nested);
+        assert!(rows.iter().all(|row| !row.has_children));
     }
 
     #[test]

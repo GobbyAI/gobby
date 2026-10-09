@@ -104,6 +104,7 @@ fn agents_tree_rules_continue_through_multiline_rows_and_scroll() {
         nested,
         last_child,
         ancestor_branches: ancestors,
+        has_children: id == "parent" || id == "first",
         ..SidebarRow::default()
     };
     let group = |name: &str| SidebarRow {
@@ -121,7 +122,7 @@ fn agents_tree_rules_continue_through_multiline_rows_and_scroll() {
         group("game-goblins"),
         agent("other", false, false, vec![]),
     ];
-    for (scroll, height, child_y) in [(0, 20, 5), (2, 11, 1)] {
+    for (scroll, height, child_y) in [(0, 20, 5), (1, 15, 4), (2, 11, 1)] {
         let mut chrome = Chrome::dark();
         chrome.sidebar.set_scroll(SidebarSection::Agents, scroll);
         let mut terminal = Terminal::new(TestBackend::new(32, height)).unwrap();
@@ -139,6 +140,16 @@ fn agents_tree_rules_continue_through_multiline_rows_and_scroll() {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
+        if scroll < 2 {
+            for y in child_y - 2..child_y {
+                assert_eq!(buffer[(1, y)].symbol(), "│", "parent to first child");
+                assert_eq!(buffer[(1, y)].fg, chrome.palette.overlay0);
+            }
+        }
+        for y in child_y + 1..child_y + 3 {
+            assert_eq!(buffer[(4, y)].symbol(), "│", "parent to grandchild");
+            assert_eq!(buffer[(4, y)].fg, chrome.palette.overlay0);
+        }
         for (offset, glyph) in [
             (0, "├"),
             (1, "│"),
