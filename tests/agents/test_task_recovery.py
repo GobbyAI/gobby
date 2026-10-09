@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.task_recovery import TaskRecoveryHandler
+from gobby.storage.agents._models import AgentRunListRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -58,12 +59,12 @@ class _RunManager:
     def get(self, run_id: str) -> _Run | None:
         return None
 
-    def list_by_status(
+    def list_by_status_summary(
         self,
         status: str | None = None,
         limit: int = 100,
         project_id: str | None = None,
-    ) -> list[_Run]:
+    ) -> list[AgentRunListRow]:
         return []
 
 
@@ -72,14 +73,23 @@ class _SweepRunManager(_RunManager):
 
     def __init__(self, *runs: _Run) -> None:
         self._runs = runs
+        self.detail_reads: list[str] = []
 
-    def list_by_status(
+    def get(self, run_id: str) -> _Run | None:
+        self.detail_reads.append(run_id)
+        return next((run for run in self._runs if run.id == run_id), None)
+
+    def list_by_status_summary(
         self,
         status: str | None = None,
         limit: int = 100,
         project_id: str | None = None,
-    ) -> list[_Run]:
-        return [run for run in self._runs if run.status == status][:limit]
+    ) -> list[AgentRunListRow]:
+        return [
+            AgentRunListRow(run.child_session_id, {"id": run.id})
+            for run in self._runs
+            if run.status == status
+        ][:limit]
 
 
 _MERGE_EXISTING_VARIABLES = SessionVariableManager.merge_existing_variables
@@ -460,7 +470,32 @@ async def test_terminal_sweep_does_not_revisit_settled_runs(
     list_tasks.assert_not_called()
     get_task.assert_not_called()
     merge_vars.assert_not_called()
+    assert sorted(runs.detail_reads) == ["settled-cancelled", "settled-failed"]
     assert variable_manager.get_variables(cancelled_child)["claimed_tasks"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_status", [None, "running", "success"])
+async def test_terminal_sweep_rechecks_run_after_summary(
+    temp_db: HubDatabase,
+    current_status: str | None,
+) -> None:
+    listed = _Run("changed-run", "error", None, None, None)
+    runs = _SweepRunManager(listed)
+    current = (
+        _Run(listed.id, current_status, None, None, None) if current_status is not None else None
+    )
+    task_manager = LocalTaskManager(temp_db)
+    handler = TaskRecoveryHandler(task_manager, runs, _Classifier(), run_db=_run_db)
+    with (
+        patch.object(runs, "get", return_value=current) as get_run,
+        patch.object(task_manager, "list_tasks", wraps=task_manager.list_tasks) as list_tasks,
+    ):
+        assert await handler.recover_tasks_from_terminal_agents() == 0
+
+    get_run.assert_called_once_with(listed.id)
+    list_tasks.assert_not_called()
+    assert handler._settled_run_ids == set()
 
 
 @pytest.mark.asyncio
