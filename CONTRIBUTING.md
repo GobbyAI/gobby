@@ -11,7 +11,7 @@ Thank you for your interest in contributing to Gobby! This document provides gui
 - [uv](https://github.com/astral-sh/uv) package manager
 - At least one supported AI CLI for testing:
   - [Claude Code](https://claude.ai/code)
-- Provider CLIs for the integration you are testing, such as Claude Code, Codex, Qwen CLI, Droid, or AGY
+- Provider CLIs for the integration you are testing, such as Claude Code, Codex, Droid, Grok, or AGY
   - [Codex CLI](https://github.com/openai/codex)
 
 ### Getting Started

@@ -200,7 +200,7 @@ abandonment, and keeps the payload recoverable through `get_handoff(failed_attem
 Codex receives a single interrupt press observed across the whole window, because a
 Ctrl+C that lands on its idle composer escalates toward quitting the CLI.
 Otherwise it interrupts the provider, clears its composer, submits `/compact` for
-Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
+Claude, Codex, and Grok or `/compress` for Droid, and continues on the same
 session row. Droid answers `/compress` with a confirm modal, and dispatch presses Enter
 once the modal is on screen. Droid replaces its `droid exec` backend on `/compress` and
 `/clear` under a stable TUI process, so hook enrichment records the TUI as the terminal

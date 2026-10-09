@@ -118,17 +118,16 @@ The canonical policy starts by denying the user home and the persistent
   (`src/gobby/agents/sandbox_policy.py:251-274`).
 - `gobby_write_exceptions()` adds the entire Gobby home to `write_paths`
   (`src/gobby/agents/sandbox_policy.py:225-248`).
-- `sensitive_write_roots()` protects several credential roots and
-  `GOBBY_HOME/local_cli_token` from writes. It omits
-  `GOBBY_HOME/.secret_kek`, `GOBBY_HOME/bootstrap.yaml`, and the managed SRT
-  installation (`src/gobby/agents/sandbox_policy.py:211-222`).
+- `sensitive_write_roots()` protects several credential roots from writes.
+  It omits `GOBBY_HOME/.secret_kek`, `GOBBY_HOME/bootstrap.yaml` (which holds
+  the operator's hub-issued `api_key`), and the managed SRT installation
+  (`src/gobby/agents/sandbox_policy.py:211-222`).
 - `compute_sandbox_paths()` includes every write path in the read set, then
   emits the broad deny and allow lists together
   (`src/gobby/agents/sandbox.py:573-687`).
 
 The regression contract explicitly requires the whole Gobby home to be
-readable and writable and checks that `local_cli_token` remains readable
-(`tests/agents/test_sandbox.py:854-881`). Under SRT v0.0.66 precedence,
+readable and writable (`tests/agents/test_sandbox.py:854-881`). Under SRT v0.0.66 precedence,
 `allowRead` wins over an overlapping `denyRead`; another deny entry cannot
 repair the exposure while the whole Gobby home remains allowed. The allow
 surface must shrink.
@@ -170,9 +169,6 @@ the daemon and PostgreSQL authentication layers.
   `CodexSandboxResolver` emits `--add-dir` for every external write path,
   including the whole Gobby home (`src/gobby/agents/sandbox.py:348-392`). Its
   resolver exposes no Gobby deny-read surface.
-- **Qwen provider-native:** affected by the broad external write inventory
-  passed through `--include-directories`
-  (`src/gobby/agents/sandbox.py:395-431`).
 - **Droid provider-native:** unsupported by Gobby's policy resolver.
   `get_sandbox_resolver("droid")` raises instead of producing an enforceable
   policy (`src/gobby/agents/sandbox.py:547-570`;
@@ -430,9 +426,12 @@ the per-run cache. For workspaces with a `.pre-commit-config.yaml`, hook executi
 uses a pre-warmed, writable per-run copy of the operator's pre-commit cache. No
 other Gobby-home or shared mutable tool path is allowed.
 
-Add `GOBBY_HOME/bootstrap.yaml`, `GOBBY_HOME/.secret_kek`,
-`GOBBY_HOME/local_cli_token`, the persistent gcode-runtime root, and
-`GOBBY_HOME/tools/srt` to the sensitive-root contract. Parent-directory allow
+Add `GOBBY_HOME/bootstrap.yaml`, `GOBBY_HOME/.secret_kek`, the persistent
+gcode-runtime root, and `GOBBY_HOME/tools/srt` to the sensitive-root contract.
+Sandboxed managed agents never read the operator's `bootstrap.yaml` or
+`.secret_kek`: the launcher injects a per-run `GOBBY_AGENT_API_TOKEN` capability
+plus identity variables, and `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` points at the
+per-run `grant.json` that the sandbox re-admits for runtime and hub config. Parent-directory allow
 entries are forbidden when they contain a sensitive descendant. Tests must
 assert effective access with real backend semantics; list membership alone is
 insufficient under SRT precedence.
@@ -700,7 +699,7 @@ Scope:
 - Make the SRT installation immutable from managed runs and extend
   `src/gobby/agents/srt_runtime.py` verification across loaded package content.
 - Add provider-native capability declarations and effective preflights for
-  Claude, Codex, Droid, Qwen, and Grok. Reject any backend that cannot prove
+  Claude, Codex, Droid, and Grok. Reject any backend that cannot prove
   the sensitive-root contract; Droid remains rejected until it has an
   enforceable resolver.
 

@@ -74,7 +74,6 @@ that a run or its assigned task has completed.
 | :--- | :--- |
 | `claude` | Claude Code hooks |
 | `codex` | Codex hook adapter or web-chat Codex backend |
-| `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
 | `grok` | Grok CLI hooks |
 | `agy` | Antigravity CLI hooks or web-chat Antigravity backend |
@@ -82,7 +81,7 @@ that a run or its assigned task has completed.
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 
 The public `get_current_session` helper accepts `claude`, `grok`,
-`qwen`, `codex`, `droid`, and `agy`. Pipeline and system sessions are created
+`codex`, `droid`, and `agy`. Pipeline and system sessions are created
 by internal automation.
 
 ## Titles, Reasoning Effort, And Reading Direction
@@ -123,7 +122,7 @@ gobby sessions list [OPTIONS]
 | :--- | :--- |
 | `-p, --project TEXT` | Filter by project name or UUID. |
 | `-s, --status TEXT` | Filter by status such as `active`, `completed`, or `awaiting_handoff`. |
-| `--source TEXT` | Filter by `claude`, `grok`, `qwen`, `agy`, `codex`, or `droid`. |
+| `--source TEXT` | Filter by `claude`, `grok`, `agy`, `codex`, or `droid`. |
 | `-n, --limit INTEGER` | Maximum rows to show. |
 | `--json` | Emit JSON. |
 
