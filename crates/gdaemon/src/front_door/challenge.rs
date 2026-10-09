@@ -39,7 +39,7 @@ fn interactive() -> String {
 pub(super) async fn answer(
     bootstrap: &Path,
     request: Request<Body>,
-) -> Result<Request<Body>, Response<Body>> {
+) -> Result<Request<Body>, Box<Response<Body>>> {
     if request.headers().contains_key("authorization") {
         return Err(grant_rejection(
             StatusCode::UNAUTHORIZED,
@@ -102,36 +102,36 @@ pub(super) async fn answer(
     response
         .headers_mut()
         .insert("cache-control", HeaderValue::from_static("no-store"));
-    Err(response)
+    Err(Box::new(response))
 }
 
-fn invalid_request() -> Response<Body> {
-    json_response(
+fn invalid_request() -> Box<Response<Body>> {
+    Box::new(json_response(
         StatusCode::BAD_REQUEST,
         serde_json::json!({"detail": "invalid challenge request"}),
-    )
+    ))
 }
 
-fn invalid_nonce() -> Response<Body> {
-    json_response(
+fn invalid_nonce() -> Box<Response<Body>> {
+    Box::new(json_response(
         StatusCode::BAD_REQUEST,
         serde_json::json!({"detail": "invalid nonce"}),
-    )
+    ))
 }
 
-fn key_unavailable() -> Response<Body> {
-    rejection(
+fn key_unavailable() -> Box<Response<Body>> {
+    Box::new(rejection(
         StatusCode::SERVICE_UNAVAILABLE,
         "key_resolver_unavailable",
         "API key resolver unavailable",
-    )
+    ))
 }
 
-fn grant_rejection(status: StatusCode, code: &str, message: &str) -> Response<Body> {
-    json_response(
+fn grant_rejection(status: StatusCode, code: &str, message: &str) -> Box<Response<Body>> {
+    Box::new(json_response(
         status,
         serde_json::json!({"code": code, "error": code, "message": message}),
-    )
+    ))
 }
 
 fn json_response(status: StatusCode, body: serde_json::Value) -> Response<Body> {
