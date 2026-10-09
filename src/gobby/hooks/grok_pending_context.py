@@ -688,7 +688,11 @@ def handle_ack_pending_inbox_envelope(
     if session_id is None:
         return False
     variable_manager = SessionVariableManager(handler._session_manager.db)
-    delivery = _delivery(variable_manager.get_variables(session_id).get(DELIVERY_VARIABLE))
+    delivery = _delivery(
+        variable_manager.get_variable_subset(session_id, (DELIVERY_VARIABLE,)).get(
+            DELIVERY_VARIABLE
+        )
+    )
     if delivery is None or delivery["envelope_id"] != envelope_id:
         return False
 

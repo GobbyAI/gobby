@@ -413,9 +413,9 @@ def register_terminal_tools(
 
         variable_manager = SessionVariableManager(db)
         submitted = (
-            variable_manager.get_variables(resolved_session_id).get(
-                "_gobby_feedback_epoch_submitted"
-            )
+            variable_manager.get_variable_subset(
+                resolved_session_id, ("_gobby_feedback_epoch_submitted",)
+            ).get("_gobby_feedback_epoch_submitted")
             is True
         )
         project_id = getattr(session, "project_id", None)

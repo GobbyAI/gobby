@@ -712,6 +712,7 @@ class TestSessionStartPreCreatedSession:
 
         assert response.decision == "allow"
         # Parent session info in context and metadata
+        assert response.context is not None
         assert "Parent session: sess-parent-456" in response.context
         assert response.metadata["parent_session_id"] == "sess-parent-456"
         assert response.metadata.get("is_pre_created") is True
@@ -1974,7 +1975,7 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
 
     handler = SimpleNamespace(_session_manager=SimpleNamespace(db=MagicMock()))
     variables = MagicMock()
-    variables.get_variables.return_value = {}
+    variables.get_variable_subset.return_value = {}
     monkeypatch.setattr(
         "gobby.workflows.state_manager.SessionVariableManager",
         MagicMock(return_value=variables),
@@ -1989,7 +1990,7 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
     assert resolve_agent_name(handler, "session-1", None) == "gobby"
     assert repository.read.call_count == 1
     assert repository.read.call_args == call(resolve_secrets=False)
-    assert variables.get_variables.return_value == {}
+    variables.get_variable_subset.assert_called_once_with("session-1", ("_agent_type",))
 
 
 def _cli_process(pid: int) -> dict[str, object]:

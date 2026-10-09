@@ -88,7 +88,12 @@ def _accessed_ids(
     """Ids fetched under ``task_id`` or no task, in first-access order across sessions."""
     ids: list[str] = []
     for session_id in session_ids:
-        records = variables.get_variables(session_id).get(ACCESSED_MEMORY_IDS_VARIABLE) or []
+        records = (
+            variables.get_variable_subset(session_id, (ACCESSED_MEMORY_IDS_VARIABLE,)).get(
+                ACCESSED_MEMORY_IDS_VARIABLE
+            )
+            or []
+        )
         for record in records:
             if not isinstance(record, dict) or record.get("task_id") not in (task_id, None):
                 continue

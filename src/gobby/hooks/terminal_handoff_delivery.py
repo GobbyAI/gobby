@@ -596,7 +596,9 @@ def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bo
 
 def _consecutive_delivery_failures(db: HubDatabase, session_id: str) -> int:
     count = (
-        SessionVariableManager(db).get_variables(session_id).get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
+        SessionVariableManager(db)
+        .get_variable_subset(session_id, (HANDOFF_DELIVERY_FAILURES_VARIABLE,))
+        .get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
     )
     return count if isinstance(count, int) and not isinstance(count, bool) else 0
 
