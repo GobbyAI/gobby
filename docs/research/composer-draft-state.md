@@ -278,6 +278,14 @@ compaction sender.
   classification and the ledger block cover the limit.
 - The unknown-composer refusal and the usage-limit attention message name
   `release_composer`.
+- The host computes `submit` without per-slot paste state. gclient sends a paste
+  as `Paste`, never as `Input` wrapped in paste markers, and web input reaches
+  the ledger as an operator write, not a frame. An `Input` submits on a CR or on
+  an escape sequence that gterm's key parser reads as unmodified Enter, because a
+  child that sets kitty flag 8 receives Enter as `\x1b[13;1u`. A `Paste` submits
+  only when the child has bracketed paste off and the text holds such an Enter.
+  A missed Enter would leave a draft until `release_composer`, so modified and
+  released Enter are the only escape forms excluded.
 
 ## Not Recommended
 
