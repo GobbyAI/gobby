@@ -140,7 +140,9 @@ class SessionVariableManager(SessionEditLedger):
             session_vars, None if project_id is None else str(project_id)
         )
 
-    def _get_variable_defaults(self, project_id: str | None) -> dict[str, Any]:
+    def _get_variable_defaults(
+        self, project_id: str | None, *, keys: Iterable[str] | None = None
+    ) -> dict[str, Any]:
         """Load enabled defaults for one project, keyed by revision.
 
         Results are cached for ``_DEFAULTS_CACHE_TTL`` seconds and dropped
@@ -152,11 +154,13 @@ class SessionVariableManager(SessionEditLedger):
         with _VARIABLE_CACHE_LOCK:
             cached = _DEFAULTS_CACHE.get(self.db, {}).get(cache_key)
         if cached is not None and (now - cached[0]) < self._DEFAULTS_CACHE_TTL:
-            return deepcopy(cached[1])
-
-        defaults = load_variable_defaults(self.db, project_id)
-        with _VARIABLE_CACHE_LOCK:
-            _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (now, defaults)
+            defaults = cached[1]
+        else:
+            defaults = load_variable_defaults(self.db, project_id)
+            with _VARIABLE_CACHE_LOCK:
+                _DEFAULTS_CACHE.setdefault(self.db, {})[cache_key] = (now, defaults)
+        if keys is not None:
+            defaults = {key: defaults[key] for key in keys if key in defaults}
         return deepcopy(defaults)
 
     def _apply_variable_defaults(
@@ -266,10 +270,13 @@ class SessionVariableManager(SessionEditLedger):
     def get_variable_subset(self, session_id: str, keys: Iterable[str]) -> dict[str, Any]:
         """Read selected layered values without materializing the session blob."""
         scope = sorted(set(_sanitize_variables_payload(list(keys))))
-        row = self.db.fetchone(_SELECT_SCOPED_VARIABLES_TEXT, (scope, session_id))
-        stored = _decode_variables_payload(row["variables"]) if row else {}
-        defaults = self._get_variable_defaults(resolve_session_project_id(self.db, session_id))
-        return {**{key: defaults[key] for key in scope if key in defaults}, **stored}
+        row = read_session_variables_row(self.db, session_id, keys=scope)
+        stored = _decode_variables_payload(row["variables"]) if row["stored"] else {}
+        project_id = row["project_id"]
+        defaults = self._get_variable_defaults(
+            None if project_id is None else str(project_id), keys=scope
+        )
+        return {**defaults, **stored}
 
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""

@@ -262,7 +262,7 @@ def test_help_stop_defers_housekeeping_and_preserves_first_work_injection() -> N
     event = _make_event(data={"prompt": "$gobby"}, metadata={"_platform_session_id": "session-1"})
     with patch("gobby.workflows.state_manager.SessionVariableManager") as variables:
         manager = variables.return_value
-        manager.get_variables.return_value = {}
+        manager.get_variable_subset.return_value = {}
         assert evaluator.evaluate(event) == (None, None)
         manager.merge_variables.assert_called_once_with(
             "session-1",
@@ -273,9 +273,9 @@ def test_help_stop_defers_housekeeping_and_preserves_first_work_injection() -> N
             },
         )
         event.event_type = HookEventType.STOP
-        manager.get_variables.return_value = {"_current_user_prompt": "$gobby"}
+        manager.get_variable_subset.return_value = {"_current_user_prompt": "$gobby"}
         assert evaluator.evaluate(event) == (None, None)
         workflow.handle.assert_not_called()
-        manager.get_variables.return_value = {"_current_user_prompt": "Implement the feature"}
+        manager.get_variable_subset.return_value = {"_current_user_prompt": "Implement the feature"}
         assert evaluator.evaluate(event) == (None, None)
         workflow.handle.assert_called_once()
