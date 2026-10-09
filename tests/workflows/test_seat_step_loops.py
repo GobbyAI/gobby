@@ -229,7 +229,11 @@ async def _code_reviewer(run: SeatRun) -> None:
     await run.load(*run.vars["required_skills"])
     assert run.step == "await"
 
-    for task, report in (("#101", "EVENT=LANDED TASK=#101"), ("#102", "VERDICT=BOUNCE TASK=#102")):
+    reports = (
+        ("#101", "EVENT=LANDED TASK=#101 SHA=abc RECEIPT=r1"),
+        ("#102", "EVENT=CANDIDATE_VERDICT TASK=#102 SHA=abc VERDICT=BOUNCE NOTE=HIGH finding"),
+    )
+    for task, report in reports:
         assert await run.admits(*WAIT)
         await run.set_flag("candidate_task", task)
         await run.set_flag("candidate_received", True)
@@ -238,10 +242,17 @@ async def _code_reviewer(run: SeatRun) -> None:
 
         await run.set_flag("verdict_ready", True)
         assert run.step == "verdict"
-        for content in (f"VERDICT=LAND TASK={task}", "EVENT=LANDED TASK=#999"):
+        # Prose mentions of the terminal tokens or of the task leave the unit open.
+        for content in (
+            f"EVENT=CANDIDATE_VERDICT TASK={task} SHA=abc VERDICT=LAND "
+            f"NOTE=EVENT=LANDED follows; no VERDICT=BOUNCE needed",
+            f"Reviewer note: EVENT=LANDED TASK={task} follows",
+            f"EVENT=LANDED TASK=#999 SHA=abc NOTE=landed after TASK={task}",
+        ):
             await run.call(*SEND, {"content": content})
             assert run.step == "verdict"
             assert run.vars["candidate_task"] == task
+            assert await run.admits("gobby-tasks-ops", "land_commit")
 
         await run.call(*SEND, {"content": report})
         assert run.step == "await"
