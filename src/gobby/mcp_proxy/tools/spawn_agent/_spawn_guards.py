@@ -10,10 +10,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.build import load_build_config
-from gobby.dispatch.constants import DISPATCH_TTL_SECONDS, MAX_ACTIVE_AGENTS
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import (
+    DISPATCH_TTL_SECONDS,
+    DispatchMutexUnavailableError,
+    RuntimeDispatchMutex,
+)
 from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
@@ -256,8 +259,6 @@ class TaskSpawnLease:
         if self._held_mutex is not None or self._db is None or self._task_id is None:
             return None
 
-        from gobby.dispatch.mutex import DispatchMutexUnavailableError, RuntimeDispatchMutex
-
         self._mutex = RuntimeDispatchMutex(
             TaskDispatchMutexManager(self._db),
             task_id=self._task_id,
@@ -380,12 +381,16 @@ def active_task_spawn_blocker(
     return None
 
 
-def max_active_agents_for_project(project_path: str) -> int:
-    try:
-        return load_build_config(project_path).max_active_agents
-    except Exception:
-        logger.debug("Failed to load build max_active_agents from %s", project_path, exc_info=True)
-        return MAX_ACTIVE_AGENTS
+def configured_max_active_agents() -> int:
+    """Read the project spawn cap from the active daemon configuration."""
+    from gobby.app_context import get_app_context
+    from gobby.config.app import DaemonConfig
+
+    container = get_app_context()
+    runtime = container.config_runtime if container is not None else None
+    if runtime is not None and runtime.ready:
+        return runtime.capture().snapshot.active.max_active_agents
+    return int(DaemonConfig.model_fields["max_active_agents"].default)
 
 
 def agent_slot_cap_refusal(
@@ -396,7 +401,7 @@ def agent_slot_cap_refusal(
     caller_session_id: str | None,
 ) -> dict[str, Any] | None:
     """Return the cap-reached refusal when the project has no free agent slot."""
-    cap = max_active_agents_for_project(project_path)
+    cap = configured_max_active_agents()
     active_count = _count_active_agents(db, project_id)
     if active_count < cap:
         return None

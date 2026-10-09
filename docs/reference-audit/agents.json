@@ -488,8 +488,8 @@
       "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/spawn_agent/_factory.py",
-        "symbol": "create_spawn_agent_registry.dispatch_batch"
+        "path": "src/gobby/mcp_proxy/tools/spawn_agent/_dispatch_batch.py",
+        "symbol": "register_dispatch_batch.dispatch_batch"
       },
       "verification": [
         "source-audit",

@@ -2627,6 +2627,17 @@
     },
     {
       "activation": "live",
+      "default": 20,
+      "description": "Maximum active agents per project.",
+      "key": "max_active_agents",
+      "machineExport": false,
+      "namespace": "max_active_agents",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 30.0,
       "description": "Timeout in seconds for establishing connections to MCP servers",
       "key": "mcp_client_proxy.connect_timeout",

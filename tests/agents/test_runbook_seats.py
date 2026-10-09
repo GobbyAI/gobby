@@ -404,7 +404,7 @@ def test_read_bound_refuses_only_past_a_full_page(
 def test_slot_capacity_not_enforced(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
     # A zero agent cap must not refuse: runbooks do not enforce slots.
     monkeypatch.setattr(
-        runbook_seat_tools, "max_active_agents_for_project", lambda path: 0, raising=False
+        runbook_seat_tools, "configured_max_active_agents", lambda: 0, raising=False
     )
     caller = _pipeline_child(env)
     _run(env, "running")

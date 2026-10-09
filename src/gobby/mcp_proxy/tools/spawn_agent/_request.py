@@ -103,3 +103,18 @@ def build_spawn_request(
         write_coordinator=getattr(runner, "write_coordinator", None),
         droid_mode=droid_mode,
     )
+
+
+def non_empty_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def first_string(mapping: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = non_empty_string(mapping.get(key))
+        if value:
+            return value
+    return None

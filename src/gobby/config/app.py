@@ -454,6 +454,11 @@ class DaemonConfig(BaseModel):
         default_factory=ProviderCapabilitiesConfig,
         description="Provider capability catalog refresh.",
     )
+    max_active_agents: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum active agents per project.",
+    )
     clones_dir: str = Field(
         default="~/.gobby/clones",
         description="Base directory for git clones (survives reboots, unlike /tmp).",

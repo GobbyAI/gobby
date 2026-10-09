@@ -739,20 +739,17 @@ Task and memory state are database-owned and must stay untracked.
 these snapshots without staging or committing them. Explicit task restore and
 memory restore commands remain available for disaster recovery and migration.
 
-## Build Defaults
+## Spawn Cap
 
-Build defaults are loaded from `~/.gobby/build.yaml`, then
-`<project>/.gobby/build.yaml`, then CLI/MCP/HTTP request flags:
+The top-level daemon config key `max_active_agents` caps active agents per project.
+It defaults to 20 and must be at least 1. Spawn admission and batch dispatch read
+the active daemon configuration, so a live config update applies to subsequent spawns:
 
 ```yaml
-max_active_agents: 10
+max_active_agents: 20
 ```
 
-`max_active_agents` is the supported build-file setting and caps concurrent
-agents for the project. Per-request CLI, MCP, and HTTP values override the file
-setting for that build.
-
-### Packaging Diagnostics
+## Packaging Diagnostics
 
 `GOBBY_SKIP_UI_BUILD=1` skips rebuilding web assets during `uv build` and uses
 the already staged `src/gobby/ui/web/dist/` files. This is useful for packaging
