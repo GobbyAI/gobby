@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.terminals import Terminal
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.terminals.composer_ledger import ComposerLedger, UnsafeReason
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -169,7 +170,7 @@ class EventHandlersBase:
         # Input typed while the dialog is open belongs to the dialog until it resolves.
         composer = self._composer_terminal(session_id)
         if composer is not None:
-            composer[0].open_wait(composer[1])
+            composer[0].open_wait(composer[1].id)
 
     def _resolve_turn_wait(
         self,
@@ -196,16 +197,20 @@ class EventHandlersBase:
         self._close_composer_wait(session_id, resolution)
 
     def _record_composer_submit(self, session_id: str) -> None:
-        """A provider submit record: the session's composer input up to now was consumed."""
+        """A provider submit record: the session's composer input up to now was consumed.
+
+        Only a native seat is adopted: the ledger observes gterm input, never tmux keys.
+        """
         composer = self._composer_terminal(session_id)
         if composer is not None:
-            composer[0].record_submit(composer[1])
+            ledger, terminal = composer
+            ledger.record_submit(terminal.id, adopt=terminal.backend == "native")
 
     def _block_composer(self, session_id: str, reason: UnsafeReason) -> None:
         """Hold automatic writes to the session's composer until a submit record or release."""
         composer = self._composer_terminal(session_id)
         if composer is not None:
-            composer[0].block(composer[1], reason)
+            composer[0].block(composer[1].id, reason)
 
     def _close_composer_wait(self, session_id: str, outcome: WaitResolution) -> None:
         """Close the dialog open on the session's composer, as the turn lifecycle clears waits."""
@@ -215,7 +220,7 @@ class EventHandlersBase:
             return
         composer = self._composer_terminal(session_id)
         if composer is not None:
-            composer[0].close_wait(composer[1], outcome)
+            composer[0].close_wait(composer[1].id, outcome)
 
     @staticmethod
     def _composer_ledger() -> ComposerLedger | None:
@@ -223,7 +228,7 @@ class EventHandlersBase:
         coordinator = app.write_coordinator if app is not None else None
         return None if coordinator is None else coordinator.composer_ledger
 
-    def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, str] | None:
+    def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, Terminal] | None:
         """The composer ledger and the live terminal bound to ``session_id``, if both exist."""
         ledger = self._composer_ledger()
         manager = getattr(self, "terminal_manager", None)
@@ -236,7 +241,7 @@ class EventHandlersBase:
                 "Failed to resolve the composer terminal for session %s", session_id, exc_info=True
             )
             return None
-        return None if row is None else (ledger, str(row.id))
+        return None if row is None else (ledger, row)
 
     def _resolve_message_processor(self) -> Any | None:
         return self._message_processor_resolver()

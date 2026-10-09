@@ -169,7 +169,8 @@ compaction sender.
   sequence number. One monotonic ledger sequence orders all events.
 - Read result `LedgerRead(state, reason, pending)`:
   - `blocked`: an unsafe marker newer than `clean_seq`, or an untracked terminal.
-    Untracked terminals include tmux rows and seats spawned before LAND.
+    Untracked terminals include tmux rows and native seats spawned before LAND that
+    have not submitted since.
   - `draft`: human input newer than `clean_seq`. Refuse without typing.
   - `held`: daemon text newer than `clean_seq`. The same payload is resubmitted with
     bare Enter (ruling 1b); a wake with a different payload clears first.
@@ -233,7 +234,10 @@ compaction sender.
   writes, so each write is counted once.
 - Seats spawned before LAND, tmux rows and an unbound ledger read `blocked`
   (`untracked`), and gates treat that as `unknown`. There is no `unverified`
-  marker.
+  marker. A provider submit record adopts an untracked native seat clean at the
+  submit, because the ledger observes its gterm input from then on. A tmux row stays
+  `blocked` after a submit, because the ledger never sees tmux keystrokes; only an
+  operator release vouches for it.
 - `_SETTLE_BEFORE_REFUSAL_SOURCES` is gone. The gates read no frame, so a
   frame painted mid-turn can no longer refuse a write, and no settle wait is
   needed before a refusal.
