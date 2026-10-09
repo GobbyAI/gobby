@@ -952,6 +952,7 @@ class TestStartStopBarriers:
             # The binary-set probe and boot-id lookup shell out; neither may see the fake Popen.
             patch("gobby.storage.schema_divergence.binary_set_apply_refusal", return_value=None),
             patch("gobby.runner_pid_record.current_boot_id", return_value="boot-test"),
+            patch("gobby.runner_pid_file.current_boot_id", return_value="boot-test"),
             patch("gobby.cli.daemon_start.subprocess.Popen", return_value=process) as popen,
             patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=0.1),
             patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True),
