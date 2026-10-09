@@ -3,6 +3,7 @@
   "cases": [
     "health_ok.json",
     "health_backend_down.json",
+    "terminal_backend_down.json",
     "config_schema.json",
     "config_values.json",
     "tasks_list.json",
@@ -15,6 +16,10 @@
   ],
   "families": {
     "health": {
+      "parity": "native",
+      "origin": "python"
+    },
+    "terminal_ws": {
       "parity": "native",
       "origin": "python"
     },

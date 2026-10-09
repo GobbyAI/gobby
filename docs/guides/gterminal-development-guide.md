@@ -114,7 +114,7 @@ Host sockets are Unix domain, mode 0600, under `~/.gobby/`:
 | Socket | Protocol | Credential |
 | --- | --- | --- |
 | `gterm-control.sock` | JSON-lines control (`spawn`, `kill`, `resize`, `write`, `grant_input`, `list`, …) | `~/.gobby/gterm-control.token` (daemon only) |
-| `gterm-frames.sock` | bincode frames (`Hello`/`Welcome`, `AttachTerminal`, `Frame`, `Input`, …) | `~/.gobby/local_cli_token` |
+| `gterm-frames.sock` | bincode frames (`Hello`/`Welcome`, `AttachTerminal`, `Frame`, `Input`, …) | Hub-issued API key from `api_key` in the client's bootstrap or its explicit key file |
 
 Golden corpus: `crates/gterminal/tests/fixtures/wire_golden/`. `gclient` attaches
 frame streams from the host and talks to the daemon only through the public
@@ -332,21 +332,22 @@ The operator supplies the remote daemon endpoint and its credential:
    tailnet address. Apply the change with a coordinated daemon restart from the
    main checkout. Ensure the daemon's HTTP port (default `60887`) is reachable
    over the tailnet and its gterm host is healthy.
-2. Securely copy that machine's `~/.gobby/local_cli_token` to an owner-only file
-   on the client machine, for example `~/.gobby/remote_local_cli_token`, and run
-   `chmod 600 ~/.gobby/remote_local_cli_token`.
+2. Provision a hub-issued key for the client machine. An enrolled remote node
+   stores its key in its own bootstrap after `gobby auth login`. An explicit
+   plaintext key file, for example `~/.gobby/remote-api-key`, must be owner-only
+   (`chmod 600 ~/.gobby/remote-api-key`).
 3. Run the client against that endpoint:
 
    ```bash
-   gclient --daemon-url http://100.101.102.103:60887 --token-file ~/.gobby/remote_local_cli_token
+   gclient --daemon-url http://100.101.102.103:60887 --token-file ~/.gobby/remote-api-key
    ```
 
 Replace the example address with the daemon's tailnet address. The client uses
 Bearer authentication for HTTP and `/ws` on that same endpoint.
-`--token-file` defaults to `~/.gobby/local_cli_token`; use the explicit file to
-keep the remote credential separate. Remote use needs no local gterm host, but
-startup refuses an unavailable remote host. Machine registration alone supplies
-neither the endpoint nor this credential.
+Without `--token-file`, the client reads `api_key` from its local bootstrap;
+use an explicit key file to select a separate remote credential. Remote use needs
+no local gterm host, but startup refuses an unavailable remote host. Machine
+registration alone supplies neither the endpoint nor this credential.
 
 ## Guard set H
 

@@ -1,14 +1,70 @@
 use super::*;
 use crate::app::{ControlState, Workspace};
 use crate::theme::ThemeName;
-use crate::ui::settings::AgentSort;
 use crate::ui::Action;
-
-/// View › Sidebar › Agents.
-const AGENTS: ContextMenuKind = ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Agents));
 
 fn labels(state: &ContextMenuState) -> Vec<&'static str> {
     state.items.iter().map(|item| item.label).collect()
+}
+
+#[test]
+fn view_menu_exposes_sidebar_controls_without_a_section_tree() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    let view = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::View),
+        (0, 0),
+    );
+    assert_eq!(
+        &labels(&view)[3..],
+        [
+            "  Show sidebar",
+            "  Pin sidebar",
+            "✓ Show all machines",
+            "✓ Show all projects",
+            "✓ Group agents by project",
+        ]
+    );
+    assert!(view.items.iter().all(|item| item.enabled));
+    chrome.sidebar.all_projects = false;
+    let view = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::View),
+        (0, 0),
+    );
+    assert_eq!(view.items[6].label, "  Show all projects");
+    assert!(!view.items[7].enabled);
+}
+
+#[test]
+fn selected_theme_and_appearance_choices_remain_enabled() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    for submenu in [Submenu::Theme, Submenu::Appearance] {
+        open_menu(&ws, &mut chrome, ContextMenuKind::Submenu(submenu), (0, 0));
+        let menu = chrome.menu.as_mut().expect("choice menu is open");
+        let selected = menu
+            .items
+            .iter()
+            .position(|item| item.label.starts_with(['✓', '●']))
+            .expect("one selected choice");
+        menu.selected = selected;
+        let selected = &menu.items[selected];
+        assert!(selected.enabled);
+        assert_eq!(selected.action, MenuAction::Noop);
+        assert_eq!(
+            activate_menu(&mut chrome).expect("enabled repick").1,
+            MenuAction::Noop
+        );
+        assert!(
+            chrome.menu.is_none(),
+            "repicking visibly dismisses the menu"
+        );
+        assert_eq!(chrome.mode, Mode::Terminal);
+    }
 }
 
 #[test]
@@ -270,8 +326,7 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    // View is the appearance and theme submenus, the monochrome toggle and
-    // the sidebar submenu, all against one margin.
+    // View keeps its sidebar controls against one margin.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
     assert_eq!(
         labels(&view),
@@ -279,7 +334,11 @@ fn menu_bar_menus_regroup_items_per_title() {
             "  Appearance: Dark ▸",
             "  Theme: Restored ▸",
             "  Monochrome",
-            "  Sidebar ▸"
+            "  Show sidebar",
+            "  Pin sidebar",
+            "✓ Show all machines",
+            "✓ Show all projects",
+            "✓ Group agents by project",
         ]
     );
     assert_eq!(
@@ -288,7 +347,11 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::OpenSubmenu(Submenu::Appearance),
             MenuAction::OpenSubmenu(Submenu::Theme),
             MenuAction::ToggleMonochrome,
-            MenuAction::OpenSubmenu(Submenu::Sidebar),
+            MenuAction::Act(Action::ToggleSidebar),
+            MenuAction::PinSidebar,
+            MenuAction::SetMachineScope(false),
+            MenuAction::Act(Action::ToggleProjectsFilter),
+            MenuAction::Act(Action::ToggleSessionsScope),
         ]
     );
     assert!(view.items.iter().all(|item| item.enabled));
@@ -431,51 +494,51 @@ fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
 }
 
 #[test]
-fn agents_view_menu_marks_the_view_in_force() {
+fn view_grouping_control_marks_the_value_in_force() {
     let ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
     let items = |chrome: &Chrome| -> Vec<(&'static str, bool)> {
-        build_menu(&ws, chrome, AGENTS, (0, 0))
-            .items
-            .into_iter()
-            .map(|item| (item.label, item.enabled))
-            .collect()
+        build_menu(
+            &ws,
+            chrome,
+            ContextMenuKind::MenuBar(MenuBarMenu::View),
+            (0, 0),
+        )
+        .items
+        .into_iter()
+        .skip(5)
+        .map(|item| (item.label, item.enabled))
+        .collect()
     };
 
-    // The defaults: the focused project's rows in tab order. Each pair
-    // marks what is in force and disables it, so choosing it is a no-op.
     assert_eq!(
         items(&chrome),
         [
-            ("✓ This project", false),
-            ("  All projects", true),
-            ("✓ Grouped", false),
-            ("  Priority", true),
+            ("✓ Show all machines", true),
+            ("✓ Show all projects", true),
+            ("✓ Group agents by project", true),
         ]
     );
 
-    // The marks follow both axes independently.
-    chrome.sidebar.all_sessions = true;
-    chrome.prefs.agent_sort = AgentSort::Priority;
+    chrome.sidebar.all_sessions = false;
     assert_eq!(
         items(&chrome),
         [
-            ("  This project", true),
-            ("✓ All projects", false),
-            ("  Grouped", true),
-            ("✓ Priority", false),
+            ("✓ Show all machines", true),
+            ("✓ Show all projects", true),
+            ("  Group agents by project", true),
         ]
     );
 
-    // The enabled choice of each pair carries the toggle its chord runs.
-    let menu = build_menu(&ws, &chrome, AGENTS, (0, 0));
+    let menu = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::View),
+        (0, 0),
+    );
     assert_eq!(
-        menu.items[0].action,
+        menu.items[7].action,
         MenuAction::Act(Action::ToggleSessionsScope)
-    );
-    assert_eq!(
-        menu.items[2].action,
-        MenuAction::Act(Action::ToggleAgentSort)
     );
 }
 
@@ -869,8 +932,8 @@ fn appearance_row_opens_its_choices_beside_it_and_saves_the_pick() {
     let enabled: Vec<bool> = choices.items.iter().map(|item| item.enabled).collect();
     assert_eq!(
         enabled,
-        [false, true, true],
-        "the one in force is marked and inert"
+        [true, true, true],
+        "the one in force stays enabled"
     );
 
     choices.selected = 1;
@@ -927,7 +990,17 @@ fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
             .into_iter()
             .map(|item| item.action)
             .collect();
-        let expected: Vec<MenuAction> = offered.iter().copied().map(MenuAction::SetTheme).collect();
+        let expected: Vec<MenuAction> = offered
+            .iter()
+            .copied()
+            .map(|name| {
+                if name == chrome.theme.name {
+                    MenuAction::Noop
+                } else {
+                    MenuAction::SetTheme(name)
+                }
+            })
+            .collect();
         assert_eq!(
             listed, expected,
             "{case}: the offered themes, in catalog order"
@@ -947,7 +1020,7 @@ fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
             let marked: Vec<&str> = choices
                 .items
                 .iter()
-                .filter(|item| !item.enabled)
+                .filter(|item| item.label.starts_with('●'))
                 .map(|item| item.label)
                 .collect();
             assert_eq!(
@@ -971,77 +1044,11 @@ fn theme_row_lists_the_offered_themes_and_each_pick_draws_and_saves() {
     assert_eq!(theme_row_label(&chrome), "  Theme: Restored ▸");
 }
 
-/// View › Sidebar › a section cascades two deep with every menu behind it
-/// open on the row that led there; left goes back one level, right opens a
-/// submenu row. Each section's submenu holds only that section's options.
+/// The flat View machine control sets the filter read by the sidebar rows.
 #[test]
-fn sidebar_submenus_cascade_and_hold_one_section_each() {
-    use super::super::modal_input::{route_modal_key, ModalOutcome};
-    use crate::key_input::KeyInput;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+fn view_machine_scope_sets_the_filter_the_rows_read() {
     let mut ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
-    let key = |code| KeyInput {
-        key: KeyEvent::new(code, KeyModifiers::NONE),
-        bytes: Vec::new(),
-    };
-    let machines = Submenu::Section(SidebarSection::Machines);
-    assert!(apply_local_menu_action(
-        &mut ws,
-        &mut chrome,
-        &MenuAction::OpenSubmenu(machines.clone())
-    ));
-    let open = chrome.menu.as_ref().expect("machines submenu");
-    assert_eq!(open.kind, ContextMenuKind::Submenu(machines.clone()));
-    assert_eq!(labels(open), ["✓ This machine", "  All machines"]);
-    let sidebar = open.parent.as_deref().expect("sidebar submenu behind");
-    assert_eq!(sidebar.kind, ContextMenuKind::Submenu(Submenu::Sidebar));
-    assert_eq!(
-        labels(sidebar),
-        [
-            "  Show sidebar",
-            "  Pin sidebar",
-            "  Machines ▸",
-            "  Projects ▸",
-            "  Agents ▸",
-            "  Terminals ▸",
-        ]
-    );
-    assert_eq!(
-        sidebar.items[sidebar.selected].action,
-        MenuAction::OpenSubmenu(machines)
-    );
-    let view = sidebar.parent.as_deref().expect("view menu behind");
-    assert_eq!(view.kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
-    assert_eq!(
-        view.items[view.selected].action,
-        MenuAction::OpenSubmenu(Submenu::Sidebar)
-    );
-
-    // Left returns to Sidebar; right on its Projects row opens Projects.
-    route_modal_key(&ws, &mut chrome, &key(KeyCode::Left));
-    let sidebar = chrome.menu.as_mut().expect("sidebar submenu");
-    assert_eq!(sidebar.kind, ContextMenuKind::Submenu(Submenu::Sidebar));
-    sidebar.selected = 3;
-    let ModalOutcome::Menu { action, .. } = route_modal_key(&ws, &mut chrome, &key(KeyCode::Right))
-    else {
-        panic!("right opens the submenu row");
-    };
-    apply_local_menu_action(&mut ws, &mut chrome, &action);
-    let projects = chrome.menu.as_ref().expect("projects submenu");
-    assert_eq!(labels(projects), ["✓ Working projects", "  All projects"]);
-    let terminals = build_menu(
-        &ws,
-        &chrome,
-        ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Terminals)),
-        (0, 0),
-    );
-    assert_eq!(
-        labels(&terminals),
-        ["New terminal", "Destroy orphaned terminals…"]
-    );
-
-    // The machine scope sets the filter the rows read.
     apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::SetMachineScope(true));
     assert_eq!(
         chrome.sidebar.machine_filter.as_deref(),

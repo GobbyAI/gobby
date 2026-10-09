@@ -231,18 +231,19 @@ maintenance singleton while the daemon is stopped.
 ### Remote node
 
 Remote bootstrap requires `hub_daemon_url` (the hub owner's HTTP origin,
-not `daemon_url`) and refuses `files_home`. Copy the hub's existing
-`local_cli_token` to the node. Remote `gobby install` authenticates with
-that token; it does not generate or rotate one.
+not `daemon_url`) and refuses `files_home`. Enroll the node with
+`gobby auth login`; it stores this machine's hub-issued key as `api_key` in
+the owner-only bootstrap. Remote `gobby install` authenticates with that key.
+Use an HTTPS hub. For an intentional non-loopback HTTP connection, pass
+`--insecure` to `gobby auth login`.
 
 ```yaml
 datastore_mode: "remote"
-hub_daemon_url: "http://<hub-host>:60887"
+hub_daemon_url: "https://<hub-host>"
 ```
 
 ```bash
-scp <hub>:~/.gobby/local_cli_token ~/.gobby/local_cli_token
-chmod 600 ~/.gobby/local_cli_token
+uv run gobby auth login
 uv run gobby install
 ```
 

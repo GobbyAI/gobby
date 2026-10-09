@@ -23,6 +23,33 @@ def _write(path: Path, content: str = "x") -> None:
     path.write_text(content)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS descriptor-path resolution")
+@pytest.mark.parametrize("inside_home", [False, True], ids=["temp-cleanup", "home-write"])
+def test_macos_relative_unlink_uses_directory_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inside_home: bool
+) -> None:
+    from tests.fixtures.external_write_audit import observe_writes
+
+    root = tmp_path / "home" / ".gobby"
+    lane = root / "worktrees" / "lane"
+    lane.mkdir(parents=True)
+    directory = root if inside_home else tmp_path / "isolated"
+    directory.mkdir(exist_ok=True)
+    target = directory / "removed.txt"
+    target.write_text("temporary")
+    monkeypatch.chdir(lane)
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        with observe_writes(root) as observer:
+            os.unlink(target.name, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+
+    expected = [f"pid={os.getpid()} os.remove: ~/.gobby/removed.txt"] if inside_home else []
+    assert observer.writes == expected
+    assert not target.exists()
+
+
 def test_ordinary_files_are_recorded_by_relative_path(tmp_path: Path) -> None:
     _write(tmp_path / "config.json")
     _write(tmp_path / "logs" / "daemon.log")

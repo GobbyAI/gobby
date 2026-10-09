@@ -122,10 +122,10 @@ pub fn machine_admits<W: WorkspaceView>(ws: &W, chrome: &Chrome, machine_id: &st
 
 /// Whether the scope and the machine filter admit `agent`.
 fn admits<W: WorkspaceView>(ws: &W, chrome: &Chrome, agent: &AgentEntry) -> bool {
-    let in_scope = chrome.sidebar.all_sessions
+    let in_scope = chrome.sidebar.all_projects
         || ws
             .focused_project()
-            .is_none_or(|focused| agent.project_id == focused);
+            .is_some_and(|focused| agent.project_id == focused);
     in_scope && machine_admits(ws, chrome, &agent.machine_id)
 }
 
@@ -207,7 +207,7 @@ pub fn agent_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow> 
     if chrome.prefs.agent_sort == AgentSort::Priority {
         candidates.sort_by_key(|candidate| Reverse(urgency(candidate.row.state)));
     }
-    if !chrome.sidebar.all_sessions {
+    if !chrome.sidebar.all_projects || !chrome.sidebar.all_sessions {
         return arrange(candidates, chrome.prefs.agent_sort);
     }
     let mut order = displayed_project_ids(ws, chrome);
@@ -306,8 +306,9 @@ pub(crate) fn agent_reference<W: WorkspaceView>(
         .session_ref
         .as_deref()
         .map_or_else(String::new, |reference| {
-            let project = (chrome.sidebar.all_sessions
-                && chrome.prefs.agent_sort == AgentSort::Priority)
+            let project = (chrome.sidebar.all_projects
+                && (!chrome.sidebar.all_sessions
+                    || chrome.prefs.agent_sort == AgentSort::Priority))
                 .then(|| project_label(ws, chrome, &agent.project_id).unwrap_or_default());
             format!(
                 "{}{reference}",

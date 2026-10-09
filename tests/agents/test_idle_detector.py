@@ -568,6 +568,20 @@ class TestComposerRead:
             ComposerRead("draft", "half-typed reply")
         )
 
+    def test_codex_narrow_pane_reads_abbreviated_warnings_footer(self) -> None:
+        """A 36-column Codex pane cuts its model row and abbreviates the warnings footer."""
+        codex = IdleDetector(BundledDetectionRegistry(), "codex")
+        secondary = "\x1b[38;2;150;150;150m"
+        tail = (
+            f"\n\n  {secondary}GPT-6.1-Sol medium · lane-2-23626 ·…\x1b[0m"
+            f"\n  {secondary}? for shortcuts            ⚠ 1 · f2\x1b[0m"
+        )
+        placeholder = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m"
+        assert codex.composer_read(f"done\n{placeholder}{tail}") == ComposerRead("empty")
+        assert codex.composer_read(f"done\n\x1b[1m›\x1b[0m half-typed reply{tail}") == (
+            ComposerRead("draft", "half-typed reply")
+        )
+
     def test_codex_active_turn_marker_remains_visible(self) -> None:
         codex = IdleDetector(BundledDetectionRegistry(), "codex")
         footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"

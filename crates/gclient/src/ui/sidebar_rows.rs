@@ -13,7 +13,6 @@ use crate::app::sidebar_model::ProjectEntry;
 use crate::theme::Palette;
 use crate::ui::chrome::{terminal_address, Chrome, RowState, WorkspaceView};
 use crate::ui::settings::TitleScrolling;
-use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot};
 use crate::ui::text::{display_width, truncate_end};
 use ratatui::style::{Modifier, Style};
@@ -181,9 +180,7 @@ pub fn displayed_project_ids<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<S
 }
 
 /// The projects the section lists, in the user's order: every project
-/// under the `all` filter; under `working`, the focused one and those with
-/// a live entry the machine filter admits, or every project when none
-/// qualifies.
+/// under the `all` filter; otherwise only the focused project.
 pub fn listed_projects<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Vec<&'a ProjectEntry> {
     let model = ws.sidebar();
     let ordered = ordered_projects(&model.projects, &chrome.sidebar.project_order);
@@ -191,22 +188,10 @@ pub fn listed_projects<'a, W: WorkspaceView>(ws: &'a W, chrome: &Chrome) -> Vec<
         return ordered;
     }
     let focused = ws.focused_project();
-    let working: Vec<&ProjectEntry> = ordered
-        .iter()
-        .copied()
-        .filter(|project| {
-            focused == Some(project.project_id.as_str())
-                || model.agents.iter().any(|agent| {
-                    agent.project_id == project.project_id
-                        && machine_admits(ws, chrome, &agent.machine_id)
-                })
-        })
-        .collect();
-    if working.is_empty() {
-        ordered
-    } else {
-        working
-    }
+    ordered
+        .into_iter()
+        .filter(|project| focused == Some(project.project_id.as_str()))
+        .collect()
 }
 
 /// `projects` with the ones `order` names first, in that order, and the
