@@ -704,8 +704,9 @@ async def test_workspace_attach_allocation_bound(
         assert len(reply["tabs"]) == tab_count
         assert {pane["id"] for pane in reply["panes"]} == set(pane_ids)
     assert peak_bytes < 64 * 1024 * 1024
-    # This fixture has UUIDs, timestamps and short titles. Budget 1 KiB for each
-    # pane plus its split-tree entry, 1 KiB per tab's metadata, and 4 KiB for the envelope.
-    # Grow with cardinality so additional fleet seats don't exhaust a fixed wire ceiling.
-    reply_byte_bound = (len(pane_ids) + tab_count + 4) * 1024
+    # This fixture has UUIDs, timestamps and short titles. Budget 512 B for each
+    # pane plus its split-tree entry, 512 B per tab's metadata, and 4 KiB for the envelope.
+    # Grow with cardinality while keeping the budget sensitive to a doubled reply.
+    reply_byte_bound = (len(pane_ids) + tab_count) * 512 + 4 * 1024
     assert max(reply_bytes) < reply_byte_bound
+    assert reply_byte_bound < 2 * max(reply_bytes)

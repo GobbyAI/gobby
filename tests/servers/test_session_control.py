@@ -1610,15 +1610,16 @@ class TestContinueInChatTerminalKill:
         host.daemon_config.context_window_overrides = {"future-model": 444_000}
 
         with patch(
-            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            "gobby.storage.sessions._contested_expiry.read_session_variables",
             return_value={},
-        ):
+        ) as read_variables:
             await SessionControlMixin._handle_attach_to_session(
                 host,
                 ws,
                 {"session_id": "source-uuid"},
             )
 
+        read_variables.assert_called_once()
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
