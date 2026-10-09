@@ -815,14 +815,16 @@ class TestSpawnAgentConcurrencyGuards:
         tmp_path: Path,
         mock_runner: MagicMock,
         agent_body: AgentDefinitionBody,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         project_path = tmp_path / "project"
         project_path.mkdir()
-        gobby_dir = project_path / ".gobby"
-        gobby_dir.mkdir()
-        (gobby_dir / "build.yaml").write_text("max_active_agents: 1\n")
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.configured_max_active_agents",
+            lambda: 1,
+        )
 
         parent_session_id = _register_parent_session(temp_db, sample_project, "parent-cap")
         run_storage = LocalAgentRunManager(temp_db)
