@@ -10,7 +10,7 @@ import pytest
 
 from gobby.runtime_grants import GrantBundle
 from gobby.runtime_grants.handshake import HandshakeService
-from gobby.runtime_grants.launch import ManagedLaunch
+from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_grants.maintenance import HandshakeMaintenanceLaunchFactory
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from tests._timing import drain_asyncio_tasks
@@ -29,6 +29,25 @@ def _maintenance_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 _GOLDEN = Path(__file__).resolve().parent / "golden" / "direct_datastores.json"
+
+
+def test_maintenance_launch_exports_its_envelope_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "ambient-run")
+    monkeypatch.setenv("GOBBY_SESSION_ID", "ambient-session")
+    monkeypatch.setenv("GOBBY_PROJECT_ID", "ambient-project")
+    handshake = _Handshake()
+    credentials = _RecordingCredentials()
+    with _factory(handshake, credentials).open("orphan-project", timeout_seconds=30) as launch:
+        grant = GrantBundle.model_validate_json(launch.grant_path.read_bytes())
+        child_env = merge_child_env(launch.env)
+        assert child_env is not None
+        assert child_env.get("GOBBY_MANAGED_EXECUTION_ID") == grant.principal.execution_id
+        assert child_env.get("GOBBY_PROJECT_ID") == "orphan-project"
+        assert "GOBBY_AGENT_RUN_ID" not in child_env
+        assert "GOBBY_SESSION_ID" not in child_env
+        assert child_env["GOBBY_AGENT_API_TOKEN"] == grant.managed_api_token
 
 
 def test_launch_signs_with_current_bootstrap_key(
