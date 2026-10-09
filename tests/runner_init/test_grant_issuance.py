@@ -19,7 +19,7 @@ from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
 from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
 from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
 from gobby.storage.hub.postgres import PostgresHubDatabase
-from gobby.storage.managed_credential_types import SecretStore
+from gobby.storage.managed_credential_types import CredentialAuthorizationError, SecretStore
 from gobby.storage.managed_credentials import ManagedCredentialManager, RevocationOutcome
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
@@ -242,6 +242,239 @@ def test_managed_refresh_rotates_live_binding(
             "rotation-predecessor",
         ) not in revocations
     finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+def test_managed_refresh_reuses_current_binding_during_drain(
+    kind: ManagedKind,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = _execution_id(kind, fixture)
+    manager = _manager(fixture, tmp_path / kind)
+    try:
+        predecessor_generation = _issue_initial_binding(manager, fixture, kind, execution_id)
+        current = manager.rotate(
+            managed_execution_id=execution_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            before = admin.execute(
+                f"SELECT credential_generation, revoked_at, revocation_requested_at, "
+                f"predecessor_drain_deadline FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert len(before) == 2
+        assert before[0][0] == predecessor_generation
+        assert before[0][2] is not None
+        assert before[0][3] is not None
+        grant = _handshake(fixture, manager).issue_for_agent(
+            _claims(kind, fixture, execution_id),
+            machine_id=str(fixture.machine_id),
+            project_id=str(fixture.project_id),
+        )
+        postgres = grant.capabilities.postgres
+        assert isinstance(postgres, PostgresDirect)
+        assert postgres.credential_generation == current.credential_generation
+        assert postgres.role_name == current.role_name
+        assert postgres.valid_until == int(current.expires_at.timestamp())
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            after = admin.execute(
+                f"SELECT credential_generation, revoked_at, revocation_requested_at, "
+                f"predecessor_drain_deadline FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert after == before
+    finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "generation",
+        "role_name",
+        "managed_execution_id",
+        "expires_at",
+        "database_url",
+        "missing",
+        "permissions",
+        "ended-owner",
+        "expired-current",
+        "invalid-drain",
+    ],
+)
+def test_managed_refresh_during_drain_fails_closed(
+    kind: ManagedKind,
+    fault: str,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = _execution_id(kind, fixture)
+    manager = _manager(fixture, tmp_path / kind)
+    try:
+        _issue_initial_binding(manager, fixture, kind, execution_id)
+        current = manager.rotate(
+            managed_execution_id=execution_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        if fault == "missing":
+            current.bootstrap_path.unlink()
+        elif fault == "permissions":
+            current.bootstrap_path.chmod(0o644)
+        elif fault in {"ended-owner", "expired-current", "invalid-drain"}:
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                if fault == "ended-owner":
+                    admin.execute(
+                        "UPDATE sessions SET status = 'expired' WHERE id = %s",
+                        (fixture.session_id,),
+                    )
+                elif fault == "expired-current":
+                    admin.execute(
+                        f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                        "SET issued_at = NOW() - INTERVAL '1 hour', "
+                        "expires_at = NOW() - INTERVAL '1 second' "
+                        "WHERE managed_execution_id = %s AND credential_generation = %s",
+                        (execution_id, current.credential_generation),
+                    )
+                else:
+                    admin.execute(
+                        f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                        "SET predecessor_drain_deadline = "
+                        "revocation_requested_at + INTERVAL '6 minutes' "
+                        "WHERE managed_execution_id = %s AND revocation_requested_at IS NOT NULL",
+                        (execution_id,),
+                    )
+        else:
+            payload = json.loads(current.bootstrap_path.read_text())
+            if fault == "generation":
+                payload["credential_generation"] -= 1
+            elif fault == "expires_at":
+                payload[fault] = (current.expires_at + timedelta(seconds=1)).isoformat()
+            else:
+                payload[fault] = "wrong-identity"
+            current.bootstrap_path.write_text(json.dumps(payload))
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            before = admin.execute(
+                f"SELECT credential_generation, revoked_at, predecessor_drain_deadline "
+                f"FROM {AUTH_SCHEMA}.principal_bindings WHERE managed_execution_id = %s "
+                "ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        with pytest.raises(HandshakeRejection) as rejected:
+            _handshake(fixture, manager).issue_for_agent(
+                _claims(kind, fixture, execution_id),
+                machine_id=str(fixture.machine_id),
+                project_id=str(fixture.project_id),
+            )
+        assert rejected.value.code in {"claims_mismatch", "credential_issuance_failed"}
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            after = admin.execute(
+                f"SELECT credential_generation, revoked_at, predecessor_drain_deadline "
+                f"FROM {AUTH_SCHEMA}.principal_bindings WHERE managed_execution_id = %s "
+                "ORDER BY credential_generation",
+                (execution_id,),
+            ).fetchall()
+        assert after == before
+    finally:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "UPDATE sessions SET status = 'active' WHERE id = %s", (fixture.session_id,)
+            )
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind", ["agent_run", "tool_chat"])
+@pytest.mark.parametrize("mismatch", ["owner", "session", "project"])
+def test_drain_reuse_requires_exact_authenticated_identity(
+    kind: ManagedKind,
+    mismatch: str,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = _execution_id(kind, fixture)
+    manager = _manager(fixture, tmp_path / kind)
+    try:
+        _issue_initial_binding(manager, fixture, kind, execution_id)
+        current = manager.rotate(
+            managed_execution_id=execution_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        bootstrap_before = current.bootstrap_path.read_bytes()
+        with pytest.raises(CredentialAuthorizationError, match="authority does not match"):
+            manager.reuse_current_during_drain(
+                managed_execution_id=execution_id,
+                owner_kind=("interactive" if mismatch == "owner" else kind),
+                session_id=(
+                    fixture.other_session_id if mismatch == "session" else fixture.session_id
+                ),
+                project_id=(
+                    fixture.other_project_id if mismatch == "project" else fixture.project_id
+                ),
+            )
+        assert current.bootstrap_path.read_bytes() == bootstrap_before
+        assert manager.get_live_binding_generation(execution_id) == current.credential_generation
+    finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+def test_drain_reuse_rechecks_owner_after_reading_bootstrap(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = fixture.agent_run_id
+    manager = _manager(fixture, tmp_path)
+    try:
+        _issue_initial_binding(manager, fixture, "agent_run", execution_id)
+        current = manager.rotate(
+            managed_execution_id=execution_id,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        owner_is_live = manager._rotation_owner_is_live
+        checks = 0
+
+        def end_owner_on_recheck(execution: UUID) -> bool:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                    admin.execute(
+                        "UPDATE sessions SET status = 'expired' WHERE id = %s",
+                        (fixture.session_id,),
+                    )
+            return owner_is_live(execution)
+
+        monkeypatch.setattr(manager, "_rotation_owner_is_live", end_owner_on_recheck)
+        with pytest.raises(HandshakeRejection, match="authority changed"):
+            _handshake(fixture, manager).issue_for_agent(
+                _claims("agent_run", fixture, execution_id),
+                machine_id=str(fixture.machine_id),
+                project_id=str(fixture.project_id),
+            )
+        assert checks == 2
+        assert manager.get_live_binding_generation(execution_id) == current.credential_generation
+    finally:
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "UPDATE sessions SET status = 'active' WHERE id = %s", (fixture.session_id,)
+            )
         _cleanup_managed_execution(manager, fixture, execution_id)
         manager.close()
 
