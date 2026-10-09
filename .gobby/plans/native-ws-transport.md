@@ -130,7 +130,7 @@ Use immutable shared frame bytes per batch. Bound each client's queue to 16 pend
 
 ```yaml
 deferral:
-  task_ref: "post-key-cutover-native-ws"
+  task_ref: "#23881"
   reason: "The native upgrade/auth seam is owned by #23519 and its live activation by the separate #23523. This tail requires both external tasks plus A1/A2/A3 before implementation; an isolated source landing alone does not establish activated auth. The fixed spec below introduces no fallback retiring verifier."
   owner: "Lane 8 Terminal port, coordinated with Lane 1"
   original_acceptance_items:
