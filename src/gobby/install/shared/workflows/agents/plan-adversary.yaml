@@ -14,6 +14,7 @@ model: grok-4.7
 reasoning_effort: xhigh
 reasoning_required: false
 checkout_mode: none
+send_message_targets: [parent, session]
 blocked_tools:
   - "EnterWorktree"
 blocked_mcp_tools:
