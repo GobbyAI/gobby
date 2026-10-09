@@ -1,0 +1,198 @@
+import json
+import shutil
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from gobby.adapters.grok_acp_client import GrokACPClient
+from gobby.providers.capabilities.collectors import grok as grok_capabilities
+from gobby.providers.capabilities.collectors import validate_snapshot
+from gobby.providers.capabilities.collectors.grok import (
+    _EFFORT_SOURCE_KEY,
+    _EFFORT_SOURCE_URL,
+    GrokCollector,
+    GrokSourceError,
+)
+from gobby.providers.capabilities.models import ReasoningSupport, SourceState
+from gobby.servers.provider_models_grok import models_from_cache
+
+_OBSERVED_AT = datetime(2026, 8, 4, 15, tzinfo=UTC)
+_GROK_CACHE_SUMMARY = (
+    Path(__file__).resolve().parents[3]
+    / "fixtures"
+    / "provider_contracts"
+    / "grok"
+    / "model-cache-summary.json"
+)
+type RawModel = Mapping[str, object]
+type DiscoverModels = Callable[[], Awaitable[Sequence[RawModel]]]
+type FetchModelsCache = Callable[[], Awaitable[Sequence[RawModel]]]
+
+
+def _discoverer(*models: RawModel) -> DiscoverModels:
+    async def discover() -> Sequence[RawModel]:
+        return models
+
+    return discover
+
+
+def _cache_loader(*models: RawModel) -> FetchModelsCache:
+    async def load_cache() -> Sequence[RawModel]:
+        return models
+
+    return load_cache
+
+
+async def test_standard_only_discovery() -> None:
+    grok = GrokCollector(
+        fetch_models_cache=_cache_loader(),
+        discover_models=_discoverer(
+            {
+                "value": "grok-composer-2.5-fast",
+                "label": "Grok Composer 2.5 Fast",
+                "context_length": 200_000,
+            },
+            {
+                "value": "grok-build",
+                "label": "Grok Build",
+                "context_length": 512_000,
+            },
+        ),
+        clock=lambda: _OBSERVED_AT,
+    )
+
+    snapshot = validate_snapshot(await grok.collect(), grok.sources)
+
+    grok_models = {model.canonical_model: model for model in snapshot.models}
+    assert grok_models["grok-composer-2.5-fast"].context_length == 200_000
+    assert grok_models["grok-build"].context_length == 512_000
+
+
+async def test_unknown_reasoning_null_efforts() -> None:
+    grok = GrokCollector(
+        fetch_models_cache=_cache_loader(),
+        discover_models=_discoverer({"value": "grok-build", "label": "Grok Build"}),
+        clock=lambda: _OBSERVED_AT,
+    )
+
+    model = (await grok.collect()).models[0]
+
+    assert model.reasoning is ReasoningSupport.UNKNOWN
+    assert model.supported_efforts is None
+    assert model.default_effort is None
+
+
+async def test_documented_grok_models_emit_reasoning_efforts() -> None:
+    grok = GrokCollector(
+        fetch_models_cache=_cache_loader(),
+        discover_models=_discoverer(
+            {"value": "grok-4.7", "label": "Grok 4.7"},
+            {"value": "grok-4.7-build-fast", "label": "Grok 4.7 Build Fast"},
+            {"value": "grok-4.6", "label": "Grok 4.6"},
+            {"value": "grok-4.5", "label": "Grok 4.5"},
+        ),
+        clock=lambda: _OBSERVED_AT,
+    )
+
+    models = {model.canonical_model: model for model in (await grok.collect()).models}
+
+    for model_id in ("grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"):
+        model = models[model_id]
+        assert model.reasoning is ReasoningSupport.KNOWN
+        assert model.supported_efforts
+        assert model.default_effort == "high"
+        provenance = model.provenance["supported_efforts"]
+        assert provenance.source_key == _EFFORT_SOURCE_KEY
+        assert provenance.source_url == _EFFORT_SOURCE_URL
+    for model_id in ("grok-4.7", "grok-4.6"):
+        efforts = models[model_id].supported_efforts
+        assert efforts is not None
+        assert "xhigh" in efforts
+    older = models["grok-4.5"].supported_efforts
+    assert older is not None
+    assert "xhigh" not in older
+
+
+async def test_models_cache_fills_missing_windows_and_omitted_models(
+    tmp_path: Path,
+) -> None:
+    summary = json.loads(_GROK_CACHE_SUMMARY.read_text(encoding="utf-8"))
+    assert "models" in summary["models_cache_keys"]
+    cache_path = tmp_path / "models_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "modelId": "grok-4.6",
+                        "name": "Grok 4.6",
+                        "_meta": {"totalContextTokens": 500_000},
+                    },
+                    {
+                        "modelId": "grok-build",
+                        "name": "Grok Build",
+                        "_meta": {"totalContextTokens": 512_000},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def load_cache() -> Sequence[RawModel]:
+        return models_from_cache(cache_path)
+
+    grok = GrokCollector(
+        discover_models=_discoverer({"value": "grok-build", "label": "Grok Build"}),
+        fetch_models_cache=load_cache,
+        clock=lambda: _OBSERVED_AT,
+    )
+    snapshot = validate_snapshot(await grok.collect(), grok.sources)
+    models = {model.canonical_model: model for model in snapshot.models}
+    assert models["grok-build"].context_length == 512_000
+    assert models["grok-4.6"].context_length == 500_000
+    assert models["grok-4.6"].provenance["context_length"].source_key == "models-cache"
+    assert snapshot.sources[1].source_key == "models-cache"
+    assert snapshot.sources[1].state is SourceState.OK
+    assert snapshot.sources[1].required is False
+
+
+async def test_missing_cli_is_source_failure() -> None:
+    async def missing_cli() -> Sequence[RawModel]:
+        raise FileNotFoundError("CLI not found in PATH")
+
+    with pytest.raises(GrokSourceError, match="CLI not found in PATH") as grok_error:
+        await GrokCollector(discover_models=missing_cli).collect()
+
+    assert grok_error.value.source_key == GrokCollector.sources[0].source_key
+
+
+@pytest.mark.asyncio
+async def test_grok_discovery_uses_acp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discover_acp = AsyncMock(
+        return_value=[
+            {"value": "grok-build", "label": "Grok Build"},
+            {"value": "grok-4.6", "label": "Grok 4.6"},
+        ]
+    )
+    monkeypatch.setattr(grok_capabilities, "discover_acp_models", discover_acp)
+    collector = GrokCollector(fetch_models_cache=_cache_loader(), clock=lambda: _OBSERVED_AT)
+
+    snapshot = validate_snapshot(await collector.collect(), collector.sources)
+
+    assert {model.canonical_model for model in snapshot.models} == {"grok-build", "grok-4.6"}
+    discover_acp.assert_awaited_once_with(
+        client_cls=GrokACPClient,
+        which=shutil.which,
+        model_discovery_cwd=grok_capabilities._model_discovery_cwd,
+        logger=grok_capabilities.logger,
+    )
+
+    discover_acp.side_effect = RuntimeError("ACP discovery failed")
+    with pytest.raises(GrokSourceError, match="ACP discovery failed"):
+        await collector.collect()

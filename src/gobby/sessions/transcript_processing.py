@@ -36,12 +36,15 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
     TokenEvent,
     TokenEventStore,
     build_token_event_payload,
     canonicalize_event_timestamp,
+    token_event_retention_cutoff,
+    token_event_retention_transaction,
 )
 
 logger = logging.getLogger("gobby.sessions.lifecycle")
@@ -304,7 +307,7 @@ class TranscriptProcessingMixin:
 
         # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
         # records; this token-event path only consumes ParsedMessage fields
-        # (model, usage, message_id). Qwen's .json transcripts use the same
+        # (model, usage, message_id). Other JSON transcripts use the same
         # line-oriented envelope contract as the other supported CLIs.
         # JSON strings may contain Unicode line separators; only physical LF ends a record.
         parsed_records = parser.parse_lines(list(StringIO(raw)), start_index=0)
@@ -366,10 +369,27 @@ class TranscriptProcessingMixin:
         if not messages:
             return []
 
+        # Parse and index outside the transaction; only usage replacement holds the lock.
+        with token_event_retention_transaction(self.db):
+            return self._persist_session_token_usage(session_id, session, messages, session_source)
+
+    def _persist_session_token_usage(
+        self,
+        session_id: str,
+        session: Session,
+        messages: list[ParsedMessage],
+        session_source: str | None,
+    ) -> list[dict[str, Any]]:
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.
-        self.token_event_store.delete_session_events(session_id, origin="backfill")
-        self.token_event_store.delete_session_events(session_id, origin="transcript")
+        # Keep replacement and insertion on one cutoff even across a long replay.
+        retention_cutoff = token_event_retention_cutoff()
+        self.token_event_store.delete_session_events(
+            session_id, origin="backfill", retention_cutoff=retention_cutoff
+        )
+        self.token_event_store.delete_session_events(
+            session_id, origin="transcript", retention_cutoff=retention_cutoff
+        )
         running_totals = self.token_event_store.get_session_totals(session_id)
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
@@ -538,7 +558,7 @@ class TranscriptProcessingMixin:
         inserted_flags: list[bool] = []
         if pending_events:
             inserted_flags = self.token_event_store.record_batch(
-                [entry.event for entry in pending_events]
+                [entry.event for entry in pending_events], retention_cutoff=retention_cutoff
             )
 
         # Pass 3: replay the sequential semantics in message order — a window

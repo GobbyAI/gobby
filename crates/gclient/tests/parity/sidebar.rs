@@ -18,7 +18,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use gobby_client::app::sidebar_model::{AgentEntry, ProjectEntry, SidebarModel, WorktreeEntry};
 use gobby_client::app::{
     apply_rename, build_menu, rename_project, route_modal_key, route_mouse, Backend,
-    ContextMenuKind, ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId, Submenu, Workspace,
+    ContextMenuKind, ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId, Workspace,
     MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{
@@ -264,6 +264,8 @@ fn chrome() -> Chrome {
     let mut chrome = Chrome::new(theme());
     chrome.sidebar.pinned = true;
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
+    // These render-parity fixtures exercise a flat agent list.
+    chrome.sidebar.all_sessions = false;
     chrome
 }
 
@@ -1162,6 +1164,8 @@ fn agent_rows_follow_project_and_machine_filter() {
     board.add("beta", "codex");
     board.add_remote("alpha", "alpha-remote", REMOTE);
     let mut chrome = chrome();
+    chrome.sidebar.all_projects = false;
+    chrome.sidebar.all_sessions = false;
     focus(&mut chrome, &mut board, "alpha");
     let labels = |board: &Board, chrome: &Chrome| -> Vec<String> {
         agent_rows(board, chrome)
@@ -1171,7 +1175,7 @@ fn agent_rows_follow_project_and_machine_filter() {
             .collect()
     };
 
-    // local (the default) lists the focused project's agents on this
+    // Local-machine, current-project scope lists the focused project's agents on this
     // machine; a machine id lists the project's agents there; `all` lists
     // the project's agents everywhere and names each remote machine on its
     // second line.
@@ -1188,6 +1192,7 @@ fn agent_rows_follow_project_and_machine_filter() {
     // The `all` scope adds the other projects' rows under dim group rows,
     // in project order; the group rows are no hits.
     chrome.sidebar.all_sessions = true;
+    chrome.sidebar.all_projects = true;
     assert_eq!(labels(&board, &chrome), ["alpha", "alpha-remote", "beta"]);
     let ids: Vec<String> = agent_rows(&board, &chrome)
         .iter()
@@ -1234,12 +1239,11 @@ fn agent_rows_follow_project_and_machine_filter() {
     chrome.prefs.agent_sort = AgentSort::Priority;
     assert_eq!(labels(&board, &chrome), ["alpha-remote", "alpha", "beta"]);
     chrome.sidebar.all_sessions = false;
+    chrome.sidebar.all_projects = false;
     assert_eq!(labels(&board, &chrome), ["alpha-remote", "alpha"]);
 
-    // Section headings are plain titles; each section's options live in its
-    // own View › Sidebar submenu. The Agents submenu holds both axes: the
-    // value in force is marked and disabled, the other choice of each pair
-    // carries the toggle. The machines section lists this machine first and
+    // Section headings are plain titles. View holds the flat controls;
+    // grouping is disabled in current-project scope. Machines lists this machine first and
     // the remote one nested under it, and a click on a row sets the filter.
     let area = Rect::new(0, 0, 34, 20);
     let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
@@ -1260,21 +1264,21 @@ fn agent_rows_follow_project_and_machine_filter() {
     let menu = build_menu(
         &board,
         &chrome,
-        ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Agents)),
+        ContextMenuKind::MenuBar(gobby_client::ui::menu_bar::MenuBarMenu::View),
         (0, 0),
     );
     let items: Vec<(&str, bool)> = menu
         .items
         .iter()
+        .skip(5)
         .map(|item| (item.label, item.enabled))
         .collect();
     assert_eq!(
         items,
         [
-            ("✓ This project", false),
-            ("  All projects", true),
-            ("  Grouped", true),
-            ("✓ Priority", false),
+            ("✓ Show all machines", true),
+            ("  Show all projects", true),
+            ("  Group agents by project", false),
         ]
     );
     // A remote row filters to that machine and a second click returns to
@@ -1728,8 +1732,8 @@ fn bound_worktree_board() -> (Workspace, Chrome, Terminal<TestBackend>) {
 
 /// #23280 item 5: the worktree indicator drew blank for sessions and had
 /// no hit of its own. A bound worktree draws its rolled-up dot, and that
-/// cell shows the most urgent bound agent; the rest of the row still opens
-/// the worktree, and a right click there still opens its menu.
+/// cell and the rest of the row focus the most urgent bound agent;
+/// a right click still opens the worktree menu.
 #[test]
 fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
     let (ws, mut chrome, term) = bound_worktree_board();
@@ -1754,7 +1758,7 @@ fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
     assert_ne!((col, row), (cell.x, cell.y));
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DOWN, col, row),
-        MouseOutcome::OpenWorktree("wt-1".to_string())
+        MouseOutcome::FocusAgent("session:sess-1".to_string())
     );
     route(&ws, &mut chrome, LEFT_UP, col, row);
     assert_eq!(
@@ -1774,6 +1778,22 @@ fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
 fn unbound_worktree_draws_no_glyph_and_no_glyph_hit() {
     let (_, chrome, _) = project_board();
     assert!(chrome.view.worktree_glyph_hit_areas.is_empty());
+}
+
+#[test]
+fn navigate_enter_on_an_occupied_worktree_focuses_its_most_urgent_agent() {
+    let (ws, mut chrome, _) = bound_worktree_board();
+    chrome.mode = Mode::Navigate;
+    chrome.sidebar.selected = 1;
+    let enter = KeyInput {
+        key: KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    assert_eq!(
+        route_modal_key(&ws, &mut chrome, &enter),
+        ModalOutcome::FocusAgent("session:sess-1".to_string())
+    );
+    assert_eq!(chrome.mode, Mode::Terminal);
 }
 
 /// Plan 3.1.2: the project rows' pointer and navigate entry points, one
@@ -1893,10 +1913,10 @@ mod project_rows_focus_toggle_and_reorder {
         assert_eq!(restored.sidebar.project_order, ["proj-beta", "proj-alpha"]);
         assert!(chrome.sidebar.all_projects);
         assert!(
-            !restored.sidebar.all_projects,
-            "the projects filter is per-window"
+            restored.sidebar.all_projects,
+            "a new window starts in all-projects scope"
         );
-        assert!(!restored.sidebar.all_sessions);
+        assert!(restored.sidebar.all_sessions);
     }
 
     /// 3.3: renaming a project labels its card for this client only; the

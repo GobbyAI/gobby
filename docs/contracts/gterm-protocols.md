@@ -151,12 +151,18 @@ release, a web or proxied holder, and a tmux backend.
 
 ```json
 {"event": "input_activity", "terminal_id": "t", "host_terminal_id": "ht-1",
- "attachment_id": "att-1", "kind": "input", "bytes": 1, "interrupt": null}
+ "attachment_id": "att-1", "kind": "input", "bytes": 1, "interrupt": null,
+ "submit": false}
 ```
 
 One event per accepted `Input` or `Paste`, with no coalescing. `kind` is
 `input` or `paste`; `interrupt` is `esc` or `ctrl_c` when the whole payload is
-exactly `\x1b` or `\x03`, else `null`. The daemon feeds it to the turn
+exactly `\x1b` or `\x03`, else `null`. `submit` is `true` when the child reads
+the write as Enter: a CR, or an escape sequence that gterm's key parser reads as
+Enter without modifiers and not as a release, such as kitty's `\x1b[13;1u`. A
+`Paste` counts only when the child has bracketed paste (mode 2004) off, since it
+then receives the text as keystrokes. The composer ledger uses `submit` to tell
+a submitted composer from a draft. The daemon feeds the event to the turn
 observer as a delivered mediated input and lifts the automatic-write
 quarantine, which is the only proof it gets that the operator typed.
 

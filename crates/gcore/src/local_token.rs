@@ -30,10 +30,95 @@ pub fn read_api_key() -> anyhow::Result<String> {
 /// [`read_api_key_at`], or an agent whose home legitimately carries no
 /// token file sends an unauthenticated request and the daemon answers 401.
 pub fn read_api_key_for(gobby_home: &Path) -> anyhow::Result<String> {
+    if let Some(token) = managed_api_token()? {
+        return Ok(token);
+    }
     if let Some(token) = agent_api_token_from_env() {
         return Ok(token);
     }
+    if std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP").is_some() {
+        anyhow::bail!("managed capability is unavailable");
+    }
     read_api_key_at(gobby_home)
+}
+
+pub(crate) fn managed_token_at(
+    path: &Path,
+    execution_id: Option<&str>,
+    session_id: Option<&str>,
+    project_id: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let invalid = || anyhow::anyhow!("managed capability envelope is unavailable or invalid");
+    let file = std::fs::File::open(path).map_err(|_| invalid())?;
+    let metadata = file.metadata().map_err(|_| invalid())?;
+    if !metadata.is_file() {
+        return Err(invalid());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(invalid());
+        }
+    }
+    let value: serde_json::Value = serde_json::from_reader(file).map_err(|_| invalid())?;
+    let object = value.as_object().ok_or_else(invalid)?;
+    let Some(token) = object.get("managed_api_token") else {
+        return Ok(None);
+    };
+    let token = token
+        .as_str()
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(invalid)?;
+    let principal = object
+        .get("principal")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(invalid)?;
+    let execution_id = execution_id
+        .filter(|value| !value.is_empty())
+        .ok_or_else(invalid)?;
+    if principal
+        .get("execution_id")
+        .and_then(serde_json::Value::as_str)
+        != Some(execution_id)
+    {
+        return Err(invalid());
+    }
+    for (key, expected) in [("session_id", session_id), ("project_id", project_id)] {
+        if let Some(expected) = expected.filter(|value| !value.is_empty())
+            && principal.get(key).and_then(serde_json::Value::as_str) != Some(expected)
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(Some(token.trim().to_owned()))
+}
+
+pub(crate) fn managed_api_token() -> anyhow::Result<Option<String>> {
+    let Some(path) = std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP") else {
+        return Ok(None);
+    };
+    let run = std::env::var("GOBBY_AGENT_RUN_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let execution = std::env::var("GOBBY_MANAGED_EXECUTION_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    if run.is_some() && execution.is_some() {
+        anyhow::bail!("managed capability envelope owner is ambiguous");
+    }
+    managed_token_at(
+        Path::new(&path),
+        run.as_deref().or(execution.as_deref()).map(str::trim),
+        std::env::var("GOBBY_SESSION_ID")
+            .ok()
+            .as_deref()
+            .map(str::trim),
+        std::env::var("GOBBY_PROJECT_ID")
+            .ok()
+            .as_deref()
+            .map(str::trim),
+    )
 }
 
 fn agent_api_token_from_env() -> Option<String> {
@@ -156,6 +241,39 @@ mod tests {
         assert_eq!(read_api_key_for(home.path())?, "file-token");
 
         set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn managed_envelope_token_is_fresh_private_and_owned() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("grant.json");
+        let write = |token: &str| -> anyhow::Result<()> {
+            std::fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({
+                    "managed_api_token": token,
+                    "principal": {"kind":"agent_run", "execution_id":"run", "session_id":"seat", "project_id":"project"}
+                }))?,
+            )?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            Ok(())
+        };
+        write("first")?;
+        assert_eq!(
+            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?,
+            Some("first".to_owned())
+        );
+        write("renewed")?;
+        assert_eq!(
+            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?,
+            Some("renewed".to_owned())
+        );
+        assert!(managed_token_at(&path, Some("other"), Some("seat"), Some("project")).is_err());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))?;
+        assert!(managed_token_at(&path, Some("run"), Some("seat"), Some("project")).is_err());
         Ok(())
     }
 }

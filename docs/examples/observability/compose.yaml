@@ -2,7 +2,7 @@
 # Gobby does not start or supervise these containers.
 #
 # Required host paths (never copied into this repository):
-#   ${HOME}/.gobby/local_cli_token  bearer credential, mounted read-only
+#   ${GOBBY_METRICS_KEY_FILE}      plaintext API key, mounted read-only
 #   ${HOME}/.gobby/logs             daemon log surfaces, read-only, logs profile
 #   ${HOME}/.gobby/otelcol          collector checkpoints, logs profile;
 #                                   `mkdir -p` it before the first logs run
@@ -29,7 +29,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ${HOME}/.gobby/local_cli_token:/etc/prometheus/secrets/gobby_token:ro
+      - ${GOBBY_METRICS_KEY_FILE:?Set an absolute API-key file path}:/etc/prometheus/secrets/gobby_token:ro
       - prometheus-data:/prometheus
 
   grafana:

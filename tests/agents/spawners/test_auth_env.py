@@ -51,7 +51,6 @@ def test_split_credential_env_separates_provider_secrets() -> None:
             "ANTHROPIC_BASE_URL": "https://api.example.test",
             "ANTHROPIC_AUTH_TOKEN": "anthropic-token",
             "GOBBY_CODEX_ENDPOINT_API_KEY": "endpoint-token",
-            "QWEN_API_KEY": "qwen-token",
             "XAI_API_KEY": "xai-token",
             "FACTORY_API_KEY": "factory-token",
         }
@@ -65,7 +64,6 @@ def test_split_credential_env_separates_provider_secrets() -> None:
         "GOBBY_AGENT_API_TOKEN": "scoped-agent-token",
         "ANTHROPIC_AUTH_TOKEN": "anthropic-token",
         "GOBBY_CODEX_ENDPOINT_API_KEY": "endpoint-token",
-        "QWEN_API_KEY": "qwen-token",
         "XAI_API_KEY": "xai-token",
         "FACTORY_API_KEY": "factory-token",
     }

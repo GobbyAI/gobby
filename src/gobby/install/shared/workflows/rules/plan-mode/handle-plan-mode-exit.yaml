@@ -14,9 +14,6 @@ rules:
         variable: plan_mode
         value: false
       - type: set_variable
-        variable: qwen_gcode_plan_hint_shown
-        value: false
-      - type: set_variable
         variable: plan_skill_directive_delivered
         value: false
 

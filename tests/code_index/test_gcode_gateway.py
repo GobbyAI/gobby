@@ -37,8 +37,8 @@ GCODE_PIN_STDOUT = f"gcode {GCODE_PIN}\n".encode()
 PRUNE_BUDGET_VERSION_STDOUT = f"gcode {MIN_GCODE_PRUNE_BUDGET_VERSION}\n".encode()
 
 
-async def test_managed_gcode_pin_requires_1_5_0() -> None:
-    assert GCODE_PIN == "1.5.0"
+async def test_managed_gcode_pin_matches_prune_budget_floor() -> None:
+    assert GCODE_PIN == MIN_GCODE_PRUNE_BUDGET_VERSION
 
 
 async def test_prune_budget_version_matches_gcode_crate_version() -> None:
@@ -685,7 +685,7 @@ async def test_gateway_rejects_stale_version(monkeypatch: pytest.MonkeyPatch) ->
         await gateway.graph_clear("proj-1")
 
 
-async def test_gateway_prune_refuses_binary_without_budget_flag(
+async def test_gateway_prune_refuses_outdated_binary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -694,10 +694,7 @@ async def test_gateway_prune_refuses_binary_without_budget_flag(
 
     with pytest.raises(
         GcodeVersionError,
-        match=(
-            rf"gcode >= {MIN_GCODE_PRUNE_BUDGET_VERSION} required for maintenance prune; "
-            r"found 1\.6\.1; reinstall gcode"
-        ),
+        match=(rf"gcode >= {GCODE_PIN} required; found 1\.6\.1"),
     ):
         await gateway.prune_project_for_maintenance(
             tmp_path,

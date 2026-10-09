@@ -12,7 +12,6 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse
 
 pytestmark = pytest.mark.unit
@@ -104,41 +103,6 @@ def test_claude_populated_reason_passes_through_unchanged(
 
     assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Blocked by policy"
     assert _warning_messages(caplog, logger_name="gobby.adapters.claude_code") == []
-
-
-def test_qwen_blank_reason_uses_sentinel_and_logs_payload(
-    enable_log_propagation, caplog: pytest.LogCaptureFixture
-) -> None:
-    adapter = QwenAdapter()
-    response = HookResponse(decision="block", reason="", context="ctx")
-
-    with caplog.at_level(logging.WARNING, logger="gobby"):
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
-
-    assert (
-        result["hookSpecificOutput"]["permissionDecisionReason"]
-        == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
-    )
-    messages = _warning_messages(caplog, logger_name="gobby.adapters.qwen")
-    assert any(
-        "QwenAdapter translated block without reason at adapter boundary" in msg for msg in messages
-    )
-    assert any(
-        "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages
-    )
-
-
-def test_qwen_populated_reason_passes_through_unchanged(
-    enable_log_propagation, caplog: pytest.LogCaptureFixture
-) -> None:
-    adapter = QwenAdapter()
-    response = HookResponse(decision="block", reason="Blocked by workflow")
-
-    with caplog.at_level(logging.WARNING, logger="gobby"):
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
-
-    assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Blocked by workflow"
-    assert _warning_messages(caplog, logger_name="gobby.adapters.qwen") == []
 
 
 def test_codex_blank_reason_uses_sentinel_and_logs_payload(

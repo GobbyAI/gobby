@@ -233,14 +233,14 @@ def test_managed_refresh_rotates_live_binding(
                 (execution_id,),
             ).fetchall()
         assert bindings == [
-            (predecessor_generation, True),
+            (predecessor_generation, False),
             (postgres.credential_generation, False),
         ]
         assert (
             execution_id,
             predecessor_generation,
             "rotation-predecessor",
-        ) in revocations
+        ) not in revocations
     finally:
         _cleanup_managed_execution(manager, fixture, execution_id)
         manager.close()
@@ -284,7 +284,7 @@ def test_managed_refresh_rotates_expired_binding(
                 (execution_id,),
             ).fetchall()
         assert bindings == [
-            (predecessor_generation, True),
+            (predecessor_generation, False),
             (postgres.credential_generation, False),
         ]
     finally:

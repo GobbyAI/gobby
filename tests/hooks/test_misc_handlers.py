@@ -67,7 +67,7 @@ class TestOtherHandlers:
 
 
 class TestPostCompactHandler:
-    @pytest.mark.parametrize("source", ["claude", "qwen", "codex", "droid", "grok", "agy"])
+    @pytest.mark.parametrize("source", ["claude", "codex", "droid", "grok", "agy"])
     def test_resets_context_pressure_for_compacting_cli(
         self,
         mock_dependencies: dict,
@@ -294,19 +294,19 @@ class TestAcpOnlyHandlers:
 
     def test_before_tool_selection_allows(self, event_handlers: EventHandlers) -> None:
         """Test BEFORE_TOOL_SELECTION allows for ACP providers."""
-        event = make_event(HookEventType.BEFORE_TOOL_SELECTION, source="qwen")
+        event = make_event(HookEventType.BEFORE_TOOL_SELECTION, source="grok")
         response = event_handlers.handle_before_tool_selection(event)
         assert response.decision == "allow"
 
     def test_before_model_allows(self, event_handlers: EventHandlers) -> None:
         """Test BEFORE_MODEL allows for ACP providers."""
-        event = make_event(HookEventType.BEFORE_MODEL, source="qwen")
+        event = make_event(HookEventType.BEFORE_MODEL, source="grok")
         response = event_handlers.handle_before_model(event)
         assert response.decision == "allow"
 
     def test_after_model_allows(self, event_handlers: EventHandlers) -> None:
         """Test AFTER_MODEL allows for ACP providers."""
-        event = make_event(HookEventType.AFTER_MODEL, source="qwen")
+        event = make_event(HookEventType.AFTER_MODEL, source="grok")
         response = event_handlers.handle_after_model(event)
         assert response.decision == "allow"
 
@@ -344,28 +344,6 @@ class TestPreCompactHandlerEdgeCases:
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
-
-    def test_pre_compact_qwen_skips_handoff(self, mock_dependencies: dict) -> None:
-        """Test PRE_COMPACT skips handoff logic for Qwen source.
-
-        Qwen fires PreCompress constantly during normal operation,
-        unlike Claude which fires it only when approaching context limits.
-        """
-        handlers = EventHandlers(**mock_dependencies)
-        event = make_event(
-            HookEventType.PRE_COMPACT,
-            source="qwen",
-            data={"trigger": "auto"},
-            metadata={"_platform_session_id": "sess-123"},
-        )
-
-        response = handlers.handle_pre_compact(event)
-
-        assert response.decision == "allow"
-        # Should NOT update session status for Qwen
-        mock_dependencies["session_manager"].update_session_status.assert_not_called()
-        # Should NOT execute workflow handler for Qwen
-        mock_dependencies["workflow_handler"].evaluate.assert_not_called()
 
 
 class TestSubagentHandlerEdgeCases:
@@ -833,7 +811,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_TOOL_SELECTION,
-            source="qwen",
+            source="grok",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -846,7 +824,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_TOOL_SELECTION,
-            source="qwen",
+            source="grok",
             metadata={},
         )
 
@@ -859,7 +837,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_MODEL,
-            source="qwen",
+            source="grok",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -872,7 +850,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_MODEL,
-            source="qwen",
+            source="grok",
             metadata={},
         )
 
@@ -885,7 +863,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="qwen",
+            source="grok",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -898,7 +876,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="qwen",
+            source="grok",
             metadata={},
         )
 
@@ -913,7 +891,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="qwen",
+            source="grok",
             data={
                 "response": {
                     "usageMetadata": {
@@ -949,7 +927,7 @@ class TestAcpHandlerEdgeCases:
         handlers = EventHandlers(event_loop=loop, **mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="qwen",
+            source="grok",
             data={
                 "response": {
                     "usageMetadata": {

@@ -109,7 +109,9 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
         .await
         .expect("roster reconcile");
 
-    let chrome = Chrome::dark();
+    let mut chrome = Chrome::dark();
+    // Naming checks compare agent rows, without project heading rows.
+    chrome.sidebar.all_sessions = false;
     let mut drawn = agent_rows(&workspace, &chrome);
     drawn.extend(terminal_rows(&workspace, &chrome));
     let labels = attention

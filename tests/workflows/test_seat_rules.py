@@ -178,6 +178,52 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
         assert (await _decide(engine, call, non_seat)).decision == "allow"
 
 
+RECOVERY_SEATS = ("assistant", "orchestrator", "lane-manager")
+WORKER_SEATS = ("developer", "code-reviewer", "plan-writer")
+RESUME = {"agent": "developer", "resume_session_id": "gobby#15771"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", RECOVERY_SEATS)
+async def test_recovery_seats_resume_an_existing_session(
+    engine: RuleEngine, agent_type: str
+) -> None:
+    seat = {"_agent_type": agent_type}
+
+    resumed = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", RESUME), seat)
+    new_spawn = await _decide(
+        engine, _proxy_call("gobby-agents", "spawn_agent", {"agent": "developer"}), seat
+    )
+    batch = await _decide(engine, _proxy_call("gobby-agents", "dispatch_batch", RESUME), seat)
+
+    assert resumed.decision == "allow"
+    for refused in (new_spawn, batch):
+        assert refused.decision == "block"
+        assert "resume_session_id" in (refused.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", WORKER_SEATS)
+async def test_other_seats_cannot_resume_or_spawn(engine: RuleEngine, agent_type: str) -> None:
+    seat = {"_agent_type": agent_type}
+
+    for arguments in (RESUME, {"agent": "developer"}):
+        refused = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", arguments), seat)
+        assert refused.decision == "block", arguments
+        assert "Seats do not spawn agents" in (refused.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_still_cannot_spawn_from_the_shell(engine: RuleEngine) -> None:
+    for command in (
+        "gobby agents spawn developer --task '#1'",
+        "uv run gobby agents spawn developer --resume gobby#15771",
+    ):
+        refused = await _decide(engine, _shell(command), ORCHESTRATOR)
+        assert refused.decision == "block", command
+        assert "Seats do not spawn agents or launch pipelines" in (refused.reason or "")
+
+
 def _seat_definitions() -> list[str]:
     agents_dir = ROLES_DIR.parents[1] / "agents"
     definitions = (yaml.safe_load(path.read_text()) for path in sorted(agents_dir.glob("*.yaml")))

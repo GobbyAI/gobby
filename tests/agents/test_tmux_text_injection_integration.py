@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,7 +24,7 @@ async def _run(*command: str, timeout: float = 5) -> tuple[int, bytes, bytes]:
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    return proc.returncode, stdout, stderr
+    return await proc.wait(), stdout, stderr
 
 
 async def _wait_for_file(path: Path, timeout: float = 6) -> bytes:
@@ -39,7 +41,10 @@ async def test_trailing_newline_waits_past_paste_suppression_window(tmp_path: Pa
     if shutil.which("tmux") is None:
         pytest.skip("tmux binary is not installed")
 
-    socket_name = f"gobby-test-{uuid4().hex}"
+    socket_root = Path(os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()).resolve()
+    socket_path = socket_root / f"t-{uuid4().hex[:16]}"
+    if len(os.fsencode(socket_path)) >= 104:
+        pytest.skip("current-run temp directory exceeds the macOS Unix socket path limit")
     session_name = f"paste-{uuid4().hex}"
     ready_signal = f"ready-{uuid4().hex}"
     capture_path = tmp_path / "paste.bin"
@@ -67,7 +72,7 @@ try:
     tty.setraw(fd)
     sys.stdout.write("\\033[?2004h")
     sys.stdout.flush()
-    subprocess.run(["tmux", "-L", sys.argv[2], "wait-for", "-S", sys.argv[3]], check=False)
+    subprocess.run(["tmux", "-S", sys.argv[2], "wait-for", "-S", sys.argv[3]], check=False)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         readable, _, _ = select.select([fd], [], [], 0.1)
@@ -103,7 +108,7 @@ finally:
         encoding="utf-8",
     )
 
-    tmux_cmd = ("tmux", "-L", socket_name, "-f", "/dev/null")
+    tmux_cmd = ("tmux", "-S", str(socket_path), "-f", "/dev/null")
     try:
         returncode, _, stderr = await _run(
             *tmux_cmd,
@@ -114,7 +119,7 @@ finally:
             "python",
             str(reader_path),
             str(capture_path),
-            socket_name,
+            str(socket_path),
             ready_signal,
         )
         assert returncode == 0, stderr.decode()
@@ -140,3 +145,5 @@ finally:
         assert enter_at - paste_end_at >= 0.12
     finally:
         await _run(*tmux_cmd, "kill-server")
+        socket_path.unlink(missing_ok=True)
+        socket_path.with_name(f"{socket_path.name}.lock").unlink(missing_ok=True)

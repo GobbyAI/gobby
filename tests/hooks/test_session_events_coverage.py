@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -205,19 +204,6 @@ class _TestHandler(SessionEventHandlerMixin):
 class TestDeriveTranscriptPath:
     """Tests for _derive_transcript_path."""
 
-    def test_qwen_source(self, tmp_path: Path) -> None:
-        handler = _TestHandler()
-        transcript = tmp_path / "q.json"
-        transcript.write_text("{}\n", encoding="utf-8")
-        result = handler._derive_transcript_path(
-            "qwen",
-            {"transcript_path": str(transcript)},
-            "ext-1",
-            owner_machine_id="local-machine",
-            local_machine_id="local-machine",
-        )
-        assert result == str(transcript)
-
     def test_unknown_source(self) -> None:
         handler = _TestHandler()
         result = handler._derive_transcript_path(
@@ -227,66 +213,6 @@ class TestDeriveTranscriptPath:
             owner_machine_id="local-machine",
             local_machine_id="local-machine",
         )
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# _find_qwen_transcript tests
-# ---------------------------------------------------------------------------
-
-
-class TestFindQwenTranscript:
-    """Tests for _find_qwen_transcript."""
-
-    def test_no_cwd(self) -> None:
-        handler = _TestHandler()
-        result = handler._find_qwen_transcript({}, "ext-1")
-        assert result is None
-
-    def test_chats_dir_not_exists(self, tmp_path: Path) -> None:
-        handler = _TestHandler()
-        result = handler._find_qwen_transcript({"cwd": str(tmp_path)}, "ext-1")
-        assert result is None
-
-    def test_match_by_prefix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import hashlib
-
-        handler = _TestHandler()
-        cwd = str(tmp_path / "project")
-        project_hash = hashlib.sha256(cwd.encode()).hexdigest()
-        chats_dir = tmp_path / ".qwen" / "tmp" / project_hash / "chats"
-        chats_dir.mkdir(parents=True)
-        (chats_dir / "session-2024-01-01T10-00-abcdefgh.json").touch()
-
-        import gobby.hooks.event_handlers._session_start as session_mod
-
-        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
-
-        result = handler._find_qwen_transcript({"cwd": cwd}, "abcdefgh-1234")
-        assert result is not None
-        assert "abcdefgh" in result
-
-    def test_missing_session_id_does_not_fallback_to_most_recent(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A missing session ID must not bind an unrelated transcript."""
-        import hashlib
-
-        handler = _TestHandler()
-        cwd = str(tmp_path / "project")
-        project_hash = hashlib.sha256(cwd.encode()).hexdigest()
-        chats_dir = tmp_path / ".qwen" / "tmp" / project_hash / "chats"
-        chats_dir.mkdir(parents=True)
-        (chats_dir / "session-2024-01-02T10-00-old.json").touch()
-        (chats_dir / "session-2024-01-01T10-00-recent.json").touch()
-
-        import gobby.hooks.event_handlers._session_start as session_mod
-
-        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
-
-        result = handler._find_qwen_transcript({"cwd": cwd}, "")
         assert result is None
 
 
@@ -483,14 +409,14 @@ class TestSessionStartAndHelpers:
         assert resp.decision == "allow"
 
     def test_handle_session_start_skips_acp_child(self) -> None:
-        """Sessions spawned by daemon-owned qwen --acp must not
+        """Sessions spawned by a daemon-owned ACP child must not
         register — the envelope carries gobby_acp_child='1' in terminal_context.
         """
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START,
             session_id="acp-child-external-id",
-            source=SessionSource.QWEN,
+            source=SessionSource.GROK,
             data={
                 "cwd": "/tmp",
                 "terminal_context": {"gobby_acp_child": "1"},
@@ -622,7 +548,9 @@ class TestSessionStartAndHelpers:
 
         # Session already has agent_type
         with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr:
-            mock_sv_mgr.return_value.get_variables.return_value = {"_agent_type": "spawned-agent"}
+            mock_sv_mgr.return_value.get_variable_subset.return_value = {
+                "_agent_type": "spawned-agent"
+            }
             assert handler._resolve_agent_name("sess-1", None) == "spawned-agent"
 
         # Global default
@@ -630,7 +558,7 @@ class TestSessionStartAndHelpers:
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr,
             patch("gobby.storage.config_repository.ConfigRepository") as mock_repo,
         ):
-            mock_sv_mgr.return_value.get_variables.return_value = {}
+            mock_sv_mgr.return_value.get_variable_subset.return_value = {}
             mock_repo.return_value.read.return_value.values = {"default_agent": "global-agent"}
             assert handler._resolve_agent_name("sess-1", None) == "global-agent"
 
@@ -743,8 +671,10 @@ class TestSessionMoreCoverage:
             ),
             patch.object(handler, "_build_agent_changes") as mock_build,
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value=stored_variables,
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                side_effect=lambda _session_id, keys: {
+                    key: stored_variables[key] for key in keys if key in stored_variables
+                },
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -782,12 +712,12 @@ class TestSessionMoreCoverage:
             # activation result carries metadata, not prompt text.
             assert not hasattr(result, "context")
 
-    def test_handle_session_start_qwen_terminal(self) -> None:
+    def test_handle_session_start_gobby_session_id_terminal(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START,
             session_id="ext-2",
-            data={"terminal_context": {"gobby_session_id": "qwen-123"}},
+            data={"terminal_context": {"gobby_session_id": "pre-created-123"}},
         )
 
         # Existing session check fails, but gobby_session_id check succeeds

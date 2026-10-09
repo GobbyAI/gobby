@@ -369,7 +369,6 @@ def test_spawn_module_exports_every_public_adapter() -> None:
         "CodexSpawnToolChatAdapter",
         "DroidSpawnToolChatAdapter",
         "GrokSpawnToolChatAdapter",
-        "QwenSpawnToolChatAdapter",
     }
 
 

@@ -1760,7 +1760,7 @@ class TestComposerGate:
     async def test_draft_deferral_never_logs_the_draft_text(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Operator drafts are user content and may hold secrets; log state and length only."""
+        """Operator drafts are user content and may hold secrets; log the state only."""
         draft = "export TOKEN=s3cret-value"
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", draft)))
         dispatcher = self._dispatcher(probe, AsyncMock())
@@ -1769,7 +1769,7 @@ class TestComposerGate:
             await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         logged = "\n".join(record.getMessage() for record in caplog.records)
-        assert f"{len(draft)} chars" in logged
+        assert "composer holds an operator draft" in logged
         assert "s3cret" not in logged
         assert "TOKEN" not in logged
 
@@ -1978,5 +1978,47 @@ class TestComposerRetry:
         assert delays[-1] == COMPOSER_RETRY_MAX_SECONDS
         assert all(delay <= COMPOSER_RETRY_MAX_SECONDS for delay in delays)
         assert delays[:4] == [15.0, 30.0, 60.0, 120.0]
+        assert states == []
+        pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_survives_a_failed_attempt_under_the_same_backoff(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerState
+        from gobby.events.live_wake import TerminalActivity
+
+        states: list[ComposerState] = ["draft", "empty"]
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
+
+        pane_sender = AsyncMock()
+        dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        dispatch = dispatcher._dispatch_live_wake_unlocked
+        attempts = 0
+
+        async def first_retry_fails(session_id: str, **kwargs: Any) -> dict[str, Any]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 2:
+                raise RuntimeError("database unavailable")
+            return await dispatch(session_id, **kwargs)
+
+        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
+        monkeypatch.setattr(dispatcher, "_dispatch_live_wake_unlocked", first_retry_fails)
+
+        first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        assert first["skipped"] == "composer_occupied"
+        await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
+
+        # The failed attempt neither ended the retry nor reset its backoff.
+        assert attempts == 3
+        assert delays == [COMPOSER_RETRY_BASE_SECONDS, COMPOSER_RETRY_BASE_SECONDS * 2]
         assert states == []
         pane_sender.assert_awaited_once()

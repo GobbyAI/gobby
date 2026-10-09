@@ -40,7 +40,7 @@ def test_registry_normalizes_grok_and_returns_reader() -> None:
     assert reader.supports_reasoning_interrupt is False
 
 
-@pytest.mark.parametrize("provider", ["droid", "qwen"])
+@pytest.mark.parametrize("provider", ["droid"])
 def test_registry_returns_diagnostics_only_readers(provider: str) -> None:
     reader = WatchdogReaderRegistry().for_provider(provider.upper())
 

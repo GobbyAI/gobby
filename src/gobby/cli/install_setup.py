@@ -16,7 +16,7 @@ from typing import Any
 
 import click
 
-from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST, DEFAULT_WEBSOCKET_PORT
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
 from gobby.install.distribution import (
     HomebrewDistributionError,
@@ -86,7 +86,7 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
         data = {
             "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
             "daemon_port": 60887,
-            "bind_host": "localhost",
+            "bind_host": DEFAULT_DAEMON_BIND_HOST,
             "websocket_port": DEFAULT_WEBSOCKET_PORT,
             "ui_port": 60889,
         }

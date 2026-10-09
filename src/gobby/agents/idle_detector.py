@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # multi-line draft plus the status lines a provider draws below it.
 COMPOSER_PROBE_LINES = 40
 
-ComposerState = Literal["empty", "draft", "unknown"]
+ComposerState = Literal["empty", "draft", "held", "unknown"]
 
 # Box edge, then the provider's prompt marker, then the draft text; the trailing
 # box edge Droid draws after the text is stripped separately.
@@ -109,20 +109,22 @@ def _apply_sgr(params: str, faint: bool, reverse: bool) -> tuple[bool, bool]:
 
 @dataclass(frozen=True)
 class ComposerRead:
-    """What a pane snapshot says about the provider's composer.
+    """What a pane snapshot or the composer ledger says about the provider's composer.
 
-    ``empty`` and ``draft`` are positive reads of a visible composer frame;
-    ``unknown`` covers no snapshot, no frame, or a frame the manifest cannot
-    classify, and callers fall back to the blind drain.
+    ``empty`` and ``draft`` are positive reads; ``unknown`` covers no snapshot, no
+    frame, a frame the manifest cannot classify, or a blocked or untracked ledger
+    entry, whose block ``reason`` the ledger names. Only the ledger reads ``held``:
+    daemon text with no human input since, with ``line`` when the ledger knows it.
     """
 
     state: ComposerState
     line: str | None = None
+    reason: str | None = None
 
     def holds_payload(self, payload: str) -> bool:
         """Match the whole draft, ignoring whitespace introduced by visual wrapping."""
         return (
-            self.state == "draft"
+            self.state in {"draft", "held"}
             and self.line is not None
             and " ".join(self.line.split()) == " ".join(payload.split())
         )
@@ -277,14 +279,15 @@ class IdleDetector:
         whole turn (``✻ Grooving… (7m 12s · still thinking with xhigh effort)``,
         ``• Working (4m 58s • esc to interrupt)``), including long thinking phases
         that write nothing to the transcript. The fingerprint follows the counter,
-        so a live turn keeps changing it while a frozen CLI does not.
+        so a live turn keeps changing it while a frozen CLI does not. Wake probes
+        pass an ``ansi`` snapshot, so styling is stripped before the rule matches.
         """
         manifest = self._manifest()
         if manifest is None:
             return None
         lines = [
             " ".join(line.split())
-            for line in pane_output.splitlines()
+            for line in plain_text(pane_output).splitlines()
             if manifest.match_rule("turn_in_flight", line.strip()).match is not None
         ]
         if not lines:

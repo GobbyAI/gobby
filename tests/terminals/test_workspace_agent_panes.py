@@ -24,6 +24,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager, tmux_locator_key
 from gobby.storage.workspaces import (
+    InvalidWorkspaceOpError,
     Workspace,
     WorkspaceManager,
     WorkspacePane,
@@ -515,6 +516,62 @@ async def test_split_axis_maps_to_storage_axis(harness: _Harness) -> None:
         reserved = await _reserve(h, placement)
         layout = _tab_row(h, ws, reserved.tab_id).layout
         assert _split_axis(layout, reserved.pane_id) == stored
+
+
+@pytest.mark.parametrize("columns", [80, 323])
+async def test_balanced_launches_preserve_manager_width_and_existing_tab(
+    harness: _Harness, columns: int
+) -> None:
+    from tests.storage.test_workspace_balancing import pane_sizes
+
+    workspace = _workspace(harness)
+    tab, manager = _base(harness, workspace)
+    original_terminal = manager.terminal_id
+    expected = {manager.id}
+    for index in range(4):
+        placement = AgentPlacement.parse(
+            {
+                "split": {
+                    "pane": manager.id,
+                    "axis": "balanced",
+                    "columns": columns,
+                    "rows": 100,
+                    "title": f"seat {index}",
+                }
+            }
+        )
+        reserved, terminal = await _launch(harness, placement)
+        harness.reserver.settle(reserved)
+        expected.add(reserved.pane_id)
+        [current] = harness.workspaces.list_tabs(workspace.id)
+        assert current.id == tab.id
+        sizes = pane_sizes(current.layout, columns, 100)
+        assert set(sizes) == expected
+        assert min(width for width, _ in sizes.values()) >= 80
+        assert min(height for _, height in sizes.values()) >= 12
+        assert _pane(harness, workspace, manager.id).terminal_id == original_terminal
+        assert _pane(harness, workspace, reserved.pane_id).terminal_id == terminal.id
+    bindings = {pane.id: pane.terminal_id for pane in harness.workspaces.list_panes(workspace.id)}
+    repaired = await harness.ops.tab_rebalance(OPERATOR, tab.id, columns, 100)
+    assert repaired.layout == current.layout
+    assert {
+        pane.id: pane.terminal_id for pane in harness.workspaces.list_panes(workspace.id)
+    } == bindings
+    assert _kinds(harness)[-1] == "pane.resized"
+
+
+async def test_balanced_height_refusal_leaves_tab_and_bindings_unchanged(harness: _Harness) -> None:
+    workspace = _workspace(harness)
+    tab, manager = _base(harness, workspace)
+    panes = harness.workspaces.list_panes(workspace.id)
+    events = _kinds(harness)
+    with pytest.raises(InvalidWorkspaceOpError, match="at least 12"):
+        harness.workspaces.add_pane(
+            mint_pane_id(), beside=manager.id, axis="vertical", balance_columns=80, balance_rows=11
+        )
+    assert harness.workspaces.list_panes(workspace.id) == panes
+    assert harness.workspaces.list_tabs(workspace.id) == [tab]
+    assert _kinds(harness) == events
 
 
 async def test_reserve_stores_final_worktree_association(harness: _Harness, tmp_path: Path) -> None:

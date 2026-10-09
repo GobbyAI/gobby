@@ -389,7 +389,8 @@ def create_spawn_agent_registry(
             worktree_id: Existing worktree to reuse (full UUID or unique id prefix)
             cleanup_isolation_on_failure: Delete freshly created isolation if boot fails
             workflow: Workflow/pipeline to use
-            execution_mode: Run lifetime; defaults to the agent definition (one_shot).
+            execution_mode: Run lifetime; session resumes default to interactive, otherwise
+                defaults to the agent definition (one_shot). Explicit overrides win.
                 Interactive standing seats remain available between turns until explicitly ended.
             provider: Required when model is supplied for a fresh spawn. Resume uses
                 the target's recorded provider. Otherwise resolved from
@@ -413,6 +414,10 @@ def create_spawn_agent_registry(
             placement: Bind the agent's terminal into a workspace pane before exec:
                 {"tab": {"workspace": REF, "title": TEXT}} or
                 {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
+                Split axis 'balanced' keeps panes at least 80 columns by 12 rows
+                when viewport 'columns' (default 80) and required 'rows' fit them,
+                else tiles the tab evenly across the viewport. A viewport too
+                small for either refuses placement without changing the tab.
                 Refusals carry ``placement_error``.
 
         Returns:

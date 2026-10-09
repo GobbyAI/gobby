@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -783,6 +785,35 @@ class TestScopeSpawnedAgentSendMessage:
         effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
         assert effect.type == "block"
         assert effect.mcp_tools == ["gobby-agents:send_message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("target", "expected"),
+        [("parent", "allow"), ("session", "allow"), ("project", "block"), ("global", "block")],
+    )
+    @pytest.mark.parametrize("agent_type", ["plan-writer", "plan-enhancer", "plan-adversary"])
+    async def test_planning_seat_reaches_live_coordinator_without_broadcast_authority(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        agent_type: str,
+        target: str,
+        expected: str,
+    ) -> None:
+        _sync_bundled(db)
+        path = (
+            Path(__file__).parents[2]
+            / f"src/gobby/install/shared/workflows/agents/{agent_type}.yaml"
+        )
+        definition = yaml.safe_load(path.read_text())
+        AgentDefinitionManager(db).create(
+            name=agent_type, definition_json=definition, source="custom"
+        )
+
+        decision, _ = await self._decide(db, session_manager, sessions["child"], agent_type, target)
+
+        assert decision == expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("target", [None, "parent"])

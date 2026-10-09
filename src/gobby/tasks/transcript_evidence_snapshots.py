@@ -48,7 +48,7 @@ class PendingTool:
 # The split is provably equivalent to one full parse because every coupling
 # across the watermark travels with the snapshot: the parser's own cross-line
 # state (`snapshot_state`/`hydrate_state` — Codex exec chains, Droid usage
-# deltas; Claude/Qwen/Grok parse per line), the derivation's unresolved tool
+# deltas; Claude/Grok parse per line), the derivation's unresolved tool
 # begins (`pending`), the event `order` counter, and the raw pre-dedup
 # `degraded` list. The per-line window filter commutes with splitting the
 # stream, and first-occurrence dedup of (dedup(prefix) + suffix) equals

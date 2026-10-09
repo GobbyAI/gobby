@@ -489,7 +489,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"agy", "droid", "grok", "qwen"}:
+    if provider in {"agy", "droid", "grok"}:
         return AIAdapterStyle.CLI
     return None
 
@@ -518,7 +518,7 @@ _TOOL_CHAT_EXECUTABLE_STYLES: frozenset[AIAdapterStyle] = frozenset(
 
 def _tool_chat_adapter_style(provider: str) -> AIAdapterStyle | None:
     # tool_chat is an agentic capability, so it mirrors vision_extract's
-    # transport classification, NOT text_generate's. grok/qwen drive their own
+    # transport classification, NOT text_generate's. grok drives its own
     # loop over ACP; droid via its CLI; codex via the app-server daemon; claude
     # via the Agent SDK. AGY can spawn agents, but its global-only MCP config
     # cannot confine a tool set to one request, so it gets no tool_chat binding.
@@ -526,7 +526,7 @@ def _tool_chat_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"grok", "qwen"}:
+    if provider == "grok":
         return AIAdapterStyle.ACP
     if provider == "droid":
         return AIAdapterStyle.CLI
@@ -655,7 +655,7 @@ def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"grok", "qwen"}:
+    if provider == "grok":
         return AIAdapterStyle.ACP
     if provider == "droid":
         return AIAdapterStyle.CLI
@@ -707,7 +707,7 @@ def _provider_binding(
 
 
 def _adapter_style_for_provider(capability: AICapability, provider: str) -> AIAdapterStyle:
-    if capability == AICapability.WEB_CHAT and provider in {"grok", "qwen"}:
+    if capability == AICapability.WEB_CHAT and provider == "grok":
         return AIAdapterStyle.ACP
     if capability == AICapability.WEB_CHAT and provider == "codex":
         return AIAdapterStyle.DAEMON

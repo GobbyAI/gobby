@@ -16,24 +16,3 @@ rules:
         delivery: on_receipt
         variable: plan_skill_directive_delivered
         value: true
-
-  teach-qwen-gcode-plan-mode:
-    description: "Teach Qwen that gcode is allowed for code navigation in plan mode"
-    event: turn_start
-    enabled: true
-    priority: 11
-    when: >
-      variables.get('plan_mode')
-      and source == 'qwen'
-      and not variables.get('qwen_gcode_plan_hint_shown')
-    effects:
-      - type: inject_context
-        delivery: on_receipt
-        template: |
-          Qwen plan mode permits `gcode` through shell command execution for code navigation.
-          Use `gcode outline path/to/file`, `gcode search "query"`, and `gcode symbol <full-uuid>` when inspecting code. Get full UUIDs from search or outline results.
-          File edits and write/destructive shell commands remain blocked until plan approval.
-      - type: set_variable
-        delivery: on_receipt
-        variable: qwen_gcode_plan_hint_shown
-        value: true

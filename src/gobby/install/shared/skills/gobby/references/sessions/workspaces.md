@@ -19,6 +19,21 @@ without `name` clears a tab title or pane label. `close_pane`, `close_tab`, and
 `close_workspace` kill the live terminals they own. Changes publish to the
 workspace's WebSocket subscribers, so an attached client redraws.
 
+`rebalance_tab(tab, rows, columns=80)` preserves the tab's pane and terminal IDs and
+rebuilds its layout into evenly sized rows and columns. Pass the current tab's
+viewport width and height in cells. When the viewport fits them, panes keep at
+least 80 columns and 12 rows, plus divider cells; the default width uses one
+column. A tab too crowded for that floor is tiled across the whole viewport, as
+gclient's Arrange > Tiled does: ceil(sqrt N) even rows. No pane is restarted or
+killed. A viewport under 80x12 or too small for even the tiled grid, missing
+height, or an in-flight spawn refuses the operation. Hidden PTY dimensions can
+be stale; supply known viewport dimensions. Crew-lane uses this same layout
+through spawn placement's
+`axis: balanced`, `columns` and required `rows` budgets. Supply `lane_columns`
+and required `lane_rows` when launching the crew-lane runbook.
+The operator CLI is
+`gobby workspaces rebalance-tab TAB --columns WIDTH --rows HEIGHT --json`.
+
 Pane input follows `send_keys` policy: `send_text` types, `send_pane_keys` presses,
 a trailing newline submits, and nonliteral input names keys such as `enter` or
 `c-c`. An `indeterminate` write may have landed: read the pane before retrying,

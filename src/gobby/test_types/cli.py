@@ -77,6 +77,10 @@ def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) 
     click.echo(f"Baseline: {len(loaded_baseline.entries)}")
     click.echo(f"New: {len(diff.new_sites)}")
     click.echo(f"Stale: {len(diff.stale_entries)}")
+    if scan.errors:
+        click.echo("Source scan errors:")
+        for error in scan.errors:
+            click.echo(f"  {error}")
     _render_suppression_sites("New suppression sites", diff.new_sites)
     if diff.stale_entries:
         click.echo("Stale baseline sites:")
@@ -91,6 +95,9 @@ def suppressions(paths: tuple[Path, ...], baseline: Path, write_baseline: bool) 
             click.echo(
                 f"  {entry['path']}::{entry['symbol']}: {directive}{suffix} on {entry['statement']}"
             )
+
+    if scan.errors:
+        raise click.exceptions.Exit(1)
 
     if write_baseline:
         if diff.new_sites:

@@ -333,7 +333,9 @@ _AGENT_IDENTITY_ENV_HEADERS = (
 
 def daemon_auth_headers() -> dict[str, str]:
     """Build daemon bearer headers, preferring a managed run capability."""
-    agent_token = os.environ.get(GOBBY_AGENT_API_TOKEN_ENV, "").strip()
+    agent_token = (
+        _managed_envelope_api_token() or os.environ.get(GOBBY_AGENT_API_TOKEN_ENV, "").strip()
+    )
     if agent_token:
         headers = {"Authorization": f"Bearer {agent_token}"}
         for env_name, header_name in _AGENT_IDENTITY_ENV_HEADERS:
@@ -341,7 +343,44 @@ def daemon_auth_headers() -> dict[str, str]:
             if value:
                 headers[header_name] = value
         return headers
+    if os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
+        raise RuntimeError("managed capability is unavailable")
     token = read_local_api_token()
     if token is None:
         return {}
     return {"Authorization": f"Bearer {token}"}
+
+
+def _managed_envelope_api_token() -> str | None:
+    """Read only the current execution's private envelope, without operator fallback."""
+    source = os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "").strip()
+    if not source:
+        return None
+    path = Path(source)
+    try:
+        with path.open("rb") as stream:
+            if os.fstat(stream.fileno()).st_mode & 0o077:
+                raise ValueError("managed capability envelope is not private")
+            raw = json.load(stream)
+    except (OSError, ValueError):
+        raise RuntimeError("managed capability envelope is unavailable or invalid") from None
+    if not isinstance(raw, dict):
+        raise RuntimeError("managed capability envelope is invalid")
+    token = raw.get("managed_api_token")
+    if token is None:
+        return None
+    principal = raw.get("principal")
+    if not isinstance(token, str) or not token.strip() or not isinstance(principal, dict):
+        raise RuntimeError("managed capability envelope is invalid")
+    run = os.environ.get("GOBBY_AGENT_RUN_ID", "").strip()
+    execution = os.environ.get(GOBBY_MANAGED_EXECUTION_ID_ENV, "").strip()
+    if bool(run) == bool(execution):
+        raise RuntimeError("managed capability envelope owner is ambiguous or missing")
+    expected = run or execution
+    if principal.get("execution_id") != expected:
+        raise RuntimeError("managed capability envelope owner does not match")
+    for key, name in (("session_id", "GOBBY_SESSION_ID"), ("project_id", "GOBBY_PROJECT_ID")):
+        value = os.environ.get(name, "").strip()
+        if value and principal.get(key) != value:
+            raise RuntimeError("managed capability envelope identity does not match")
+    return token.strip()

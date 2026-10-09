@@ -107,8 +107,8 @@ def test_stale_runtime_version_is_typed(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("version", "expected_state"),
     [
-        ("0.7.2", GhookRuntimeState.STALE_VERSION),
-        ("0.7.3", GhookRuntimeState.COMPATIBLE),
+        ("0.7.3", GhookRuntimeState.STALE_VERSION),
+        (MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA, GhookRuntimeState.COMPATIBLE),
     ],
 )
 def test_agent_identity_runtime_version_floor(

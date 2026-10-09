@@ -393,29 +393,22 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         )
 
     def get_live_binding_generation(self, managed_execution_id: UUID) -> int | None:
-        """Return the unrevoked generation for rotate, including expired predecessors."""
+        """Return current authority, including an expired binding awaiting refresh."""
         candidates = [
             row
             for row in self._database.fetchall(
-                f"SELECT * FROM {self.auth_schema}.list_active_principals()"
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
             )
             if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+            and _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
         ]
-        if not candidates:
+        if len(candidates) != 1:
             return None
-        now = datetime.now(UTC)
-        live = [
-            row
-            for row in candidates
-            if isinstance(expires_at := _row_value(row, "expires_at"), datetime)
-            and expires_at > now
-        ]
-        rotatable = live or candidates
         try:
-            return max(
-                int(str(_row_value(row, "role_name")).rsplit("_", 1)[1]) for row in rotatable
-            )
-        except (IndexError, ValueError) as error:
+            return int(_row_value(candidates[0], "credential_generation"))
+        except (TypeError, ValueError) as error:
             raise CredentialIssuanceError(
                 "managed principal role has invalid generation"
             ) from error
@@ -445,6 +438,12 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
+        # Bounded, deadline-only cleanup; a generic reconcile would revoke an
+        # expired current binding before its live owner can refresh it.
+        self._database.fetchone(
+            f"SELECT {self.auth_schema}.drain_rotation_predecessors(%s)",
+            (self._machine_id,),
+        )
         due = self._database.fetchall(
             f"SELECT * FROM {self.auth_schema}.principals_due_for_rotation(%s)",
             (self._machine_id,),
@@ -479,6 +478,8 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         issued_at: datetime,
         expires_at: datetime,
     ) -> ManagedCredential | None:
+        if not self._rotation_owner_is_live(managed_execution_id):
+            return None
         password = secrets.token_urlsafe(32)
         successor_generation: int | None = None
         bootstrap_path = self._execution_root(managed_execution_id) / "bootstrap.json"
@@ -543,12 +544,80 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         finally:
             password = ""
 
-        self.revoke(
-            managed_execution_id,
-            generation=predecessor_generation,
-            reason="rotation-predecessor",
-        )
+        # SQL durably marks the predecessor for a bounded drain. Lifecycle
+        # cleanup or reconciliation revokes it after the advertised deadline,
+        # including when the daemon crashes after publication.
         return credential
+
+    def _rotation_owner_is_live(self, execution_id: UUID) -> bool:
+        """Refuse ambiguous bindings and ended owners before minting any successor."""
+        from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
+
+        # An expired Postgres password is refreshable for a live owner. Binding
+        # revocation and owner status, rather than password expiry, end that authority.
+        bindings = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(execution_id)
+            and isinstance(_row_value(row, "expires_at"), datetime)
+        ]
+        current = [
+            row
+            for row in bindings
+            if _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
+        ]
+        if len(current) != 1 or len(bindings) > 2:
+            return False
+        binding = current[0]
+        for predecessor in bindings:
+            if predecessor is binding:
+                continue
+            requested = _row_value(predecessor, "revocation_requested_at")
+            deadline = _row_value(predecessor, "predecessor_drain_deadline")
+            generation = _row_value(predecessor, "credential_generation")
+            current_generation = _row_value(binding, "credential_generation")
+            if (
+                not isinstance(requested, datetime)
+                or not isinstance(deadline, datetime)
+                or not requested < deadline <= requested + timedelta(minutes=5)
+                or not isinstance(generation, int)
+                or not isinstance(current_generation, int)
+                or generation != current_generation - 1
+                or any(
+                    _row_value(predecessor, key) != _row_value(binding, key)
+                    for key in (
+                        "owner_kind",
+                        "agent_run_id",
+                        "session_id",
+                        "project_id",
+                        "issuing_machine_id",
+                        "code_overlay_project_id",
+                    )
+                )
+            ):
+                return False
+        owner_kind = _row_value(binding, "owner_kind")
+        if owner_kind == "maintenance":
+            return _row_value(binding, "login_capable") is True
+        session = self._database.fetchone(
+            "SELECT status FROM sessions WHERE id = %s AND machine_id = %s",
+            (_row_value(binding, "session_id"), self._machine_id),
+        )
+        if session is None or _row_value(session, "status") in ("expired", "deleted"):
+            return False
+        if owner_kind == "tool_chat":
+            return True
+        if owner_kind != "agent_run":
+            return False
+        run = self._database.fetchone(
+            "SELECT status FROM agent_runs WHERE id = %s AND machine_id = %s",
+            (_row_value(binding, "agent_run_id"), self._machine_id),
+        )
+        return run is not None and _row_value(run, "status") in ACTIVE_AGENT_RUN_STATUSES
 
     def list_active(self) -> list[dict[str, object]]:
         """Return active scoped-role metadata without credential material."""

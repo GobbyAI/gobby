@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Collection, Mapping
 from typing import Literal, TypedDict
 
@@ -31,6 +32,68 @@ class LayoutSplit(TypedDict):
 
 
 type LayoutNode = LayoutLeaf | LayoutSplit
+
+MIN_PANE_COLUMNS = 80
+MIN_PANE_ROWS = 12
+
+
+def balanced_layout(
+    layout: LayoutNode, columns: int = MIN_PANE_COLUMNS, rows: int | None = None
+) -> LayoutNode:
+    """Keep pane order and IDs, filling columns of evenly sized rows.
+
+    Reserve a cell for every divider. Columns keep each pane at the width and
+    height interactive agents need, and a narrow viewport uses one column. A lane
+    too crowded for that floor tiles the whole viewport instead, as gclient's
+    Arrange > Tiled does: ceil(sqrt N) even rows, each filled left to right.
+    """
+    if not isinstance(columns, int) or isinstance(columns, bool) or columns < MIN_PANE_COLUMNS:
+        raise InvalidWorkspaceOpError(f"A lane tab needs at least {MIN_PANE_COLUMNS} columns")
+    if not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS:
+        raise InvalidWorkspaceOpError(f"Supply the tab viewport rows (at least {MIN_PANE_ROWS})")
+    panes: list[LayoutNode] = [_leaf(pane_id) for pane_id in layout_pane_ids(layout)]
+    count = min(len(panes), (columns + 1) // (MIN_PANE_COLUMNS + 1))
+    per_column, remainder = divmod(len(panes), count)
+    if rows >= (per_column + bool(remainder)) * (MIN_PANE_ROWS + 1) - 1:
+        stacks: list[LayoutNode] = []
+        offset = 0
+        for index in range(count):
+            size = per_column + (index < remainder)
+            stacks.append(_join(panes[offset : offset + size], _even(rows, size), "vertical"))
+            offset += size
+        return _join(stacks, _even(columns, count), "horizontal")
+    per_row = math.ceil(len(panes) / (math.isqrt(len(panes) - 1) + 1))
+    tiers = [panes[start : start + per_row] for start in range(0, len(panes), per_row)]
+    if len(tiers) * 2 - 1 > rows or per_row * 2 - 1 > columns:
+        raise InvalidWorkspaceOpError(
+            f"{len(panes)} panes cannot fit {columns}x{rows}, even tiled {len(tiers)} rows "
+            "deep. Enlarge the tab before retrying."
+        )
+    return _join(
+        [_join(tier, _even(columns, len(tier)), "horizontal") for tier in tiers],
+        _even(rows, len(tiers)),
+        "vertical",
+    )
+
+
+def _even(total: int, count: int) -> list[int]:
+    """Split ``total`` cells into ``count`` extents within one cell of each other."""
+    size, extra = divmod(total - count + 1, count)
+    return [size + (index < extra) for index in range(count)]
+
+
+def _join(nodes: list[LayoutNode], sizes: list[int], axis: LayoutAxis) -> LayoutNode:
+    """Lay ``nodes`` along ``axis`` at ``sizes`` cells, one divider cell between each."""
+    if len(nodes) == 1:
+        return nodes[0]
+    middle = len(nodes) // 2
+    first = sum(sizes[:middle]) + middle - 1
+    second = sum(sizes[middle:]) + len(nodes) - middle - 1
+    return _split(
+        axis,
+        first / (first + second),
+        [_join(nodes[:middle], sizes[:middle], axis), _join(nodes[middle:], sizes[middle:], axis)],
+    )
 
 
 def validate_layout(value: object) -> LayoutNode:

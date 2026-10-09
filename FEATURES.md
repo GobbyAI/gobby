@@ -29,7 +29,6 @@ Full hook, transcript, and web-chat integration exists for:
 
 - Claude Code
 - Codex CLI
-- Qwen Code
 - Grok CLI
 - Factory Droid
 
@@ -178,7 +177,7 @@ Sources: [`src/gobby/storage/tasks/_stage_registry.py`](src/gobby/storage/tasks/
 ## Agents and multi-agent orchestration
 
 - Spawn from a prompt or reusable agent definition.
-- Claude, Codex, Droid, Grok, Qwen, and AGY provider targets with provider fallback chains.
+- Claude, Codex, Droid, Grok, and AGY provider targets with provider fallback chains.
 - Provider, model, reasoning, tools, skills, variables, rules, workflows, pipelines, personas, and
   task association.
 - Shared-checkout, worktree, clone, and inherited isolation modes.
@@ -413,7 +412,7 @@ Sources: [`src/gobby/communications/`](src/gobby/communications/) and
 
 - Central LLM service with model registry, context-window metadata, prompt rendering, image
   payloads, local provider support, and provider fallback.
-- Provider capability collectors for Claude, Codex, Droid, Grok, and Qwen.
+- Provider capability collectors for Claude, Codex, Droid, and Grok.
 - Feature profiles and explicit provider, model, and reasoning candidate chains.
 - Runtime provider metadata refresh and generation endpoints.
 - Speech-to-text HTTP endpoint with capability detection and guarded lazy loading.

@@ -185,6 +185,20 @@ def test_manager_pane_supplies_workspace_without_named_tab(lane_env: LaneEnv) ->
     assert resolve(lane_env)["lane_pane"] == lane_env.pane
 
 
+def test_suffixed_lane_tab_wins_over_shared_managers_other_lane(lane_env: LaneEnv) -> None:
+    workspaces = WorkspaceManager(lane_env.db)
+    old = workspaces.list_tabs(lane_env.workspace)[0]
+    workspaces.rename_tab(old.id, "Lane 5")
+    lane_pane = str(uuid4())
+    workspaces.create_tab(
+        lane_env.workspace,
+        pane_id=lane_pane,
+        project_id=lane_env.project,
+        title="Lane 3 - Terminal port",
+    )
+    assert resolve(lane_env)["lane_pane"] == lane_pane
+
+
 def test_native_manager_pane_supplies_workspace_without_named_tab(lane_env: LaneEnv) -> None:
     workspaces = WorkspaceManager(lane_env.db)
     workspaces.rename_tab(workspaces.list_tabs(lane_env.workspace)[0].id, "Other")

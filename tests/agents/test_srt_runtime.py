@@ -28,7 +28,6 @@ from gobby.agents.sandbox_resolvers import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     GrokSandboxResolver,
-    QwenSandboxResolver,
     SandboxResolver,
 )
 from gobby.agents.srt_runtime import (
@@ -260,6 +259,38 @@ async def test_rendered_write_denies_are_the_ones_a_grant_can_reach(
     # Each deny costs Seatbelt compile time, superlinearly: 1978 took 13.7 s of CPU.
     # This workspace renders 55.
     assert len(deny_write) < 100 < len(paths.deny_write_paths)
+
+
+def test_rendering_keeps_write_denies_under_each_pinned_default_grant(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Independently captured from getDefaultWritePaths() in verified SRT 0.0.79.
+    # A pin bump requires refreshing this contract, without a network fetch in pytest.
+    assert SRT_RELEASE.version == "0.0.79"
+    defaults = (
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/null",
+        "/dev/tty",
+        "/dev/dtracehelper",
+        "/dev/autofs_nowait",
+        "/tmp/claude",
+        "/private/tmp/claude",
+        "~/.npm/_logs",
+        "~/.claude/debug",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    denies = [str(Path(path).expanduser() / "synthetic") for path in defaults]
+    paths = ResolvedSandboxPaths(
+        workspace_path=str(tmp_path),
+        read_paths=[],
+        write_paths=[],
+        allow_external_network=False,
+        deny_write_paths=denies,
+    )
+
+    assert render_srt_settings(paths)["filesystem"]["denyWrite"] == denies
 
 
 def test_write_deny_under_a_symlinked_srt_default_is_rendered(
@@ -663,7 +694,6 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     [
         ("codex", CodexSandboxResolver()),
         ("droid", None),
-        ("qwen", QwenSandboxResolver()),
         ("grok", GrokSandboxResolver()),
     ],
 )
@@ -913,8 +943,11 @@ def srt_root(tmp_path: Path) -> Iterator[Path]:
 
 
 def _write_valid_srt_install(root: Path, *, helper_mode: int = 0o755) -> None:
+    from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(root)
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-    package_dir.mkdir(parents=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
     for architecture in ("arm64", "x64"):
         helper = package_dir / "vendor" / "seccomp" / architecture / "apply-seccomp"
         helper.parent.mkdir(parents=True)
@@ -946,8 +979,8 @@ def _patch_srt_verification_runtime(
         "node_dependency_status",
         lambda: DependencyStatus(
             state="healthy",
-            installed_version="20.11.0",
-            minimum_version="20.11.0",
+            installed_version="22.12.0",
+            minimum_version="22.12.0",
             expected_version=None,
             path="/usr/bin/node",
             error=None,
@@ -1008,6 +1041,28 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
     injected.write_text("export default 'persisted payload';\n", encoding="utf-8")
 
     with pytest.raises(SrtRuntimeError, match="content manifest"):
+        verify_srt_installation()
+
+
+@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js"])
+def test_verify_srt_installation_rejects_unpatched_proxy_with_rewritten_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    srt_root: Path,
+    name: str,
+) -> None:
+    from gobby.agents.srt_package_patch import HTTP_PROXY_PATH
+    from tests.srt_fixture_helpers import upstream_proxy_bytes
+
+    _write_valid_srt_install(srt_root)
+    _patch_srt_verification_runtime(monkeypatch, srt_root)
+    proxy = (srt_root / HTTP_PROXY_PATH).with_name(name)
+    proxy.chmod(0o644)
+    proxy.write_bytes(upstream_proxy_bytes(name.removesuffix(".js")))
+    (srt_root / "content-manifest.json").chmod(0o644)
+    srt_runtime.write_srt_content_manifest(srt_root)
+    srt_runtime.make_srt_installation_immutable(srt_root)
+
+    with pytest.raises(SrtRuntimeError, match=f"{name} checksum mismatch"):
         verify_srt_installation()
 
 

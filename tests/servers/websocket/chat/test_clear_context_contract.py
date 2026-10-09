@@ -33,14 +33,10 @@ from gobby.servers.websocket.chat.backends.grok import (
     GrokManagedChatSession,
     GrokWebChatBackend,
 )
-from gobby.servers.websocket.chat.backends.qwen import (
-    QwenManagedChatSession,
-    QwenWebChatBackend,
-)
 
 pytestmark = pytest.mark.unit
 
-_BACKENDS = ("claude", "codex", "acp", "droid", "grok", "qwen")
+_BACKENDS = ("claude", "codex", "acp", "droid", "grok")
 
 
 def _continuation_ids(session: object) -> set[str]:
@@ -151,14 +147,13 @@ def test_managed_base_exposes_restart_default() -> None:
     assert signature.return_annotation in {bool, "bool"}
 
 
-def test_six_backends_satisfy_protocol_once_clear_context_exists() -> None:
+def test_five_backends_satisfy_protocol_once_clear_context_exists() -> None:
     sessions: list[ChatSessionProtocol] = [
         ChatSession(conversation_id="claude"),
         CodexManagedChatSession(conversation_id="codex", _backend=MagicMock()),
         ACPManagedChatSession(conversation_id="acp", chat_mode="plan"),
         DroidManagedChatSession(conversation_id="droid", _backend=MagicMock()),
         GrokManagedChatSession(conversation_id="grok", _backend=MagicMock()),
-        QwenManagedChatSession(conversation_id="qwen", _backend=MagicMock()),
     ]
     assert [session.provider for session in sessions] == list(_BACKENDS)
     for session in sessions:
@@ -324,7 +319,7 @@ async def test_codex_clear_context_archives_and_starts_fresh_thread() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["acp", "grok", "qwen"])
+@pytest.mark.parametrize("provider", ["acp", "grok"])
 async def test_acp_family_clear_context_creates_session_instead_of_resume(
     provider: str,
 ) -> None:
@@ -336,12 +331,9 @@ async def test_acp_family_clear_context_creates_session_instead_of_resume(
             chat_mode="plan",
             _backend=backend,
         )
-    elif provider == "grok":
+    else:
         backend = GrokWebChatBackend(client=client, default_model="grok-model")
         session = GrokManagedChatSession(conversation_id="grok-clear", _backend=backend)
-    else:
-        backend = QwenWebChatBackend(client=client, default_model="qwen-model")
-        session = QwenManagedChatSession(conversation_id="qwen-clear", _backend=backend)
     backend._health = ProviderBackendHealth(provider=provider, available=True)
     session._model = f"{provider}-model"
     session.chat_mode = "normal"
@@ -416,14 +408,13 @@ async def test_droid_clear_context_starts_process_without_old_session_id(
 
 
 @pytest.mark.asyncio
-async def test_all_six_backends_are_covered_by_this_module() -> None:
+async def test_all_five_backends_are_covered_by_this_module() -> None:
     covered = {
         "claude": hasattr(ChatSession, "clear_context"),
         "codex": hasattr(CodexManagedChatSession, "clear_context"),
         "acp": hasattr(ACPManagedChatSession, "clear_context"),
         "droid": hasattr(DroidManagedChatSession, "clear_context"),
         "grok": hasattr(GrokManagedChatSession, "clear_context"),
-        "qwen": hasattr(QwenManagedChatSession, "clear_context"),
     }
     assert list(covered) == list(_BACKENDS)
     missing = [name for name, present in covered.items() if not present]

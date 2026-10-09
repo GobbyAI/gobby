@@ -415,40 +415,6 @@ _GROK_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
-def _qwen_digit(digit: str) -> PlanKeystrokeSequence:
-    """Qwen Code approval-menu selection: the item number activates with no Enter."""
-    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
-
-
-# Qwen Code (Qwen CLI TUI) native tool-approval menu. Captured empirically for
-# task #15732 by driving ``qwen --approval-mode default`` on a pty against a
-# working local LM Studio backend and reading the rendered menu grid (the
-# gobby-managed ACP path runs qwen headless and never shows this menu; this
-# mapping is for the native TUI a user runs under a proxy terminal). Qwen Code
-# uses the same RadioButtonSelect confirmation shape as other ACP CLIs
-# ([*] = the default-highlighted item):
-#
-#   Apply this change?
-#     [*] 1. Yes, allow once
-#     [ ] 2. Yes, allow always
-#     [ ] 3. No, suggest changes (esc)
-#
-# Empirically verified: the item NUMBER activates immediately with NO Enter
-# (digit "1" approved and wrote the probe file; digit "2" likewise approved and
-# wrote it). Option 1 ("allow once") is the single manual approval, option 2
-# ("allow always") is the auto-accept / bypass item. Esc rejects regardless of
-# menu shape (Esc on the write menu cancelled the write and the file was never
-# created); the reject DIGIT varies by tool type while Escape is
-# the shape-independent reject shown as the menu's "(esc)" shortcut.
-_QWEN_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
-    "approve_act": _qwen_digit("1"),
-    "approve_yolo": _qwen_digit("2"),
-    # Reject via the "(esc)" shortcut: the menu's reject DIGIT varies by tool
-    # type, but Escape always rejects regardless of menu shape.
-    REQUEST_CHANGES_OPTION_ID: PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),)),
-}
-
-
 def _pane_contains_all(*needles: str) -> PlanMenuMatcher:
     return lambda pane_text: all(needle in pane_text for needle in needles)
 
@@ -504,18 +470,6 @@ def _agy_native_option(option: int, pane_text: str) -> PlanKeystrokeSequence | N
     if option == 2:
         return _agy_open_then("n")
     return None
-
-
-def _qwen_native_option(
-    option: int,
-    pane_text: str,
-) -> PlanKeystrokeSequence | None:
-    matcher = _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes")
-    if not matcher(pane_text) or option < 1 or option > 3:
-        return None
-    if option == 3:
-        return PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),))
-    return _qwen_digit(str(option))
 
 
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
@@ -592,20 +546,12 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
             sequence=_grok_digit,
         ),
     )
-    # --- qwen (Qwen Code TUI tool-approval menu) -- task #15732 ---
-    for _qwen_option_id, _qwen_sequence in _QWEN_PLAN_MENU.items():
-        registry.register("qwen", _qwen_option_id, _qwen_sequence)
-    registry.register_menu_matcher(
-        "qwen",
-        _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes (esc)"),
-    )
     # --- agy (artifact review: Action required, ctrl+r then y/n) -- task #20755 ---
     agy_matcher = _pane_contains_all("Action required")
     for _agy_option_id, _agy_sequence in _AGY_PLAN_MENU.items():
         registry.register("agy", _agy_option_id, _agy_sequence)
     registry.register_menu_matcher("agy", agy_matcher)
     registry.register_native_option_resolver("agy", _agy_native_option)
-    registry.register_native_option_resolver("qwen", _qwen_native_option)
 
 
 def build_default_plan_keystroke_registry() -> PlanKeystrokeRegistry:

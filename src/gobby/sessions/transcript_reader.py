@@ -2,7 +2,7 @@
 
 Reads from live transcript files for all live sessions and falls back to
 gzip archives for expired sessions. Supported CLI transcripts are line-oriented,
-including Qwen's ``.json`` envelope files.
+including ``.json`` envelope files.
 
 Rendered reads are **windowed** through a cached per-session boundary index
 (:mod:`gobby.sessions.transcript_index`) so daemon RAM stays bounded on very

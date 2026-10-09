@@ -71,7 +71,7 @@ postgres_pool:
   open_timeout_seconds: 30.0
   max_lifetime_seconds: 300.0
 daemon_port: 60887
-bind_host: "localhost"
+bind_host: "127.0.0.1"
 websocket_port: 60888
 ui_port: 60889
 ```
@@ -549,9 +549,8 @@ The fixed 20-second blocking-effect budget and 30-second ghook transport window
 are part of the validation ladder. These runtime fields have live activation
 policy; inspect the write response and active snapshot for application failures.
 A `hooks.provider_timeout` change also requires `gobby install`
-to rewrite provider settings. Qwen stores the provider value in milliseconds;
-Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`
-hook at 3 seconds. Antigravity stores a `timeout` on every action in
+to rewrite provider settings. Claude caps `SessionEnd` at 60 seconds; Codex
+keeps its enqueue-only `SessionEnd` hook at 3 seconds. Antigravity stores a `timeout` on every action in
 `~/.gemini/config/hooks.json`; the bundled template uses 45 seconds through
 `AGY_HOOK_TIMEOUT_SECONDS`. Unlike the other standard installers, that Antigravity
 per-hook timeout is not rewritten from `hooks.provider_timeout`, so changing the
@@ -801,7 +800,7 @@ snapshot and daemon diagnostics before taking recovery action. Do not replay a
 committed mutation as though persistence failed.
 
 When `hooks.provider_timeout` changes, rerun `gobby install` so the
-Claude, Codex, Qwen, Droid, and Grok client configurations receive the new
+Claude, Codex, Droid, and Grok client configurations receive the new
 outer deadline.
 
 ### Secret Is Masked Or Missing

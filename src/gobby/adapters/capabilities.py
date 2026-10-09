@@ -10,7 +10,6 @@ from typing import Any
 from gobby.adapters.agy_contract import AGY_HOOK_ALIASES, AGY_HOOK_CONTRACTS
 from gobby.adapters.claude_contract import CLAUDE_HOOK_CONTRACTS
 from gobby.adapters.droid_contract import DROID_HOOK_CONTRACTS
-from gobby.adapters.qwen_contract import QWEN_HOOK_CONTRACTS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 
@@ -192,46 +191,6 @@ def _claude_capabilities() -> ProviderCapabilities:
         supports_permissions=True,
         supports_permission_neutral_rewrite=True,
         supports_elicitation=True,
-    )
-
-
-def _qwen_capabilities() -> ProviderCapabilities:
-    events: dict[str, HookCapability] = {}
-    for contract in QWEN_HOOK_CONTRACTS:
-        context_channel = (
-            ContextChannel.ADDITIONAL_CONTEXT
-            if contract.allows_additional_context
-            else ContextChannel.NONE
-        )
-        extra_fields: list[str] = []
-        if contract.decision_style.value == ProviderDecisionStyle.PRE_TOOL_USE:
-            extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
-        elif contract.decision_style.value == ProviderDecisionStyle.PERMISSION_REQUEST:
-            extra_fields.extend(
-                [
-                    "permission_decision",
-                    "auto_approve",
-                    "modified_input",
-                    "updated_permissions",
-                ]
-            )
-
-        events[contract.native_name] = HookCapability(
-            hook_name=contract.native_name,
-            event_type=contract.event_type,
-            decision_style=ProviderDecisionStyle(contract.decision_style.value),
-            context_channel=context_channel,
-            supported_response_fields=_response_fields(
-                *extra_fields,
-                context_channel=context_channel,
-            ),
-        )
-
-    return ProviderCapabilities(
-        source=SessionSource.QWEN,
-        hook_events=events,
-        supports_permissions=True,
-        supports_permission_neutral_rewrite=True,
     )
 
 
@@ -540,7 +499,6 @@ PROVIDER_CAPABILITIES: dict[SessionSource, ProviderCapabilities] = {
     SessionSource.CLAUDE: _claude_capabilities(),
     SessionSource.CODEX: _codex_capabilities(),
     SessionSource.GROK: _grok_capabilities(),
-    SessionSource.QWEN: _qwen_capabilities(),
     SessionSource.DROID: _droid_capabilities(),
     SessionSource.UNKNOWN: _unsupported_capabilities(SessionSource.UNKNOWN),
 }
@@ -550,7 +508,6 @@ SOURCE_ALIASES: dict[str, SessionSource] = {
     "claude": SessionSource.CLAUDE,
     "codex": SessionSource.CODEX,
     "grok": SessionSource.GROK,
-    "qwen": SessionSource.QWEN,
     "droid": SessionSource.DROID,
     "agy": SessionSource.AGY,
     "unknown": SessionSource.UNKNOWN,

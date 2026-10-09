@@ -74,7 +74,7 @@ class ConcreteAdapter(BaseAdapter):
 class IncompleteAdapter(BaseAdapter):
     """Adapter that only implements some abstract methods (for testing)."""
 
-    source = SessionSource.QWEN
+    source = SessionSource.GROK
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Only implement one abstract method."""
@@ -163,8 +163,8 @@ class TestBaseAdapterSubclassing:
     def test_different_sources_can_be_defined(self) -> None:
         """Different adapters can define different sources."""
 
-        class QwenTestAdapter(BaseAdapter):
-            source = SessionSource.QWEN
+        class GrokTestAdapter(BaseAdapter):
+            source = SessionSource.GROK
 
             def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
                 return None
@@ -181,10 +181,10 @@ class TestBaseAdapterSubclassing:
             def translate_from_hook_response(self, response: HookResponse) -> dict[str, Any]:
                 return {}
 
-        qwen_adapter = QwenTestAdapter()
+        grok_adapter = GrokTestAdapter()
         codex_adapter = CodexTestAdapter()
 
-        assert qwen_adapter.source == SessionSource.QWEN
+        assert grok_adapter.source == SessionSource.GROK
         assert codex_adapter.source == SessionSource.CODEX
 
 

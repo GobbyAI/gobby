@@ -1,0 +1,554 @@
+header:
+  plan_id: workspace-index-pin
+  plan_hash: 961a6a8fe42833aa7b00727f74e64ddea8274c9c21342f313ade192d9be232c6
+  root_task_ref: '23433'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-08T23:22:00Z'
+  task_tree_source: db
+  task_tree_source_hash: 644cb8985af08eadb4575aebdac1de0210bd25866426ffba0c1155ce2a76486f
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: T1
+  item_id: T1.1
+  plan_node_hash: b401ff691f2f8869933f6c82b0986eba030f4418ee1b0f1809797dcd922d7abf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23828'
+    validation_criteria_snippet: 'T1.1: Spawn timing reports `isolation_prepare` and
+      the five repair subphases for worktree, clone, and reused-worktree spawns. test:
+      `tests/agents/test_spawn_is...'
+    matched_artifact_ref: tests/agents/test_spawn_isolation_timing.py::test_spawn_timing_attributes_isolation_repair
+  deferral_target: null
+  detail: ''
+- section_id: T1
+  item_id: T1.2
+  plan_node_hash: d0b7c4951cd908af350b10088ea1bacf7902abd9aecc20bde338f7cd6e4b0002
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23828'
+    validation_criteria_snippet: 'T1.1: Spawn timing reports `isolation_prepare` and
+      the five repair subphases for worktree, clone, and reused-worktree spawns. test:
+      `tests/agents/test_spawn_is...'
+    matched_artifact_ref: tests/agents/test_spawn_isolation_timing.py::test_idle_baseline_breakdown_is_complete
+  deferral_target: null
+  detail: ''
+- section_id: T1
+  item_id: T1.3
+  plan_node_hash: db0010871b05aa295c0497fff016d7854f430a3aea61852b291839352dff1ab0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23828'
+    validation_criteria_snippet: 'T1.1: Spawn timing reports `isolation_prepare` and
+      the five repair subphases for worktree, clone, and reused-worktree spawns. test:
+      `tests/agents/test_spawn_is...'
+    matched_artifact_ref: tests/agents/test_spawn_isolation_timing.py::test_prepare_failure_response_unchanged_after_move
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.1
+  plan_node_hash: 3a0ed5c14dfafb8eff7695837dc1413bec0d0db7d23f1eb42292fe9f5331798c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/worktrees/test_fork_commit.py::test_default_uses_caller_head_without_fetch
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.2
+  plan_node_hash: 8be2c5378e739f9931657222b1ad94a60cdb71b7168db07da333168ca8e5c53d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/worktrees/test_fork_commit.py::test_explicit_refs_select_commit
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.3
+  plan_node_hash: a51940f265088e53ce5d4f7f1027ca6bcbe5c3377bbd2389878d5e6beca8cdc4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/worktrees/test_fork_commit.py::test_existing_branch_mismatch_is_rejected
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.4
+  plan_node_hash: 55209af2e245bfff1ef69d1110ea1292d87e7d8b1139de39fe28cd72e2df022c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/agents/test_worktree_fork_commit.py::test_refresh_preserves_workspace_ancestry
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.5
+  plan_node_hash: d36763236eb48587e173a63ef347fcf816c89d9471f9b7955d04a3b4ba45d10e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_worktrees_create.py::test_omitted_base_uses_project_head_and_explicit_main_stays_main
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.6
+  plan_node_hash: e281a6787211a7075868b2aa74d08774c13cf40586cd0a3d44431c48e350cd7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/hooks/test_misc_handlers.py::TestWorktreeHandlers::test_worktree_create_uses_exact_local_head
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.7
+  plan_node_hash: b101011df06ddf15851d97828025578436cee18633e76472cfc876a32e22ed69
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/servers/test_source_control_worktrees.py::test_create_client_worktree_uses_exact_selected_commit
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.8
+  plan_node_hash: 9aa41178475b1d29a4f3a62b8769b199790e18549c9b675d0adffb660fd2c4f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/agents/test_worktree_fork_commit.py::test_omitted_base_survives_to_one_head_resolution
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.9
+  plan_node_hash: 27b734a799d46c24df744a63c29b539f26af8faba90a14b055207a91cc456e1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23829'
+    validation_criteria_snippet: 'A1.1: Default worktrees fork the caller''s local
+      HEAD without fetch, including unpushed commits. test: `tests/worktrees/test_fork_commit.py::test_default_uses_c...'
+    matched_artifact_ref: tests/agents/test_worktree_fork_commit.py::test_dirty_parent_fork_yields_clean_worktree
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.1
+  plan_node_hash: 04152925ff1fc491a295b288d32fda17c6464066af16918a6dcf401c9502847e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23830'
+    validation_criteria_snippet: 'A2.1: Default clones include caller-local unpushed
+      commits and record the selected commit. test: `tests/clones/test_fork_commit.py::test_local_clone_uses_calle...'
+    matched_artifact_ref: tests/clones/test_fork_commit.py::test_local_clone_uses_caller_head
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.2
+  plan_node_hash: 3b2f9fa8f3bd238e0d5d25a892faee874751318604f9843d23d1ed2027ac8e9e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23830'
+    validation_criteria_snippet: 'A2.1: Default clones include caller-local unpushed
+      commits and record the selected commit. test: `tests/clones/test_fork_commit.py::test_local_clone_uses_calle...'
+    matched_artifact_ref: tests/clones/test_fork_commit.py::test_clone_ref_sources
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.3
+  plan_node_hash: d223bfa3955d5b5f5e4bff53ab4b712a47ac0839939e9034af25354eb30a848d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23830'
+    validation_criteria_snippet: 'A2.1: Default clones include caller-local unpushed
+      commits and record the selected commit. test: `tests/clones/test_fork_commit.py::test_local_clone_uses_calle...'
+    matched_artifact_ref: tests/clones/test_fork_commit.py::test_extracted_merge_path
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.4
+  plan_node_hash: a54eb7c15297e5676f821d37f4e1b3808fe103869f4b9a326084b3af708df0eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23830'
+    validation_criteria_snippet: 'A2.1: Default clones include caller-local unpushed
+      commits and record the selected commit. test: `tests/clones/test_fork_commit.py::test_local_clone_uses_calle...'
+    matched_artifact_ref: tests/agents/test_clone_fork_commit.py::test_clone_omission_and_detached_head
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.1
+  plan_node_hash: 391779d329841ff9ebf589ba97ada7bf0dedbe4dbfa7188ce3b7875285e71e14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23831'
+    validation_criteria_snippet: 'B1.1: Migration and all carriers expose an overlay-owned
+      pin table with source-version FK and scoped grants. test: `crates/gcore/tests/schema_contract.rs::code...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::code_overlay_pin_schema_contract
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.2
+  plan_node_hash: c851e76efa4a6106bba5df87e716677dc9d5866d13f954128df86183028514a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23831'
+    validation_criteria_snippet: 'B1.1: Migration and all carriers expose an overlay-owned
+      pin table with source-version FK and scoped grants. test: `crates/gcore/tests/schema_contract.rs::code...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::clean_selector_records_git_blob
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.3
+  plan_node_hash: 4e75bdb83db190e9b74c6e9b6b08b496a249bfb0cd482bca21caffb95303c8a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23831'
+    validation_criteria_snippet: 'B1.1: Migration and all carriers expose an overlay-owned
+      pin table with source-version FK and scoped grants. test: `crates/gcore/tests/schema_contract.rs::code...'
+    matched_artifact_ref: tests/utils/test_isolation_pin_marker.py::test_marker_requires_complete_pin_provenance
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.4
+  plan_node_hash: f7cf3cb25bf2101a3960c70017acc64d843df6e2565c94bb5af1a8c99b308774
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23831'
+    validation_criteria_snippet: 'B1.1: Migration and all carriers expose an overlay-owned
+      pin table with source-version FK and scoped grants. test: `crates/gcore/tests/schema_contract.rs::code...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::selector_blob_follows_every_write_outcome
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.1
+  plan_node_hash: 3e6e0070aef7a9d4523867f51a91f72e27e08e04eaa86024b28d2a57bf91eb82
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: crates/gcode/src/commands/pin/tests.rs::pin_inherits_effective_selectors
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.2
+  plan_node_hash: 27cb4227e84d03484da95949c331aa22140477618974fe62bb30f15e22a2152f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: crates/gcode/src/commands/pin/tests.rs::pin_records_only_safe_selectors_and_gaps
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.3
+  plan_node_hash: a0ef1717a16d162d2474d58c899123506cce749702bf9f76c061e04457bd3562
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: crates/gcode/src/commands/pin/tests.rs::pin_cold_and_replacement
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.4
+  plan_node_hash: 50d3e14a76aed0685264f74b3cd9d6cc77ed86ef06b917af0fcab0e0d7750189
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: tests/agents/test_code_index_pin.py::test_agent_preflight_pins_marker_before_index
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.5
+  plan_node_hash: 63f9281e53f05d79e7e4d8fd027d87be570bbece1d1a08d4f92f5e989a2870a1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: tests/agents/test_code_index_pin.py::test_pin_failure_forces_cold_index_without_parent_fallthrough
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.6
+  plan_node_hash: d2af13cb55d24794dac15016f452d77549e691a77fa35beedd6748c038197c20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: tests/agents/test_code_index_pin.py::test_direct_paths_pin_before_return
+  deferral_target: null
+  detail: ''
+- section_id: B2
+  item_id: B2.7
+  plan_node_hash: 894bde0602fc3096786d3ba0923d0fab861b8ede4836c0e62685d66c62a66091
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23832'
+    validation_criteria_snippet: 'B2.1: The pin copies clean effective selectors,
+      including inherited rows from an author overlay, at the selected commit. test:
+      `crates/gcode/src/commands/pin/t...'
+    matched_artifact_ref: tests/agents/test_code_index_pin.py::test_pin_storage_failure_blocks_success
+  deferral_target: null
+  detail: ''
+- section_id: B3
+  item_id: B3.1
+  plan_node_hash: 1f5dbdc793afc9002e8809156a39a55399e2f7af8638fa17bb29f0020aa1f9a3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23833'
+    validation_criteria_snippet: 'B3.1: Parent changes cannot alter pinned BM25, symbol,
+      tree, import, or codewiki facts. test: `crates/gcode/src/visibility/tests.rs::pinned_reads_survive_paren...'
+    matched_artifact_ref: crates/gcode/src/visibility/tests.rs::pinned_reads_survive_parent_reindex
+  deferral_target: null
+  detail: ''
+- section_id: B3
+  item_id: B3.2
+  plan_node_hash: a7fc661ce81756b4cf70ea40daa40e7ef7b5a2e44412362cafe1ff62259fe647
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23833'
+    validation_criteria_snippet: 'B3.1: Parent changes cannot alter pinned BM25, symbol,
+      tree, import, or codewiki facts. test: `crates/gcode/src/visibility/tests.rs::pinned_reads_survive_paren...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/search.rs::pinned_visibility_precedes_limit
+  deferral_target: null
+  detail: ''
+- section_id: B3
+  item_id: B3.3
+  plan_node_hash: 5b4e4cdb99cb06252f24a4b79ed19db98e4afb4d98e80f8ddcf6632bed2b47d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23833'
+    validation_criteria_snippet: 'B3.1: Parent changes cannot alter pinned BM25, symbol,
+      tree, import, or codewiki facts. test: `crates/gcode/src/visibility/tests.rs::pinned_reads_survive_paren...'
+    matched_artifact_ref: crates/gcode/src/visibility/tests.rs::overlay_shadowing_of_pins
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.1
+  plan_node_hash: e9b7ad4c3fed76027d59a577dc32b4ddd15bf5a0eecd607972f4731ce6b713ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::projection_reads_respect_pin_versions
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.2
+  plan_node_hash: c580a9ade3a093a27944ee1e9afe27e7f33c8a1d095bffe62c33c6fc5b7ae2ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: crates/gcode/src/projection/sync/tests.rs::reproject_only_moved_pinned_paths
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.3
+  plan_node_hash: 2ce4f980d35daec9f0dfffca82ba69b19926752f0fb797770391de444b5312db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: crates/gcode/src/cli/tests/projection.rs::text_search_survives_projection_recovery
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.4
+  plan_node_hash: b59fee115f82237f42753f8e81e27eb282f060e6f8378df5318b98b9dfad425c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: crates/gcode/src/projection/sync/tests.rs::stale_pinned_completion_is_discarded
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.5
+  plan_node_hash: f7bf1e562c556626c89ac1a14279225918cf486c086548c571890b084bf69bb3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: tests/code_index/test_sync_worker_pins.py::test_worker_schedules_pinned_recovery
+  deferral_target: null
+  detail: ''
+- section_id: B4
+  item_id: B4.6
+  plan_node_hash: 9c8273e9943bd097b541523ffaf42b201f0b04ff0f06e3d48fc9ed68bf638b5b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23834'
+    validation_criteria_snippet: 'B4.1: Graph and vector results grant access only
+      to source versions named by pins or child-owned selectors. test: `crates/gcode/src/cli/tests/projection.rs::pr...'
+    matched_artifact_ref: crates/gcode/tests/projection_stale.rs::pinned_sync_file_routes_through_cli
+  deferral_target: null
+  detail: ''
+- section_id: B5
+  item_id: B5.1
+  plan_node_hash: 874bc2d27b8721c41ac08e8b2e2a3f79caa9ced911324f597f172da4d7383f5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23835'
+    validation_criteria_snippet: 'B5.1: Prune retains pinned versions and their source-project
+      facts while any child pin exists. test: `crates/gcode/src/commands/status/content_gc/tests.rs::pin...'
+    matched_artifact_ref: crates/gcode/src/commands/status/content_gc/tests.rs::pinned_version_survives_prune
+  deferral_target: null
+  detail: ''
+- section_id: B5
+  item_id: B5.2
+  plan_node_hash: 5f88db971d13eb0e1c77167b9332b1b80982eb5177570bee95038a9a2a825879
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23835'
+    validation_criteria_snippet: 'B5.1: Prune retains pinned versions and their source-project
+      facts while any child pin exists. test: `crates/gcode/src/commands/status/content_gc/tests.rs::pin...'
+    matched_artifact_ref: crates/gcode/src/commands/status/prune/tests.rs::purged_overlay_releases_pins
+  deferral_target: null
+  detail: ''
+- section_id: B5
+  item_id: B5.3
+  plan_node_hash: f6bf0ec6cc03dba2d6ffcfda28aa9b138a33ed923df7ac962758845e21e2442a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23835'
+    validation_criteria_snippet: 'B5.1: Prune retains pinned versions and their source-project
+      facts while any child pin exists. test: `crates/gcode/src/commands/status/content_gc/tests.rs::pin...'
+    matched_artifact_ref: crates/gcode/src/commands/status/prune/tests.rs::nested_pin_chain_preserves_source_version
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.1
+  plan_node_hash: 281323c7c031d2791c9bf9a23c0aaa9fe8b11d5088257c393c26bfe9c9b8afb6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23836'
+    validation_criteria_snippet: 'C1.1: No-change and one-file overlays avoid full
+      discovery and ignore parent HEAD movement. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_u...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_uses_child_candidates_only
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.2
+  plan_node_hash: 279403d87377bf60c7403dd5bc1671f0bb77f0aca26e5c22d9f77a291b442691
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23836'
+    validation_criteria_snippet: 'C1.1: No-change and one-file overlays avoid full
+      discovery and ignore parent HEAD movement. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_u...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_falls_back_to_full_discovery
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.3
+  plan_node_hash: e12f731360cf6963657387269abccfee21eb547f9e508b7a0c36fc4b68042645
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23836'
+    validation_criteria_snippet: 'C1.1: No-change and one-file overlays avoid full
+      discovery and ignore parent HEAD movement. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_u...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/facts.rs::candidate_imports_keep_unchanged_providers
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.4
+  plan_node_hash: 87b1705d030678e2f063833dea98f242cd7a4567aa42308cc115a7d6305d233d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23836'
+    validation_criteria_snippet: 'C1.1: No-change and one-file overlays avoid full
+      discovery and ignore parent HEAD movement. test: `crates/gcode/src/index/indexer/tests/overlay.rs::reconcile_u...'
+    matched_artifact_ref: crates/gcode/src/index/indexer/tests/overlay.rs::owned_rows_leave_divergence_without_discovery
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.1
+  plan_node_hash: 08aad54f452cca9d1a861893627fa578cbc286991ec8b9fcba89e4b4a63cd434
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23837'
+    validation_criteria_snippet: 'C2.1: An unchanged index run performs no Leiden
+      pass. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden`.
+      C2.2: Changed inputs...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.2
+  plan_node_hash: 6e6c6340335e43699d0b8352d1c8fe5ce55b1d8dc791dc9adb82fd5f9bf25d72
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23837'
+    validation_criteria_snippet: 'C2.1: An unchanged index run performs no Leiden
+      pass. test: `crates/gcode/src/communities/refresh_tests.rs::unchanged_inputs_skip_leiden`.
+      C2.2: Changed inputs...'
+    matched_artifact_ref: crates/gcode/src/communities/refresh_tests.rs::changed_or_legacy_signature_runs_leiden_once
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.1
+  plan_node_hash: aa9b1c4b47c6191ce8e090448d5afa9773ee5bdbcb7677638d4f19b1c4bba5ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23838'
+    validation_criteria_snippet: 'C3.1: Spawn timing reports `code_overlay_index`.
+      test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
+      C3.2: Guides state...'
+    matched_artifact_ref: tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.2
+  plan_node_hash: 8f281f9ffe4017c418c59f187a5741a4c27ce92d237069f2a4781712f55394e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23838'
+    validation_criteria_snippet: 'C3.1: Spawn timing reports `code_overlay_index`.
+      test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
+      C3.2: Guides state...'
+    matched_artifact_ref: docs/guides/code-index.md
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.3
+  plan_node_hash: 0e18f6ec6ee56e81b60c2f0dca6337c739339bc759f853ac33409c451abaf28c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23838'
+    validation_criteria_snippet: 'C3.1: Spawn timing reports `code_overlay_index`.
+      test: `tests/agents/test_code_overlay_index_timing.py::test_spawn_phase_uses_overlay_name`.
+      C3.2: Guides state...'
+    matched_artifact_ref: benchmarked workspace indexing
+  deferral_target: null
+  detail: ''

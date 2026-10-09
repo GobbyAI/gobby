@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,6 +34,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.runtime import SnapshotMode
 from gobby.utils.session_context import session_context_for_test
 
@@ -61,6 +62,7 @@ class _GrokTurnPane:
 
     backend = "native"
     target = "term-grok"
+    ledger: ClassVar[ComposerLedger]
 
     def __init__(
         self,
@@ -78,6 +80,7 @@ class _GrokTurnPane:
 
     async def send_key(self, key: str) -> tuple[bool, str | None]:
         self.keys.append(key)
+        self.ledger.observe_write(self.target, origin="daemon", kind="key", payload=key)
         if key == "ctrl_c":
             if self.first_ctrl_c_at is None:
                 self.first_ctrl_c_at = time.monotonic()
@@ -88,10 +91,19 @@ class _GrokTurnPane:
 
     async def type_text(self, text: str) -> tuple[bool, str | None]:
         self.typed.append(text)
+        self.ledger.observe_write(self.target, origin="daemon", kind="text", payload=text)
         return True, None
 
     async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
         return f"ready\n{_RULE}\n› \n{_RULE}"
+
+
+@pytest.fixture(autouse=True)
+def _tracked_grok_seat(composer_ledger: ComposerLedger, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Track the fake seat with an empty composer; its writes reach the ledger as
+    daemon input, as native write_batch records them."""
+    composer_ledger.record_spawn(_GrokTurnPane.target, "")
+    monkeypatch.setattr(_GrokTurnPane, "ledger", composer_ledger, raising=False)
 
 
 def _grok_events(tmp_path: Path, *records: dict[str, Any]) -> tuple[Path, Path]:
@@ -168,7 +180,8 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
     # Grok has no composer reader: the compact receipt, not the submit, proved it.
     assert result["submit_unverified"] is True
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter"]
+    # The ledger reads the settled seat's composer empty, so nothing is drained.
+    assert pane.keys == ["enter"]
     assert pane.typed == ["/compact\n"]
 
 
@@ -193,7 +206,8 @@ async def test_live_grok_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*_DRAIN, "enter"]
+    # The ledger reads the settled seat's composer empty, so nothing is drained.
+    assert pane.keys == ["enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact\n"]
 
@@ -265,14 +279,14 @@ async def test_live_codex_turn_that_settles_is_compacted_without_interrupt(
     assert result["compacted"] is True
     assert result["interrupted"] is False
     assert result["command"] == "/compact"
-    assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    assert pane.keys == ["enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.parametrize(
     ("provider", "headless"),
-    [("grok", True), ("droid", True), ("claude", False), ("codex", False), ("qwen", False)],
+    [("grok", True), ("droid", True), ("claude", False), ("codex", False)],
 )
 def test_only_headless_clis_declare_headless_spawn(provider: str, headless: bool) -> None:
     assert provider_capabilities(provider).headless_spawn is headless

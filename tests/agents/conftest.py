@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from gobby.agents.spawn_models import SpawnRequest
+from tests.agents import terminal_fixtures
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.storage.definitions.conftest import (
     _reset_revision_globals,
@@ -18,6 +19,7 @@ from tests.terminals.fakes import bind_spawn_runtime
 
 if TYPE_CHECKING:
     from gobby.storage.projects import LocalProjectManager
+    from gobby.terminals.composer_ledger import ComposerLedger
 
 AGENT_TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
@@ -38,6 +40,12 @@ def bind_terminal_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
             bind_spawn_runtime(self)
 
     monkeypatch.setattr(SpawnRequest, "__init__", wrapped)
+
+
+@pytest.fixture(autouse=True)
+def spawned_composers(composer_ledger: ComposerLedger, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bind the ledger, as the daemon does, and record each live spawn clean in it."""
+    monkeypatch.setattr(terminal_fixtures, "spawn_ledger", composer_ledger)
 
 
 @pytest.fixture

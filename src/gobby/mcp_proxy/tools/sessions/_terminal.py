@@ -34,6 +34,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command as _send_terminal_compaction_command_impl,
 )
+from gobby.mcp_proxy.tools.sessions._terminal_release import register_release_composer_tool
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _authorize_send_keys_target as _authorize_send_keys_target,
 )
@@ -284,6 +285,7 @@ def register_terminal_tools(
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
     )
+    register_release_composer_tool(registry, session_manager, terminal_manager=terminal_manager)
 
     def _validated_found_work(entries: list[dict[str, Any]] | None) -> list[FoundWorkEntry]:
         """Hold each handed-off finding to the ladder with the feedback tool's task rules."""
@@ -323,7 +325,10 @@ def register_terminal_tools(
 
         session_id = get_current_session_id()
         if session_id is not None:
-            variables = SessionVariableManager(db).get_variables(session_id)
+            variables = SessionVariableManager(db).get_variable_subset(
+                session_id,
+                (HANDOFF_DISPATCH_GATE_VARIABLE, FAILED_HANDOFF_VARIABLE, PENDING_HANDOFF_VARIABLE),
+            )
             gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
             failed = variables.get(FAILED_HANDOFF_VARIABLE)
             if (
@@ -413,9 +418,9 @@ def register_terminal_tools(
 
         variable_manager = SessionVariableManager(db)
         submitted = (
-            variable_manager.get_variables(resolved_session_id).get(
-                "_gobby_feedback_epoch_submitted"
-            )
+            variable_manager.get_variable_subset(
+                resolved_session_id, ("_gobby_feedback_epoch_submitted",)
+            ).get("_gobby_feedback_epoch_submitted")
             is True
         )
         project_id = getattr(session, "project_id", None)

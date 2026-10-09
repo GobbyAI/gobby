@@ -18,7 +18,6 @@ from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.code_navigation_recovery import navigation_requires_index
 from gobby.hooks.normalization import normalize_tool_fields
 
@@ -152,7 +151,6 @@ def _hook_shell_cases(adapter: type[BaseAdapter], tool: str, name: str) -> list[
 
 REPORTED_OUTAGES = [
     *_hook_shell_cases(ClaudeCodeAdapter, "Bash", "claude"),
-    *_hook_shell_cases(QwenAdapter, "run_shell_command", "qwen"),
     pytest.param(
         CodexHooksAdapter,
         lambda r: shell_hook(

@@ -28,7 +28,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
@@ -50,6 +50,7 @@ from gobby.storage.tasks._stage_states import StageManifestSpec
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     NamedKey,
@@ -60,6 +61,7 @@ from gobby.terminals.runtime import (
 )
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
+from gobby.utils.host_sleep import AwakeClock
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -1038,6 +1040,64 @@ def _make_terminal_run(
     return stored_run
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_age", "run_age", "expected_handled"),
+    [
+        (ProgressType.FILE_MODIFIED, 11428, 5, 0),
+        (ProgressType.TOOL_STARTED, 11428, 5, 0),
+        (ProgressType.TOOL_STARTED, 11428, 120, 1),
+        (None, 0, 120, 1),
+        (ProgressType.FILE_MODIFIED, 5, 120, 0),
+        (ProgressType.TOOL_STARTED, 90, 120, 0),
+    ],
+)
+async def test_resumed_run_stagnation_starts_at_new_run(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    event_type: ProgressType | None,
+    event_age: int,
+    run_age: int,
+    expected_handled: int,
+) -> None:
+    now = datetime.now(UTC)
+    clock = AwakeClock(wall=lambda: now.timestamp(), monotonic=lambda: 0.0)
+    tracker = ProgressTracker(temp_db, stagnation_threshold=60, clock=clock)
+    if event_type is not None:
+        tracker.record_event(sample_session["id"], event_type)
+        temp_db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            (now - timedelta(seconds=event_age), sample_session["id"]),
+        )
+    run = _make_terminal_run(agent_run_manager, sample_session)
+    run = replace(run, started_at=now - timedelta(seconds=run_age))
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        stuck_detector=StuckDetector(temp_db, progress_tracker=tracker),
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+    with (
+        patch.object(monitor, "_get_active_terminal_runs", return_value=[run]),
+        patch.object(monitor, "_defer_stagnation_for_live_pane", AsyncMock(return_value=False)),
+        patch.object(
+            monitor._idle_check_handler,
+            "current_provider_error_snapshot",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(monitor._cleanup_handler, "cleanup_agent", AsyncMock()) as cleanup,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+    assert handled == expected_handled
+    assert cleanup.await_count == expected_handled
+    if expected_handled:
+        assert cleanup.call_args.kwargs["terminal_payload"] == (
+            "autonomous stuck: No progress events for 120 seconds"
+        )
+
+
 def _make_progress_stagnation_monitor(
     *,
     agent_run_manager: LocalAgentRunManager,
@@ -1424,8 +1484,8 @@ async def test_nonfatal_progress_stagnation_action_is_not_deferred(
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    # The only capture is the composer probe guarding the Enter, not a grace read.
-    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
+    # The ledger guards the Enter, so nothing reads the pane, not even a grace read.
+    assert runtime.snapshot_calls == []
     assert runtime.write_log == [("key", "enter")]
 
 
@@ -1434,6 +1494,7 @@ async def test_stuck_enter_leaves_an_operator_draft_unsubmitted(
     agent_run_manager: LocalAgentRunManager,
     temp_db: HubDatabase,
     sample_session: dict[str, Any],
+    composer_ledger: ComposerLedger,
     layer: str,
 ) -> None:
     monitor, run, _stuck_detector = _make_progress_stagnation_monitor(
@@ -1443,12 +1504,16 @@ async def test_stuck_enter_leaves_an_operator_draft_unsubmitted(
         suggested_action="change_approach",
         layer=layer,
     )
+    assert run.terminal_id is not None
+    composer_ledger.observe_write(
+        run.terminal_id, origin="operator", kind="text", payload="Reply ACK"
+    )
 
-    with _pane_text(monitor, "────────────\n❯ Reply ACK\n────────────\n") as runtime:
+    with _pane_text(monitor, None) as runtime:
         handled = await monitor.check_autonomous_stuck_agents()
 
     assert handled == 1
-    assert runtime.snapshot_calls == [COMPOSER_PROBE_LINES]
+    assert runtime.snapshot_calls == []
     assert runtime.write_log == []
     stored = agent_run_manager.get(run.id)
     assert stored is not None
@@ -2584,8 +2649,8 @@ class TestCheckIdleAgents:
 
         assert handled == 1
         # Pane capture SHOULD have been called since session was stale; the
-        # reprompt then probes the composer once more before draining it.
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        # reprompt then drains the composer the ledger reads clean.
+        assert runtime.snapshot_calls == [15]
         assert _runtime_of(mon).write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
@@ -2726,7 +2791,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.snapshot_calls == [15]
         assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
@@ -2851,7 +2916,7 @@ class TestCheckIdleAgents:
             handled = await mon.check_idle_agents()
 
         assert handled == 1
-        assert runtime.snapshot_calls == [15, COMPOSER_PROBE_LINES]
+        assert runtime.snapshot_calls == [15]
         assert runtime.write_log[0] == ("key", "ctrl_u")
 
     @pytest.mark.asyncio
@@ -4521,7 +4586,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -4573,7 +4638,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit-recycled-pid",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -4869,7 +4934,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-init",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -4941,7 +5006,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-young",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 
@@ -4979,7 +5044,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-naive-uninit",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None
@@ -5029,7 +5094,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-pattern",
             machine_id="21000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         assert session_manager.update(session_id=child.id, external_id=child.id) is not None

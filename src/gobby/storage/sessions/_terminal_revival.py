@@ -340,7 +340,7 @@ def _clear_successor_of(db: HubDatabase, session_id: str) -> str | None:
     # Module-level import would be circular: clear_continuation imports this package.
     from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 
-    variables = read_session_variables(db, session_id)
+    variables = read_session_variables(db, session_id, keys=(CLEAR_ATTEMPT_VARIABLE,))
     marker = variables.get(CLEAR_ATTEMPT_VARIABLE) if variables else None
     consumed_by = marker.get("consumed_by") if isinstance(marker, dict) else None
     if isinstance(consumed_by, str) and consumed_by and consumed_by != session_id:

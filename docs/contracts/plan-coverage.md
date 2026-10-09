@@ -191,6 +191,12 @@ a `proof_error` detail, when any of these is true:
 
 A candidate's path never falls back to the split heuristic, whatever its size.
 
+`<path>::*` is the only proof form, including for a file the code index has no
+record for, such as an unindexed script. A bare path does not parse as a proof.
+Symbol validation otherwise rejects `::*` on a file with no index record. It
+accepts a candidate's `::*` there and leaves the proof to
+`production-size-growth`. On an indexed file, symbol validation is unchanged.
+
 **Block format is load-bearing.** `iter_target_block_lines` reads the inventory
 as a contiguous block: the `Targets:` line itself, then every immediately
 following line. **A blank line ends the block**, as does the next heading, a

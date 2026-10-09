@@ -75,6 +75,7 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+/.nextest/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -218,7 +219,6 @@ __marimo__/
 .factory/
 .gemini/
 .grok/
-.qwen/
 .agent/
 .agentvibes/
 .antigravity/

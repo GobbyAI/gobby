@@ -47,13 +47,11 @@ from .installers import (
     install_embedding,
     install_git_hooks,
     install_grok,
-    install_qwen,
     uninstall_agy,
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
     uninstall_grok,
-    uninstall_qwen,
 )
 from .installers.git_hooks import uninstall_git_hooks
 from .runtime import CliRuntime
@@ -64,7 +62,6 @@ COMPONENTS: tuple[str, ...] = (
     "claude",
     "codex",
     "grok",
-    "qwen",
     "droid",
     "agy",
     "git-hooks",
@@ -77,7 +74,7 @@ COMPONENTS: tuple[str, ...] = (
     "gterm",
     "srt",
 )
-CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "qwen", "droid", "agy"})
+CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "droid", "agy"})
 # Components that leave something behind to remove. voice, embedding, and
 # ide-settings only write configuration, and gclient, gterm, and srt install
 # Gobby's own runtime under ~/.gobby; none of them has an uninstall.
@@ -85,7 +82,6 @@ UNINSTALLABLE_COMPONENTS: tuple[str, ...] = (
     "claude",
     "codex",
     "grok",
-    "qwen",
     "droid",
     "agy",
     "git-hooks",
@@ -97,7 +93,6 @@ COMPONENT_LABELS: dict[str, str] = {
     "claude": "Claude Code",
     "codex": "Codex",
     "grok": "Grok CLI",
-    "qwen": "Qwen CLI",
     "droid": "Droid CLI",
     "agy": "Antigravity CLI",
     "git-hooks": "Git hooks",
@@ -115,7 +110,6 @@ _CLI_INSTALLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "agy": install_agy,
     "claude": install_claude,
     "grok": install_grok,
-    "qwen": install_qwen,
     "codex": install_codex,
     "droid": install_droid,
 }
@@ -123,12 +117,11 @@ _CLI_UNINSTALLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "agy": uninstall_agy,
     "claude": uninstall_claude,
     "grok": uninstall_grok,
-    "qwen": uninstall_qwen,
     "codex": uninstall_codex,
     "droid": uninstall_droid,
 }
 # Uninstallers whose signature still carries the worktree ``mode`` parameter.
-_MODE_UNINSTALLERS: frozenset[str] = frozenset({"qwen", "droid"})
+_MODE_UNINSTALLERS: frozenset[str] = frozenset({"droid"})
 
 
 @dataclass(frozen=True)

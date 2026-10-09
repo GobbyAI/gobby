@@ -56,7 +56,6 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
         live_model_discovery=True,
     ),
     ProviderMetadata("grok", "grok", "Grok", ".grok"),
-    ProviderMetadata("qwen", "qwen", "Qwen", ".qwen"),
     ProviderMetadata(
         "agy",
         "agy",

@@ -60,9 +60,21 @@ class TestAgentRestartReconciliation:
     async def test_restart_reconciles_and_rotates_managed_credentials_without_agent_runner(
         self,
     ) -> None:
+        expired_binding = True
+
+        def refresh() -> list[object]:
+            nonlocal expired_binding
+            expired_binding = False
+            return [object()]
+
+        def reconcile() -> int:
+            if expired_binding:
+                raise RuntimeError("live binding revoked before refresh")
+            return 2
+
         credential_manager = MagicMock()
-        credential_manager.reconcile.return_value = 2
-        credential_manager.rotate_due.return_value = [object()]
+        credential_manager.reconcile.side_effect = reconcile
+        credential_manager.rotate_due.side_effect = refresh
         runner = SimpleNamespace(
             agent_runner=None,
             managed_credential_manager=credential_manager,
@@ -73,6 +85,7 @@ class TestAgentRestartReconciliation:
         )
 
         assert reconciled == 0
+        assert not expired_binding
         credential_manager.reconcile.assert_called_once_with()
         credential_manager.rotate_due.assert_called_once_with()
 
@@ -99,7 +112,7 @@ class TestAgentRestartReconciliation:
 
         # Startup carried on rather than failing the daemon.
         assert reconciled == 0
-        credential_manager.rotate_due.assert_not_called()
+        credential_manager.rotate_due.assert_called_once_with()
         records = [r for r in caplog.records if "credential startup" in r.getMessage()]
         assert len(records) == 1
         assert records[0].exc_info is not None
@@ -1567,7 +1580,7 @@ class TestReclassifyReconciliationPendingRuns:
         post = AsyncMock(side_effect=replay)
         with (
             patch.object(loop, "time", virtual_time),
-            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox_envelopes.get_hook_inbox_dir", return_value=inbox_dir),
             patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
             patch("gobby.hooks.inbox._post_envelope", new=post),
             caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
@@ -1667,7 +1680,7 @@ class TestReclassifyReconciliationPendingRuns:
         post = AsyncMock(side_effect=replay)
         with (
             patch.object(loop, "time", virtual_time),
-            patch("gobby.hooks.inbox.get_hook_inbox_dir", return_value=inbox_dir),
+            patch("gobby.hooks.inbox_envelopes.get_hook_inbox_dir", return_value=inbox_dir),
             patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
             patch("gobby.hooks.inbox._post_envelope", new=post),
             patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=observed_barrier),

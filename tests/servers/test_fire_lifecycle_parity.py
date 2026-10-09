@@ -81,7 +81,7 @@ def rules_db(hub_db: HubDatabase) -> HubDatabase:
 # session ids that reach the real DB must be valid UUID strings.
 SESSION_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
 PROJECT_ID = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
-MANAGED_FIRE_LIFECYCLE_PROVIDERS = ("claude", "codex", "droid", "grok", "qwen")
+MANAGED_FIRE_LIFECYCLE_PROVIDERS = ("claude", "codex", "droid", "grok")
 
 
 def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
@@ -935,7 +935,6 @@ class TestAgyNativeLifecycleParity:
             "codex",
             "droid",
             "grok",
-            "qwen",
         )
 
     def test_pre_compact_unsupported_for_agy(self) -> None:

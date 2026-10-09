@@ -233,6 +233,7 @@ if TYPE_CHECKING:
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
+    from gobby.terminals.composer_ledger import ComposerLedger
     from tests.fixtures.isolated_checkout import (
         IsolatedCheckoutFactory,
         IsolatedCheckoutProject,
@@ -251,6 +252,7 @@ def _reset_process_global_state() -> None:
     from gobby.agents import terminal_delivery
     from gobby.storage import schema_contract
     from gobby.telemetry import providers as telemetry_providers
+    from gobby.terminals.composer_ledger import bind_composer_ledger
 
     api_tracer_provider = trace._TRACER_PROVIDER
     api_meter_provider = metrics_internal._METER_PROVIDER
@@ -280,10 +282,13 @@ def _reset_process_global_state() -> None:
     # test faked must not answer for a later test's binary.
     schema_contract._probe_installed_file.cache_clear()
 
+    # Terminal wiring binds the daemon's composer ledger for every composer gate.
+    bind_composer_ledger(None)
+
 
 @pytest.fixture(autouse=True)
 def _restore_process_global_state() -> Generator[None]:
-    """Isolate OpenTelemetry, terminal-delivery, tmux and probe-cache state around every test.
+    """Isolate OpenTelemetry, terminal-delivery, tmux, ledger and probe-cache state per test.
 
     OpenTelemetry provider registration uses process-global one-shot guards.
     Terminal delivery also owns process-global admission and in-flight task
@@ -355,6 +360,21 @@ def temp_dir() -> Iterator[Path]:
 
 
 @pytest.fixture
+def composer_ledger() -> "ComposerLedger":
+    """The bound composer ledger every gate reads; the process-state reset unbinds it.
+
+    Seed a clean seat with ``record_spawn(terminal_id, "")``, a human draft with
+    ``observe_write(terminal_id, origin="operator", kind="text", payload=...)`` and
+    held daemon text with ``origin="daemon"``. An unseeded terminal reads unknown.
+    """
+    from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
+
+    ledger = ComposerLedger()
+    bind_composer_ledger(ledger)
+    return ledger
+
+
+@pytest.fixture
 def stub_srt_verifier() -> Iterator[MagicMock]:
     """Pass the managed-SRT gate without the pinned install; unit spawn modules opt in."""
     with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
@@ -399,7 +419,8 @@ def safe_gobby_home_dir() -> Iterator[Path]:
     """Session-scoped temp directory for safe Gobby home.
 
     The home is seeded with the machine identity the process resolved before
-    home isolation. Collection-time ``require_machine_id()`` calls and the
+    home isolation, or an identity created only in this temporary home.
+    Collection-time ``require_machine_id()`` calls and the
     schema seed's machines row both use that identity; without the file, any
     ``clear_cache()`` (e.g. tests/adapters/test_codex_machine_id.py) makes the
     next derivation mint a fresh uuid under this empty home, orphaning every
@@ -409,10 +430,11 @@ def safe_gobby_home_dir() -> Iterator[Path]:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         home = Path(tmpdir)
-        machine_id = get_machine_id()
-        if machine_id:
-            (home / "machine_id").write_text(f"{machine_id}\n")
-        yield home
+        with patch.dict(os.environ, {"GOBBY_HOME": str(home)}):
+            machine_id = get_machine_id()
+            if machine_id:
+                (home / "machine_id").write_text(f"{machine_id}\n")
+            yield home
 
 
 @pytest.fixture
@@ -695,7 +717,7 @@ def mock_daemon_config() -> "MagicMock":
 
 
 @pytest.fixture(scope="session")
-def _session_machine_identity() -> str | None:
+def _session_machine_identity(safe_gobby_home_dir: Path) -> str | None:
     """The machine identity resolved once for the whole test session."""
     from gobby.utils.machine_id import get_machine_id
 

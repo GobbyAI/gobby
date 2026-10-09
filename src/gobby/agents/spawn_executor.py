@@ -20,7 +20,6 @@ from gobby.agents.spawn_executor_providers import (
     prepare_claude_spawn,
     prepare_droid_spawn,
     prepare_grok_spawn,
-    prepare_qwen_spawn,
 )
 
 # Explicit re-exports: the facade stays the patch and import target for both.
@@ -149,8 +148,6 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
         if result is None:
             if request.provider == "grok":
                 result = await _spawn_grok_terminal(request)
-            elif request.provider == "qwen":
-                result = await _spawn_qwen_terminal(request)
             elif request.provider == "codex":
                 result = await _spawn_codex_terminal(request)
             elif request.provider == "droid":
@@ -189,13 +186,6 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     plan = await prepare_claude_spawn(request)
-    if isinstance(plan, SpawnResult):
-        return plan
-    return await _runtime_spawn(request, plan)
-
-
-async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
-    plan = await prepare_qwen_spawn(request)
     if isinstance(plan, SpawnResult):
         return plan
     return await _runtime_spawn(request, plan)

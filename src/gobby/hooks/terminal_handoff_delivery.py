@@ -57,7 +57,6 @@ _TERMINAL_SOURCES = frozenset(
         SessionSource.CLAUDE,
         SessionSource.CODEX,
         SessionSource.GROK,
-        SessionSource.QWEN,
         SessionSource.DROID,
     }
 )
@@ -238,7 +237,9 @@ def _settle_skipped_delivery(
 
 def _settle_unclaimed_delivery(db: HubDatabase, staged: StagedTerminalHandoff) -> None:
     try:
-        variables = SessionVariableManager(db).get_variables(staged.session_id)
+        variables = SessionVariableManager(db).get_variable_subset(
+            staged.session_id, (PENDING_HANDOFF_VARIABLE, HANDOFF_DISPATCH_GATE_VARIABLE)
+        )
         reason = staged_handoff_rejection(variables, staged.attempt_id)
     except Exception as exc:
         _log_skipped_delivery(
@@ -306,7 +307,9 @@ def schedule_staged_handoff_on_stop(
     session_id = event.metadata.get("_platform_session_id")
     if not isinstance(session_id, str) or not session_id:
         return False
-    variables = SessionVariableManager(session_manager.db).get_variables(session_id)
+    variables = SessionVariableManager(session_manager.db).get_variable_subset(
+        session_id, (PENDING_HANDOFF_VARIABLE, HANDOFF_DISPATCH_GATE_VARIABLE)
+    )
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping):
         return False
@@ -324,7 +327,9 @@ def schedule_staged_handoff_on_stop(
         session_manager.db, session_id, attempt_id, recover_unarmed_gate=True
     )
     if claimed is None:
-        current = SessionVariableManager(session_manager.db).get_variables(session_id)
+        current = SessionVariableManager(session_manager.db).get_variable_subset(
+            session_id, (PENDING_HANDOFF_VARIABLE, HANDOFF_DISPATCH_GATE_VARIABLE)
+        )
         reason = staged_handoff_rejection(current, attempt_id) or "claim changed concurrently"
         _log_skipped_delivery(session_id, attempt_id, reason)
         return False
@@ -596,7 +601,9 @@ def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bo
 
 def _consecutive_delivery_failures(db: HubDatabase, session_id: str) -> int:
     count = (
-        SessionVariableManager(db).get_variables(session_id).get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
+        SessionVariableManager(db)
+        .get_variable_subset(session_id, (HANDOFF_DELIVERY_FAILURES_VARIABLE,))
+        .get(HANDOFF_DELIVERY_FAILURES_VARIABLE)
     )
     return count if isinstance(count, int) and not isinstance(count, bool) else 0
 

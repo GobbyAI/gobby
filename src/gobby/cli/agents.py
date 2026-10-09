@@ -173,7 +173,7 @@ def agents() -> None:
 @click.option("--session", "-s", "parent_session_id", required=True, help="Parent session ID")
 @click.option("--workflow", "-w", help="Workflow name to execute")
 @click.option("--task", "-t", help="Task ID or reference")
-@click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
+@click.option("--provider", "-p", default="claude", help="LLM provider (claude, codex, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
     "--network", type=click.Choice(["none", "trusted"]), help="SRT profile for this launch"
@@ -207,7 +207,7 @@ def spawn_agent_cmd(
 
         gobby agents spawn "Implement feature X" --session sess-abc123
 
-        gobby agents spawn "Fix the bug" -s sess-abc123 -p qwen
+        gobby agents spawn "Fix the bug" -s sess-abc123 -p codex
 
         gobby agents spawn "Run tests" -s sess-abc123 --task '#123'
     """

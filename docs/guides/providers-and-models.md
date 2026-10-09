@@ -53,7 +53,6 @@ format for backends such as:
 - `codex`
 - `droid`
 - `grok`
-- `qwen`
 - `agy`
 
 Feature configs choose preferred candidate order; provider availability, auth
@@ -146,7 +145,7 @@ capability rows; a successful collection replaces the provider snapshot in one
 transaction.
 
 Capability collectors own provider-specific discovery for Claude, Codex, Droid,
-Grok, Qwen, and Antigravity. On an empty database, bundled Claude, Droid, and Antigravity snapshots
+Grok, and Antigravity. On an empty database, bundled Claude, Droid, and Antigravity snapshots
 provide cold-start rows with `stale` source health and `bundled` provenance. Startup then
 refreshes collectors concurrently, with a 30-second source timeout, and repeats
 every 24 hours. Successful live facts retain their `source_key`, optional
@@ -203,17 +202,6 @@ Unavailable groups stay in Settings and stay hidden from the picker.
 Relevant UI owners include `ProviderPicker`,
 `ChatInputModelControls`, `web/src/lib/providerModels.ts`, and
 `web/src/hooks/useChat/*`.
-
-## Qwen and Local Endpoints
-
-Qwen models come from ACP discovery, like Grok. When the active Qwen model uses a
-loopback-backed `modelProviders` entry, Qwen is excluded provider-wide from metadata
-coverage, matching Codex and Claude. Discovery uses only Qwen's ACP model catalog;
-Gobby performs zero settings-file model discovery, post-discovery loopback filtering,
-or special local-model warmup.
-
-Configured local generation endpoints remain separate `endpoint:<name>` providers.
-Qwen web chat uses the normal ACP attach path.
 
 ## CLI
 

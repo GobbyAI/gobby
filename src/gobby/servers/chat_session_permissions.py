@@ -584,7 +584,7 @@ class ChatSessionPermissionsMixin:
             plan_dirs = [_resolve(d) for d in plan_dirs]
 
             home = Path.home()
-            for cli in (".claude", ".qwen", ".codex"):
+            for cli in (".claude", ".codex"):
                 plan_dirs.append(home / cli / "plans")
 
             candidates: list[Path] = []
@@ -643,7 +643,7 @@ class ChatSessionPermissionsMixin:
             '<plan-mode status="active">',
             "You are in PLAN MODE. Your role is to research and design, not execute.",
             "",
-            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .qwen/, .codex/)",
+            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .codex/)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash (rm, mv, git add/commit/push, redirects)",
             "",
             "Present a structured plan with:",

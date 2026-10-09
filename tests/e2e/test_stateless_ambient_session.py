@@ -69,11 +69,6 @@ def _session_for(
 
 def _schema_hook_input(cli_source: str) -> dict[str, Any]:
     target = {"server_name": TARGET_SERVER, "tool_name": TARGET_TOOL}
-    if cli_source == "qwen":
-        return {
-            "function_name": "mcp_gobby_get_tool_schema",
-            "parameters": target,
-        }
     if cli_source == "droid":
         return {
             "toolName": "gobby___get_tool_schema",
@@ -193,7 +188,7 @@ def test_session_start_accepts_distinct_cli_and_lifecycle_sources(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cli_source", ["claude", "codex", "qwen", "droid", "grok"])
+@pytest.mark.parametrize("cli_source", ["claude", "codex", "droid", "grok"])
 async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
     cli_source: str,
     cli_events: CLIEventSimulator,

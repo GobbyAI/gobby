@@ -526,8 +526,6 @@ def _is_user_text_record(cli_name: str, turn: dict[str, Any]) -> bool:
     message = turn.get("message")
     if not isinstance(message, Mapping):
         return False
-    if cli_name == "qwen":
-        return turn.get("type") == "user" and _qwen_parts_have_text(message.get("parts"))
     if cli_name == "droid":
         return (
             turn.get("type") == "message"
@@ -535,13 +533,6 @@ def _is_user_text_record(cli_name: str, turn: dict[str, Any]) -> bool:
             and _content_has_text(message.get("content"))
         )
     return False
-
-
-def _qwen_parts_have_text(value: Any) -> bool:
-    return isinstance(value, list) and any(
-        isinstance(part, Mapping) and isinstance(part.get("text"), str) and bool(part["text"])
-        for part in value
-    )
 
 
 def _partition_entries(

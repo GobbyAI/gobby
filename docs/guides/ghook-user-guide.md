@@ -1,7 +1,7 @@
 # ghook User Guide
 
 ghook receives lifecycle and tool-use events from Claude Code, Codex, Factory
-Droid, Grok, Qwen CLI, and Antigravity. Managed hook dispatch normally enqueues an
+Droid, Grok, and Antigravity. Managed hook dispatch normally enqueues an
 envelope to `$GOBBY_HOME/hooks/inbox/` before attempting delivery, so the daemon
 can replay an interrupted delivery. If enqueue fails, the live path attempts a
 bounded direct POST; `--enqueue-only` cannot use that fallback.
@@ -128,8 +128,8 @@ ghook schema-identity --json
 | `--gobby-owned` | dispatch | Normal hook invocation. Reads stdin, enqueues, attempts POST. |
 | `--diagnose` | introspection | Prints a JSON snapshot of what *would* happen. No network, no envelope write. |
 | `--version` | metadata | Prints version and writes `~/.gobby/bin/.ghook-runtime.json` for the daemon. |
-| `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `qwen`, `droid`, `grok`, `agy`. Case-insensitive. |
-| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex/Qwen, `PreInvocation`/`PreToolUse` for Antigravity, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
+| `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `droid`, `grok`, `agy`. Case-insensitive. |
+| `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex, `PreInvocation`/`PreToolUse` for Antigravity, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
 | `--detach` | dispatch | After enqueue and project-root walk-up, call `setsid(2)` to escape the host CLI's process group before the POST. Useful for hooks where the host CLI tears down its session immediately. |
 | `--enqueue-only` | dispatch | Durably queue the event and return the provider skip response without live POST. Cannot supply a synchronous decision. |
 | `schema-identity --json` | metadata | Print the embedded datastore schema contract; no runtime stamp write. |
@@ -138,7 +138,7 @@ ghook schema-identity --json
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success, including all structured Qwen allow/block responses and non-Stop Codex deny/block responses returned as JSON. |
+| `0` | Success, including non-Stop Codex deny/block responses returned as JSON. |
 | `1` | Non-critical hook failure returned as JSON error output. |
 | `2` | Critical hook failure or blocked critical hook returned as stderr. |
 
@@ -209,7 +209,7 @@ Claude Code uses lowercase-hyphenated names internally for some hooks (`session-
 
 Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes from ghook's per-CLI registry. Tool-use hooks are non-critical — the envelope still spools, but a transient daemon outage won't block your tool call. Turn-level `Stop` is never critical, so a daemon outage does not freeze the CLI on every turn.
 
-### Codex, Qwen, Droid, Grok, Antigravity
+### Codex, Droid, Grok, Antigravity
 
 Same pattern with different `--cli` and `--type` values. ghook's per-CLI
 registry (see `crates/ghook/src/cli_config.rs`) defines which hooks are
@@ -220,7 +220,6 @@ tmux pane env vars.
 |-----|----------------|
 | `claude` | `session-start`, `session-end`, `pre-compact` |
 | `codex` | `SessionStart`, `SessionEnd`, `PreCompact` |
-| `qwen` | `SessionStart`, `SessionEnd`, `PreCompact` |
 | `droid` | `SessionStart`, `SessionEnd`, `PreCompact` |
 | `grok` | `session_start`, `session_end`, `pre_compact` |
 | `agy` | none |
@@ -246,12 +245,6 @@ Antigravity uses exactly five PascalCase hook types: `PreInvocation`, `PreToolUs
 including malformed stdin: ghook exits `0` with the skip JSON on stdout
 (`{"decision":"allow"}` for `PreToolUse`, `{}` otherwise) and the diagnostic
 on stderr, because a non-zero exit would block the tool call.
-
-Qwen uses its current PascalCase terminal-hook names. Malformed input and
-transport failures exit `2` for its three critical lifecycle hooks and `1` for
-its other hooks, including `Stop`. Successful Qwen responses, including a
-blocking `Stop`, are serialized to stdout with exit `0` so Qwen can consume the
-structured decision and reason.
 
 Unknown `--cli` values return `{}` with exit 2 before dispatch side effects.
 Diagnose mode reports them as unrecognized.

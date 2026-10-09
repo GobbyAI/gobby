@@ -348,9 +348,8 @@ class TestStatusUtils:
                 },
                 "coding_clis": {
                     "claude": "installed",
-                    "qwen": None,
                     "codex": None,
-                    "hooks": {"claude": True, "qwen": False, "codex": False},
+                    "hooks": {"claude": True, "codex": False},
                 },
                 "runtime": {"python": _dependency("3.13.5", minimum_version="3.13.0")},
                 "dependencies": {

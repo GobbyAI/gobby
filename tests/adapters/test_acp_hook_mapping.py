@@ -2,8 +2,7 @@
 
 import pytest
 
-# Qwen now has a native terminal-hook contract; this file tests the shared ACP base.
-from gobby.adapters.acp_hook_adapter import ACPHookAdapter as QwenAdapter
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.hooks.events import HookEventType
 
 pytestmark = pytest.mark.unit
@@ -30,14 +29,14 @@ class TestEventTypeMapping:
     )
     def test_event_map_coverage(
         self,
-        adapter: QwenAdapter,
+        adapter: ACPHookAdapter,
         acp_type: str,
         expected_type: HookEventType,
     ) -> None:
         """EVENT_MAP maps all ACP hook types correctly."""
         assert adapter.EVENT_MAP[acp_type] == expected_type
 
-    def test_event_map_has_all_acp_types(self, adapter: QwenAdapter) -> None:
+    def test_event_map_has_all_acp_types(self, adapter: ACPHookAdapter) -> None:
         """EVENT_MAP contains exactly 11 ACP hook types."""
         assert len(adapter.EVENT_MAP) == 11
 
@@ -59,7 +58,7 @@ class TestEventTypeMapping:
     )
     def test_hook_event_name_map_coverage(
         self,
-        adapter: QwenAdapter,
+        adapter: ACPHookAdapter,
         event_type_value: str,
         expected_acp_name: str,
     ) -> None:
@@ -121,18 +120,18 @@ class TestToolNameNormalization:
     )
     def test_tool_map_coverage(
         self,
-        adapter: QwenAdapter,
+        adapter: ACPHookAdapter,
         acp_tool: str,
         expected_tool: str,
     ) -> None:
         """TOOL_MAP normalizes all known ACP tool names."""
         assert adapter.normalize_tool_name(acp_tool) == expected_tool
 
-    def test_unknown_tool_passes_through(self, adapter: QwenAdapter) -> None:
+    def test_unknown_tool_passes_through(self, adapter: ACPHookAdapter) -> None:
         """Unknown tool names pass through unchanged."""
         assert adapter.normalize_tool_name("CustomTool") == "CustomTool"
         assert adapter.normalize_tool_name("mcp_server_tool") == "mcp_server_tool"
 
-    def test_empty_tool_name(self, adapter: QwenAdapter) -> None:
+    def test_empty_tool_name(self, adapter: ACPHookAdapter) -> None:
         """Empty tool name passes through unchanged."""
         assert adapter.normalize_tool_name("") == ""

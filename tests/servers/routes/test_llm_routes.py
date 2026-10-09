@@ -185,21 +185,21 @@ def test_generate_selects_explicit_provider_model(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="droid",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen3-coder",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"qwen": adapter})
+    service = TextGenerationService(registry, {"droid": adapter})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "qwen",
+            "provider": "droid",
             "model": "qwen3-coder",
             "system_prompt": "Be concise",
             "max_tokens": 128,
@@ -211,13 +211,13 @@ def test_generate_selects_explicit_provider_model(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "qwen",
+        "provider": "droid",
         "model": "qwen3-coder",
     }
     assert adapter.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="qwen",
+            provider="droid",
             model="qwen3-coder",
             system_prompt="Be concise",
             max_tokens=128,
@@ -342,7 +342,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="droid",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen3-coder",),
@@ -351,7 +351,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
     )
     server_with_llm.services.text_generation_service = TextGenerationService(
         registry,
-        {"qwen": adapter},
+        {"droid": adapter},
     )
 
     # Callers may raise per-candidate budgets above the tight configured
@@ -361,7 +361,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "qwen",
+            "provider": "droid",
             "model": "qwen3-coder",
             "candidate_timeout_seconds": 90,
             "cli_candidate_timeout_seconds": 300,
@@ -382,7 +382,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "qwen",
+            "provider": "droid",
             "model": "qwen3-coder",
             "candidate_timeout_seconds": 5000,
             "cli_candidate_timeout_seconds": 5000,
@@ -401,7 +401,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "qwen",
+            "provider": "droid",
             "model": "qwen3-coder",
             "total_timeout_seconds": 45,
         },
@@ -419,7 +419,7 @@ def test_generate_caps_and_propagates_timeout_overrides(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "qwen",
+            "provider": "droid",
             "model": "qwen3-coder",
             "cli_candidate_timeout_seconds": 60,
         },
@@ -667,14 +667,14 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
     server_with_llm: MagicMock,
 ) -> None:
     prompt = "Summarize this module once from lower-level summaries."
-    candidates = ("qwen/qwen3-coder", "claude/sonnet")
-    qwen = _FakeTextAdapter(text=prompt)
+    candidates = ("droid/qwen3-coder", "claude/sonnet")
+    droid = _FakeTextAdapter(text=prompt)
     claude = _FakeTextAdapter(text="Fallback prose")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
+                provider="droid",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("qwen3-coder",),
@@ -688,7 +688,7 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
             ),
         ]
     )
-    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
+    service = TextGenerationService(registry, {"droid": droid, "claude": claude})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -707,10 +707,10 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
         "provider": "claude",
         "model": "sonnet",
     }
-    assert qwen.requests == [
+    assert droid.requests == [
         TextGenerationRequest(
             prompt=prompt,
-            provider="qwen",
+            provider="droid",
             profile="feature_mid",
             candidates=candidates,
             model="qwen3-coder",
@@ -1146,7 +1146,7 @@ def test_vision_status_lists_only_proven_providers_as_available(
     providers = {binding["provider"] for binding in data["bindings"]}
     assert "endpoint:lm-studio" in available_providers
     assert "local" not in providers
-    assert not {"codex", "droid", "grok", "qwen"} & available_providers
+    assert not {"codex", "droid", "grok"} & available_providers
 
 
 def test_vision_extract_upload_executes_service(

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
 _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
-_LAZY_ACP_PROVIDERS = frozenset({"grok", "qwen"})
+_LAZY_ACP_PROVIDERS = frozenset({"grok"})
 _GENERIC_LOCAL_UNAVAILABLE_REASON = (
     "Generic OpenAI-compatible endpoints are unavailable for web chat"
 )

@@ -144,6 +144,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%s", session_id, len(prompt))
+            # The provider took a prompt from the composer; a native child's prompt never
+            # passed through it.
+            if not event.metadata.get("_native_subagent_binding"):
+                self._record_composer_submit(session_id)
 
             if self._session_manager and not event.metadata.get("_native_subagent_binding"):
                 try:
@@ -179,15 +183,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     self.logger.warning("Failed to reset subagent count on BEFORE_AGENT: %s", e)
             elif self._session_manager:
                 self._ensure_bound_grok_native_subagent(event, session_id)
-
-            try:
-                from gobby.hooks.event_handlers._session_start.transcripts import (
-                    ensure_qwen_transcript_tracking,
-                )
-
-                ensure_qwen_transcript_tracking(self, event, session_id)
-            except Exception as e:
-                self.logger.warning("Failed to register deferred Qwen transcript: %s", e)
 
             # Start a fresh lifecycle generation (unless /clear or /exit).
             prompt_lower = stripped_prompt.lower()
@@ -623,6 +618,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if session_id:
             self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)
+            # A manual compaction was submitted from the composer; auto compaction typed nothing.
+            if is_handoff_trigger:
+                self._record_composer_submit(session_id)
             # Auto compaction in Codex is an in-session event, not a handoff.
             if is_handoff_trigger and self._session_manager:
                 if not self._skip_session_status_update_during_shutdown(

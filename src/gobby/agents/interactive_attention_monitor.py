@@ -13,6 +13,7 @@ from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
+from gobby.terminals.composer_attention import composer_attention_holds
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.logging import ThrottledLogger
@@ -67,8 +68,6 @@ class InteractiveAttentionMonitor:
             InteractiveCapacityRecovery(
                 session_manager,
                 attention_manager,
-                detection_registry,
-                registry,
                 write_coordinator,
                 max_reprompt_attempts
                 if max_reprompt_attempts is not None
@@ -250,6 +249,7 @@ class InteractiveAttentionMonitor:
                 session.id,
                 session.source or "",
                 pane_output,
+                terminal_id=str(row.id),
             )
 
     async def _sync_interactive_attention(
@@ -257,6 +257,8 @@ class InteractiveAttentionMonitor:
         session_id: str,
         provider: str,
         pane_output: str,
+        *,
+        terminal_id: str | None = None,
     ) -> None:
         manager = self._attention_manager
         if manager is None:
@@ -284,7 +286,9 @@ class InteractiveAttentionMonitor:
             ):
                 return
             await self._resolve_interactive_lifecycle_wait(session_id)
-            await self._clear_attention_if_current(session_attention_entry_id(session_id))
+            await self._clear_attention_if_current(
+                session_attention_entry_id(session_id), terminal_id=terminal_id
+            )
             return
         prompt_payload = (
             detected
@@ -368,12 +372,17 @@ class InteractiveAttentionMonitor:
 
         await asyncio.to_thread(resolve)
 
-    async def _clear_attention_if_current(self, entry_id: str) -> None:
+    async def _clear_attention_if_current(
+        self, entry_id: str, *, terminal_id: str | None = None
+    ) -> None:
+        """Clear the entry, except a withheld wake's item while its composer still blocks."""
         manager = self._attention_manager
         if manager is None:
             return
         current = await asyncio.to_thread(manager.get, entry_id)
         if current is None or current.state is None:
+            return
+        if terminal_id is not None and composer_attention_holds(current, terminal_id):
             return
         await manager.transition_async(
             asyncio.to_thread,

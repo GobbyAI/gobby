@@ -59,7 +59,9 @@ def _record_review(
         identity={"closure_id": record["closure_id"]},
         max_items=_MAX_REVIEW_RECORDS,
     )
-    variables = state.get_variables(session_id)
+    variables = state.get_variable_subset(
+        session_id, ("_memory_pending_task_reviews", REVIEW_RECORDS_VARIABLE)
+    )
     if pending_memory_reviews_complete(variables):
         state.set_variable(session_id, REVIEW_DELIVERED_VARIABLE, True)
     pending_reviews = pending_memory_reviews(variables)
@@ -88,7 +90,12 @@ def _accessed_ids(
     """Ids fetched under ``task_id`` or no task, in first-access order across sessions."""
     ids: list[str] = []
     for session_id in session_ids:
-        records = variables.get_variables(session_id).get(ACCESSED_MEMORY_IDS_VARIABLE) or []
+        records = (
+            variables.get_variable_subset(session_id, (ACCESSED_MEMORY_IDS_VARIABLE,)).get(
+                ACCESSED_MEMORY_IDS_VARIABLE
+            )
+            or []
+        )
         for record in records:
             if not isinstance(record, dict) or record.get("task_id") not in (task_id, None):
                 continue

@@ -57,7 +57,7 @@ def test_map_session_info_translates_to_canonical_fields() -> None:
 def test_map_session_info_unresolved_cwd_yields_none_project() -> None:
     mapped = map_session_info(
         {"sessionId": "s1", "cwd": "/unknown"},
-        provider="qwen",
+        provider="grok",
         resolve_project_id=_resolver({}),
     )
 
@@ -73,7 +73,7 @@ def test_map_session_info_strips_strings_and_drops_empty_values() -> None:
             "title": "   ",
             "updatedAt": "  ",
         },
-        provider="qwen",
+        provider="grok",
         resolve_project_id=_resolver({"/repo": "proj-1"}),
     )
 

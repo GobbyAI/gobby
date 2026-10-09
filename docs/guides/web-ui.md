@@ -108,17 +108,17 @@ the UI or restart the daemon.
    daemon logs before choosing a repair.
 4. After the repair, repeat the failed read and verify the live connection.
 
-Manual authenticated checks, from a trusted client with the local token:
+Manual authenticated checks, from a trusted client with a hub-issued API key:
 
 ```bash
 BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
-TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+: "${GOBBY_API_KEY:?Set a valid hub-issued API key}"
 curl -fsS "$BASE/api/health"
 curl -fsS "$BASE/api/auth/status"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/api/admin/status"
+curl -fsS -H "Authorization: Bearer $GOBBY_API_KEY" "$BASE/api/admin/status"
 ```
 
-Keep the token out of logs and shared evidence. See
+Keep the API key out of logs and shared evidence. See
 [admin authentication](admin-operations.md#authentication) for rotation and
 [HTTP endpoints](http-endpoints.md) for route ownership and access rules.
 

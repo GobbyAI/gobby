@@ -385,7 +385,7 @@ class TestCloseTerminalWindow:
         mock_sm_cls.return_value = mock_sm
         mock_process.return_value.cmdline.return_value = [
             "python",
-            "qwen",
+            "codex",
             "session-id",
             "other",
         ]

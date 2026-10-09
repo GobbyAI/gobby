@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from jinja2.exceptions import SecurityError
@@ -21,6 +22,7 @@ from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_dir
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.telemetry.rule_allow_audit import RuleAllowAudit
 from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 from gobby.workflows.definitions import (
@@ -526,6 +528,27 @@ class TestRuleEngineLoadRules:
 
         event = _make_event(HookEventType.BEFORE_TOOL)
         await _assert_evaluation(db, event, "allow")
+
+    def test_project_rows_load_only_for_their_project(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        body = RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            effects=[RuleEffect(type="block", reason="blocked")],
+        ).model_dump()
+        projects = LocalProjectManager(db)
+        project_a, project_b = (projects.create(f"rules-{uuid4()}").id for _ in range(2))
+        manager.create(name="global-rule", definition_json=body)
+        manager.create(name="project-a-rule", definition_json=body, project_id=project_a)
+        engine = RuleEngine(db)
+
+        def loaded(project_id: str | None) -> list[str]:
+            rows = engine._load_rules([RuleTriggerEvent.BEFORE_TOOL], project_id=project_id)
+            return [row.name for row, _ in rows]
+
+        assert loaded(None) == ["global-rule"]
+        assert loaded(project_a) == ["global-rule", "project-a-rule"]
+        assert loaded(project_b) == ["global-rule"]
 
 
 class TestBlockEffect:
@@ -3472,7 +3495,7 @@ class TestTurnEndResolution:
         )
 
         variables: dict[str, Any] = {}
-        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.AGY)
         await _assert_evaluation(db, event, "allow", variables=variables)
 
         assert variables["matched"] is True

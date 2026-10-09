@@ -212,7 +212,7 @@ async def test_tool_status_preserves_acp_metadata_and_content_blocks() -> None:
         ToolCallEvent(
             tool_call_id="tool-1",
             tool_name="Edit",
-            server_name="qwen",
+            server_name="grok",
             arguments={"path": "src/app.py"},
             status="pending",
             tool_kind="edit",
@@ -234,7 +234,7 @@ async def test_tool_status_preserves_acp_metadata_and_content_blocks() -> None:
         ToolCallEvent(
             tool_call_id="tool-1",
             tool_name="Edit",
-            server_name="qwen",
+            server_name="grok",
             arguments={},
             status="pending",
         ),

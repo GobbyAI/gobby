@@ -1,4 +1,20 @@
 nextest-version = { required = "0.9.133" }
+experimental = ["setup-scripts"]
+
+[scripts.setup.gclient-test-gterm]
+# Validate/build the checkout's host once, before any test's timeout starts.
+command = ["cargo", "build", "-p", "gobby-terminal", "--features", "vt-engine", "--bin", "gterm"]
+
+[[profile.default.scripts]]
+filter = '''package(gobby-client) & binary(frame_source_live) & (
+    test(=direct_frames_verify_epoch_and_render) |
+    test(=granted_direct_input_echoes_and_revoke_refuses) |
+    test(=tmux_pane_attaches_through_host_observer)
+)'''
+setup = 'gclient-test-gterm'
+
+[store]
+dir = ".nextest"
 
 [profile.default]
 fail-fast = false
@@ -9,7 +25,7 @@ fail-fast = false
 # co-spawned; a genuinely leaked child holds the pipe forever and still fails.
 leak-timeout = { period = "10s", result = "fail" }
 
-# Every run leaves target/nextest/<profile>/junit.xml, which keeps each
+# Every run leaves .nextest/<profile>/junit.xml, which keeps each
 # failure's name and captured output after a terminal has truncated them.
 [profile.default.junit]
 path = "junit.xml"
@@ -29,6 +45,12 @@ test-group = 'ghook-process'
 
 [[profile.default.overrides]]
 filter = 'package(gobby-core) & (test(schema::runner_tests) | binary(catalog_manifest_freshness) | binary(schema_contract))'
+test-group = 'serial-db'
+
+[[profile.default.overrides]]
+# Schema subprocesses share hub roles and must not inherit sibling capture pipes
+# while long apply tests run (the macOS FD_CLOEXEC race described above).
+filter = 'package(gobby-daemon) & (test(retention::tests::database) | binary(schema_cli) | binary(cli_contract))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]

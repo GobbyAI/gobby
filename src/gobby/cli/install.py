@@ -39,7 +39,6 @@ from ._detectors import (
     _is_codex_cli_installed,
     _is_droid_cli_installed,
     _is_grok_cli_installed,
-    _is_qwen_cli_installed,
 )
 from ._install_daemon import (
     _ci_environment,
@@ -89,7 +88,6 @@ from .installers import (
     install_grok,
     install_postgres,
     install_qdrant,
-    install_qwen,
 )
 from .installers.container_restart import apply_managed_service_restart_policy
 from .runtime import get_cli_runtime
@@ -131,7 +129,6 @@ __all__ = [
     "_is_codex_cli_installed",
     "_is_droid_cli_installed",
     "_is_grok_cli_installed",
-    "_is_qwen_cli_installed",
     "_is_agy_cli_installed",
     "_echo_install_details",
     "_ensure_daemon_config",
@@ -320,7 +317,7 @@ def install(
     sections. `gobby install COMPONENT...` requires an existing install and
     runs only those components, in order.
 
-    Components: claude, codex, grok, qwen, droid, agy, git-hooks, rtk,
+    Components: claude, codex, grok, droid, agy, git-hooks, rtk,
     impeccable, voice, embedding, ide-settings, gclient, gterm, srt. gclient and
     gterm promote that binary only and do not claim the daemon singleton. srt
     restages the managed SRT runner after a runner change without claiming the
@@ -355,8 +352,6 @@ def install(
         clis_to_install.append("claude")
     if _is_grok_cli_installed():
         clis_to_install.append("grok")
-    if _is_qwen_cli_installed():
-        clis_to_install.append("qwen")
     if _is_agy_cli_installed():
         clis_to_install.append("agy")
     if _is_codex_cli_installed():
@@ -551,7 +546,6 @@ def install(
             "agy": install_agy,
             "claude": install_claude,
             "grok": install_grok,
-            "qwen": install_qwen,
             "codex": install_codex,
             "droid": install_droid,
         }
