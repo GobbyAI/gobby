@@ -413,6 +413,9 @@ def create_spawn_agent_registry(
             placement: Bind the agent's terminal into a workspace pane before exec:
                 {"tab": {"workspace": REF, "title": TEXT}} or
                 {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
+                Split axis 'balanced' keeps panes at least 80 columns by 12 rows
+                using viewport 'columns' (default 80) and required 'rows'.
+                Insufficient capacity refuses placement without changing the tab.
                 Refusals carry ``placement_error``.
 
         Returns:

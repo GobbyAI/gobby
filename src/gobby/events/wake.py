@@ -689,28 +689,24 @@ class WakeDispatcher:
         *,
         method: str,
     ) -> tuple[dict[str, Any] | None, bool]:
-        """Withhold the drain unless a probe positively confirms an empty composer.
+        """Withhold the wake unless the composer ledger admits typing.
 
         Returns the withheld outcome (``None`` to deliver) and whether the composer
-        was confirmed empty; only an unconfirmed delivery keeps the blind drain.
+        was confirmed empty; only an unconfirmed delivery keeps the drain.
 
-        Only an ``empty`` read authorizes typing. A ``draft`` blocks, and so does
-        every ``unknown`` read, because the frame may hold a draft the probe could
-        not read. That includes a provider whose manifest has no composer rules
-        (Grok): it answers ``unknown`` to every probe, so it gets no live wake
-        typing, and its durable messages arrive through hook context on its next
-        tool call instead. A missing probe has no safer read to
-        offer, so it stays on its existing path; a probe *error* is different:
-        the composer is unreadable, which is exactly the unconfirmed state, so
-        it withholds and retries rather than blinding typing into a composer it
-        could not read. Priority remains on the durable notification; it never
-        authorizes typing over a draft. No debounce record is written, so the
-        next wake probes again.
+        ``empty`` authorizes typing, and ``held`` daemon text is drained first. A
+        human ``draft`` blocks, and so does ``unknown``: a blocked or untracked
+        entry (a gap, an interrupt, a provider limit, a tmux pane) whose composer
+        only a submit or an operator release vouches for again. Its durable
+        messages arrive through hook context on its next tool call instead. A
+        missing probe has no safer read to offer, so it stays on its existing
+        path; a probe *error* withholds and retries. Priority remains on the
+        durable notification; it never authorizes typing over a draft. No
+        debounce record is written, so the next wake probes again.
 
-        A live turn fingerprint blocks even on an ``empty`` composer: the row was
+        An open transcript turn blocks even on an ``empty`` composer: the row was
         reconciled idle earlier, so a turn that started since then would be
-        steered or cancelled by this write, and an earlier empty snapshot alone
-        cannot authorize a later overlapping write.
+        steered or cancelled by this write.
         """
         if self._activity_probe is None:
             return None, False
@@ -722,14 +718,11 @@ class WakeDispatcher:
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
         state = activity.composer.state
-        if state == "empty":
-            return None, True
+        if state in {"empty", "held"}:
+            return None, state == "empty"
         if state == "draft":
-            # The draft is operator content and may hold secrets: log its length only.
             logger.warning(
-                "wake for session %s deferred: composer holds an operator draft (%d chars)",
-                session_id,
-                len(activity.composer.line or ""),
+                "wake for session %s deferred: composer holds an operator draft", session_id
             )
             return composer_occupied_result(session_id, method=method), False
         return composer_unconfirmed_result(session_id, method=method), False

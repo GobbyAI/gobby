@@ -74,9 +74,18 @@ pub(super) fn managed_envelope(
     ctx: &AcquireCtx,
     existing: Option<&GrantBundle>,
 ) -> Result<(String, CapabilityClaims), GrantError> {
-    let owned = ctx
-        .managed_envelope
-        .clone()
+    let fresh = match ctx.managed_bootstrap.as_deref() {
+        Some(path) => crate::local_token::managed_token_at(
+            path,
+            ctx.expected_execution_id.as_deref(),
+            ctx.session_id.as_deref(),
+            Some(&ctx.project_id),
+        )
+        .map_err(|_| GrantError::Malformed("invalid managed capability envelope".to_owned()))?,
+        None => None,
+    };
+    let owned = fresh
+        .or_else(|| ctx.managed_envelope.clone())
         .ok_or(GrantError::ManagedCapabilityMissing)?;
     let envelope = owned.trim();
     if envelope.is_empty() {

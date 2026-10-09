@@ -40,6 +40,8 @@ pub(crate) struct InputActivity {
     pub bytes: usize,
     /// `"esc"` or `"ctrl_c"` when the whole `Input` payload was that one byte.
     pub interrupt: Option<&'static str>,
+    /// Whether the write reached the child as Enter, submitting its composer.
+    pub submit: bool,
 }
 
 pub(crate) struct EventReceiver {
@@ -150,6 +152,7 @@ impl HostEvents {
             "kind": activity.kind,
             "bytes": activity.bytes,
             "interrupt": activity.interrupt,
+            "submit": activity.submit,
         }))
         .await;
     }

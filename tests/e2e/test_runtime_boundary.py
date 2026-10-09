@@ -694,6 +694,7 @@ def _spawn_same_deployment_standby(
     work = boundary.project_dir / f".standby-{http_port}"
     logs = work / "logs"
     logs.mkdir(parents=True)
+    (work / "machine_id").write_text((boundary.home / "machine_id").read_text())
     bootstrap = work / "bootstrap.yaml"
     files_home = work / "files"
     files_home.mkdir()

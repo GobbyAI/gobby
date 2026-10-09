@@ -730,6 +730,8 @@ async def _run_async_shutdown_cleanup(
                 lambda: stop(drain_host=drain_host),
                 "gterm host stop",
             )
+    # Nothing feeds the composer ledger once the host stops; cancelling flushes it.
+    await _cancel_runner_task(runner, "_composer_ledger_task")
     _best_effort_sync(
         shutdown_transcript_evidence_pool,
         "Transcript evidence process pool shutdown",

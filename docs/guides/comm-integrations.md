@@ -118,10 +118,10 @@ redacting it. Over the cap, it sends a one-line omission note instead.
 Example with an explicit destination:
 
 ```bash
-GOBBY_TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+: "${GOBBY_API_KEY:?Set a valid hub-issued API key}"
 
 curl -X POST http://127.0.0.1:60887/api/comms/send \
-  -H "Authorization: Bearer $GOBBY_TOKEN" \
+  -H "Authorization: Bearer $GOBBY_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "channel_name": "team-telegram",

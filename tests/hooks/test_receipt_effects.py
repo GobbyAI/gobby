@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
@@ -29,6 +30,10 @@ class _VariableStore:
 
     def get_variables(self, session_id: str) -> dict[str, Any]:
         return dict(self.variables.get(session_id, {}))
+
+    def get_variable_subset(self, session_id: str, keys: Sequence[str]) -> dict[str, Any]:
+        stored = self.variables.get(session_id, {})
+        return {key: stored[key] for key in keys if key in stored}
 
     def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         self.variables.setdefault(session_id, {}).update(updates)

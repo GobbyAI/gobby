@@ -1178,7 +1178,10 @@ fn checkout_mode_migration_preserves_modes_and_agent_settings() -> anyhow::Resul
         )?;
     }
     let report = SchemaRunner::new(&mut client, "public")?.apply()?;
-    assert_eq!(report.migrations_applied, 1);
+    assert_eq!(
+        report.migrations_applied,
+        MIGRATIONS.len() - migration_index
+    );
     for table in ["tasks", "build_profiles"] {
         let modes: Vec<String> = client
             .query(
@@ -1510,6 +1513,37 @@ fn prior_canonical_baseline_receipt_is_accepted() -> anyhow::Result<()> {
     assert!(!report.baseline_applied);
     assert_eq!(report.migrations_applied, 0);
     SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
+fn prior_420_receipt_upgrades_retention_schema_and_matches_fresh() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    // Reconstruct the exact pre-465 catalog and its released baseline receipt.
+    client.batch_execute(
+        "DROP INDEX idx_token_events_event_at; DROP TABLE token_event_retention_totals; \
+         DELETE FROM schema_migrations WHERE version=465;",
+    )?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum=$1 WHERE version=420",
+        &[&"f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55"],
+    )?;
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!report.baseline_applied);
+    assert_eq!(report.migrations_applied, 1);
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    let upgraded = super::catalog_manifest(&mut client, "public")?;
+    let Some((_fresh_database, mut fresh)) = scratch_database()? else {
+        anyhow::bail!("test database disappeared during schema comparison");
+    };
+    install_baseline(&mut fresh)?;
+    assert_eq!(upgraded, super::catalog_manifest(&mut fresh, "public")?);
     Ok(())
 }
 

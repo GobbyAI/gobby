@@ -13,6 +13,7 @@ use std::path::Path;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_terminal::layout::NavDirection;
 
+use crate::app::sidebar_model::worktree_focus_target;
 use crate::daemon::Daemon;
 use crate::key_input::KeyInput;
 use crate::prefs::save_prefs;
@@ -55,6 +56,8 @@ pub enum ModalOutcome {
     Focus(PaneId),
     /// The navigator picked a terminal: reveal it, attaching on demand.
     FocusTerminal(String),
+    /// Navigate picked the agent occupying a worktree: reveal its terminal.
+    FocusAgent(String),
     /// Navigate picked a project card: make it the focused project.
     FocusProject(String),
     /// Navigate picked a worktree row: open a shell there.
@@ -589,7 +592,12 @@ fn navigate_key<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, key: &KeyEvent) -
             chrome.mode = Mode::Terminal;
             return match rows.into_iter().nth(chrome.sidebar.selected) {
                 Some(row) if row.kind == RowKind::Project => ModalOutcome::FocusProject(row.id),
-                Some(row) if row.kind == RowKind::Worktree => ModalOutcome::OpenWorktree(row.id),
+                Some(row) if row.kind == RowKind::Worktree => {
+                    worktree_focus_target(ws.sidebar(), &row.id)
+                        .map_or(ModalOutcome::OpenWorktree(row.id), |agent| {
+                            ModalOutcome::FocusAgent(agent.entry_id.clone())
+                        })
+                }
                 _ => ModalOutcome::Consumed,
             };
         }

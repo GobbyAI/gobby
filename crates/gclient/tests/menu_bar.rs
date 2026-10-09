@@ -11,7 +11,6 @@ use gobby_client::key_input::KeyInput;
 use gobby_client::prefs::load_prefs;
 use gobby_client::theme::ThemeKind;
 use gobby_client::ui::chrome::Mode;
-use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::keymap::BINDINGS;
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::status::Toast;
@@ -207,7 +206,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
     );
     assert_eq!(
         labels(MenuBarMenu::Help),
-        ["Keys", "Alerts…", "Daemon", "About Gobby"]
+        ["Keybinds", "Alerts…", "Daemon", "About Gobby"]
     );
     assert_eq!(
         labels(MenuBarMenu::Gobby),
@@ -245,7 +244,11 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "  Appearance: Dark ▸",
             "  Theme: Restored ▸",
             "  Monochrome",
-            "  Sidebar ▸"
+            "  Show sidebar",
+            "  Pin sidebar",
+            "✓ Show all machines",
+            "✓ Show all projects",
+            "✓ Group agents by project",
         ]
     );
     assert_eq!(
@@ -276,11 +279,6 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             [
                 Submenu::Appearance,
                 Submenu::Theme,
-                Submenu::Sidebar,
-                Submenu::Section(SidebarSection::Machines),
-                Submenu::Section(SidebarSection::Projects),
-                Submenu::Section(SidebarSection::Agents),
-                Submenu::Section(SidebarSection::Terminals),
                 Submenu::Arrange(ArrangeTarget { tab, pane: None }),
             ]
             .map(ContextMenuKind::Submenu),
@@ -306,6 +304,14 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
                 )
                 .await
                 .expect("menu action dispatch");
+                if action == MenuAction::Noop {
+                    assert!(!exit);
+                    assert_eq!(observable_state(&fixture), before);
+                    assert_eq!(fixture.mock.requests().len(), requests_before);
+                    assert_eq!(fixture.mock.workspace_requests().len(), workspace_before);
+                    assert!(outcomes_rx.try_recv().is_err());
+                    continue;
+                }
                 // A daemon op runs as a job; its outcome is its effect.
                 let effect = exit
                     || observable_state(&fixture) != before
@@ -573,7 +579,7 @@ async fn the_appearance_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
     fixture.mock.shutdown().await;
 }
 
-/// A search hides the legend; Help opened again from Help › Keys drops
+/// A search hides the legend; Help opened again from Help › Keybinds drops
 /// that search and shows the legend.
 #[tokio::test]
 async fn help_reopened_from_the_legend_row_drops_the_old_search() {

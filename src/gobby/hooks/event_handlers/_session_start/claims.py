@@ -25,7 +25,9 @@ def rehydrate_found_work_gate_arm(handler: Any, session_id: str) -> None:
         from gobby.workflows.state_manager import SessionVariableManager
 
         variable_manager = SessionVariableManager(session_manager.db)
-        variables = dict(variable_manager.get_variables(session_id) or {})
+        variables = variable_manager.get_variable_subset(
+            session_id, (FOUND_WORK_GATE_ARMED_AT_VARIABLE,)
+        )
         links = session_task_manager.get_session_tasks(session_id)
         if arm_found_work_gate_from_task_links(variables, links):
             variable_manager.merge_variables(

@@ -105,7 +105,7 @@ class TestListRules:
     def test_list_filter_by_event(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
 
-        mock_manager.list_by_event.return_value = [
+        mock_manager.list_by_event_across_projects.return_value = [
             _make_rule_row("event-rule"),
         ]
 
@@ -113,7 +113,9 @@ class TestListRules:
             result = cli_runner.invoke(rules, ["list", "--event", "before_tool"])
             assert result.exit_code == 0
             assert "event-rule" in result.output
-            mock_manager.list_by_event.assert_called_once_with("before_tool", enabled=None)
+            mock_manager.list_by_event_across_projects.assert_called_once_with(
+                "before_tool", enabled=None
+            )
 
     def test_list_filter_by_group(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules

@@ -63,6 +63,17 @@ def restart_start_refusal(
     if refusal := dirty_bundled_content_refusal(get_install_dir(), database=database):
         return refusal
 
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).read_only_operational_config()
+    if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
+        from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+
+        try:
+            verify_srt_installation()
+        except SrtRuntimeError as exc:
+            return f"Managed SRT sandbox preflight failed: {exc}"
+
     url = _hub_url(database)
     if url is None:
         logger.debug("Restart preflight skipped the schema plan: no readable hub URL")

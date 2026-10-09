@@ -4,4 +4,5 @@ pub mod front_door;
 pub mod heartbeat;
 pub mod lease;
 pub mod lifecycle;
+mod retention;
 pub mod serve;

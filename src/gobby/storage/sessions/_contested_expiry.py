@@ -9,7 +9,7 @@ than racing a concurrent variable write.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from gobby.sessions.contested_expiry import (
@@ -79,32 +79,47 @@ def clear_contested_terminal_expiry(db: HubDatabase, session_id: str) -> None:
         )
 
 
-def read_session_variables_row(db: HubDatabase, session_id: str) -> Mapping[str, Any]:
+def read_session_variables_row(
+    db: HubDatabase, session_id: str, *, keys: Collection[str] | None = None
+) -> Mapping[str, Any]:
     """Return ``stored``, ``variables`` and the session's ``project_id`` in one row.
 
-    Every hook-path reader of a session's variables shares this statement, so
-    one event pays for one read. The state manager also needs the project to
-    layer definition defaults (#23359).
+    Explicit key scopes project stored values in PostgreSQL and cache separately
+    from full reads. Project metadata remains available for readers that layer defaults.
     """
+    key_scope = None if keys is None else tuple(sorted(set(keys)))
+    variables = "sv.variables::text"
+    params: tuple[Any, ...] = (session_id, session_id)
+    cache_key: tuple[Any, ...] = ("session_variables", session_id)
+    if key_scope is not None:
+        variables = (
+            "(SELECT COALESCE(jsonb_object_agg(key, sv.variables -> key), '{}'::jsonb)"
+            " FROM unnest(%s::text[]) AS requested(key)"
+            " WHERE jsonb_typeof(sv.variables) = 'object' AND sv.variables ? key)::text"
+        )
+        params = (list(key_scope), session_id, session_id)
+        cache_key = (*cache_key, key_scope)
     row = scoped_read(
         db,
-        ("session_variables", session_id),
+        cache_key,
         _VARIABLES_ROW_TABLES,
         lambda: db.fetchone(
-            "SELECT sv.session_id IS NOT NULL AS stored, sv.variables::text AS variables,"
+            f"SELECT sv.session_id IS NOT NULL AS stored, {variables} AS variables,"
             " s.project_id"
             " FROM (SELECT 1) AS one"
             " LEFT JOIN session_variables sv ON sv.session_id = %s"
             " LEFT JOIN sessions s ON s.id = %s",
-            (session_id, session_id),
+            params,
         ),
     )
     return row or {"stored": False, "variables": None, "project_id": None}
 
 
-def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] | None:
+def read_session_variables(
+    db: HubDatabase, session_id: str, *, keys: Collection[str] | None = None
+) -> dict[str, Any] | None:
     """Return a session's stored variables, or None when it has no row."""
-    row = read_session_variables_row(db, session_id)
+    row = read_session_variables_row(db, session_id, keys=keys)
     if not row["stored"]:
         return None
     return _stored_variables(row)
@@ -112,7 +127,7 @@ def read_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any] |
 
 def session_has_active_native_subagent(db: HubDatabase, session_id: str) -> bool:
     """Return whether a native Claude/Codex/Grok subagent is in flight on this session."""
-    variables = read_session_variables(db, session_id)
+    variables = read_session_variables(db, session_id, keys=("subagent_count", "is_subagent"))
     if not variables:
         return False
     raw_count = variables.get("subagent_count") or 0

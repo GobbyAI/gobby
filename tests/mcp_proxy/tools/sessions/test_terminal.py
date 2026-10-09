@@ -345,7 +345,7 @@ class TestRegisterTerminalTools:
                 gate["readiness_unconfirmed"] = True
                 variables.pop("failed_handoff_attempt")
                 variables["set_handoff_pending"] = {"attempt_id": attempt_id}
-            variable_manager.return_value.get_variables.return_value = variables
+            variable_manager.return_value.get_variable_subset.return_value = variables
             result = asyncio.run(
                 set_handoff(
                     current_state="New handoff",

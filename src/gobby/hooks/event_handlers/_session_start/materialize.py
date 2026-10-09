@@ -23,9 +23,11 @@ from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     build_handoff_continue_prompt,
 )
+from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
 from .agents import _seed_parent_turn_seq
 from .claims import (
+    MCP_PROXY_READY_VARIABLE,
     inherited_mcp_proxy_ready,
     preserve_task_claim_state,
     rehydrate_found_work_gate_arm,
@@ -52,6 +54,15 @@ from .terminal_runtime import (
 from .transcripts import replace_session_message_processor
 
 _CONTEXT_MODE_METADATA_KEY = "_session_start_context_mode"
+_CLEAR_SUCCESSOR_VARIABLE_KEYS = (
+    "task_claimed",
+    "claimed_tasks",
+    "active_task_id",
+    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
+    MCP_PROXY_READY_VARIABLE,
+    "_agent_type",
+    "_agent_definition_hash",
+)
 
 
 def _compat_module() -> Any:
@@ -222,7 +233,9 @@ def _bind_clear_successor(
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(handler._session_manager.db)
-            predecessor_vars = dict(sv_mgr.get_variables(predecessor_id) or {})
+            predecessor_vars = sv_mgr.get_variable_subset(
+                predecessor_id, _CLEAR_SUCCESSOR_VARIABLE_KEYS
+            )
         except Exception:
             predecessor_vars = {}
         preserve_task_claim_state(
@@ -238,7 +251,9 @@ def _bind_clear_successor(
             stale_vars: dict[str, Any] = {}
             try:
                 if sv_mgr is not None:
-                    stale_vars = dict(sv_mgr.get_variables(supersedes) or {})
+                    stale_vars = sv_mgr.get_variable_subset(
+                        supersedes, _CLEAR_SUCCESSOR_VARIABLE_KEYS
+                    )
             except Exception:
                 stale_vars = {}
             preserve_task_claim_state(handler, sv_mgr, successor_id, supersedes, stale_vars)
@@ -415,6 +430,9 @@ def activate_materialized_session(
         session_id=session_id,
         pending_bind=pending_native_terminal_bind,
     )
+    # /clear left the composer, and no BEFORE_AGENT records it; the pane is bound by now.
+    if session_source == "clear":
+        handler._record_composer_submit(session_id)
     if session_obj:
         _schedule_tmux_window_rename_for_session(handler, session_obj)
 

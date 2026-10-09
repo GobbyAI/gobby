@@ -10,6 +10,7 @@ use tokio::time::{sleep_until, Instant};
 use super::events::InputActivity;
 use super::helpers::{err, named_key_bytes, s};
 use super::state::{HostState, Inner, TerminalSlot};
+use super::submit::presses_enter;
 use crate::protocol::MAX_WRITE_BYTES;
 
 pub const MAX_WRITE_BATCH_TARGETS: usize = 64;
@@ -166,6 +167,7 @@ impl HostState {
             if slot.input_grant.as_deref() != Some(holder) {
                 return Err("input_not_granted");
             }
+            let submit = input.submit(slot);
             deliver_native(slot, input)?;
             InputActivity {
                 terminal_id: slot.identity.terminal_id.clone(),
@@ -174,6 +176,7 @@ impl HostState {
                 kind,
                 bytes,
                 interrupt,
+                submit,
             }
         };
         self.events.emit_input_activity(activity).await;
@@ -365,6 +368,15 @@ impl NativeInput {
             _ => None,
         }
     }
+
+    /// Whether `slot`'s child reads this input as Enter. A paste it takes
+    /// bracketed is text; an unbracketed one reaches it as keystrokes.
+    fn submit(&self, slot: &TerminalSlot) -> bool {
+        match self {
+            Self::Bytes(bytes) => presses_enter(bytes),
+            Self::Paste(text) => !pastes_bracketed(slot) && presses_enter(text.as_bytes()),
+        }
+    }
 }
 
 /// Resolves a native slot by host id: `not_found` for unknown ids and
@@ -425,6 +437,19 @@ fn send_to_pty(slot: &TerminalSlot, input: NativeInput) -> Result<(), &'static s
 #[cfg(not(feature = "vt-engine"))]
 fn send_to_pty(_slot: &TerminalSlot, _input: NativeInput) -> Result<(), &'static str> {
     Err("terminal_gone")
+}
+
+#[cfg(feature = "vt-engine")]
+fn pastes_bracketed(slot: &TerminalSlot) -> bool {
+    slot.child
+        .as_ref()
+        .is_some_and(|child| child.runtime.bracketed_paste())
+}
+
+/// No slot owns a child here, and `send_to_pty` refuses every write anyway.
+#[cfg(not(feature = "vt-engine"))]
+fn pastes_bracketed(_slot: &TerminalSlot) -> bool {
+    false
 }
 
 fn parse_batch_operations(
@@ -730,6 +755,32 @@ mod tests {
             deliver_native(slot, NativeInput::Paste("x".to_owned())),
             Err("terminal_gone"),
         );
+    }
+
+    #[cfg(feature = "vt-engine")]
+    #[tokio::test]
+    async fn a_paste_submits_only_when_the_child_reads_it_unbracketed() {
+        for (child_output, submits) in [(&b""[..], true), (b"\x1b[?2004h", false)] {
+            let state = state();
+            crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
+            let (runtime, _received) =
+                crate::pane::PaneRuntime::test_with_channel_and_scrollback_bytes(
+                    80,
+                    24,
+                    0,
+                    child_output,
+                    4,
+                );
+            let mut inner = state.inner.lock().await;
+            let slot = native_slot_mut(&mut inner, "ht-1").expect("native slot");
+            slot.child = Some(crate::host::spawn::PreparedChild::from_test_runtime(
+                runtime,
+            ));
+
+            assert_eq!(NativeInput::Paste("ls\r".to_owned()).submit(slot), submits);
+            assert!(!NativeInput::Paste("ls".to_owned()).submit(slot));
+            assert!(NativeInput::Bytes(b"\r".to_vec()).submit(slot));
+        }
     }
 
     #[tokio::test]

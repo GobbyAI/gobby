@@ -82,7 +82,11 @@ class _DictVariablesConnection:
 
     def execute(self, query: str, params: tuple[Any, ...]) -> _DictVariablesConnection:
         if "UPDATE session_variables" in query:
-            self.written_variables = json.loads(params[0])
+            layered = {**json.loads(params[0]), **self.variables}
+            self.written_variables = {
+                **{key: value for key, value in layered.items() if key not in params[1]},
+                **json.loads(params[2]),
+            }
         return self
 
     def fetchone(self) -> dict[str, Any]:

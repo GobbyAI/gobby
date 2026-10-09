@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import threading
 import time
 from functools import partial
@@ -13,6 +15,7 @@ import pytest
 from gobby.agents import srt_runtime
 from gobby.agents.srt_runtime import SrtInstallation, SrtRuntimeError
 from gobby.utils import dependency_requirements as requirements
+from gobby.utils import spawn
 from gobby.utils.dependency_requirements import (
     SRT_RELEASE,
     DependencyStatus,
@@ -22,6 +25,30 @@ from gobby.utils.dependency_requirements import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("version", "state"),
+    [("20.11.0", "outdated"), ("22.11.0", "outdated"), ("22.12.0", "healthy")],
+)
+def test_srt_node_preflight_enforces_upstream_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version: str, state: str
+) -> None:
+    node = tmp_path / "node"
+    node.touch()
+    monkeypatch.setattr(shutil, "which", lambda name: str(node))
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command == [str(node.resolve()), "--version"]
+        return subprocess.CompletedProcess(command, 0, f"v{version}\n", "")
+
+    monkeypatch.setattr(spawn, "run", run)
+    status = requirements.node_dependency_status()
+    assert status.state == state
+    assert status.minimum_version == "22.12.0"
+    assert status.path == str(node.resolve())
+    if state == "outdated":
+        assert "Install Node.js 22.12.0 or newer" in (status.error or "")
 
 
 def _raise_srt_runtime_error(message: str) -> None:

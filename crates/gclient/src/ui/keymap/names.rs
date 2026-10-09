@@ -180,12 +180,12 @@ pub const BINDINGS: &[BindingSpec] = &[
     ),
     spec(
         "toggle_projects_filter",
-        "List working projects or every project",
+        "List the current project or every project",
         &[],
     ),
     spec(
         "toggle_sessions_scope",
-        "List the focused project's sessions or every project's",
+        "Toggle grouping agents by project",
         &[],
     ),
     spec(

@@ -166,7 +166,7 @@ def list_rules(
     """List rules with optional filters."""
     with _manager_context() as manager:
         if event:
-            rows = manager.list_by_event(event, enabled=enabled_flag)
+            rows = manager.list_by_event_across_projects(event, enabled=enabled_flag)
         elif group:
             rows = manager.list_by_group(group, enabled=enabled_flag)
         else:

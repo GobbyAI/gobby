@@ -71,7 +71,7 @@ postgres_pool:
   open_timeout_seconds: 30.0
   max_lifetime_seconds: 300.0
 daemon_port: 60887
-bind_host: "localhost"
+bind_host: "127.0.0.1"
 websocket_port: 60888
 ui_port: 60889
 ```

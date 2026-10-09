@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks import inbox
+from gobby.hooks import inbox, inbox_envelopes
 
 pytestmark = pytest.mark.unit
 
@@ -32,7 +32,7 @@ async def test_barrier_classifies_two_thousand_envelopes_off_loop(
         (tmp_path / f"{index:04}.json").write_text(payload, encoding="utf-8")
 
     loop_thread = threading.get_ident()
-    original_load = inbox._load_envelope
+    original_load = inbox_envelopes.load_envelope
     reads = 0
 
     def load(path: Path) -> dict[str, Any] | None:
@@ -41,7 +41,7 @@ async def test_barrier_classifies_two_thousand_envelopes_off_loop(
         reads += 1
         return original_load(path)
 
-    monkeypatch.setattr(inbox, "_load_envelope", load)
+    monkeypatch.setattr(inbox_envelopes, "load_envelope", load)
     monkeypatch.setattr(inbox, "_drain_hook_inbox_once_locked", AsyncMock(return_value=0))
     async with asyncio.timeout(5):
         result = await inbox.drain_hook_inbox_barrier(FastAPI(), tmp_path, timeout_seconds=0)

@@ -14,6 +14,27 @@ AUTH_REMEDIATION = (
 )
 
 
+def test_managed_client_refreshes_capability_before_each_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "/fake/private/grant.json")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"success": True}
+    with (
+        patch(
+            "gobby.utils.daemon_client.daemon_auth_headers",
+            side_effect=[
+                {"Authorization": "Bearer launch"},
+                {"Authorization": "Bearer renewed"},
+            ],
+        ),
+        patch("gobby.utils.daemon_client.httpx.get", return_value=response) as request,
+    ):
+        client = DaemonClient()
+        client.call_http_api("/api/example", method="GET")
+    assert request.call_args.kwargs["headers"]["Authorization"] == "Bearer renewed"
+
+
 def test_auth_headers_attached() -> None:
     response = MagicMock(status_code=200)
     response.json.return_value = {"success": True}

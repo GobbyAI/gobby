@@ -274,7 +274,7 @@ async fn help_menu_ends_with_about_gobby_and_both_entries_open() {
         (0, 0),
     );
     let labels: Vec<_> = help.items.iter().map(|item| item.label).collect();
-    assert_eq!(labels, ["Keys", "Alerts…", "Daemon", "About Gobby"]);
+    assert_eq!(labels, ["Keybinds", "Alerts…", "Daemon", "About Gobby"]);
 
     let mock = MockDaemon::start("local-token").await;
     let daemon = LiveDaemon::connect(mock.url(), "local-token")

@@ -70,6 +70,27 @@ async def test_request_auth_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_managed_proxy_refreshes_capability_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", "/fake/private/grant.json")
+    with patch(
+        "gobby.mcp_proxy.stdio_proxy.daemon_auth_headers",
+        side_effect=[
+            {"Authorization": "Bearer launch"},
+            {"Authorization": "Bearer renewed"},
+        ],
+    ):
+        proxy = DaemonProxy(60887)
+        client = AsyncMock()
+        client.request.return_value = _response(200, {"success": True})
+        with patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client):
+            result = await proxy._request("POST", "/api/example", json={})
+    assert result == {"success": True}
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer renewed"
+
+
+@pytest.mark.asyncio
 async def test_request_preserves_explicit_nulls_in_tool_results() -> None:
     payload = {
         "success": True,

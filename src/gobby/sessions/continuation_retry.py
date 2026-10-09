@@ -14,14 +14,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead
+from gobby.agents.idle_detector import ComposerRead
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES, SessionManager
+from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.pane_io import (
     ComposerReader,
+    ComposerVerdict,
     PaneIO,
+    clear_composer,
+    composer_verdict,
     send_pane_key,
     submit_text,
 )
@@ -72,13 +76,6 @@ async def await_before_agent(
         await asyncio.sleep(poll_seconds)
 
 
-async def _read_composer(pane: PaneIO, composer_read: ComposerReader) -> ComposerRead | None:
-    try:
-        return composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-    except Exception:
-        return None
-
-
 def continuation_write_allowed(
     db: HubDatabase, session_id: str, *, baseline_generation: int | None = None
 ) -> bool:
@@ -116,27 +113,27 @@ async def resubmit_continuation(
     cli_source: str | None,
     composer_read: ComposerReader | None,
     verify_seconds: float,
-    before_agent_check: Callable[[], Awaitable[bool]] | None = None,
+    before_agent_check: Callable[[], Awaitable[bool]],
     db: HubDatabase | None = None,
     baseline_generation: int | None = None,
 ) -> bool:
     """Re-submit the continuation without ever writing over operator text.
 
     The read that triggered this retry reported the draft left and may have been
-    wrong, so a fresh composer read decides, under the same gating every other
+    wrong, so the composer ledger decides, under the same gating every other
     composer writer follows:
 
-    - Our prompt is still held: a bare Enter submits it.
-    - An operator draft, or a frame the manifest cannot classify (which may hide
-      one): nothing is written. The operator owns that text, so the caller's
-      durable fallback delivers the continuation instead.
-    - The composer is confirmed empty: a bare Enter goes first, because the read
-      may have missed a held copy. The lost prompt is re-pasted only when
-      BEFORE_AGENT has still not arrived and a second read still confirms the
-      composer empty, so no drain can delete keystrokes and no held copy is
-      duplicated.
-    - No composer reader: a bare Enter submits a held copy and is a no-op on an
-      empty composer; an unverifiable re-paste could only duplicate the prompt.
+    - A human draft, other daemon text, or a blocked or untracked entry: nothing
+      is written. The caller's durable fallback delivers the continuation instead.
+    - Our prompt is held, or the composer is empty: a bare Enter goes first; it
+      submits a held copy and is a no-op on an empty composer.
+    - BEFORE_AGENT still has not arrived after that Enter: the provider may have
+      dropped the prompt (a Codex compact boundary keeps the ledger's copy but
+      clears the screen), so a held copy is drained one backspace per character.
+      The prompt is re-pasted only when the frame then reads empty; a draft or an
+      unclassifiable frame writes nothing more.
+    - No composer reader: a re-paste could not be verified, so only the bare
+      Enter goes.
 
     Returns False when nothing safe could be written or a pane write failed.
     """
@@ -148,28 +145,29 @@ async def resubmit_continuation(
             return False
         return await _send_enter(pane, session_id)
 
-    if composer_read is None:
-        return await send_enter_if_allowed()
-
-    read = await _read_composer(pane, composer_read)
-    if read is None or read.state == "unknown":
+    read = read_composer(pane.target)
+    if read.state != "empty" and not _holds_our_prompt(read, prompt):
         return False
-    if read.state == "draft":
-        if not _holds_our_prompt(read, prompt):
-            return False
-        return await send_enter_if_allowed()
-
-    if not await send_enter_if_allowed():
-        return False
-    if before_agent_check is not None and await before_agent_check():
-        # A held copy the empty read missed was submitted by that Enter and its
-        # BEFORE_AGENT arrived; a re-paste would queue the continuation twice.
+    sent = await send_enter_if_allowed()
+    if not sent or composer_read is None:
+        return sent
+    if await before_agent_check():
+        # That Enter submitted a held copy and its BEFORE_AGENT arrived; a
+        # re-paste would queue the continuation twice.
         return True
-    read = await _read_composer(pane, composer_read)
-    if read is None or read.state != "empty":
-        # A held copy is visible now, or the frame is unreadable or holds operator
-        # text: never type over it. The next bounded Enter handles a held copy.
-        return read is not None and read.state == "draft" and _holds_our_prompt(read, prompt)
+    read = read_composer(pane.target)
+    verdict: ComposerVerdict | None
+    if _holds_our_prompt(read, prompt):
+        drain = await clear_composer(pane, cli_source, composer_read, verify_seconds=verify_seconds)
+        verdict = drain.verdict if drain.ok else None
+    elif read.state == "empty":
+        verdict = await composer_verdict(
+            pane, "", composer_read, window_seconds=max(verify_seconds, 0.0)
+        )
+    else:
+        return False
+    if verdict != "left":
+        return False
     if db is not None and not await asyncio.to_thread(
         continuation_write_allowed, db, session_id, baseline_generation=baseline_generation
     ):

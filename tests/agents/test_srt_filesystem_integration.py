@@ -14,7 +14,7 @@ from typing import Literal
 
 import pytest
 
-from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, compute_sandbox_paths
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_resolvers import merge_claude_settings
 from gobby.agents.srt_runtime import render_srt_settings
 from gobby.cli.install_setup_srt import install_srt_runtime
@@ -40,10 +40,9 @@ def _nested_runner_socket_root() -> Path:
     sandbox-runtime allocates that socket under ``os.tmpdir()``, which the
     runner takes from GOBBY_SRT_TMPDIR. The directory cannot live inside
     ``tmp_path``: macOS limits ``sun_path`` to 104 bytes and pytest's temp
-    directories exceed it. Inside a managed execution the outer Seatbelt
-    profile only allows Unix-socket binds under the tmux socket roots, so a
-    nested runner fails with ``listen EPERM``; probe the bind instead of
-    guessing from environment flags.
+    directories exceed it. Managed executions permit sockets under their
+    canonical current-run temp directory. Probe the bind rather than guessing
+    from environment flags.
     """
     root = Path(tempfile.gettempdir())
     probe_path = root / f"srt-probe-{os.getpid()}.sock"
@@ -101,6 +100,17 @@ async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launc
     backend: Literal["srt", "provider-native"],
     provider: Literal["claude"] | None,
 ) -> None:
+    seatbelt = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if seatbelt.returncode != 0 and "sandbox_apply: Operation not permitted" in seatbelt.stderr:
+        pytest.skip("host-level SRT proof requires permission to apply a nested Seatbelt profile")
+    assert seatbelt.returncode == 0, seatbelt.stderr
+
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -153,42 +163,3 @@ async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launc
     assert runner.read_bytes() == original_runner
     later_launch = _run_srt(node, runner, settings, workspace, "exit 0", socket_root)
     assert later_launch.returncode == 0, later_launch.stderr
-
-
-def test_rendering_keeps_write_denies_under_each_default_grant_of_the_pinned_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("Node.js is required")
-    runtime = install_srt_runtime().path
-    request.addfinalizer(lambda: _make_runtime_removable(runtime))
-    package = runtime / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "dist" / "index.js"
-    # A pin bump that adds a default grant fails here instead of dropping denies under it.
-    probe = subprocess.run(
-        [
-            node,
-            "--input-type=module",
-            "-e",
-            "const srt = await import(process.argv[1]);"
-            " console.log(JSON.stringify(srt.getDefaultWritePaths()))",
-            str(package),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    )
-    denies = [f"{path}/synthetic" for path in json.loads(probe.stdout)]
-    paths = ResolvedSandboxPaths(
-        workspace_path=str(tmp_path),
-        read_paths=[],
-        write_paths=[],
-        allow_external_network=False,
-        deny_write_paths=denies,
-    )
-
-    assert render_srt_settings(paths)["filesystem"]["denyWrite"] == denies

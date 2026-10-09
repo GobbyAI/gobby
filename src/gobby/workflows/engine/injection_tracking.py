@@ -57,7 +57,14 @@ class InjectionTrackingMixin:
         committed: dict[str, Any] = {}
         if platform_session_id:
             try:
-                committed = SessionVariableManager(self.db).get_variables(platform_session_id)
+                committed = SessionVariableManager(self.db).get_variable_subset(
+                    platform_session_id,
+                    (
+                        MEMORY_SURFACE_SEQ_VARIABLE,
+                        ACCESSED_MEMORY_IDS_VARIABLE,
+                        SURFACED_MEMORY_IDS_VARIABLE,
+                    ),
+                )
             except Exception as exc:  # Tracking failures never block workflow injection.
                 logger.debug("Failed to read memory tracking variables for dedup: %s", exc)
         staged_seq = staged_session_variable(MEMORY_SURFACE_SEQ_VARIABLE)
@@ -128,7 +135,9 @@ class InjectionTrackingMixin:
         already: set[str] = set()
         if sv_mgr is not None and platform_session_id:
             try:
-                existing_vars = sv_mgr.get_variables(platform_session_id)
+                existing_vars = sv_mgr.get_variable_subset(
+                    platform_session_id, ("injected_review_lesson_ids",)
+                )
                 already = set(existing_vars.get("injected_review_lesson_ids", []) or [])
             except Exception as exc:  # Tracking failures never block workflow injection.
                 logger.debug("Failed to read injected_review_lesson_ids for dedup: %s", exc)

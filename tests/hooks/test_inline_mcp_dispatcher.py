@@ -246,11 +246,16 @@ async def test_cross_loop_timeout_cancels_daemon_task(
     dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(lambda: proxy, daemon_loop)
     assert dispatcher is not None
 
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(
-            dispatcher("gobby-memory", "memory_stats", {}, None),
-            timeout=0.05,
-        )
+    dispatch = asyncio.create_task(dispatcher("gobby-memory", "memory_stats", {}, None))
+    try:
+        # This tests cancellation of an executing daemon task. Cross-loop
+        # scheduling must complete before the cancellation deadline starts.
+        assert await asyncio.to_thread(started.wait, 1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(dispatch, timeout=0.05)
+    finally:
+        dispatch.cancel()
+        await asyncio.gather(dispatch, return_exceptions=True)
     assert started.is_set()
     assert await asyncio.to_thread(cancelled.wait, 1)
     assert not await asyncio.to_thread(late_work.wait, 0.05)

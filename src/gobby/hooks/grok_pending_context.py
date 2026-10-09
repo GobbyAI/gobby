@@ -240,7 +240,11 @@ def clear_queued_context(session_manager: object | None, session_id: str | None)
         return None, changed
 
     try:
-        SessionVariableManager(db)._mutate_variables(session_id, mutate)
+        SessionVariableManager(db)._mutate_variables(
+            session_id,
+            mutate,
+            keys=(BRIEFING_VARIABLE, TURN_CONTEXT_VARIABLE, DELIVERY_VARIABLE),
+        )
     except Exception:
         logger.debug(
             "Skipping queued Grok context clear: session=%s",
@@ -333,7 +337,11 @@ def stash_response(
         variables[variable] = components
         return None, True
 
-    variable_manager._mutate_variables(session_id, mutate)
+    variable_manager._mutate_variables(
+        session_id,
+        mutate,
+        keys=(BRIEFING_VARIABLE if is_briefing else TURN_CONTEXT_VARIABLE,),
+    )
     # Passive-hook stdout is discarded by Grok. Move the effects with its text
     # so the prompt receipt cannot acknowledge an undelivered directive.
     response.metadata.pop(STAGED_EFFECTS_FIELD, None)
@@ -399,7 +407,11 @@ def enqueue_pending_messages(
         variables[BRIEFING_VARIABLE] = queued
         return None, True
 
-    SessionVariableManager(session_manager.db)._mutate_variables(session_id, mutate)
+    SessionVariableManager(session_manager.db)._mutate_variables(
+        session_id,
+        mutate,
+        keys=(BRIEFING_VARIABLE, DELIVERY_VARIABLE),
+    )
 
 
 def settle_delivery(handler: PendingContextHandler, event: HookEvent) -> None:
@@ -445,6 +457,7 @@ def settle_delivery(handler: PendingContextHandler, event: HookEvent) -> None:
     message_ids = SessionVariableManager(handler._session_manager.db)._mutate_variables(
         session_id,
         mutate,
+        keys=(BRIEFING_VARIABLE, DELIVERY_VARIABLE),
     )
     if not message_ids or handler._inter_session_msg_manager is None:
         return
@@ -595,6 +608,13 @@ def flush_response(
     plan = SessionVariableManager(handler._session_manager.db)._mutate_variables(
         session_id,
         lambda variables: _flush_plan(variables, event, response),
+        keys=(
+            BRIEFING_VARIABLE,
+            TURN_CONTEXT_VARIABLE,
+            DELIVERY_VARIABLE,
+            "plan_mode",
+            "plan_skill_directive_delivered",
+        ),
     )
     if plan is None or plan.kind == "drop":
         if plan is not None:
@@ -668,7 +688,11 @@ def handle_ack_pending_inbox_envelope(
     if session_id is None:
         return False
     variable_manager = SessionVariableManager(handler._session_manager.db)
-    delivery = _delivery(variable_manager.get_variables(session_id).get(DELIVERY_VARIABLE))
+    delivery = _delivery(
+        variable_manager.get_variable_subset(session_id, (DELIVERY_VARIABLE,)).get(
+            DELIVERY_VARIABLE
+        )
+    )
     if delivery is None or delivery["envelope_id"] != envelope_id:
         return False
 
@@ -691,7 +715,11 @@ def handle_ack_pending_inbox_envelope(
         variables.pop(DELIVERY_VARIABLE, None)
         return True, True
 
-    if not variable_manager._mutate_variables(session_id, mutate):
+    if not variable_manager._mutate_variables(
+        session_id,
+        mutate,
+        keys=(BRIEFING_VARIABLE, DELIVERY_VARIABLE),
+    ):
         return False
     path.unlink(missing_ok=True)
     remove_marker(envelope_id)

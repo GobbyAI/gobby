@@ -123,7 +123,7 @@ impl AuthState {
         })
     }
 
-    pub async fn authenticate(&self, headers: &mut HeaderMap) -> Result<(), Response<Body>> {
+    pub async fn authenticate(&self, headers: &mut HeaderMap) -> Result<(), Box<Response<Body>>> {
         for name in IDENTITY_HEADERS {
             headers.remove(name);
         }
@@ -171,20 +171,20 @@ const IDENTITY_HEADERS: [&str; 4] = [
     "x-gobby-front-door",
 ];
 
-fn missing_auth() -> Response<Body> {
-    rejection(
+fn missing_auth() -> Box<Response<Body>> {
+    Box::new(rejection(
         StatusCode::UNAUTHORIZED,
         "missing_auth",
         "Authentication required",
-    )
+    ))
 }
 
-fn resolver_unavailable() -> Response<Body> {
-    rejection(
+fn resolver_unavailable() -> Box<Response<Body>> {
+    Box::new(rejection(
         StatusCode::SERVICE_UNAVAILABLE,
         "key_resolver_unavailable",
         "API key resolver unavailable",
-    )
+    ))
 }
 
 pub(super) fn rejection(status: StatusCode, code: &str, message: &str) -> Response<Body> {

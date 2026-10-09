@@ -609,7 +609,9 @@ def _active_path_owners(
         owner_session_id = str(row["session_id"])
         variables = variables_by_session.get(owner_session_id)
         if variables is None:
-            variables = variable_manager.get_variables(owner_session_id)
+            variables = variable_manager.get_variable_subset(
+                owner_session_id, ("task_edited_file_checkouts",)
+            )
             variables_by_session[owner_session_id] = variables
         task_id = str(row["task_id"])
         paths = task_edited_file_set_for_checkout(variables, task_id, checkout_root)

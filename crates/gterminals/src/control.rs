@@ -169,6 +169,8 @@ pub enum HostEventKind {
         kind: InputKind,
         bytes: u64,
         interrupt: Option<Interrupt>,
+        /// The write reached the child as Enter, submitting its composer.
+        submit: bool,
     },
 }
 
@@ -212,6 +214,10 @@ impl HostEvent {
                     Some(Value::String(name)) if name == "ctrl_c" => Some(Interrupt::CtrlC),
                     Some(_) => return Err(EventError::Malformed("interrupt".into())),
                 },
+                submit: value
+                    .get("submit")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| EventError::Malformed("submit".into()))?,
             },
             _ => return Err(EventError::UnknownEvent(event)),
         };

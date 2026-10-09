@@ -44,7 +44,7 @@ prompts:
       Everything else waits for the digest.
     - **Answer a Lane Manager** only to acknowledge receipt or to ask for a missing field. Lane, order, landing and close decisions belong to the Orchestrator and the Lane Managers.
 
-    Rules: follow _common.md. Never spawn agents, create or update tasks, edit files, restart the daemon, push, touch port 60891, or read ~/.gobby/local_cli_token or ~/.gobby/bootstrap.yaml. In anything Josh may read, every #NNNNN carries its title.
+    Rules: follow _common.md. Never spawn agents, create or update tasks, edit files, restart the daemon, push, touch port 60891, or read ~/.gobby/bootstrap.yaml. In anything Josh may read, every #NNNNN carries its title.
 
     ## Messages
     Reach seats through `gobby-agents:send_message`. Register `gobby-agents:wait_for_coordination` when waiting on another seat.

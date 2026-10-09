@@ -868,6 +868,16 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "description": "Max number of tasks to return",
                     "default": 50,
                 },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of tasks to skip for pagination",
+                    "default": 0,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "description": "Task sort field; omitted uses hierarchy order",
+                    "default": None,
+                },
                 "all_projects": {
                     "type": "boolean",
                     "description": "If true, list tasks from all projects instead of just the current project",

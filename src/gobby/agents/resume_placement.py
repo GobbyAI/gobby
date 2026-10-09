@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_gate import SandboxRequiredError, require_managed_srt
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.storage.workspace_layout import MIN_PANE_ROWS
 from gobby.terminals.workspace_agent_panes import (
     AgentPaneReserver,
     AgentPlacement,
@@ -31,13 +32,17 @@ RuntimeSpawn = Callable[[SpawnRequest, "ProviderSpawnPlan"], Awaitable[SpawnResu
 def placement_snapshot(resolved: ResolvedPlacement) -> dict[str, Any]:
     """The validated placement a resume replays: kind, workspace, title and split target."""
     placement = resolved.placement
-    return {
+    snapshot: dict[str, Any] = {
         "kind": placement.kind,
         "workspace_id": resolved.workspace_id,
         "title": placement.title,
         "beside_pane_id": resolved.beside_pane_id,
         "axis": placement.axis,
     }
+    if placement.axis == "balanced":
+        snapshot["columns"] = placement.columns
+        snapshot["rows"] = placement.rows
+    return snapshot
 
 
 def _refusal(request: SpawnRequest, code: str) -> SpawnResult:
@@ -86,7 +91,17 @@ async def _preflight(
         or (kind == "split") != isinstance(axis, str)
     ):
         return "invalid_placement"
-    placement = AgentPlacement(kind=kind, ref=ref, title=title, axis=axis)
+    columns = snapshot.get("columns", 80)
+    if not isinstance(columns, int) or isinstance(columns, bool) or columns < 80:
+        return "invalid_placement"
+    rows = snapshot.get("rows")
+    if axis == "balanced" and (
+        not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS
+    ):
+        return "invalid_placement"
+    placement = AgentPlacement(
+        kind=kind, ref=ref, title=title, axis=axis, columns=columns, rows=rows
+    )
     try:
         resolved = await reserver.preflight(f"session:{parent_session_id}", project_id, placement)
     except AgentPlacementError as exc:

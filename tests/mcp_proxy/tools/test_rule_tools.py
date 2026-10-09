@@ -11,12 +11,14 @@ Verifies that rule tools wrap RuleDefinitionManager:
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -121,6 +123,26 @@ class TestListRules:
         names = [r["name"] for r in result["rules"]]
         assert "rule-before" in names
         assert "rule-after" not in names
+
+    def test_event_filter_without_project_lists_every_project(
+        self, def_manager: RuleDefinitionManager, rule_tools: dict[str, Any]
+    ) -> None:
+        _create_test_rule(def_manager, name="global-rule")
+        body = {"event": "before_tool", "effects": [{"type": "block", "reason": "test"}]}
+        projects = LocalProjectManager(def_manager.db)
+        project_a, project_b = (projects.create(f"rules-{uuid4()}").id for _ in range(2))
+        def_manager.create(name="project-a-rule", definition_json=body, project_id=project_a)
+        def_manager.create(name="project-b-rule", definition_json=body, project_id=project_b)
+
+        every_project = rule_tools["list_rules"](event="before_tool")
+        only_a = rule_tools["list_rules"](event="before_tool", project_id=project_a)
+
+        assert {r["name"] for r in every_project["rules"]} == {
+            "global-rule",
+            "project-a-rule",
+            "project-b-rule",
+        }
+        assert {r["name"] for r in only_a["rules"]} == {"global-rule", "project-a-rule"}
 
     def test_filter_by_group(self, def_manager, rule_tools) -> None:
         _create_test_rule(def_manager, name="rule-a", group="alpha")

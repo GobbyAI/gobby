@@ -663,6 +663,41 @@ class TestLimitSpawnNetworkOverride:
         assert LIMIT_SPAWN_NETWORK_OVERRIDE not in response.reason
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["assistant", "orchestrator", "lane-manager"])
+async def test_spawn_rules_let_a_root_recovery_seat_resume_a_session(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_type: str,
+) -> None:
+    _only_rules_enabled(
+        temp_db,
+        SEAT_NO_SPAWN,
+        LIMIT_SPAWNABLE_AGENTS,
+        LIMIT_SPAWN_NETWORK_OVERRIDE,
+        "no-agent-spawn-for-merge",
+    )
+    seat = _register(session_manager, str(sample_project["id"]), f"seat-{agent_type}")
+    engine = RuleEngine(temp_db, session_manager=session_manager)
+    variables = {"_agent_type": agent_type}
+
+    resumed = await engine.evaluate(
+        _spawn_event(seat.id, "spawn_agent", "developer", resume_session_id="gobby#15771"),
+        session_id=seat.id,
+        variables=dict(variables),
+    )
+    new_spawn = await engine.evaluate(
+        _spawn_event(seat.id, "spawn_agent", "developer"),
+        session_id=seat.id,
+        variables=dict(variables),
+    )
+
+    assert resumed.decision == "allow"
+    assert new_spawn.decision == "block"
+    assert SEAT_NO_SPAWN in (new_spawn.reason or "")
+
+
 def test_bundled_merge_orchestrator_may_spawn_merge_workers(temp_db: HubDatabase) -> None:
     sync_bundled_agents(temp_db)
 

@@ -8,11 +8,13 @@ import io
 import json
 import os
 import re
+import subprocess
 import token
 import tokenize
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from typing import Any, Literal
 
@@ -107,6 +109,7 @@ class SuppressionScan:
 
     sites: tuple[SuppressionSite, ...]
     files_scanned: int
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,10 +147,19 @@ def scan_suppressions(
     resolved_root = root.resolve()
     targets = tuple(_resolve_target(path, root=resolved_root) for path in paths)
     files = tuple(_discover_python_files(targets, root=resolved_root))
-    sites = tuple(site for path in files for site in _scan_python_file(path, root=resolved_root))
+    sites: list[SuppressionSite] = []
+    errors: list[str] = []
+    for path in files:
+        try:
+            file_sites = tuple(_scan_python_file(path, root=resolved_root))
+        except ValueError as exc:
+            errors.append(str(exc))
+        else:
+            sites.extend(file_sites)
     return SuppressionScan(
         sites=tuple(sorted(sites, key=_site_sort_key)),
         files_scanned=len(files),
+        errors=tuple(errors),
     )
 
 
@@ -238,21 +250,77 @@ def _resolve_target(path: str | Path, *, root: Path) -> Path:
 
 
 def _discover_python_files(targets: Sequence[Path], *, root: Path) -> Iterator[Path]:
+    git_files = _git_python_files(root)
+    if git_files is not None:
+        file_targets = {target for target in targets if target.is_file()}
+        directory_targets = tuple(target for target in targets if target.is_dir())
+        candidates: Iterable[Path] = (
+            path
+            for path in git_files
+            if path in file_targets
+            or any(path.is_relative_to(target) for target in directory_targets)
+        )
+    else:
+        candidates = chain.from_iterable(
+            ((target,) if target.suffix in {".py", ".pyi"} else ())
+            if target.is_file()
+            else _walk_python_files(target, root=root)
+            for target in targets
+        )
     seen: set[Path] = set()
-    for target in targets:
-        if target.is_file():
-            candidates: Iterable[Path] = (target,) if target.suffix in {".py", ".pyi"} else ()
-        else:
-            candidates = _walk_python_files(target, root=root)
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if resolved in seen or _is_generated_file(resolved):
-                continue
-            seen.add(resolved)
-            yield resolved
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if (
+            resolved in seen
+            or _is_excluded_directory(resolved.parent, root=root)
+            or _is_generated_file(resolved)
+        ):
+            continue
+        seen.add(resolved)
+        yield resolved
+
+
+def _git_python_files(root: Path) -> tuple[Path, ...] | None:
+    """Use Git's index and ignore rules; standalone source trees use the walker."""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                "*.py",
+                "*.pyi",
+            ],
+            capture_output=True,
+            env={**os.environ, "LC_ALL": "C"},
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(f"Could not discover Git-visible Python source in {root}: {exc}") from exc
+    if result.returncode:
+        if b"not a git repository" in result.stderr:
+            return None
+        raise ValueError(
+            f"Could not discover Git-visible Python source in {root}: "
+            f"{os.fsdecode(result.stderr).strip()}"
+        )
+    return tuple(
+        path
+        for name in result.stdout.split(b"\0")
+        if name and (path := root / os.fsdecode(name)).is_file()
+    )
 
 
 def _walk_python_files(target: Path, *, root: Path) -> Iterator[Path]:
+    if _is_excluded_directory(target, root=root):
+        return
     for directory, dirnames, filenames in os.walk(target):
         directory_path = Path(directory)
         dirnames[:] = [

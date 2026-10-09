@@ -148,6 +148,8 @@ class GrantBundle(BaseModel):
     expires_at: int
     payload_checksum: str = ""
     signature: str = ""
+    # Transport credential belongs to the private file envelope, not the signed grant.
+    managed_api_token: str | None = Field(default=None, repr=False, exclude=True)
 
     def model_dump_canonical(self) -> bytes:
         """Serialize the full wire grant as sorted compact JSON with a trailing newline."""

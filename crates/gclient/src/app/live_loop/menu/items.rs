@@ -3,8 +3,6 @@
 use crate::app::{ControlState, PaneId};
 use crate::theme::ThemeName;
 use crate::ui::chrome::attention_pane;
-use crate::ui::hit::SidebarSection;
-use crate::ui::settings::AgentSort;
 use crate::ui::sidebar::{agent_blocked, ALL_MACHINES};
 use crate::ui::{Action, Chrome, WorkspaceView};
 
@@ -238,47 +236,13 @@ pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem>
         Submenu::Arrange(target) => arrange_items(target),
         Submenu::Appearance => appearance_items(chrome),
         Submenu::Theme => theme_items(chrome),
-        Submenu::Sidebar => sidebar_items(chrome),
-        Submenu::Section(SidebarSection::Machines) => {
-            let filter = chrome.sidebar.machine_filter.as_deref();
-            vec![
-                choice(
-                    ("✓ This machine", "  This machine"),
-                    filter.is_none(),
-                    MenuAction::SetMachineScope(false),
-                ),
-                choice(
-                    ("✓ All machines", "  All machines"),
-                    filter == Some(ALL_MACHINES),
-                    MenuAction::SetMachineScope(true),
-                ),
-            ]
-        }
-        Submenu::Section(SidebarSection::Projects) => {
-            let all = chrome.sidebar.all_projects;
-            let filter = MenuAction::Act(Action::ToggleProjectsFilter);
-            vec![
-                choice(
-                    ("✓ Working projects", "  Working projects"),
-                    !all,
-                    filter.clone(),
-                ),
-                choice(("✓ All projects", "  All projects"), all, filter),
-            ]
-        }
-        Submenu::Section(SidebarSection::Agents) => agents_view_items(chrome),
-        Submenu::Section(SidebarSection::Terminals) => vec![
-            item("New terminal", MenuAction::Act(Action::NewTerminal)),
-            item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
-        ],
     }
 }
 
-/// View › Sidebar: the column's visibility and pin, then one submenu per
-/// section, in the sidebar's order.
-fn sidebar_items(chrome: &Chrome) -> Vec<MenuItem> {
+/// View's flat visibility, machine and project controls.
+pub(in crate::app::live_loop) fn sidebar_items(chrome: &Chrome) -> Vec<MenuItem> {
     let shown = chrome.sidebar.pinned || chrome.sidebar.overlay;
-    let mut items = vec![
+    vec![
         toggle(
             ("✓ Show sidebar", "  Show sidebar"),
             shown,
@@ -289,42 +253,37 @@ fn sidebar_items(chrome: &Chrome) -> Vec<MenuItem> {
             chrome.sidebar.pinned,
             MenuAction::PinSidebar,
         ),
-    ];
-    items.extend(SidebarSection::ALL.into_iter().map(|section| {
-        let label = match section {
-            SidebarSection::Machines => "  Machines ▸",
-            SidebarSection::Projects => "  Projects ▸",
-            SidebarSection::Agents => "  Agents ▸",
-            SidebarSection::Terminals => "  Terminals ▸",
-        };
-        item(label, MenuAction::OpenSubmenu(Submenu::Section(section)))
-    }));
-    items
-}
-
-/// The agents section's options: the scope, then the order, one pair each.
-/// The rows show the view they are in, so the menu marks which value is in
-/// force rather than naming the next one.
-fn agents_view_items(chrome: &Chrome) -> Vec<MenuItem> {
-    let all = chrome.sidebar.all_sessions;
-    let priority = chrome.prefs.agent_sort == AgentSort::Priority;
-    let scope = MenuAction::Act(Action::ToggleSessionsScope);
-    let sort = MenuAction::Act(Action::ToggleAgentSort);
-    vec![
-        choice(("✓ This project", "  This project"), !all, scope.clone()),
-        choice(("✓ All projects", "  All projects"), all, scope),
-        choice(("✓ Grouped", "  Grouped"), !priority, sort.clone()),
-        choice(("✓ Priority", "  Priority"), priority, sort),
+        toggle(
+            ("✓ Show all machines", "  Show all machines"),
+            chrome.sidebar.machine_filter.as_deref() == Some(ALL_MACHINES),
+            MenuAction::SetMachineScope(
+                chrome.sidebar.machine_filter.as_deref() != Some(ALL_MACHINES),
+            ),
+        ),
+        toggle(
+            ("✓ Show all projects", "  Show all projects"),
+            chrome.sidebar.all_projects,
+            MenuAction::Act(Action::ToggleProjectsFilter),
+        ),
+        enabled_if(
+            toggle(
+                ("✓ Group agents by project", "  Group agents by project"),
+                chrome.sidebar.all_sessions,
+                MenuAction::Act(Action::ToggleSessionsScope),
+            ),
+            chrome.sidebar.all_projects,
+        ),
     ]
 }
 
 /// One choice of a pair, `(marked, plain)` spellings against one margin.
-/// The value in force is marked and disabled, so choosing what is already
-/// chosen closes the menu and changes nothing; the other choice carries the
-/// toggle its chord runs.
+/// The value in force stays enabled; re-picking it only closes the menu.
 fn choice(labels: (&'static str, &'static str), active: bool, action: MenuAction) -> MenuItem {
     let (marked, plain) = labels;
-    enabled_if(item(if active { marked } else { plain }, action), !active)
+    item(
+        if active { marked } else { plain },
+        if active { MenuAction::Noop } else { action },
+    )
 }
 
 /// An on/off row, `(marked, plain)` spellings against one margin. Unlike a
@@ -381,9 +340,9 @@ const THEMES: [(ThemeName, &str, (&str, &str)); ThemeName::ALL.len()] = [
     ),
     (ThemeName::Moss, "  Theme: Moss ▸", ("● Moss", "  Moss")),
     (
-        ThemeName::YourProposal,
-        "  Theme: Your proposal ▸",
-        ("● Your proposal", "  Your proposal"),
+        ThemeName::MidnightMoss,
+        "  Theme: Midnight moss ▸",
+        ("● Midnight moss", "  Midnight moss"),
     ),
     (
         ThemeName::Staircase,

@@ -41,7 +41,7 @@ def _message(
         tool_name=None,
         tool_input=None,
         tool_result=None,
-        timestamp=datetime(2026, 4, 8, 12, 0, tzinfo=UTC),
+        timestamp=datetime.now(UTC),
         raw_json={"id": message_id},
         usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
         message_id=message_id,

@@ -12,6 +12,7 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.storage.workspace_layout import MIN_PANE_ROWS
 from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceBusyError,
@@ -44,7 +45,7 @@ AgentPlacementErrorCode = Literal[
 ]
 
 # Placement's split directions, mapped to the layout's storage axis.
-_SPLIT_AXES = {"right": "horizontal", "down": "vertical"}
+_SPLIT_AXES = {"right": "horizontal", "down": "vertical", "balanced": "balanced"}
 _PLACEMENT_FIELDS = {
     "tab": frozenset({"workspace", "title"}),
     "split": frozenset({"pane", "axis", "title"}),
@@ -93,6 +94,8 @@ class AgentPlacement:
     ref: str
     title: str
     axis: str | None = None
+    columns: int = 80
+    rows: int | None = None
 
     @classmethod
     def parse(cls, raw: object) -> AgentPlacement:
@@ -103,7 +106,8 @@ class AgentPlacement:
         fields = _PLACEMENT_FIELDS.get(kind) if isinstance(kind, str) else None
         if fields is None:
             raise _invalid(f"placement kind must be 'tab' or 'split', got {kind!r}")
-        if not isinstance(body, Mapping) or set(body) != fields:
+        allowed = fields | {"columns", "rows"} if kind == "split" else fields
+        if not isinstance(body, Mapping) or not fields <= set(body) <= allowed:
             raise _invalid(f"placement.{kind} must have exactly the fields {sorted(fields)}")
         title, ref = body["title"], body["workspace" if kind == "tab" else "pane"]
         if not isinstance(title, str) or not title.strip():
@@ -116,7 +120,23 @@ class AgentPlacement:
         stored = _SPLIT_AXES.get(axis) if isinstance(axis, str) else None
         if stored is None:
             raise _invalid(f"placement.split.axis must be one of {sorted(_SPLIT_AXES)}")
-        return cls(kind="split", ref=ref, title=title, axis=stored)
+        columns = body.get("columns", 80)
+        if (
+            not isinstance(columns, int)
+            or isinstance(columns, bool)
+            or columns < 80
+            or ("columns" in body and stored != "balanced")
+        ):
+            raise _invalid("placement.split.columns requires balanced axis and at least 80 columns")
+        rows = body.get("rows")
+        if stored == "balanced":
+            if not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS:
+                raise _invalid(
+                    f"Balanced placement requires viewport rows (at least {MIN_PANE_ROWS})"
+                )
+        elif "rows" in body:
+            raise _invalid("placement.split.rows requires balanced axis")
+        return cls(kind="split", ref=ref, title=title, axis=stored, columns=columns, rows=rows)
 
 
 @dataclass(frozen=True)
@@ -258,7 +278,9 @@ class AgentPaneReserver:
         change = self._workspaces.add_pane(
             pane_id,
             beside=resolved.beside_pane_id,
-            axis=placement.axis,
+            axis="vertical" if placement.axis == "balanced" else placement.axis,
+            balance_columns=placement.columns if placement.axis == "balanced" else None,
+            balance_rows=placement.rows,
             expected_workspace_id=resolved.workspace_id,
             expected_tab_id=resolved.tab_id,
             expected_project_id=resolved.project_id,

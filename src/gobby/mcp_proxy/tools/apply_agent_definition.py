@@ -226,7 +226,17 @@ def commit_definition_changes(
 
     manager = SessionVariableManager(db)
     with db.transaction_immediate(AgentStepInstanceMutation(session_id=session_id)):
-        current = manager.get_variables(session_id)
+        current = manager.get_variable_subset(
+            session_id,
+            (
+                *changes,
+                "_agent_type",
+                "_agent_definition_hash",
+                "_agent_definition_keys",
+                "is_spawned_agent",
+                "_persona_name",
+            ),
+        )
         current_agent = current.get("_agent_type")
         if current_agent != expected_agent_type:
             return {"status": "superseded", "agent": current_agent}
@@ -285,7 +295,7 @@ def commit_definition_changes(
         elif identity_change:
             delta["_agent_definition_drift"] = None
         manager.merge_variables(session_id, delta)
-        merged = manager.get_variables(session_id)
+        merged = manager.get_variable_subset(session_id, ("_agent_type", "_active_skill_names"))
         return {"status": "applied", "agent": agent, "variables": merged}
 
 
@@ -345,7 +355,9 @@ async def apply_agent_definition_impl(
     from gobby.workflows.agent_resolver import resolve_agent_with_row
     from gobby.workflows.state_manager import SessionVariableManager
 
-    stored = SessionVariableManager(db).get_variables(session_id)
+    stored = SessionVariableManager(db).get_variable_subset(
+        session_id, ("_agent_type", "_agent_definition_hash", "is_spawned_agent")
+    )
     session = SessionManager(db).get(session_id)
     if is_spawned_session(stored, session):
         return _refusal("spawned_session_definition_fixed", "Spawned session definition is fixed")

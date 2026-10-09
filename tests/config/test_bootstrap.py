@@ -193,6 +193,18 @@ def test_loading_a_missing_bootstrap_never_writes_one(tmp_path: Path) -> None:
     assert list(home.iterdir()) == []
 
 
+@pytest.mark.parametrize("present", [False, True])
+def test_default_bind_host_is_numeric_loopback(tmp_path: Path, present: bool) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    if present:
+        _write_bootstrap(bootstrap_path, "daemon_port: 60887\n")
+
+    bootstrap = load_bootstrap(str(bootstrap_path))
+
+    assert bootstrap.bind_host == "127.0.0.1"
+    assert bootstrap.to_config_dict()["bind_host"] == "127.0.0.1"
+
+
 def test_front_door_defaults_enabled_with_no_routes(tmp_path: Path) -> None:
     bootstrap_path = tmp_path / "bootstrap.yaml"
     _write_bootstrap(bootstrap_path, "daemon_port: 60887\n")

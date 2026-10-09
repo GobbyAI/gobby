@@ -38,7 +38,8 @@ for the metric taxonomy behind the panels.
    endpoint really carries Gobby series before blaming the stack:
 
    ```bash
-   curl -sf -H "Authorization: Bearer $(cat ~/.gobby/local_cli_token)" \
+   : "${GOBBY_METRICS_KEY_FILE:?Set the absolute path to your metrics API-key file}"
+   curl -sf -H "Authorization: Bearer $(cat "$GOBBY_METRICS_KEY_FILE")" \
      http://127.0.0.1:60887/api/admin/metrics | grep -c '^daemon_uptime_seconds'
    ```
 
@@ -46,11 +47,13 @@ for the metric taxonomy behind the panels.
    the Web UI under Settings -> Observability, or through the `gobby-config`
    MCP tools. There is no `gobby config` CLI.
 
-3. **A readable `~/.gobby/local_cli_token`.** Prometheus bind-mounts that file
-   read-only at `/etc/prometheus/secrets/gobby_token` and sends its contents as
-   the bearer credential. The token is never copied into this directory, into
-   `prometheus.yml`, or into any image. On Docker Desktop, `~/.gobby` must be
-   inside a shared file path (Settings -> Resources -> File sharing).
+3. **An owner-only plaintext file containing a valid hub-issued API key.**
+   Set `GOBBY_METRICS_KEY_FILE` to its absolute path before running Compose.
+   Prometheus bind-mounts it read-only at `/etc/prometheus/secrets/gobby_token`
+   and sends the key as its bearer credential. The file contains only the key,
+   not the bootstrap YAML. Keep it outside this repository and container images.
+   On Docker Desktop, its parent must be a shared path (Settings -> Resources ->
+   File sharing). Revoke the key when retiring this scrape client.
 
 ## Start And Stop
 

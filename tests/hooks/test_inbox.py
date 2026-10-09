@@ -33,12 +33,18 @@ from gobby.hooks.inbox import (
     HookInboxBarrierResult,
     _get_hook_inbox_drain_lock,
     _get_hook_settle_listeners,
-    _load_envelope,
     _post_envelope,
-    _quarantine_file,
     drain_hook_inbox_barrier,
     drain_hook_inbox_once,
+)
+from gobby.hooks.inbox_envelopes import (
     get_hook_quarantine_dir,
+)
+from gobby.hooks.inbox_envelopes import (
+    load_envelope as _load_envelope,
+)
+from gobby.hooks.inbox_envelopes import (
+    quarantine_file as _quarantine_file,
 )
 from gobby.hooks.inbox_maintenance import _compute_sleep_seconds
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
@@ -952,7 +958,7 @@ def test_load_envelope_skips_quarantine_failure_without_raising(
     envelope_path.write_text("{invalid", encoding="utf-8")
 
     with caplog.at_level("WARNING"):
-        with patch("gobby.hooks.inbox.Path.write_text", side_effect=OSError("disk full")):
+        with patch("gobby.hooks.inbox_envelopes.Path.write_text", side_effect=OSError("disk full")):
             envelope = _load_envelope(envelope_path)
 
     assert envelope is None
@@ -1586,7 +1592,7 @@ async def test_drain_reads_and_acknowledges_receipts_off_the_event_loop(tmp_path
 
     with (
         patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
-        patch("gobby.hooks.inbox._load_envelope", side_effect=load),
+        patch("gobby.hooks.inbox_envelopes.load_envelope", side_effect=load),
         patch("gobby.storage.hook_receipts.acknowledge_receipt", side_effect=acknowledge),
     ):
         assert await drain_hook_inbox_once(app, inbox_dir=inbox_dir) == 1

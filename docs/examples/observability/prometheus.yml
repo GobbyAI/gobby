@@ -1,6 +1,6 @@
 # Prometheus scrape configuration for a local Gobby daemon.
 # The bearer credential is read from a read-only mount of
-# ${HOME}/.gobby/local_cli_token; it is never stored in this file.
+# ${GOBBY_METRICS_KEY_FILE}; the hub-issued API key is never stored in this file.
 
 global:
   scrape_interval: 15s

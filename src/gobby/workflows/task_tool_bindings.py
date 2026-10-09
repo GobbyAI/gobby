@@ -147,7 +147,7 @@ def cleanup_task_tool_bindings(
     if boundary is None:
         return
     TaskToolBindings(manager, session_id).clear_pending(boundary)
-    persisted = manager.get_variables(session_id)
+    persisted = manager.get_variable_subset(session_id, ("task_tool_bindings",))
     if "task_tool_bindings" in persisted:
         variables["task_tool_bindings"] = persisted["task_tool_bindings"]
 
@@ -169,7 +169,7 @@ class TaskToolBindings:
             }
             return None, True
 
-        self.manager._mutate_variables(self.session_id, mutate)
+        self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_turn",))
 
     def assert_can_select(self, task_id: str | None) -> None:
         """Fence an explicit own switch under the caller's claim transaction."""
@@ -192,7 +192,7 @@ class TaskToolBindings:
                 )
             return None, False
 
-        self.manager._mutate_variables(self.session_id, check)
+        self.manager._mutate_variables(self.session_id, check, keys=("task_tool_bindings",))
 
     def start(self, event: HookEvent) -> None:
         key = _call_key(event)
@@ -245,7 +245,9 @@ class TaskToolBindings:
             variables["task_tool_bindings"] = calls
             return None, True
 
-        self.manager._mutate_variables(self.session_id, mutate)
+        self.manager._mutate_variables(
+            self.session_id, mutate, keys=("task_tool_bindings", "claimed_tasks")
+        )
 
     def clear_pending(self, boundary: str) -> None:
         """Retire completed/abandoned calls; only live background work crosses turns."""
@@ -267,10 +269,15 @@ class TaskToolBindings:
                 variables.pop("task_tool_turn", None)
             return None, changed
 
-        self.manager._mutate_variables(self.session_id, mutate)
+        self.manager._mutate_variables(
+            self.session_id, mutate, keys=("task_tool_bindings", "task_tool_turn")
+        )
 
     def started_at(self, event: HookEvent) -> float | None:
-        variables = self.manager.get_variables(self.session_id)
+        variables = self.manager.get_variable_subset(
+            self.session_id,
+            ("task_tool_bindings", "task_tool_turn", "task_selection_history", "claimed_tasks"),
+        )
         key = _matching_key(event, variables)
         calls = _bindings(variables)
         call = calls.get(key, {}) if key else {}
@@ -316,4 +323,4 @@ class TaskToolBindings:
             variables["task_tool_bindings"] = calls
             return None, True
 
-        self.manager._mutate_variables(self.session_id, mutate)
+        self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_bindings",))

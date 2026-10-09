@@ -24,7 +24,7 @@ pub enum ThemeName {
     #[serde(alias = "classic")]
     Restored,
     Moss,
-    YourProposal,
+    MidnightMoss,
     Staircase,
     InverseBar,
     GobbyBar,
@@ -121,7 +121,7 @@ impl ThemeName {
     pub const ALL: [ThemeName; 11] = [
         ThemeName::Restored,
         ThemeName::Moss,
-        ThemeName::YourProposal,
+        ThemeName::MidnightMoss,
         ThemeName::Staircase,
         ThemeName::InverseBar,
         ThemeName::GobbyBar,
@@ -136,7 +136,7 @@ impl ThemeName {
         match self {
             ThemeName::Restored => "Restored",
             ThemeName::Moss => "Moss",
-            ThemeName::YourProposal => "Your proposal",
+            ThemeName::MidnightMoss => "Midnight moss",
             ThemeName::Staircase => "Staircase",
             ThemeName::InverseBar => "Inverse bar",
             ThemeName::GobbyBar => "Gobby bar",
@@ -201,7 +201,7 @@ impl ThemeName {
                     fills(n(0.925), o(0.75, 0.09, 125)),
                 ],
             },
-            ThemeName::YourProposal => Entry {
+            ThemeName::MidnightMoss => Entry {
                 model: Clay,
                 dark_ground: Some(o(0.12, 0.045, 255)),
                 light_ground: Some(o(0.94, 0.045, 90)),
@@ -264,7 +264,7 @@ impl ThemeName {
                 dark_ground: Some(o(0.24, 0.045, 255)),
                 light_ground: Some(n(0.96)),
                 dark: fills(o(0.29, 0.045, 125), n(0.46)),
-                // Dropped from System: it duplicated Your proposal there.
+                // Dropped from System: it duplicated Midnight moss there.
                 system: None,
                 light: [
                     fills(o(0.68, 0.045, 125), n(0.85)),

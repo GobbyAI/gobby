@@ -178,6 +178,7 @@ class GobbyRunner:
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     _tmux_window_repair_task: asyncio.Task[None] | None
+    _composer_ledger_task: asyncio.Task[None] | None
     database: HubDatabase
     managed_credential_manager: ManagedCredentialManager
     db_executor: DatabaseExecutor

@@ -546,6 +546,7 @@ class TestDaemonConfig:
         """Test default daemon config."""
         config = DaemonConfig()
         assert config.daemon_port == 60887
+        assert config.bind_host == "127.0.0.1"
         assert config.daemon_health_check_interval == 10.0
         assert isinstance(config.bin_freshness, BinFreshnessConfig)
         assert isinstance(config.project_verification_synthesis, ProjectVerificationSynthesisConfig)
@@ -789,7 +790,7 @@ class TestBootstrapConfig:
 
         bootstrap = load_bootstrap(str(temp_dir / "nonexistent.yaml"))
         assert bootstrap.daemon_port == 60887
-        assert bootstrap.bind_host == "localhost"
+        assert bootstrap.bind_host == "127.0.0.1"
         assert bootstrap.websocket_port == 60888
         assert bootstrap.ui_port == 60889
 
@@ -828,7 +829,7 @@ class TestBootstrapConfig:
         d = bootstrap.to_config_dict()
         assert d["daemon_port"] == 7777
         assert d["websocket"]["port"] == 7778
-        assert d["bind_host"] == "localhost"
+        assert d["bind_host"] == "127.0.0.1"
         assert "hub_backend" not in d
         assert "files_home" in d
         assert "hub_daemon_url" in d

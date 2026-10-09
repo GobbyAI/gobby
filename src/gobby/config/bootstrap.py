@@ -31,7 +31,8 @@ from .postgres_pool import (
 # Default bootstrap file location. Kept as a string for compatibility with callers
 # that import the constant; load_bootstrap() resolves GOBBY_HOME dynamically.
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
-DEFAULT_DAEMON_BIND_HOST = "localhost"
+# Keep the Rust bootstrap default and local client dial URLs on the same address family.
+DEFAULT_DAEMON_BIND_HOST = "127.0.0.1"
 DEFAULT_DAEMON_PORT = 60887
 DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889

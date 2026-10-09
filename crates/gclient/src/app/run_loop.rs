@@ -334,6 +334,12 @@ fn apply_scripted_modal_outcome(
             scripted_focus_project(workspace, chrome, &project_id);
         }
         ModalOutcome::OpenWorktree(_) => {}
+        ModalOutcome::FocusAgent(entry_id) => {
+            if let Some(pane) = attention_pane(&*workspace, &entry_id) {
+                chrome.reveal_pane(pane, workspace.pane(pane).display_name());
+                scripted_focus(workspace, chrome, pane, true)?;
+            }
+        }
         ModalOutcome::Action(action) => return Ok(apply_scripted_action(chrome, action)),
         ModalOutcome::Commit(kind, value) => apply_rename(workspace, chrome, kind, value),
         ModalOutcome::Menu { kind, action } => {

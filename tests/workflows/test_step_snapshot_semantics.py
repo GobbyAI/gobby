@@ -667,7 +667,7 @@ def test_existing_step_instance_skips_the_variables_read(snap_db: PostgresHubDat
     with (
         patch.object(
             SessionVariableManager,
-            "get_variables",
+            "get_variable_subset",
             side_effect=AssertionError("variables decoded for an existing instance"),
         ),
         patch("gobby.workflows.agent_resolver.resolve_agent_with_row") as resolve,

@@ -1051,7 +1051,8 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     let expect_activity = |events: &mut std::os::unix::net::UnixStream,
                            kind: &str,
                            bytes: u64,
-                           interrupt: serde_json::Value| {
+                           interrupt: serde_json::Value,
+                           submit: bool| {
         let event = recv_json(events);
         assert_eq!(event["event"], "input_activity", "{event}");
         assert_eq!(event["terminal_id"], "grant-terminal", "{event}");
@@ -1060,10 +1061,11 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
         assert_eq!(event["kind"], kind, "{event}");
         assert_eq!(event["bytes"], bytes, "{event}");
         assert_eq!(event["interrupt"], interrupt, "{event}");
+        assert_eq!(event["submit"], submit, "{event}");
         assert!(event.get("data").is_none(), "{event}");
         assert!(event.get("text").is_none(), "{event}");
     };
-    let cases: [(ClientMessage, &str, u64, serde_json::Value); 4] = [
+    let cases: [(ClientMessage, &str, u64, serde_json::Value, bool); 5] = [
         (
             ClientMessage::Input {
                 data: b"x".to_vec(),
@@ -1071,6 +1073,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             "input",
             1,
             serde_json::Value::Null,
+            false,
         ),
         (
             ClientMessage::Input {
@@ -1079,6 +1082,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             "input",
             1,
             json!("esc"),
+            false,
         ),
         (
             ClientMessage::Input {
@@ -1087,17 +1091,28 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             "input",
             3,
             serde_json::Value::Null,
+            false,
+        ),
+        (
+            ClientMessage::Input {
+                data: b"\r".to_vec(),
+            },
+            "input",
+            1,
+            serde_json::Value::Null,
+            true,
         ),
         (
             ClientMessage::Paste { text: "abc".into() },
             "paste",
             3,
             serde_json::Value::Null,
+            false,
         ),
     ];
-    for (message, kind, bytes, interrupt) in cases {
+    for (message, kind, bytes, interrupt, submit) in cases {
         embed_support::write_msg(&mut frames, &message);
-        expect_activity(&mut events, kind, bytes, interrupt);
+        expect_activity(&mut events, kind, bytes, interrupt, submit);
     }
 
     // A mismatched revoke keeps the grant; an unqualified revoke clears it.
@@ -1113,7 +1128,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             data: b"y".to_vec(),
         },
     );
-    expect_activity(&mut events, "input", 1, serde_json::Value::Null);
+    expect_activity(&mut events, "input", 1, serde_json::Value::Null, false);
     let cleared = rpc(
         &mut requests,
         "revoke_input",
@@ -1166,7 +1181,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             data: b"\x03".to_vec(),
         },
     );
-    expect_activity(&mut events, "input", 1, json!("ctrl_c"));
+    expect_activity(&mut events, "input", 1, json!("ctrl_c"), false);
     let exited = recv_json(&mut events);
     assert_eq!(exited["event"], "terminal_exited", "{exited}");
     assert_eq!(exited["host_terminal_id"], host_terminal_id, "{exited}");

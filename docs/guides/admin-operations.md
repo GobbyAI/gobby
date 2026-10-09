@@ -53,14 +53,12 @@ uv run gobby pack --dry-run
 
 ## Authentication
 
-Daemon API auth is required by default. `gobby install` provisions the
-owner-readable `$GOBBY_HOME/local_cli_token` (default
-`~/.gobby/local_cli_token`); daemon clients send it as a bearer token. Inspect
-its file/hash agreement with:
-
-```bash
-uv run gobby auth token
-```
+Daemon API auth uses hub-issued API keys. Local `gobby install` provisions this
+machine's key in the owner-only `$GOBBY_HOME/bootstrap.yaml` `api_key` field.
+Clients send the key as a bearer credential; gdaemon validates it with the hub
+and forwards verified identity to Python. Remote nodes enroll with
+`gobby auth login` after configuring their hub connection. Keys belong to a user
+and machine; provision each node separately.
 
 Browser authentication uses the canonical user stored in PostgreSQL. Reset the
 sole installed user's Argon2id password with:
@@ -106,39 +104,26 @@ If an existing credential is empty or partial, startup reports its path and a
 repair hint. Remove the damaged file at that path and restart the daemon to
 recreate it. Valid existing credentials remain unchanged.
 
-### Rotate The Local Token
+### Replace Or Revoke An API Key
 
-1. Check the current state with `gobby auth token`.
-2. Run `gobby auth token --rotate` on the hub machine.
-3. Have clients reread the token. The daemon refreshes its credential cache on
-   a request after the five-second refresh interval.
-4. Copy `$GOBBY_HOME/local_cli_token` (default `~/.gobby/local_cli_token`) to
-   every additional trusted client machine and set mode `0600`.
-5. Re-run the verification matrix below. The old token must return `401`.
+Use the authenticated key routes: `POST /api/auth/keys` issues a key for the
+caller's machine, `GET /api/auth/keys` lists its user's keys, and
+`DELETE /api/auth/keys/{key_id}` revokes one. Save an issued key immediately;
+the plaintext is returned only when issued.
 
-Capture and verify old-token invalidation on the hub machine:
-
-```bash
-BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
-OLD_TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
-uv run gobby auth token --rotate
-sleep 6
-test "$(curl -sS -o /dev/null -w '%{http_code}' \
-  -H "Authorization: Bearer $OLD_TOKEN" \
-  "$BASE/api/admin/status")" = 401
-```
-
-Rotation updates the file and authoritative `auth.api_token_hash`. Existing
-browser sessions remain valid; the `/ws` cookie bridge uses the refreshed token
-for its upstream standalone-WebSocket connection.
+Provision a replacement, update the client's `api_key` in its owner-only
+bootstrap or explicit key file, and verify access before revoking the previous
+key. Explicit revocation takes effect immediately. Verify that the revoked key
+returns `401` and the replacement succeeds. Do not distribute one machine's key
+to other nodes; enroll those nodes separately.
 
 ### Manual Verification Matrix
 
-Run the HTTP checks from a machine holding the current token:
+Run the HTTP checks with a valid hub-issued API key in `GOBBY_API_KEY`:
 
 ```bash
 BASE="${GOBBY_DAEMON_URL:-http://localhost:60887}"
-TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+: "${GOBBY_API_KEY:?Set a valid hub-issued API key}"
 
 for path in /api/health /api/admin/startup-progress; do
   curl -fsS "$BASE$path" >/dev/null
@@ -149,14 +134,12 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' \
 test "$(curl -sS -o /dev/null -w '%{http_code}' \
   -H 'Authorization: Bearer invalid-token' \
   "$BASE/api/admin/status")" = 401
-curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/admin/status" >/dev/null
-curl -fsS -H "X-Gobby-Local-Token: $TOKEN" \
+curl -fsS -H "Authorization: Bearer $GOBBY_API_KEY" \
   "$BASE/api/admin/status" >/dev/null
 
 # FastMCP's streamable HTTP endpoint is /mcp.
 curl -fsS "$BASE/mcp" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $GOBBY_API_KEY" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"auth-check","version":"1.0"}}}'

@@ -285,10 +285,15 @@ async def _start_machine_local_lifecycle(
 
 async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     from gobby.runner_init.services import mark_service_degraded
+    from gobby.terminals.composer_ledger import composer_ledger_path, persist_ledger
 
     host = getattr(runner, "terminal_host_manager", None)
     if host is None:
         return
+    runner._composer_ledger_task = asyncio.create_task(
+        persist_ledger(host.composer_ledger, composer_ledger_path()),
+        name="composer-ledger-persist",
+    )
     try:
         await host.start()
         if not host.native_available:

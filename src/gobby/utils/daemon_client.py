@@ -25,6 +25,7 @@ Example:
 
 import asyncio
 import logging
+import os
 import threading
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -167,7 +168,7 @@ class DaemonClient:
         try:
             response = httpx.get(
                 f"{self.url}/api/health",
-                headers=self._auth_headers,
+                headers=self._merged_headers(),
                 timeout=self.timeout,
                 trust_env=False,
             )
@@ -276,6 +277,8 @@ class DaemonClient:
         return record.source
 
     def _merged_headers(self, headers: Mapping[str, str] | None = None) -> dict[str, str]:
+        if os.environ.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
+            self._auth_headers = daemon_auth_headers()
         merged = dict(self._auth_headers)
         if headers:
             merged.update(headers)

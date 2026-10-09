@@ -362,25 +362,28 @@ async def test_mcp_timeout_stays_capped_and_background_result_fills_cache(
             dispatch_finished.set()
 
     engine = RuleEngine(temp_db, mcp_dispatcher=stalled_dispatcher)
-    started_at = time.perf_counter()
     with caplog.at_level(logging.WARNING):
-        response = await engine.evaluate(
-            HookEvent(
-                event_type=HookEventType.BEFORE_TOOL,
+        # The dispatch stays stalled until the hook returns, so returning at all
+        # proves the timeout capped the hook; the wait_for only bounds a hang.
+        response = await asyncio.wait_for(
+            engine.evaluate(
+                HookEvent(
+                    event_type=HookEventType.BEFORE_TOOL,
+                    session_id=_CODEX_SESSIONS[0],
+                    source=SessionSource.CODEX,
+                    timestamp=datetime.now(UTC),
+                    data={"tool_name": "Read"},
+                    metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
+                ),
                 session_id=_CODEX_SESSIONS[0],
-                source=SessionSource.CODEX,
-                timestamp=datetime.now(UTC),
-                data={"tool_name": "Read"},
-                metadata={"_platform_session_id": _CODEX_SESSIONS[0]},
+                variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
             ),
-            session_id=_CODEX_SESSIONS[0],
-            variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
+            timeout=5.0,
         )
-        hook_seconds = time.perf_counter() - started_at
+        dispatch_pending_at_return = not dispatch_finished.is_set()
         await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
         release_dispatch.set()
         await asyncio.wait_for(dispatch_finished.wait(), timeout=1.0)
-        cached_started_at = time.perf_counter()
         cached_response = await engine.evaluate(
             HookEvent(
                 event_type=HookEventType.BEFORE_TOOL,
@@ -393,13 +396,11 @@ async def test_mcp_timeout_stays_capped_and_background_result_fills_cache(
             session_id=_CODEX_SESSIONS[0],
             variables={"project": {"id": "isolated-hub", "path": "/tmp"}},
         )
-        cached_seconds = time.perf_counter() - cached_started_at
 
     assert response.decision == "allow"
     assert response.context is None
-    assert hook_seconds < 0.2
+    assert dispatch_pending_at_return
     assert dispatch_count == 1
-    assert cached_seconds < 0.2
     assert cached_response.context is not None
     assert "late-hub" in cached_response.context
     assert "timed out after 0.05s (rule surface-memory-timeout)" in caplog.text

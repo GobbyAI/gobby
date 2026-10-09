@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import itertools
 import json
+import tracemalloc
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -55,6 +57,7 @@ OPS = {
     "workspace.select",
     "tab.create",
     "tab.rename",
+    "tab.rebalance",
     "tab.move",
     "tab.close",
     "pane.split",
@@ -390,6 +393,13 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     second = (await op("pane.split", pane=first["id"], axis="horizontal"))["panes"][0]
     assert (await op("pane.swap", pane=first["id"], other=second["id"]))["id"] == tab["id"]
     assert (await op("pane.resize", pane=second["id"], ratio=0.25))["layout"]["ratio"] == 0.25
+    rebalanced = await op("tab.rebalance", tab=tab["id"], columns=200, rows=50)
+    assert rebalanced["id"] == tab["id"]
+    assert rebalanced["layout"]["ratio"] == pytest.approx(0.5, abs=0.01)
+    assert {child["pane_id"] for child in rebalanced["layout"]["children"]} == {
+        first["id"],
+        second["id"],
+    }
     assert (await op("pane.rename", pane=first["id"], label="main"))["label"] == "main"
     assert (await op("tab.rename", tab=tab["id"], title="renamed"))["title"] == "renamed"
     other = await op("tab.create", workspace=home, project_id=stack.project_id)
@@ -645,3 +655,53 @@ def test_op_fields_refuse_types_a_message_cannot_be_checked_against() -> None:
     for op in (send_many, pick_axis):
         with pytest.raises(TypeError, match=rf"WorkspaceOps\.{op.__name__}\.\w+: unsupported"):
             _fields(op)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("client_count,tab_count,rounds", [(1, 8, 1), (3, 8, 1), (3, 32, 5)])
+async def test_workspace_attach_allocation_bound(
+    stack: _Stack, client_count: int, tab_count: int, rounds: int
+) -> None:
+    """Measure the real snapshot/serialization path against controlled hub rows."""
+    home, _ = stack.workspaces.create(LOCAL_MACHINE_ID, "allocation-probe")
+    pane_ids: list[str] = []
+    for tab_index in range(tab_count):
+        first = str(uuid.uuid4())
+        stack.workspaces.mark_spawn_in_flight(first)
+        stack.workspaces.create_tab(
+            home.id, pane_id=first, project_id=stack.project_id, title=f"Tab {tab_index}"
+        )
+        pane_ids.append(first)
+        for _ in range(7):
+            pane_id = str(uuid.uuid4())
+            stack.workspaces.mark_spawn_in_flight(pane_id)
+            stack.workspaces.add_pane(pane_id, beside=first, axis="horizontal")
+            pane_ids.append(pane_id)
+    clients = [_client(stack, set()) for _ in range(client_count)]
+    tracemalloc.start()
+    try:
+        for _ in range(rounds):
+            replies = await asyncio.gather(
+                *(
+                    _request(
+                        stack.server, client, {"type": "workspace_attach", "workspace": home.id}
+                    )
+                    for client in clients
+                )
+            )
+        current_bytes, peak_bytes = tracemalloc.get_traced_memory()
+        allocation_sites = tracemalloc.take_snapshot().statistics("lineno")[:5]
+    finally:
+        tracemalloc.stop()
+    reply_bytes = [len(client.sent_messages[-1].encode()) for client in clients]
+    print(
+        f"ATTACH_ALLOCATION clients={client_count} tabs={tab_count} panes={len(pane_ids)} "
+        f"rounds={rounds} "
+        f"reply_bytes={reply_bytes} current_bytes={current_bytes} peak_bytes={peak_bytes} "
+        f"retained_sites={[str(site) for site in allocation_sites]}"
+    )
+    for reply in replies:
+        assert len(reply["tabs"]) == tab_count
+        assert {pane["id"] for pane in reply["panes"]} == set(pane_ids)
+    assert peak_bytes < 64 * 1024 * 1024
+    assert max(reply_bytes) < 128 * 1024

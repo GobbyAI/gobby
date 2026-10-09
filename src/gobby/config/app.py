@@ -26,6 +26,7 @@ from gobby.config._loading import (
 # Internal imports for DaemonConfig fields - NOT re-exported
 from gobby.config.ai import AIConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.cron import CronConfig
@@ -186,8 +187,8 @@ class DaemonConfig(BaseModel):
         description="Port for daemon to listen on",
     )
     bind_host: str = Field(
-        default="localhost",
-        description="Host/IP to bind servers to. Use 'localhost' for local-only access, "
+        default=DEFAULT_DAEMON_BIND_HOST,
+        description="Host/IP to bind servers to. Use '127.0.0.1' for local-only access, "
         "'0.0.0.0' for all interfaces, or a specific IP (e.g., Tailscale IP) for restricted access.",
     )
     datastore_mode: Literal["local", "remote"] = Field(

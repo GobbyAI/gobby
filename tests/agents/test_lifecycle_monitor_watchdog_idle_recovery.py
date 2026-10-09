@@ -29,6 +29,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReviewStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
@@ -2273,6 +2274,7 @@ async def test_reprompt_held_on_an_operator_draft_never_fails_the_run(
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    composer_ledger: ComposerLedger,
 ) -> None:
     """A held reprompt is not an undeliverable one, however long the draft stays."""
     transcript_path = tmp_path / "codex-draft-held.jsonl"
@@ -2285,11 +2287,15 @@ async def test_reprompt_held_on_an_operator_draft_never_fails_the_run(
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1302",
         transcript_path=transcript_path,
     )
+    assert run.terminal_id is not None
+    composer_ledger.observe_write(
+        run.terminal_id, origin="operator", kind="text", payload="Reply ACK"
+    )
     recovery = monitor._idle_check_handler._recovery
     iterations = recovery._tmux_config.max_reprompt_attempts + 1
 
     with (
-        _pane_text(monitor, "────────────\n❯ Reply ACK\n────────────\n"),
+        _pane_text(monitor, None),
         patch.object(
             recovery,
             "_idle_reprompt_message",
@@ -2364,14 +2370,15 @@ async def test_capacity_reprompt_delivery_failures_are_bounded(
 
 
 @pytest.mark.asyncio
-async def test_completed_turn_recovery_leaves_a_framed_operator_draft_alone(
+async def test_completed_turn_recovery_leaves_an_operator_draft_alone(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
+    composer_ledger: ComposerLedger,
 ) -> None:
-    """A positively read draft withholds the drain; nothing is written to the terminal."""
+    """An operator draft in the ledger withholds the drain; nothing is written."""
     transcript_path = tmp_path / "codex-framed-draft.jsonl"
     _write_codex_lifecycle_transcript(transcript_path)
     monitor, run = _make_idle_monitor_run(
@@ -2382,9 +2389,13 @@ async def test_completed_turn_recovery_leaves_a_framed_operator_draft_alone(
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1099",
         transcript_path=transcript_path,
     )
+    assert run.terminal_id is not None
+    composer_ledger.observe_write(
+        run.terminal_id, origin="operator", kind="text", payload="uv run pytest tests/foo.py"
+    )
 
     with (
-        _pane_text(monitor, "────────────\n❯ uv run pytest tests/foo.py\n────────────\n"),
+        _pane_text(monitor, None),
         patch.object(
             monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",

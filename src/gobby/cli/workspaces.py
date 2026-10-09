@@ -18,6 +18,7 @@ import click
 import httpx
 
 from gobby.cli.utils_config import get_daemon_url
+from gobby.storage.workspace_layout import MIN_PANE_ROWS
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 
@@ -214,6 +215,32 @@ def show_workspace(workspace: str, node: str | None, json_format: bool) -> None:
         click.echo(f"{tab_ref}{title}  project {tab['project_id']}")
         for pane in panes_by_tab.get(str(tab["id"]), []):
             click.echo(_pane_line(tab_ref, pane))
+
+
+@workspaces.command("rebalance-tab")
+@click.argument("tab")
+@click.option(
+    "--columns",
+    type=click.IntRange(min=80),
+    default=80,
+    show_default=True,
+    help="Tab viewport width in cells; 80 keeps every pane in one column",
+)
+@click.option(
+    "--rows",
+    type=click.IntRange(min=MIN_PANE_ROWS),
+    required=True,
+    help="Tab viewport height in cells",
+)
+@click.option("--node", help="Node ref, id, hostname, or label")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def rebalance_tab(tab: str, columns: int, rows: int, node: str | None, json_format: bool) -> None:
+    """Rebalance TAB without replacing panes or their terminal processes."""
+    result = _call_workspace_tool(
+        "rebalance_tab", _arguments(tab=tab, columns=columns, rows=rows, node=_node_of(tab, node))
+    )
+    if _emit(result, json_format):
+        click.echo(f"Rebalanced tab {_row(result, 'tab')['id']}")
 
 
 @workspaces.command("create")

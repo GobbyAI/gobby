@@ -150,7 +150,7 @@ CLOSURE_ID = f"{TASK_ID}:2026-08-25T00:00:00+00:00"
 
 def _state_manager(variables: dict[str, Any]) -> tuple[MagicMock, MagicMock]:
     state_manager = MagicMock()
-    state_manager.get_variables.return_value = variables
+    state_manager.get_variable_subset.return_value = variables
     return state_manager, MagicMock(return_value=state_manager)
 
 
@@ -176,7 +176,9 @@ async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
     assert result["pending_reviews_complete"] is True
     assert result["pending_reviews"] == []
     state_manager.upsert_bounded_list_variable.assert_called_once()
-    state_manager.get_variables.assert_called_with(SESSION_ID)
+    state_manager.get_variable_subset.assert_any_call(
+        SESSION_ID, ("_memory_pending_task_reviews", "_memory_task_review_records")
+    )
     state_manager.set_variable.assert_called_once_with(
         SESSION_ID, "_memory_review_stop_delivered", True
     )

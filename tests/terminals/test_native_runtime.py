@@ -21,6 +21,7 @@ import pytest
 from gobby.agents.constants import GOBBY_TERMINAL_ID
 from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, native_locator_key
+from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
 from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
     HostBatchTarget,
@@ -1074,6 +1075,95 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     assert "text" in kinds
     assert interleaved == ["trying", "done"]
     assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
+
+
+async def _prepared_ledger_spawn(
+    host: FakeHostClient, ledger: ComposerLedger
+) -> tuple[NativeTerminalRuntime, PreparedSpawn]:
+    runtime = NativeTerminalRuntime(
+        host,
+        frame_host_epoch=host.host_epoch,
+        frame_client=_RecordingFrame(),
+        composer_ledger=ledger,
+    )
+    request = TerminalSpawnRequest(
+        terminal_id=uuid4(),
+        spawn_key="gobby-native",
+        command=["/bin/sh"],
+        cwd="/tmp",
+        rows=24,
+        cols=80,
+        reservation_id="rsv",
+        reserve_key="rk",
+    )
+    prepared = await runtime.prepare_spawn(request)
+    prepared.acknowledge_persist()
+    prepared.acknowledge_observer()
+    return runtime, prepared
+
+
+@pytest.mark.asyncio
+async def test_committed_spawn_starts_with_an_empty_composer() -> None:
+    ledger = ComposerLedger()
+    runtime, prepared = await _prepared_ledger_spawn(FakeHostClient(), ledger)
+    terminal_id = str(prepared.terminal_id)
+    assert ledger.read(terminal_id) == LedgerRead("blocked", "untracked")
+
+    await runtime.commit_spawn(prepared)
+
+    assert ledger.read(terminal_id) == LedgerRead("empty")
+
+
+@pytest.mark.asyncio
+async def test_spawn_committed_on_a_new_host_moves_the_ledger_to_that_host() -> None:
+    host = FakeHostClient()
+    ledger = ComposerLedger()
+    ledger.release("seat-on-the-dead-host")
+    ledger.resume_host("dead-host", 40, since=None, gap=False)
+    runtime, prepared = await _prepared_ledger_spawn(host, ledger)
+
+    await runtime.commit_spawn(prepared)
+
+    assert ledger.read(str(prepared.terminal_id)) == LedgerRead("empty")
+    assert ledger.read("seat-on-the-dead-host") == LedgerRead("blocked", "untracked")
+    assert ledger.host_cursor == (host.host_epoch, 0)
+
+
+@pytest.mark.asyncio
+async def test_native_wake_batch_records_daemon_text_in_the_composer_ledger() -> None:
+    host = FakeHostClient()
+    ledger = ComposerLedger()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch, composer_ledger=ledger)
+    terminal = _native_terminal(host, host_terminal_id="ht-1")
+    store = MemoryTerminalStore()
+    store.rows[terminal.id] = terminal
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, store),
+        runtime_registry(runtime),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    ledger.release(terminal.id)
+
+    results = await coordinator.run_native_wake_batch(
+        [
+            NativeWakeBatchRequest(
+                result_id="session-1",
+                terminal_id=terminal.id,
+                clear_action_key="wake-clear:session-1",
+                wake_action_key="wake:session-1",
+                operations=(
+                    NativeBatchOperation(kind="key", payload="ctrl_u"),
+                    NativeBatchOperation(kind="text", payload="continue", delay_ms=15),
+                    NativeBatchOperation(kind="key", payload="enter", delay_ms=15),
+                ),
+            )
+        ]
+    )
+
+    assert isinstance(results[0].outcome, Delivered)
+    assert ledger.read(terminal.id) == LedgerRead("held", pending="continue")
+    ledger.record_submit(terminal.id)
+    assert ledger.read(terminal.id) == LedgerRead("empty")
 
 
 @pytest.mark.asyncio

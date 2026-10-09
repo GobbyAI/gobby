@@ -308,6 +308,27 @@ class RuleDefinitionManager:
         project_id: str | None = None,
         enabled: bool | None = None,
     ) -> list[RuleDefinitionRow]:
+        """List an event's rules as ``project_id`` sees them: global rows plus its own.
+
+        With no project id only global rows apply. Admin listings that span every
+        project use :meth:`list_by_event_across_projects`.
+        """
+        global_only = ["project_id IS NULL"] if project_id is None else []
+        return self._list_event_rows(event, project_id, enabled, global_only)
+
+    def list_by_event_across_projects(
+        self, event: str, enabled: bool | None = None
+    ) -> list[RuleDefinitionRow]:
+        """List an event's rules from every project, global rows included."""
+        return self._list_event_rows(event, None, enabled, [])
+
+    def _list_event_rows(
+        self,
+        event: str,
+        project_id: str | None,
+        enabled: bool | None,
+        scope_conditions: list[str],
+    ) -> list[RuleDefinitionRow]:
         return [
             RuleDefinitionRow.from_row(row)
             for row in list_definition_rows(
@@ -316,7 +337,7 @@ class RuleDefinitionManager:
                 project_id=project_id,
                 enabled=enabled,
                 include_deleted=False,
-                extra_conditions=["(definition_json->>'event') = %s"],
+                extra_conditions=["(definition_json->>'event') = %s", *scope_conditions],
                 extra_params=(event,),
                 order_by="priority, name",
             )

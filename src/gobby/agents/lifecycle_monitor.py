@@ -30,7 +30,7 @@ from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
-from gobby.agents.watchdog.composer_probe import composer_holds_draft
+from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -676,8 +676,8 @@ class AgentLifecycleMonitor:
                         )
                 self._draft_grace_observations.pop(run.id, None)
             elif run.terminal_id and self._terminal_services is not None:
-                if await composer_holds_draft(self._terminal_services, self._idle_detector, run):
-                    logger.debug("Skipped stuck Enter for agent %s: composer holds a draft", run.id)
+                if composer_refuses_automation(self._terminal_services, run):
+                    logger.debug("Skipped stuck Enter for agent %s: composer not clean", run.id)
                 else:
                     try:
                         await self._terminal_services.write(

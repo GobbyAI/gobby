@@ -118,6 +118,24 @@ def _run(group: Any, arguments: list[str]) -> Result:
     return CliRunner().invoke(group, arguments)
 
 
+def test_rebalance_tab_uses_supported_operator_tool_and_rejects_narrow_budget(
+    daemon: _FakeDaemon,
+) -> None:
+    daemon.payloads = [{"success": True, "tab": TAB}]
+    result = _run(
+        workspaces, ["rebalance-tab", "0:0:6", "--columns", "80", "--rows", "100", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["tab"] == TAB
+    assert daemon.tools == ["rebalance_tab"]
+    assert daemon.arguments == [{"tab": "0:0:6", "columns": 80, "rows": 100}]
+    refused = _run(workspaces, ["rebalance-tab", "0:0:6", "--columns", "79"])
+    assert refused.exit_code == 2
+    missing_height = _run(workspaces, ["rebalance-tab", "0:0:6"])
+    assert missing_height.exit_code == 2
+    assert daemon.tools == ["rebalance_tab"]
+
+
 def test_panes_split_resolves_ref_node_and_direction(daemon: _FakeDaemon) -> None:
     daemon.payloads = [SPLIT, SPLIT]
 

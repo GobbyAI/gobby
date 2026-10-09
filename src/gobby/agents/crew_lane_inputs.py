@@ -126,7 +126,8 @@ def resolve_crew_lane_inputs(
         tab
         for candidate in workspaces.list_for_node(caller.machine_id)
         for tab in workspaces.list_tabs(candidate.id)
-        if tab.project_id == caller.project_id and tab.title == f"Lane {lane}"
+        if tab.project_id == caller.project_id
+        and re.fullmatch(rf"Lane {lane}(?:\s+[-–—:·].*)?", tab.title or "")
     ]
     try:
         explicit_pane = (

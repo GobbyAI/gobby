@@ -163,6 +163,7 @@ GRANT_FIELD_INVENTORY: tuple[str, ...] = (
     "deployment",
     "expires_at",
     "issued_at",
+    "managed_api_token",
     "payload_checksum",
     "postgres.credential_generation",
     "postgres.dsn",

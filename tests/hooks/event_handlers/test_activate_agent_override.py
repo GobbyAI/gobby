@@ -63,7 +63,7 @@ def _make_event_handlers() -> EventHandlers:
     session_manager = session_storage
     variables = SessionVariableManager(session_storage.db)
     if isinstance(variables, MagicMock):
-        variables.get_variables.return_value = {}
+        variables.get_variable_subset.return_value = {}
 
     return EventHandlers(
         session_manager=session_manager,
@@ -126,7 +126,7 @@ class TestAgentNameOverride:
 
         # SessionVariableManager must return empty vars so the code falls
         # through to the config repository instead of using existing _agent_type.
-        mock_svm_cls.return_value.get_variables.return_value = {}
+        mock_svm_cls.return_value.get_variable_subset.return_value = {}
 
         with patch("gobby.storage.config_repository.ConfigRepository") as mock_repo:
             mock_repo.return_value.read.return_value.values = {"default_agent": configured_agent}
@@ -182,7 +182,7 @@ class TestAgentNameOverride:
         mock_resolve.return_value = agent_body
 
         mock_svm = MagicMock()
-        mock_svm.get_variables.return_value = {}
+        mock_svm.get_variable_subset.return_value = {}
         mock_svm_cls.return_value = mock_svm
 
         handlers._activate_default_agent(

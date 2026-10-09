@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "name": "terminal_backend_down",
+  "family": "terminal_ws",
+  "backend": "down",
+  "credential": "none",
+  "request": {
+    "method": "GET",
+    "path": "/api/terminals",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "content-type": "application/json",
+      "retry-after": "1"
+    },
+    "body": {
+      "status": "unavailable",
+      "backend": {
+        "state": "down",
+        "target": "@mask@"
+      }
+    }
+  },
+  "mask": ["/response/body/backend/target"]
+}

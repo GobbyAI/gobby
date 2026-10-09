@@ -388,8 +388,11 @@ def verify_srt_installation_locked(
             policy_hash=policy_hash,
         )
     try:
+        from gobby.agents.srt_package_patch import verify_srt_proxy_patch
+
+        verify_srt_proxy_patch(root)
         _verify_srt_content(root, manifest)
-    except SrtRuntimeError as exc:
+    except (OSError, SrtRuntimeError, ValueError) as exc:
         _raise_srt_lockout(
             str(exc),
             run_id=run_id,

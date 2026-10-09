@@ -8,10 +8,30 @@ from starlette.testclient import TestClient
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.config.ui import is_loopback_bind_host
+from gobby.config.ui import effective_ui_host, is_loopback_bind_host
 from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
+
+
+def test_default_daemon_config_keeps_ui_on_its_local_host() -> None:
+    config = DaemonConfig()
+
+    assert effective_ui_host(config.ui.host, config.bind_host) == config.ui.host
+
+
+@pytest.mark.parametrize("bind_host", ["localhost", "127.0.0.1", "::1"])
+def test_local_ui_host_stays_local_for_loopback_daemon_bind(bind_host: str) -> None:
+    assert effective_ui_host("localhost", bind_host) == "localhost"
+
+
+@pytest.mark.parametrize("bind_host", ["0.0.0.0", "100.64.0.1", "::"])
+def test_local_ui_host_follows_external_daemon_bind(bind_host: str) -> None:
+    assert effective_ui_host("localhost", bind_host) == bind_host
+
+
+def test_explicit_ui_host_is_preserved() -> None:
+    assert effective_ui_host("127.0.0.2", "0.0.0.0") == "127.0.0.2"
 
 
 @pytest.mark.parametrize(

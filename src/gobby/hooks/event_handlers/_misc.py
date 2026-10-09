@@ -43,6 +43,10 @@ PROVIDER_ERROR_RESUME_PROMPT = (
     "The previous turn stopped because of a temporary provider API error. "
     "Continue the interrupted work."
 )
+USAGE_LIMIT_VALVE = (
+    " Automatic input stays held until a prompt is submitted in the pane"
+    " or gobby-sessions release_composer is called."
+)
 _HTTP_STATUS = re.compile(r"\b(?:HTTP\s*)?([1-5][0-9]{2})\b", re.IGNORECASE)
 
 
@@ -67,6 +71,11 @@ def _stop_failure_error(event: HookEvent) -> tuple[str, str, bool]:
     diagnostic = " ".join(
         value for value in (error_type, rendered, details) if isinstance(value, str)
     ).lower()
+    if event.source == SessionSource.CLAUDE and (
+        error_type == "rate_limit" or "usage_limit_reached" in diagnostic
+    ):
+        # Claude stops on the /rate-limit-options menu, where any resume key would land.
+        return "usage_limit", message[: 240 - len(USAGE_LIMIT_VALVE)] + USAGE_LIMIT_VALVE, False
     statuses = {int(match.group(1)) for match in _HTTP_STATUS.finditer(diagnostic)}
     terminal = any(status in {400, 401, 402, 403, 404, 422} for status in statuses)
     terminal = terminal or any(
@@ -359,6 +368,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
         if not isinstance(session_id, str) or not session_id or lifecycle is None:
             return HookResponse(decision="allow")
         error_type, message, retryable = _stop_failure_error(event)
+        if error_type == "usage_limit":
+            self._block_composer(session_id, "provider_limit")
         try:
             transition = lifecycle.record_provider_failure(
                 session_id,

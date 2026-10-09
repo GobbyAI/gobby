@@ -87,6 +87,13 @@ fn rgb(color: ratatui::style::Color) -> (u8, u8, u8) {
     }
 }
 
+fn current_project_chrome() -> Chrome {
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.all_projects = false;
+    chrome.sidebar.all_sessions = false;
+    chrome
+}
+
 #[test]
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
@@ -156,7 +163,7 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     // machine, one card, one three-line agent and one two-line bare terminal.
     let ws = scripted_workspace();
     assert_eq!(
-        section_rects(&ws, &Chrome::dark(), area),
+        section_rects(&ws, &current_project_chrome(), area),
         sidebar_layout(area, SidebarSide::Left, 1, 1, 2).sections
     );
 }
@@ -164,7 +171,7 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
 #[test]
 fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     let ws = scripted_workspace();
-    let chrome = Chrome::dark();
+    let chrome = current_project_chrome();
     let area = Rect::new(0, 0, 26, 40);
     let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
     let mut hits = SidebarHits::default();
@@ -231,7 +238,7 @@ fn section_headings_sit_on_the_header_fill_in_its_ink() {
     // theme-mapping board, #23416).
     let ws = scripted_workspace();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
-        let mut chrome = Chrome::dark();
+        let mut chrome = current_project_chrome();
         chrome.set_theme(kind);
         let p = chrome.palette;
         let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
@@ -266,7 +273,7 @@ fn section_headings_sit_on_the_header_fill_in_its_ink() {
 fn missing_local_machine_does_not_hide_agents_or_draw_a_phantom_machine() {
     let mut ws = scripted_workspace();
     ws.set_local_machine("");
-    let chrome = Chrome::dark();
+    let chrome = current_project_chrome();
 
     assert!(machine_rows(&ws, &chrome).is_empty());
     assert_eq!(agent_rows(&ws, &chrome).len(), 1);
@@ -280,7 +287,7 @@ fn bare_terminal_titles_stay_still_while_agents_ticker() {
         .pane_for_terminal("term-beta")
         .expect("bare terminal pane");
     ws.pane_mut(pane).label = Some("a-bare-terminal-title-longer-than-the-sidebar".to_owned());
-    let mut chrome = Chrome::dark();
+    let mut chrome = current_project_chrome();
     let draw_row = |chrome: &Chrome| {
         let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
         terminal
@@ -299,7 +306,7 @@ fn bare_terminal_titles_stay_still_while_agents_ticker() {
 #[test]
 fn wider_sidebar_shows_the_expanded_card() {
     let ws = scripted_workspace();
-    let mut chrome = Chrome::dark();
+    let mut chrome = current_project_chrome();
     chrome.sidebar.toggle_group("proj-alpha");
     let area = Rect::new(0, 0, 31, 40);
     let mut terminal = Terminal::new(TestBackend::new(31, 40)).unwrap();
@@ -373,7 +380,7 @@ fn agent_quiet_lines_meet_aa_on_every_row_fill() {
             .filter(|name| name.offered(kind, false))
         {
             for monochrome in [false, true] {
-                let mut chrome = Chrome::dark();
+                let mut chrome = current_project_chrome();
                 chrome.prefs.palette = name;
                 chrome.prefs.monochrome = monochrome;
                 chrome.set_theme(kind);

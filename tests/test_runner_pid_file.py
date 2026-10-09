@@ -24,6 +24,7 @@ from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon import _do_stop
 from gobby.cli.daemon_start import start
 from gobby.cli.runtime import CliRuntime
+from gobby.config.logging import LoggingSettings
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import (
     FailOpenPidOwnership,
@@ -935,7 +936,7 @@ class TestStartStopBarriers:
         config.daemon_port = 60888
         config.websocket.port = 60889
         config.bind_host = "127.0.0.1"
-        config.logging = MagicMock()
+        config.logging = LoggingSettings(dir=str(tmp_path / "logs"))
         config.ui.enabled = False
         # Both sandbox flags gate the real SRT preflight in `gobby start` (#21034).
         config.agent_sandbox.enabled = False
@@ -952,6 +953,7 @@ class TestStartStopBarriers:
             # The binary-set probe and boot-id lookup shell out; neither may see the fake Popen.
             patch("gobby.storage.schema_divergence.binary_set_apply_refusal", return_value=None),
             patch("gobby.runner_pid_record.current_boot_id", return_value="boot-test"),
+            patch("gobby.runner_pid_file.current_boot_id", return_value="boot-test"),
             patch("gobby.cli.daemon_start.subprocess.Popen", return_value=process) as popen,
             patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=0.1),
             patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True),
@@ -962,6 +964,7 @@ class TestStartStopBarriers:
             (tmp_path / "logs").mkdir()
             result = _cli_runtime().invoke(start, [])
         assert result.exit_code == 0
+        assert (tmp_path / "logs" / "runtime.log").is_file()
         kwargs = popen.call_args.kwargs
         assert "GOBBY_SINGLETON_LOCK_FD" in kwargs["env"]
         assert kwargs.get("pass_fds")

@@ -7,6 +7,7 @@ the claim shields read it back to tell a contested expiry from a final one
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,7 @@ from gobby.sessions.contested_expiry import (
     contested_expiry_stamp,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.read_scope import hub_read_scope
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import (
@@ -345,3 +347,138 @@ def test_an_unconsumed_clear_marker_does_not_block_revival(
 
     assert revived is not None
     assert revived.status == "active"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("consumer", ["clear-successor", "native-subagent"])
+def test_lifecycle_reads_do_not_decode_unrelated_variables(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    consumer: str,
+) -> None:
+    from gobby.storage.sessions import _contested_expiry
+    from gobby.storage.sessions._terminal_revival import _clear_successor_of
+
+    session = _registered(temp_db, sample_project)
+    variables = SessionVariableManager(temp_db)
+    unrelated = "x" * (4 * 1024 * 1024)
+    successor = str(uuid.uuid4())
+    variables.merge_variables(
+        session.id,
+        {
+            "unrelated": unrelated,
+            "clear_attempt": {"consumed_by": successor},
+            "subagent_count": 1,
+            "is_subagent": False,
+        },
+    )
+    decode_sizes: list[int] = []
+    decode = _contested_expiry._stored_variables
+
+    def observe_decode(row: Any) -> dict[str, Any]:
+        payload = row["variables"]
+        decode_sizes.append(len(payload) if isinstance(payload, str) else len(json.dumps(payload)))
+        return decode(row)
+
+    monkeypatch.setattr(_contested_expiry, "_stored_variables", observe_decode)
+    if consumer == "clear-successor":
+        assert _clear_successor_of(temp_db, session.id) == successor
+    else:
+        assert _contested_expiry.session_has_active_native_subagent(temp_db, session.id) is True
+    assert decode_sizes
+    assert max(decode_sizes) < 4096
+    assert variables.get_variables(session.id)["unrelated"] == unrelated
+
+
+@pytest.mark.integration
+def test_projected_lifecycle_reads_distinguish_missing_rows_and_keys(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.storage.sessions._contested_expiry import read_session_variables_row
+
+    session = _registered(temp_db, sample_project)
+    assert read_session_variables(temp_db, session.id, keys=("missing",)) is None
+    missing_row = read_session_variables_row(temp_db, session.id, keys=("missing",))
+    assert missing_row["stored"] is False
+    assert str(missing_row["project_id"]) == session.project_id
+
+    SessionVariableManager(temp_db).merge_variables(session.id, {"other": "stored"})
+    assert read_session_variables(temp_db, session.id, keys=("missing",)) == {}
+    stored_row = read_session_variables_row(temp_db, session.id, keys=("missing",))
+    assert stored_row["stored"] is True
+    assert str(stored_row["project_id"]) == session.project_id
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("payload", ["null", "[]", "7", '"text"'])
+def test_projected_lifecycle_reads_ignore_non_object_roots(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    payload: str,
+) -> None:
+    from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
+
+    session = _registered(temp_db, sample_project)
+    SessionVariableManager(temp_db).merge_variables(session.id, {"other": "stored"})
+    temp_db.execute(
+        "UPDATE session_variables SET variables = %s::jsonb WHERE session_id = %s",
+        (payload, session.id),
+    )
+    assert read_session_variables(temp_db, session.id, keys=("subagent_count",)) == {}
+    assert read_session_variables(temp_db, session.id, keys=()) == {}
+    assert read_session_variables(temp_db, session.id) == {}
+    assert session_has_active_native_subagent(temp_db, session.id) is False
+
+
+@pytest.mark.integration
+def test_projected_lifecycle_reads_keep_distinct_scopes_and_full_reads(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _registered(temp_db, sample_project)
+    SessionVariableManager(temp_db).merge_variables(session.id, {"first": 1, "second": 2})
+    reads: list[str] = []
+    fetchone = temp_db.fetchone
+
+    def observe_fetchone(sql: str, params: Any = ()) -> Any:
+        reads.append(sql)
+        return fetchone(sql, params)
+
+    monkeypatch.setattr(temp_db, "fetchone", observe_fetchone)
+    with hub_read_scope():
+        assert read_session_variables(temp_db, session.id, keys=("second", "first")) == {
+            "first": 1,
+            "second": 2,
+        }
+        assert read_session_variables(temp_db, session.id, keys=("first", "second", "first")) == {
+            "first": 1,
+            "second": 2,
+        }
+        assert read_session_variables(temp_db, session.id, keys=("first",)) == {"first": 1}
+        assert read_session_variables(temp_db, session.id, keys=("missing",)) == {}
+        full = read_session_variables(temp_db, session.id)
+        assert full is not None
+        assert full["first"] == 1
+        assert full["second"] == 2
+    assert len(reads) == 4
+
+
+@pytest.mark.integration
+def test_variable_mutation_invalidates_projected_lifecycle_reads(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    session = _registered(temp_db, sample_project)
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(session.id, {"subagent_count": 0, "is_subagent": False})
+    with hub_read_scope():
+        assert read_session_variables(temp_db, session.id, keys=("subagent_count",)) == {
+            "subagent_count": 0
+        }
+        variables.merge_variables(session.id, {"subagent_count": 1})
+        assert read_session_variables(temp_db, session.id, keys=("subagent_count",)) == {
+            "subagent_count": 1
+        }

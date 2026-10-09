@@ -137,6 +137,9 @@ def _srt_root(gobby_home: Path) -> Path:
 
 def _write_srt_install(root: Path, *, node: Path) -> None:
     """Lay down a pinned install that verifies; its runner never runs."""
+    from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(root)
     package = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
     for architecture in ("arm64", "x64"):
         helper = package / "vendor" / "seccomp" / architecture / "apply-seccomp"

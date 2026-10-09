@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from gobby.sessions.model_family import normalize_model
@@ -18,6 +19,23 @@ logger = logging.getLogger(__name__)
 
 TimeSeriesGranularity = Literal["30m", "1h", "1d"]
 VALID_GRANULARITIES: frozenset[TimeSeriesGranularity] = frozenset({"30m", "1h", "1d"})
+TOKEN_EVENT_RETENTION_DAYS = 180
+
+
+def token_event_retention_cutoff() -> datetime:
+    """Old usage remains in lifetime totals, but its raw rows are not replayed."""
+    return datetime.now(UTC) - timedelta(days=TOKEN_EVENT_RETENTION_DAYS)
+
+
+@contextmanager
+def token_event_retention_transaction(db: HubDatabase) -> Iterator[None]:
+    """Keep writes/replay atomic with respect to the Rust exclusive prune cycle."""
+    with db.transaction():
+        db.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+            ("hub-retention:token-events",),
+        )
+        yield
 
 
 @normalize_datetime_model(required=("event_at",))
@@ -176,78 +194,105 @@ class TokenEventStore:
 
     def record(self, event: TokenEvent) -> bool:
         """Insert a token event row idempotently."""
-        cursor = self.db.execute(
-            f"""
-            INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
-            VALUES {_TOKEN_EVENT_VALUES_ROW}
-            {_TOKEN_EVENT_CONFLICT_CLAUSE}
-            """,
-            _record_params(event),
-        )
-        rowcount = getattr(cursor, "rowcount", None)
-        if isinstance(rowcount, int):
-            return rowcount > 0
-        return True
+        with token_event_retention_transaction(self.db):
+            if canonicalize_event_timestamp(event.event_at) < token_event_retention_cutoff():
+                return False
+            cursor = self.db.execute(
+                f"""
+                INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
+                VALUES {_TOKEN_EVENT_VALUES_ROW}
+                {_TOKEN_EVENT_CONFLICT_CLAUSE}
+                """,
+                _record_params(event),
+            )
+            rowcount = getattr(cursor, "rowcount", None)
+            if isinstance(rowcount, int):
+                return rowcount > 0
+            return True
 
-    def record_batch(self, events: Sequence[TokenEvent]) -> list[bool]:
+    def record_batch(
+        self, events: Sequence[TokenEvent], *, retention_cutoff: datetime | None = None
+    ) -> list[bool]:
         """Insert token events idempotently in chunked multi-row statements.
 
         Returns one flag per event, in input order, reporting exactly what
         sequential ``record`` calls would have reported: ``True`` when the
         event inserted a row, ``False`` when its ``(session_id, message_id)``
         already existed — in the table or earlier in ``events``. Events
-        without a ``message_id`` never conflict and always insert.
+        without a ``message_id`` never conflict. Expired events never insert.
 
-        Statement count is bounded by ``ceil(len(events) /
+        Insert statement count is bounded by ``ceil(len(events) /
         RECORD_BATCH_CHUNK_SIZE)``, not by the number of events.
         """
-        flags = [False] * len(events)
-        for start in range(0, len(events), RECORD_BATCH_CHUNK_SIZE):
-            chunk = events[start : start + RECORD_BATCH_CHUNK_SIZE]
-            params: list[Any] = []
-            for event in chunk:
-                params.extend(_record_params(event))
-            values = ", ".join([_TOKEN_EVENT_VALUES_ROW] * len(chunk))
-            rows = self.db.fetchall(
-                f"""
-                INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
-                VALUES {values}
-                {_TOKEN_EVENT_CONFLICT_CLAUSE}
-                RETURNING session_id, message_id
-                """,
-                params,
+        if not events:
+            return []
+        with token_event_retention_transaction(self.db):
+            flags = [False] * len(events)
+            cutoff = (
+                retention_cutoff if retention_cutoff is not None else token_event_retention_cutoff()
             )
-            inserted_keys: set[tuple[str, str]] = set()
-            for row in rows:
-                row_message_id = _row_value(row, "message_id")
-                if isinstance(row_message_id, str):
-                    inserted_keys.add((str(_row_value(row, "session_id")), row_message_id))
-            chunk_seen: set[tuple[str, str]] = set()
-            for offset, event in enumerate(chunk):
-                if event.message_id is None:
-                    # The conflict target requires a non-null message_id, so
-                    # these rows cannot be skipped by DO NOTHING.
-                    flags[start + offset] = True
+            for start in range(0, len(events), RECORD_BATCH_CHUNK_SIZE):
+                chunk = [
+                    (offset, event)
+                    for offset, event in enumerate(events[start : start + RECORD_BATCH_CHUNK_SIZE])
+                    if canonicalize_event_timestamp(event.event_at) >= cutoff
+                ]
+                if not chunk:
                     continue
-                key = (event.session_id, event.message_id)
-                if key in chunk_seen:
-                    # An earlier occurrence in this statement won the insert;
-                    # sequential record() would have reported False here.
-                    continue
-                chunk_seen.add(key)
-                flags[start + offset] = key in inserted_keys
-        return flags
+                params: list[Any] = []
+                for _, event in chunk:
+                    params.extend(_record_params(event))
+                values = ", ".join([_TOKEN_EVENT_VALUES_ROW] * len(chunk))
+                rows = self.db.fetchall(
+                    f"""
+                    INSERT INTO token_events ({", ".join(_TOKEN_EVENT_COLUMNS)})
+                    VALUES {values}
+                    {_TOKEN_EVENT_CONFLICT_CLAUSE}
+                    RETURNING session_id, message_id
+                    """,
+                    params,
+                )
+                inserted_keys: set[tuple[str, str]] = set()
+                for row in rows:
+                    row_message_id = _row_value(row, "message_id")
+                    if isinstance(row_message_id, str):
+                        inserted_keys.add((str(_row_value(row, "session_id")), row_message_id))
+                chunk_seen: set[tuple[str, str]] = set()
+                for offset, event in chunk:
+                    if event.message_id is None:
+                        # The conflict target requires a non-null message_id, so
+                        # these rows cannot be skipped by DO NOTHING.
+                        flags[start + offset] = True
+                        continue
+                    key = (event.session_id, event.message_id)
+                    if key in chunk_seen:
+                        # An earlier occurrence in this statement won the insert;
+                        # sequential record() would have reported False here.
+                        continue
+                    chunk_seen.add(key)
+                    flags[start + offset] = key in inserted_keys
+            return flags
 
-    def delete_session_events(self, session_id: str, *, origin: str | None = None) -> int:
-        """Delete token events for a session."""
+    def delete_session_events(
+        self,
+        session_id: str,
+        *,
+        origin: str | None = None,
+        retention_cutoff: datetime | None = None,
+    ) -> int:
+        """Replace retained events; Rust archives expired rows before removing them."""
+        cutoff = (
+            retention_cutoff if retention_cutoff is not None else token_event_retention_cutoff()
+        )
         if origin:
             cursor = self.db.execute(
-                "DELETE FROM token_events WHERE session_id = %s AND origin = %s",
-                (session_id, origin),
+                "DELETE FROM token_events WHERE session_id = %s AND origin = %s AND event_at >= %s",
+                (session_id, origin, cutoff),
             )
         else:
             cursor = self.db.execute(
-                "DELETE FROM token_events WHERE session_id = %s", (session_id,)
+                "DELETE FROM token_events WHERE session_id = %s AND event_at >= %s",
+                (session_id, cutoff),
             )
         rowcount = getattr(cursor, "rowcount", None)
         return rowcount if isinstance(rowcount, int) else 0
@@ -263,14 +308,21 @@ class TokenEventStore:
         row = self.db.fetchone(
             """
             SELECT
-                COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
-                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
-            FROM token_events
-            WHERE session_id = %s
+                COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+                COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
+                COALESCE(SUM(cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
+                COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens
+            FROM (
+                SELECT input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+                FROM token_events
+                WHERE session_id = %s
+                UNION ALL
+                SELECT input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+                FROM token_event_retention_totals
+                WHERE session_id = %s
+            ) AS lifetime_usage
             """,
-            (session_id,),
+            (session_id, session_id),
         )
         return {
             "input_tokens": _coerce_int(_row_value(row, "input_tokens"), default=0),

@@ -68,6 +68,7 @@ TOOLS = {
     "close_pane",
     "move_pane",
     "swap_panes",
+    "rebalance_tab",
     "rename_workspace_item",
     "send_text",
     "send_pane_keys",
@@ -209,6 +210,14 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         second_ref = f"{tab_ref}:{split_layout['panes'][0]['ref']}"
         swapped = await _ok(registry, "swap_panes", pane=first_ref, other=second_ref)
         assert swapped["tab"]["id"] == tab["id"]
+        before = stack.workspaces.list_panes(created["id"])
+        balanced = await _ok(registry, "rebalance_tab", tab=tab_ref, columns=80, rows=100)
+        assert balanced["tab"]["layout"]["axis"] == "vertical"
+        assert stack.workspaces.list_panes(created["id"]) == before
+        assert (
+            await _code(registry, "rebalance_tab", tab=tab_ref, columns=79, rows=100)
+            == "invalid_op"
+        )
         labelled = await _ok(registry, "rename_workspace_item", ref=first_ref, name="main")
         assert labelled["pane"]["label"] == "main"
         titled = await _ok(registry, "rename_workspace_item", ref=tab_ref, name="work")

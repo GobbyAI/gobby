@@ -7,13 +7,18 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals.runtime import SnapshotMode, SnapshotResult
+from gobby.storage.terminals import TerminalManager
+from gobby.terminals.composer_ledger import (
+    ComposerLedger,
+    bind_composer_ledger,
+    read_composer,
+)
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime, _fake_terminal_services
 from tests.agents.test_lifecycle_monitor_watchdog_idle_recovery import (
@@ -29,7 +34,9 @@ def placed_seat(
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    composer_ledger: ComposerLedger,
 ) -> tuple[Session, Path, LifecycleRuntime, AttentionStateManager]:
+    """A seat whose composer the ledger tracks, so a capacity retry may type into it."""
     machine_id = "21000000-0000-4000-8000-000000000001"
     monkeypatch.setattr("gobby.storage.terminals.require_machine_id", lambda: machine_id)
     transcript = tmp_path / "placed-codex.jsonl"
@@ -41,7 +48,7 @@ def placed_seat(
         project_id=sample_project["id"],
         transcript_path=str(transcript),
     )
-    TerminalManager(temp_db).upsert_external(
+    terminal = TerminalManager(temp_db).upsert_external(
         machine_id=machine_id,
         project_id=sample_project["id"],
         backend="tmux",
@@ -49,6 +56,7 @@ def placed_seat(
         locator_key="tmux:%capacity",
         session_id=session.id,
     )
+    composer_ledger.record_spawn(str(terminal.id), "")
     attention = AttentionStateManager(temp_db)
     runtime = LifecycleRuntime(
         snapshot_text=(
@@ -172,6 +180,7 @@ async def test_model_output_resets_capacity_budget(
     )
     await monitor._check_attention_panes(active_runs=[])
     first_writes = list(runtime.write_log)
+    assert any(kind == "text" for kind, _payload in first_writes)
 
     _append_codex_capacity_turn(transcript, model_output_payload_type="reasoning")
     await monitor._check_attention_panes(active_runs=[])
@@ -182,15 +191,32 @@ async def test_model_output_resets_capacity_budget(
     assert current.status == "active"
 
 
+def _seat_terminal_id(temp_db: HubDatabase, session: Session) -> str:
+    terminal = TerminalManager(temp_db).get_live_for_session(session.id)
+    assert terminal is not None
+    return str(terminal.id)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("composer", ["› operator draft", "unreadable frame"])
+@pytest.mark.parametrize("composer", ["draft", "blocked", "untracked"])
 async def test_capacity_retry_preserves_composer_and_budget(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     placed_seat: tuple[Session, Path, LifecycleRuntime, AttentionStateManager],
+    composer_ledger: ComposerLedger,
     composer: str,
 ) -> None:
+    """Only a ledger-empty composer takes the retry; the pane frame is never consulted."""
     session, _transcript, runtime, attention = placed_seat
+    terminal_id = _seat_terminal_id(temp_db, session)
+    ledger = composer_ledger
+    if composer == "draft":
+        ledger.observe_write(terminal_id, origin="operator", kind="text", payload="half-typed")
+    elif composer == "blocked":
+        ledger.block(terminal_id, "gap")
+    else:
+        ledger = ComposerLedger()
+        bind_composer_ledger(ledger)
     services = _fake_terminal_services(temp_db, runtime)
     monitor = InteractiveAttentionMonitor(
         detection_registry=BundledDetectionRegistry(),
@@ -200,8 +226,6 @@ async def test_capacity_retry_preserves_composer_and_budget(
         write_coordinator=services.coordinator,
         max_reprompt_attempts=1,
     )
-    empty_frame = runtime.snapshot_text
-    runtime.snapshot_text = empty_frame.replace("›", composer)
 
     await monitor._check_attention_panes(active_runs=[])
     assert runtime.write_log == []
@@ -209,7 +233,7 @@ async def test_capacity_retry_preserves_composer_and_budget(
     assert blocked is not None
     assert blocked.reason == "stall"
     assert blocked.kind == "non_actionable"
-    runtime.snapshot_text = empty_frame
+    ledger.release(terminal_id)
     await monitor._check_attention_panes(active_runs=[])
     assert any(kind == "text" for kind, _payload in runtime.write_log)
 
@@ -276,45 +300,19 @@ async def test_failed_delivery_is_bounded_separately_from_successful_retries(
 
 
 @pytest.mark.asyncio
-async def test_capacity_composer_probe_outage_retries_on_next_poll(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-    placed_seat: tuple[Session, Path, LifecycleRuntime, AttentionStateManager],
-) -> None:
-    session, _transcript, runtime, attention = placed_seat
-    runtime.snapshot_effects = [runtime.snapshot_text, TimeoutError("probe unavailable")]
-    services = _fake_terminal_services(temp_db, runtime)
-    monitor = InteractiveAttentionMonitor(
-        detection_registry=BundledDetectionRegistry(),
-        session_manager=session_manager,
-        attention_manager=attention,
-        registry=services.registry,
-        write_coordinator=services.coordinator,
-        max_reprompt_attempts=1,
-    )
-
-    await monitor._check_attention_panes(active_runs=[])
-    assert runtime.write_log == []
-    await monitor._check_attention_panes(active_runs=[])
-
-    assert any(kind == "text" for kind, _payload in runtime.write_log)
-    current = session_manager.get(session.id)
-    assert current is not None
-    assert current.status == "active"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("new_failure", [False, True])
 @pytest.mark.parametrize("replace_attention", [False, True])
 async def test_capacity_recheck_reconciles_preserved_composer_attention(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     placed_seat: tuple[Session, Path, LifecycleRuntime, AttentionStateManager],
+    composer_ledger: ComposerLedger,
     monkeypatch: pytest.MonkeyPatch,
     new_failure: bool,
     replace_attention: bool,
 ) -> None:
     session, transcript, runtime, attention = placed_seat
+    terminal_id = _seat_terminal_id(temp_db, session)
     services = _fake_terminal_services(temp_db, runtime)
     monitor = InteractiveAttentionMonitor(
         detection_registry=BundledDetectionRegistry(),
@@ -324,58 +322,48 @@ async def test_capacity_recheck_reconciles_preserved_composer_attention(
         write_coordinator=services.coordinator,
         max_reprompt_attempts=1,
     )
-    empty_frame = runtime.snapshot_text
-    runtime.snapshot_text = empty_frame.replace("›", "› operator draft")
+    composer_ledger.observe_write(
+        terminal_id, origin="operator", kind="text", payload="operator draft"
+    )
     await monitor._check_attention_panes(active_runs=[])
     entry_id = session_attention_entry_id(session.id)
     blocked = attention.get(entry_id)
     assert blocked is not None
     assert blocked.fingerprint is not None
     assert blocked.fingerprint.startswith("capacity:")
-    runtime.snapshot_text = empty_frame
-    original_snapshot = runtime.snapshot
+    composer_ledger.release(terminal_id)
 
-    async def snapshot_after_progress(
-        terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
-    ) -> SnapshotResult:
-        if mode == "ansi":
-            if new_failure:
-                _append_codex_capacity_turn(transcript, model_output_payload_type="reasoning")
-            else:
-                with transcript.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps(
-                            {
-                                "timestamp": datetime.now(UTC).isoformat(),
-                                "type": "event_msg",
-                                "payload": {"type": "task_started"},
-                            }
-                        )
-                        + "\n"
-                    )
-                    handle.write(
-                        json.dumps(
-                            {
-                                "timestamp": datetime.now(UTC).isoformat(),
-                                "type": "response_item",
-                                "payload": {"type": "reasoning"},
-                            }
-                        )
-                        + "\n"
-                    )
-            if replace_attention:
-                attention.transition(
-                    entry_id,
-                    state="blocked",
-                    session_id=session.id,
-                    reason="stall",
-                    kind="non_actionable",
-                    fingerprint="operator-attention",
-                    payload={"label": "Operator intervention"},
-                )
-        return await original_snapshot(terminal, lines, mode=mode)
+    # The transcript and attention move while the retry rechecks under the lock.
+    def read_after_progress(read_terminal_id: str) -> ComposerRead:
+        if new_failure:
+            _append_codex_capacity_turn(transcript, model_output_payload_type="reasoning")
+        else:
+            with transcript.open("a", encoding="utf-8") as handle:
+                for record_type, payload_type in (
+                    ("event_msg", "task_started"),
+                    ("response_item", "reasoning"),
+                ):
+                    record = {
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "type": record_type,
+                        "payload": {"type": payload_type},
+                    }
+                    handle.write(json.dumps(record) + "\n")
+        if replace_attention:
+            attention.transition(
+                entry_id,
+                state="blocked",
+                session_id=session.id,
+                reason="stall",
+                kind="non_actionable",
+                fingerprint="operator-attention",
+                payload={"label": "Operator intervention"},
+            )
+        return read_composer(read_terminal_id)
 
-    monkeypatch.setattr(runtime, "snapshot", snapshot_after_progress)
+    monkeypatch.setattr(
+        "gobby.agents.watchdog.interactive_capacity.read_composer", read_after_progress
+    )
     await monitor._check_attention_panes(active_runs=[])
 
     assert runtime.write_log == []

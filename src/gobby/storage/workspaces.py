@@ -40,6 +40,7 @@ from gobby.storage.workspace_layout import (
     _ratio,
     _with_ratio,
     _without_panes,
+    balanced_layout,
 )
 from gobby.storage.workspace_layout import LayoutSplit as LayoutSplit
 from gobby.storage.workspace_layout import WorkspaceNotFoundError as WorkspaceNotFoundError
@@ -641,6 +642,8 @@ class WorkspaceManager:
         expected_workspace_id: str | None = None,
         expected_tab_id: str | None = None,
         expected_project_id: str | None = None,
+        balance_columns: int | None = None,
+        balance_rows: int | None = None,
     ) -> LayoutChange:
         """Insert a pane in a new split beside ``beside`` along ``axis``.
 
@@ -659,9 +662,10 @@ class WorkspaceManager:
             ):
                 raise WorkspaceNotFoundError(f"Pane {beside_id} left its preflighted tab; retry")
             pane = _insert_pane(conn, home, pane_id, role=role)
-            tab = _write_layout(
-                conn, home, _place(tabs[home].layout, pane_id, beside_id, split_axis)
-            )
+            layout = _place(tabs[home].layout, pane_id, beside_id, split_axis)
+            if balance_columns is not None:
+                layout = balanced_layout(layout, balance_columns, balance_rows)
+            tab = _write_layout(conn, home, layout)
         return LayoutChange(panes=(pane,), tabs=(tab,))
 
     def remove_pane(self, pane_id: str, *, refuse_in_flight: bool = False) -> LayoutChange:
@@ -739,6 +743,16 @@ class WorkspaceManager:
             tabs=(target,) if source is None else (source, target),
             removed_tabs=(tabs[home],) if moved_away and source is None else (),
         )
+
+    def rebalance_tab(
+        self, tab_id: str, columns: int = 80, rows: int | None = None
+    ) -> WorkspaceTab:
+        """Rearrange a tab atomically without changing any pane or terminal identity."""
+        tab_id = _uuid(tab_id)
+        with self.db.transaction() as conn:
+            tab = _lock_tabs(conn, tab_id)[tab_id]
+            self._guard(conn, "p.tab_id = %s::uuid", [tab_id], True)
+            return _write_layout(conn, tab_id, balanced_layout(tab.layout, columns, rows))
 
     def set_ratio(self, pane_id: str, ratio: float) -> WorkspaceTab:
         """Set the ratio of the split directly holding ``pane_id``."""

@@ -954,4 +954,28 @@ mod tests {
             "and it never moves a tmux pane off the live edge"
         );
     }
+
+    #[test]
+    fn wheel_notch_focuses_an_unfocused_reporting_pane_and_preserves_focused_reports() {
+        let (mut ws, mut chrome, _, other, (col, row)) = split_chrome();
+        track_mouse(&mut ws, other);
+        let notch = event(MouseEventKind::ScrollUp, col, row, KeyModifiers::NONE);
+        let bytes = b"\x1b[<64;2;2M".to_vec();
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &notch),
+            MouseOutcome::FocusWrite {
+                pane: other,
+                bytes: bytes.clone()
+            }
+        );
+        assert!(
+            chrome.gesture.is_none(),
+            "a wheel notch captures no mouse button"
+        );
+        chrome.focus_pane(other);
+        assert_eq!(
+            route_mouse(&ws, &mut chrome, &notch),
+            MouseOutcome::Write { pane: other, bytes }
+        );
+    }
 }

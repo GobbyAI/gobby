@@ -40,7 +40,9 @@ def merge_claimed_task_projection(
     release the transaction and retry with its row included; never acquire a
     task row while holding the variable lock.
     """
-    task_ids = _claim_ids(updates) | _claim_ids(manager.get_variables(session_id))
+    task_ids = _claim_ids(updates) | _claim_ids(
+        manager.get_variable_subset(session_id, ("claimed_tasks",))
+    )
     if observed_claim_task_id is not None:
         task_ids.add(observed_claim_task_id)
     tasks = LocalTaskManager(manager.db)
@@ -94,5 +96,20 @@ def merge_claimed_task_projection(
                 refresh_claimed_task_extra_skills(variables, tasks)
                 return True, True
 
-            if manager._mutate_variables(session_id, mutate):
+            if manager._mutate_variables(
+                session_id,
+                mutate,
+                keys=(
+                    *updates,
+                    "claimed_tasks",
+                    "task_claimed",
+                    "task_has_commits",
+                    "enforce_tdd",
+                    "claimed_task_extra_skills",
+                    "unresolvable_claimed_task_extra_skills",
+                    "claimed_task_requires_tdd",
+                    "claimed_task_acceptance_test_paths",
+                    "claimed_task_is_source_work",
+                ),
+            ):
                 return True

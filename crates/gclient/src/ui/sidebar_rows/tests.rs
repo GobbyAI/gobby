@@ -68,11 +68,11 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 #[test]
-fn project_rows_list_working_projects_and_expand_one_card() {
+fn project_rows_list_the_current_project_and_expand_one_card() {
     let ws = scripted_workspace();
     let mut chrome = Chrome::dark();
-    // `working`: beta has no live entry, so only the focused alpha lists,
-    // folded, with its toggle.
+    chrome.sidebar.all_projects = false;
+    // Current-project scope lists only focused alpha, folded with its toggle.
     let rows = project_rows(&ws, &chrome);
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     assert_eq!(ids, ["proj-alpha"]);
@@ -111,11 +111,42 @@ fn project_rows_list_working_projects_and_expand_one_card() {
 }
 
 #[test]
+fn project_scope_defaults_to_all_and_can_show_only_the_current_project() {
+    let ws = scripted_workspace();
+    let mut chrome = Chrome::dark();
+    assert_eq!(
+        displayed_project_ids(&ws, &chrome),
+        ["proj-alpha", "proj-beta"]
+    );
+    chrome.sidebar.all_projects = false;
+    assert_eq!(displayed_project_ids(&ws, &chrome), ["proj-alpha"]);
+}
+
+#[test]
+fn agent_project_headings_follow_grouping_and_current_project_scope() {
+    let ws = scripted_workspace();
+    let mut chrome = Chrome::dark();
+    let ids = |chrome: &Chrome| {
+        agent_rows(&ws, chrome)
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&chrome), ["group:proj-alpha", "run:term-alpha"]);
+    chrome.sidebar.all_sessions = false;
+    assert_eq!(ids(&chrome), ["run:term-alpha"]);
+    chrome.sidebar.all_sessions = true;
+    chrome.sidebar.all_projects = false;
+    assert_eq!(ids(&chrome), ["run:term-alpha"]);
+}
+
+#[test]
 fn agent_and_terminal_rows_are_separate() {
     let mut ws = scripted_workspace();
     let beta = ws.pane_for_terminal("term-beta").unwrap();
     ws.pane_mut(beta).cwd = Some("/srv/app".into());
-    let chrome = Chrome::dark();
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.all_sessions = false;
     let rows = agent_rows(&ws, &chrome);
     let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
     assert_eq!(ids, ["run:term-alpha"]);
@@ -194,7 +225,10 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     ws.open_terminal("term-effort", "native", "epoch").unwrap();
     ws.open_terminal("term-bare", "native", "epoch").unwrap();
 
-    let rows = agent_rows(&ws, &Chrome::dark());
+    let mut chrome = Chrome::dark();
+    chrome.sidebar.all_sessions = false;
+    chrome.sidebar.all_projects = false;
+    let rows = agent_rows(&ws, &chrome);
 
     assert_eq!(rows[0].height(), 3);
     assert_eq!(rows[0].definition, "Codex");

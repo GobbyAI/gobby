@@ -37,6 +37,11 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.terminals import TerminalManager
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.composer_ledger import (
+        bind_composer_ledger,
+        composer_ledger_path,
+        load_ledger,
+    )
     from gobby.terminals.composer_lock import bind_composer_coordinator
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.input_grants import sync_host_input_grant
@@ -90,12 +95,17 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         run_manager=LocalAgentRunManager(runner.database),
         tmux_attach_history_lines=config.tmux.attach_history_lines,
     )
+    # One composer ledger: host input, daemon writes, and spawns all feed it.
+    composer_ledger = load_ledger(composer_ledger_path())
+    runner.terminal_host_manager.composer_ledger = composer_ledger
+    bind_composer_ledger(composer_ledger)
 
     terminal_runtime_registry = TerminalRuntimeRegistry()
     native_runtime = NativeTerminalRuntime(
         HostManagerControl(runner.terminal_host_manager),
         terminal_manager=runner.terminal_manager,
         spawn_in_doubt_seconds=config.terminals.spawn_in_doubt_seconds,
+        composer_ledger=composer_ledger,
     )
     terminal_runtime_registry.register(native_runtime)
     # Spawn-less adapter for hand-started tmux panes: send_keys, wake, and
@@ -123,6 +133,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         runner.terminal_manager,
         terminal_runtime_registry,
         lease_registry=runner.lease_registry,
+        composer_ledger=composer_ledger,
     )
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
     bind_composer_coordinator(runner.write_coordinator)

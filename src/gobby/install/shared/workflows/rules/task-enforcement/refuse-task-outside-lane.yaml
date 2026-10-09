@@ -1,0 +1,26 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+# Josh, 2026-10-08: "I need the agents to stop creating tasks outside of a lane."
+# No session, role or agent type is exempt. A project with no open `lane` epic is
+# unaffected. The rule sees MCP calls only; operator CLI and HTTP paths bypass it.
+rules:
+  refuse-task-outside-lane:
+    description: "Refuse MCP task creation whose parent chain reaches no open lane epic"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: "creates_task_outside_lane(tool_input, event.data)"
+    effects:
+      - type: block
+        mcp_tools:
+          - "gobby-tasks:create_task"
+          - "gobby-tasks-ops:start_expansion_run"
+          - "gobby-tasks-ops:build_task"
+        reason: >-
+          Retry under a lane: set create_task's parent_task_id, or start_expansion_run's
+          task_id, to an open lane epic or one of its descendants. Open lane epics:
+          {{ open_lane_epic_refs() }}. Only an epic labeled `lane` is created without a
+          parent. build_task with a plan file creates an unparented epic, so create the
+          plan's epic under a lane and run start_expansion_run with its plan_file. If no
+          lane fits, ask the Orchestrator with gobby-agents:send_message. Nothing was
+          written.

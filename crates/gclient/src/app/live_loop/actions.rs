@@ -167,6 +167,9 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::FocusTerminal(terminal_id) => {
             focus_terminal(workspace, chrome, outcomes, &terminal_id).await?;
         }
+        ModalOutcome::FocusAgent(entry_id) => {
+            focus_agent(workspace, chrome, outcomes, &entry_id).await?;
+        }
         ModalOutcome::OpenWorktree(worktree_id) => {
             open_worktree(workspace, chrome, outcomes, &worktree_id).await?;
         }

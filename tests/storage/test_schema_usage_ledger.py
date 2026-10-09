@@ -11,7 +11,6 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
-from gobby.storage.schema_contract import expected_schema_identity
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import get_machine_id
@@ -200,6 +199,11 @@ def test_capacity_details_default_and_identity(temp_db: HubDatabase) -> None:
             "WHERE machine_id = %s AND provider = 'codex'",
             (machine_id,),
         ).fetchone()
+        migration = conn.execute(
+            "SELECT filename FROM schema_migrations WHERE version = %s",
+            (USAGE_LEDGER_VERSION,),
+        ).fetchone()
     assert row is not None
     assert json.loads(row["details"]) == {}
-    assert expected_schema_identity()["latest_version"] == USAGE_LEDGER_VERSION
+    assert migration is not None
+    assert migration["filename"] == "463_usage_ledger.sql"

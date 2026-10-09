@@ -479,6 +479,8 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         issued_at: datetime,
         expires_at: datetime,
     ) -> ManagedCredential | None:
+        if not self._rotation_owner_is_live(managed_execution_id):
+            return None
         password = secrets.token_urlsafe(32)
         successor_generation: int | None = None
         bootstrap_path = self._execution_root(managed_execution_id) / "bootstrap.json"
@@ -549,6 +551,42 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             reason="rotation-predecessor",
         )
         return credential
+
+    def _rotation_owner_is_live(self, execution_id: UUID) -> bool:
+        """Refuse ambiguous bindings and ended owners before minting any successor."""
+        from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
+
+        now = datetime.now(UTC)
+        bindings = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.list_active_principals()"
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(execution_id)
+            and isinstance(expiry := _row_value(row, "expires_at"), datetime)
+            and expiry > now
+        ]
+        if len(bindings) != 1:
+            return False
+        binding = bindings[0]
+        owner_kind = _row_value(binding, "owner_kind")
+        if owner_kind == "maintenance":
+            return _row_value(binding, "login_capable") is True
+        session = self._database.fetchone(
+            "SELECT status FROM sessions WHERE id = %s AND machine_id = %s",
+            (_row_value(binding, "session_id"), self._machine_id),
+        )
+        if session is None or _row_value(session, "status") in ("expired", "deleted"):
+            return False
+        if owner_kind == "tool_chat":
+            return True
+        if owner_kind != "agent_run":
+            return False
+        run = self._database.fetchone(
+            "SELECT status FROM agent_runs WHERE id = %s AND machine_id = %s",
+            (_row_value(binding, "agent_run_id"), self._machine_id),
+        )
+        return run is not None and _row_value(run, "status") in ACTIVE_AGENT_RUN_STATUSES
 
     def list_active(self) -> list[dict[str, object]]:
         """Return active scoped-role metadata without credential material."""

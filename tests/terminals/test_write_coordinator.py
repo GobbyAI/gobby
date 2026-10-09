@@ -15,6 +15,7 @@ from gobby.storage.terminals import (
     Terminal,
     UnresolvedWriteCapacityError,
 )
+from gobby.terminals.composer_ledger import LedgerRead
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
@@ -236,6 +237,34 @@ async def test_cancel_during_delivered_clear_returns_result_without_duplicate_re
         outcome = await attempt()
     assert isinstance(outcome, Delivered)
     assert runtime.write_log == [("text", "hello")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        ("automatic", LedgerRead("held", pending="continue")),
+        ("attention", LedgerRead("draft")),
+    ],
+)
+async def test_dispatch_records_the_write_origin_in_the_composer_ledger(
+    origin: Literal["automatic", "attention"], expected: LedgerRead
+) -> None:
+    coordinator, _fake, store = _coordinator()
+    terminal_id = next(iter(store.rows))
+    coordinator.composer_ledger.release(terminal_id)
+
+    await coordinator.write(
+        WriteRequest(
+            terminal_id=terminal_id,
+            action_key="write-1",
+            origin=origin,
+            kind="text",
+            payload="continue",
+        )
+    )
+
+    assert coordinator.composer_ledger.read(terminal_id) == expected
 
 
 @pytest.mark.asyncio

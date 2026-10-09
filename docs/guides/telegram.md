@@ -325,12 +325,12 @@ Use daemon bearer authentication and read-modify-write:
 
 ```bash
 GOBBY_API="http://127.0.0.1:60887"
-GOBBY_TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+: "${GOBBY_API_KEY:?Set a valid hub-issued API key}"
 CHANNEL_NAME="personal-telegram"
 
 CHANNEL_JSON="$(
   curl -fsS "$GOBBY_API/api/comms/channels" \
-    -H "Authorization: Bearer $GOBBY_TOKEN" |
+    -H "Authorization: Bearer $GOBBY_API_KEY" |
     jq -ce --arg name "$CHANNEL_NAME" '.[] | select(.name == $name)'
 )"
 CHANNEL_ID="$(jq -r '.id' <<<"$CHANNEL_JSON")"
@@ -342,12 +342,12 @@ UPDATED_CONFIG="$(
 
 jq -cn --argjson config "$UPDATED_CONFIG" '{"config": $config}' |
   curl -fsS -X PUT "$GOBBY_API/api/comms/channels/$CHANNEL_ID" \
-    -H "Authorization: Bearer $GOBBY_TOKEN" \
+    -H "Authorization: Bearer $GOBBY_API_KEY" \
     -H "Content-Type: application/json" \
     --data-binary @-
 
 curl -fsS "$GOBBY_API/api/comms/channels/$CHANNEL_ID/status" \
-  -H "Authorization: Bearer $GOBBY_TOKEN" |
+  -H "Authorization: Bearer $GOBBY_API_KEY" |
   jq '{active, is_polling, init_error, supports_webhooks, supports_polling}'
 ```
 

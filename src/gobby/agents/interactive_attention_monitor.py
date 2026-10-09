@@ -67,8 +67,6 @@ class InteractiveAttentionMonitor:
             InteractiveCapacityRecovery(
                 session_manager,
                 attention_manager,
-                detection_registry,
-                registry,
                 write_coordinator,
                 max_reprompt_attempts
                 if max_reprompt_attempts is not None

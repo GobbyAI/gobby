@@ -86,6 +86,7 @@ def test_control_goldens_match_rust_emitter() -> None:
         "kind": "input",
         "bytes": 1,
         "interrupt": None,
+        "submit": False,
         "epoch": "epoch-1",
         "seq": 43,
     }
@@ -98,12 +99,24 @@ def test_control_goldens_match_rust_emitter() -> None:
         interrupt=None,
         epoch="epoch-1",
         seq=43,
+        submit=False,
     )
     assert decode_host_event(input_activity | {"kind": "paste", "interrupt": "ctrl_c"}) == (
-        InputActivityEvent("t", "ht-1", "att-1", "paste", 1, "ctrl_c", "epoch-1", 43)
+        InputActivityEvent("t", "ht-1", "att-1", "paste", 1, "ctrl_c", "epoch-1", 43, submit=False)
     )
     with pytest.raises(ValueError, match="interrupt"):
         decode_host_event(input_activity | {"interrupt": "sigint"})
+    assert decode_host_event(input_activity | {"submit": True}) == (
+        InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=True)
+    )
+    assert decode_host_event(input_activity | {"submit": "yes"}) == (
+        InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=None)
+    )
+    # A host older than the flag cannot say which input submitted.
+    older_host = {key: value for key, value in input_activity.items() if key != "submit"}
+    assert decode_host_event(older_host) == (
+        InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=None)
+    )
 
 
 def test_control_client_matches_golden_corpus() -> None:

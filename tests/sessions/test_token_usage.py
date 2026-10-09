@@ -234,9 +234,11 @@ async def test_batched_transcript_recording_matches_sequential_record_semantics(
     batched_flags: list[bool] = []
     original_record_batch = store.record_batch
 
-    def _spy_record_batch(events: list[TokenEvent]) -> list[bool]:
+    def _spy_record_batch(
+        events: list[TokenEvent], *, retention_cutoff: datetime | None = None
+    ) -> list[bool]:
         batched_events.extend(events)
-        flags = original_record_batch(events)
+        flags = original_record_batch(events, retention_cutoff=retention_cutoff)
         batched_flags.extend(flags)
         return flags
 

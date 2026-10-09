@@ -18,6 +18,72 @@ use super::*;
 use crate::local_token::AUTHORIZATION_HEADER;
 
 const TOKEN: &str = "operator-token";
+
+#[test]
+fn capability_envelope_preserves_signed_grant_payload() {
+    let grant = fixture_grant(PrincipalKind::AgentRun).with_checksum();
+    let mut envelope = serde_json::to_value(&grant).expect("grant");
+    envelope["managed_api_token"] = json!("fixture-capability");
+    let parsed = parse_grant_json(&serde_json::to_vec(&envelope).expect("envelope"))
+        .expect("known envelope metadata");
+    assert_eq!(parsed, grant);
+    assert!(
+        !String::from_utf8(parsed.model_dump_canonical().expect("canonical"))
+            .expect("utf8")
+            .contains("fixture-capability")
+    );
+    envelope["unexpected_metadata"] = json!(true);
+    assert!(parse_grant_json(&serde_json::to_vec(&envelope).expect("envelope")).is_err());
+}
+
+#[test]
+fn managed_handshake_reads_renewed_file_capability() {
+    let harness = Harness::new();
+    let mut managed = fixture_grant(PrincipalKind::AgentRun);
+    managed.expires_at = NOW - 1;
+    managed = managed.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &managed).expect("private grant");
+    let renewed_token = envelope_token(NOW + 60, PROJECT);
+    let expired_token = envelope_token(NOW - 10, PROJECT);
+    let mut payload = serde_json::to_value(&managed).expect("grant");
+    payload["managed_api_token"] = json!(renewed_token);
+    let bytes = serde_json::to_vec(&payload).expect("envelope");
+    fs::write(&path, &bytes).expect("daemon-published renewal");
+    let mut renewed = managed.clone();
+    renewed.expires_at = NOW + 3000;
+    if let PostgresCapability::Direct {
+        credential_generation,
+        ..
+    } = &mut renewed.capabilities.postgres
+    {
+        *credential_generation += 1;
+    }
+    renewed = renewed.with_checksum();
+    let scripted = spawn_managed_challenge(&renewed_token, renewed.clone());
+    let mut request = harness.request(Some(scripted.url.clone()));
+    request.managed_bootstrap = Some(path.clone());
+    request.managed_envelope = Some(expired_token.clone());
+    request.expected_execution_id = managed.principal.execution_id.clone();
+    request.session_id = managed.principal.session_id.clone();
+    let acquired = acquire_with(&request).expect("renewed capability handshake");
+    let requests = join(scripted);
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.contains(&format!("Bearer {renewed_token}")))
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains(&expired_token))
+    );
+    assert_eq!(
+        acquired.bundle.credential_generation(),
+        renewed.credential_generation()
+    );
+    assert_eq!(fs::read(path).expect("unchanged daemon envelope"), bytes);
+}
 const MACHINE: &str = "machine-test";
 const PROJECT: &str = "project-test";
 const NOW: i64 = 1_700_000_100;

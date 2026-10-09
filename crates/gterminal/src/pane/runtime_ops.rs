@@ -339,12 +339,15 @@ impl PaneRuntime {
         self.try_send_bytes(self.paste_payload(text))
     }
 
+    /// Whether the child asked for bracketed paste (mode 2004), so a paste
+    /// reaches it wrapped as text rather than as keystrokes.
+    pub fn bracketed_paste(&self) -> bool {
+        self.input_state()
+            .is_some_and(|state| state.bracketed_paste)
+    }
+
     fn paste_payload(&self, text: String) -> Bytes {
-        let bracketed = self
-            .input_state()
-            .map(|state| state.bracketed_paste)
-            .unwrap_or(false);
-        let payload = if bracketed {
+        let payload = if self.bracketed_paste() {
             format!("\x1b[200~{text}\x1b[201~")
         } else {
             text

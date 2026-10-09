@@ -175,6 +175,8 @@ def test_crew_lane_renders_operator_inputs(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         lane=lane,
+        lane_columns=160,
+        lane_rows=100,
         seats=seat,
         workspace="pilot-workspace",
         worktree="pilot-worktree",
@@ -219,7 +221,13 @@ def test_crew_lane_renders_operator_inputs(
     assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
     assert args["reserved_run_id"] == "pilot-run"
     assert args["placement"] == {
-        "split": {"pane": "pilot:resolved-pane", "axis": "right", "title": f"Lane {lane} {title}"}
+        "split": {
+            "pane": "pilot:resolved-pane",
+            "axis": "balanced",
+            "columns": 160,
+            "rows": 100,
+            "title": f"Lane {lane} {title}",
+        }
     }
     assert f".gobby/roles/{role_file}" in args["prompt"]
     assert ".gobby/roles/_common.md first" in args["prompt"]
@@ -277,6 +285,7 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         lane="6",
+        lane_rows=100,
         seats=",".join(reversed(seats)),
         lane_pane=lane_pane,
         workspace="pilot-workspace",
@@ -312,7 +321,9 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
         assert placement == {
             "split": {
                 "pane": anchor_pane,
-                "axis": "right",
+                "axis": "balanced",
+                "columns": 80,
+                "rows": 100,
                 "title": f"Lane 6 {titles[step.id]}",
             }
         }

@@ -21,6 +21,23 @@ use ratatui::Terminal;
 /// The board's System host: Catppuccin Mocha's base.
 const HOST: (u8, u8, u8) = (0x1e, 0x1e, 0x2e);
 
+#[test]
+fn midnight_moss_has_the_approved_label_and_preference_key() {
+    let theme = ThemeName::ALL
+        .into_iter()
+        .find(|theme| theme.label() == "Midnight moss")
+        .expect("the approved theme name is offered");
+    assert_eq!(serde_json::to_string(&theme).unwrap(), "\"midnight-moss\"");
+    assert_eq!(
+        serde_json::from_str::<ThemeName>("\"midnight-moss\"").unwrap(),
+        theme
+    );
+    assert!(ThemeName::ALL
+        .into_iter()
+        .all(|theme| theme.label() != "Your proposal"));
+    assert!(serde_json::from_str::<ThemeName>("\"your-proposal\"").is_err());
+}
+
 /// A light host for System under a light OS. The board draws no such cell,
 /// so this is a fixture: Catppuccin Latte's base.
 const LIGHT_HOST: (u8, u8, u8) = (0xef, 0xf1, 0xf5);
@@ -37,7 +54,7 @@ const DARK: [(ThemeName, [&str; 5]); 9] = [
         ["#041225", "#232521", "#445427", "#102035", "#e1a79d"],
     ),
     (
-        ThemeName::YourProposal,
+        ThemeName::MidnightMoss,
         ["#000516", "#1e2b17", "#5a5b58", "#09192d", "#e1a79d"],
     ),
     (
@@ -72,7 +89,7 @@ const DARK: [(ThemeName, [&str; 5]); 9] = [
 const SYSTEM: [(ThemeName, [&str; 3]); 9] = [
     (ThemeName::Restored, ["#373835", "#5f615d", "#89c4c6"]),
     (ThemeName::Moss, ["#373835", "#57673a", "#e1a79d"]),
-    (ThemeName::YourProposal, ["#313d18", "#626460", "#e1a79d"]),
+    (ThemeName::MidnightMoss, ["#313d18", "#626460", "#e1a79d"]),
     (ThemeName::InverseBar, ["#353633", "#d0d2cd", "#89c4c6"]),
     (ThemeName::GobbyBar, ["#353633", "#a7d91d", "#e1a79d"]),
     (ThemeName::ContrastChrome, ["#a4a5a1", "#dddfda", "#89c4c6"]),
@@ -97,7 +114,7 @@ const LIGHT: [LightCell; 9] = [
         [Some(["#9d9f9b", "#c8d8ae"]), Some(["#e5e7e3", "#a1b879"])],
     ),
     (
-        ThemeName::YourProposal,
+        ThemeName::MidnightMoss,
         ["#f7ebca", "#e8dbbb", "#7d3d34"],
         [Some(["#979995", "#c6c8c4"]), Some(["#d6d8d4", "#9d9f9b"])],
     ),
@@ -626,7 +643,7 @@ fn each_appearance_offers_its_themes() {
     let standalone = vec![
         Restored,
         Moss,
-        YourProposal,
+        MidnightMoss,
         Staircase,
         InverseBar,
         GobbyBar,
@@ -642,7 +659,7 @@ fn each_appearance_offers_its_themes() {
     let system = vec![
         Restored,
         Moss,
-        YourProposal,
+        MidnightMoss,
         InverseBar,
         GobbyBar,
         ContrastChrome,

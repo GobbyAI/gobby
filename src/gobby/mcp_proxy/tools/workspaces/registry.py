@@ -221,6 +221,14 @@ def create_workspaces_registry(
         return await _run(lambda actor: ops().pane_swap(actor, pane, other, node=node))
 
     @registry.tool(
+        description=f"Balance a tab at an 80-column, 12-row floor using viewport dimensions. {_NODE}"
+    )
+    async def rebalance_tab(
+        tab: str, rows: int, columns: int = 80, node: str | None = None
+    ) -> dict[str, Any]:
+        return await _run(lambda actor: ops().tab_rebalance(actor, tab, columns, rows, node=node))
+
+    @registry.tool(
         description=(
             "Rename what `ref` names: a workspace's name, or a tab's title or pane's label "
             f"(omit `name` to clear those). {_NODE}"

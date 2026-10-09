@@ -339,7 +339,7 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         serde_json::json!({
             "event":"input_activity","terminal_id":"t","host_terminal_id":"ht-1",
             "attachment_id":"att-1","kind":"input","bytes":1,"interrupt":null,
-            "epoch":"epoch-1","seq":43
+            "submit":false,"epoch":"epoch-1","seq":43
         }),
     );
     write_json(

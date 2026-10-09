@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -20,6 +20,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.sessions import startup_claim as _startup_claim
 from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
+from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
     resolve_session_project_id,
@@ -35,10 +36,19 @@ logger = logging.getLogger(__name__)
 
 _MutationResult = TypeVar("_MutationResult")
 
-# The blob is decoded here, so take the server's text and skip the pool's
-# canonical re-dump of jsonb containers (#23359).
-_SELECT_VARIABLES_TEXT = (
-    "SELECT variables::text AS variables FROM session_variables WHERE session_id = %s"
+_STORED_VARIABLES_OBJECT = (
+    "CASE WHEN jsonb_typeof(variables) = 'object' THEN variables ELSE '{}'::jsonb END"
+)
+_SELECT_SCOPED_VARIABLES_TEXT = (
+    "SELECT (SELECT COALESCE(jsonb_object_agg(key, stored -> key), '{}'::jsonb) "
+    "FROM unnest(%s::text[]) AS requested(key) WHERE stored ? key)::text AS variables "
+    f"FROM (SELECT {_STORED_VARIABLES_OBJECT} AS stored FROM session_variables "
+    "WHERE session_id = %s) AS session_state"
+)
+_UPDATE_SCOPED_VARIABLES = (
+    "UPDATE session_variables SET variables = "
+    f"((%s::jsonb || {_STORED_VARIABLES_OBJECT}) - %s::text[]) || %s::jsonb, "
+    "updated_at = %s WHERE session_id = %s"
 )
 
 
@@ -103,19 +113,7 @@ def _clear_variable_defaults_caches() -> None:
 register_revision_listener("variables", _clear_variable_defaults_caches)
 
 
-def _session_dirty_file_checkouts(variables: Mapping[str, Any]) -> dict[str, list[str]]:
-    """Return a mutable copy of ``session_dirty_file_checkouts`` (checkout root -> paths)."""
-    raw = variables.get("session_dirty_file_checkouts")
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        str(root): list(dict.fromkeys(str(path) for path in paths if path))
-        for root, paths in raw.items()
-        if isinstance(paths, list)
-    }
-
-
-class SessionVariableManager:
+class SessionVariableManager(SessionEditLedger):
     """Manages session-scoped shared variables (visible to all workflows).
 
     Variable resolution layers definition defaults under session overrides,
@@ -197,25 +195,45 @@ class SessionVariableManager:
                 variables["_memory_review_stop_delivered"] = False
             return None, changed
 
-        self._mutate_variables(session_id, enqueue)
+        self._mutate_variables(
+            session_id,
+            enqueue,
+            keys=(
+                "_memory_review_stop_delivered",
+                "_memory_pending_task_reviews",
+                "_memory_task_review_records",
+            ),
+        )
 
     def _mutate_variables(
         self,
         session_id: str,
         mutator: Callable[[dict[str, Any]], tuple[_MutationResult, bool]],
         *,
+        keys: Iterable[str],
         apply_defaults: bool = False,
     ) -> _MutationResult:
-        """Serialize one variable mutation and persist only changed payloads."""
+        """Mutate a declared key scope without decoding or re-encoding unrelated state.
+
+        Callers declare every key their callback reads or writes. The advisory lock
+        still covers projection and persistence, including the first insert.
+        """
+        scope = sorted(set(keys) | {"active_task_id", "task_selection_history"})
+        stored_scope: list[str] = _sanitize_variables_payload(scope)
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
+            row = conn.execute(_SELECT_SCOPED_VARIABLES_TEXT, (stored_scope, session_id)).fetchone()
             variables = _decode_variables_payload(row["variables"]) if row else {}
             previous_task_id = variables.get("active_task_id")
             previous_history = variables.get("task_selection_history")
-            if apply_defaults:
-                variables = self._apply_variable_defaults(
-                    variables, resolve_session_project_id(self.db, session_id)
-                )
+            defaults = (
+                self._get_variable_defaults(resolve_session_project_id(self.db, session_id))
+                if apply_defaults
+                else {}
+            )
+            variables = {
+                **{key: defaults[key] for key in stored_scope if key in defaults},
+                **variables,
+            }
             result, changed = mutator(variables)
             if not changed:
                 return result
@@ -228,20 +246,30 @@ class SessionVariableManager:
             else:
                 variables["task_selection_history"] = previous_history
             record_task_selection(variables, previous_task_id, now)
+            if undeclared := variables.keys() - (set(scope) | set(stored_scope)):
+                raise ValueError(f"Mutation wrote undeclared variable keys: {sorted(undeclared)}")
             encoded = _encode_variables_payload(variables)
+            encoded_defaults = _encode_variables_payload(defaults)
             if row:
                 conn.execute(
-                    "UPDATE session_variables SET variables = %s, updated_at = %s "
-                    "WHERE session_id = %s",
-                    (encoded, now, session_id),
+                    _UPDATE_SCOPED_VARIABLES,
+                    (encoded_defaults, stored_scope, encoded, now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
-                    "VALUES (%s, %s, %s)",
-                    (session_id, encoded, now),
+                    "VALUES (%s, (%s::jsonb - %s::text[]) || %s::jsonb, %s)",
+                    (session_id, encoded_defaults, stored_scope, encoded, now),
                 )
             return result
+
+    def get_variable_subset(self, session_id: str, keys: Iterable[str]) -> dict[str, Any]:
+        """Read selected layered values without materializing the session blob."""
+        scope = sorted(set(_sanitize_variables_payload(list(keys))))
+        row = self.db.fetchone(_SELECT_SCOPED_VARIABLES_TEXT, (scope, session_id))
+        stored = _decode_variables_payload(row["variables"]) if row else {}
+        defaults = self._get_variable_defaults(resolve_session_project_id(self.db, session_id))
+        return {**{key: defaults[key] for key in scope if key in defaults}, **stored}
 
     def set_variable(self, session_id: str, name: str, value: Any) -> None:
         """Set a single session variable (atomic read-modify-write)."""
@@ -281,7 +309,7 @@ class SessionVariableManager:
             variables.update(updates)
             return True, True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=updates)
 
     def select_task_claim(self, session_id: str, task_id: str, ref: str) -> bool:
         """Select a canonically owned task while the caller retains its task row lock."""
@@ -291,7 +319,7 @@ class SessionVariableManager:
             variables.update(add_claimed_task(variables, task_id, ref))
             return True, True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=("claimed_tasks", "task_claimed"))
 
     def release_task_claim(self, session_id: str, task_id: str) -> bool:
         """Release one claim under the variable lock, preserving edit attribution."""
@@ -303,7 +331,9 @@ class SessionVariableManager:
             variables.update(updates)
             return changed, changed
 
-        return self._mutate_variables(session_id, release)
+        return self._mutate_variables(
+            session_id, release, keys=("claimed_tasks", "task_claimed", "task_has_commits")
+        )
 
     def merge_existing_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         """Atomically merge updates without creating a missing session row."""
@@ -311,7 +341,8 @@ class SessionVariableManager:
             return False
 
         with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-            row = conn.execute(_SELECT_VARIABLES_TEXT, (session_id,)).fetchone()
+            scope = sorted(_sanitize_variables_payload(list(updates)))
+            row = conn.execute(_SELECT_SCOPED_VARIABLES_TEXT, (scope, session_id)).fetchone()
             if row is None:
                 return False
 
@@ -321,9 +352,14 @@ class SessionVariableManager:
                 return False
 
             conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s "
-                "WHERE session_id = %s",
-                (_encode_variables_payload(merged), datetime.now(UTC).isoformat(), session_id),
+                _UPDATE_SCOPED_VARIABLES,
+                (
+                    "{}",
+                    scope,
+                    _encode_variables_payload(merged),
+                    datetime.now(UTC).isoformat(),
+                    session_id,
+                ),
             )
             return True
 
@@ -349,7 +385,7 @@ class SessionVariableManager:
             variables[boolean_name] = count > 0
             return count, True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=(counter_name, boolean_name))
 
     def append_to_bounded_list_variable(
         self,
@@ -373,7 +409,7 @@ class SessionVariableManager:
                 variables.update(updates)
             return len(bounded_items), True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=(name, *(updates or {})))
 
     def upsert_bounded_list_variable(
         self,
@@ -408,7 +444,7 @@ class SessionVariableManager:
                 variables.update(updates)
             return len(bounded_items), True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=(name, *(updates or {})))
 
     def upsert_open_tool_error(
         self,
@@ -461,7 +497,7 @@ class SessionVariableManager:
             variables["open_tool_errors"] = normalize_open_tool_error_records(records)
             return None, True
 
-        self._mutate_variables(session_id, mutate)
+        self._mutate_variables(session_id, mutate, keys=("open_tool_errors",))
 
     def resolve_open_tool_errors(
         self,
@@ -491,7 +527,7 @@ class SessionVariableManager:
             variables["open_tool_errors"] = retained
             return None, True
 
-        self._mutate_variables(session_id, mutate)
+        self._mutate_variables(session_id, mutate, keys=("open_tool_errors",))
 
     def append_to_set_variable(
         self,
@@ -536,7 +572,7 @@ class SessionVariableManager:
                 variables[name] = sorted(existing)
             return True, True
 
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
+        return self._mutate_variables(session_id, mutate, apply_defaults=True, keys=(name,))
 
     def claim_set_variable_values(
         self,
@@ -567,7 +603,7 @@ class SessionVariableManager:
             variables[name] = sorted(existing)
             return claimed, True
 
-        return self._mutate_variables(session_id, mutate)
+        return self._mutate_variables(session_id, mutate, keys=(name,))
 
     def append_to_set_variable_and_conditional_merge(
         self,
@@ -597,337 +633,9 @@ class SessionVariableManager:
 
             return True, True
 
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
-
-    def record_edited_file(
-        self,
-        session_id: str,
-        repo_relative_path: str,
-        checkout_root: str | None = None,
-    ) -> bool:
-        """Record a successful repo file edit in session and active-task ledgers."""
-        return self.record_edited_files(
-            session_id,
-            [repo_relative_path],
-            checkout_root=checkout_root,
+        return self._mutate_variables(
+            session_id, mutate, apply_defaults=True, keys=(name, condition_name, *updates)
         )
-
-    def record_edited_files(
-        self,
-        session_id: str,
-        repo_relative_paths: list[str],
-        *,
-        checkout_root: str | None = None,
-        edited_at: float | None = None,
-        started_at: float | None = None,
-        attribute_to_task: bool = True,
-    ) -> bool:
-        """Atomically record one successful mutation observation and its paths.
-
-        ``edited_at`` is the epoch time the edit hook fired; a replayed envelope
-        carries its original time, so the ledger never mistakes replay time for
-        edit time.
-        """
-        normalized_paths = list(dict.fromkeys(path for path in repo_relative_paths if path))
-        if not normalized_paths:
-            return False
-        stamp = time.time() if edited_at is None else edited_at
-
-        from gobby.workflows.task_claim_state import (
-            active_task_id_for_edit,
-            assert_task_edit_paths_available,
-            normalize_task_checkout_root,
-            record_task_live_edit_starts,
-            task_selected_at,
-        )
-
-        normalized_checkout = normalize_task_checkout_root(checkout_root)
-
-        def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
-            task_id = (
-                active_task_id_for_edit(variables)
-                if started_at is None
-                else task_selected_at(variables, started_at)
-            )
-            if not attribute_to_task:
-                task_id = None
-            if started_at is not None and (
-                task_id is None or task_id not in variables.get("claimed_tasks", {})
-            ):
-                logger.warning(
-                    "Edit attribution has no owned selection at tool start; use claim_task(task_id) "
-                    "to select the task before retrying the edit (session %s)",
-                    session_id,
-                )
-                task_id = None
-            if task_id is not None:
-                assert_task_edit_paths_available(
-                    variables, task_id, normalized_paths, normalized_checkout
-                )
-            stored = variables.get("session_edited_files", [])
-            if not isinstance(stored, list):
-                stored = [stored] if stored else []
-            session_files = list(dict.fromkeys(str(file) for file in stored if file))
-            session_files.extend(path for path in normalized_paths if path not in session_files)
-            variables["session_edited_files"] = session_files
-            # Paths edited since the last reconcile released them as clean; this
-            # is what ``has_dirty_files`` reads, so no hook has to ask git.
-            stored_dirty = variables.get("session_dirty_files", [])
-            if not isinstance(stored_dirty, list):
-                stored_dirty = [stored_dirty] if stored_dirty else []
-            dirty_files = list(dict.fromkeys(str(file) for file in stored_dirty if file))
-            dirty_files.extend(path for path in normalized_paths if path not in dirty_files)
-            variables["session_dirty_files"] = dirty_files
-            if normalized_checkout is not None:
-                # Which checkout each dirty path was edited in: a reconcile run
-                # from another worktree's git cannot see this dirt and must not
-                # release it.
-                dirty_checkouts = _session_dirty_file_checkouts(variables)
-                files_for_dirty_checkout = dirty_checkouts.get(normalized_checkout, [])
-                files_for_dirty_checkout.extend(
-                    path for path in normalized_paths if path not in files_for_dirty_checkout
-                )
-                dirty_checkouts[normalized_checkout] = files_for_dirty_checkout
-                variables["session_dirty_file_checkouts"] = dirty_checkouts
-
-            if task_id:
-                record_task_live_edit_starts(
-                    variables, task_id, normalized_paths, normalized_checkout, stamp
-                )
-                raw_task_files = variables.get("task_edited_files") or {}
-                task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
-                stored_for_task = task_files.get(task_id, [])
-                if not isinstance(stored_for_task, list):
-                    stored_for_task = [stored_for_task] if stored_for_task else []
-                files_for_task = list(dict.fromkeys(str(file) for file in stored_for_task if file))
-                files_for_task.extend(
-                    path for path in normalized_paths if path not in files_for_task
-                )
-                task_files = dict(task_files)
-                task_files[task_id] = files_for_task
-                variables["task_edited_files"] = task_files
-                # Epoch seconds of the newest edit per path: release_task_paths compares
-                # it against the last commit touching the path to tell this task's own
-                # uncommitted work from someone else's dirt on a stale attribution. A
-                # stale replay never lowers a newer stamp.
-                raw_times = variables.get("task_edited_file_times") or {}
-                task_times = raw_times if isinstance(raw_times, dict) else {}
-                raw_task_times = task_times.get(task_id, {})
-                times_for_task = dict(raw_task_times) if isinstance(raw_task_times, dict) else {}
-                for path in normalized_paths:
-                    previous = times_for_task.get(path)
-                    times_for_task[path] = (
-                        max(float(previous), stamp) if isinstance(previous, (int, float)) else stamp
-                    )
-                task_times = dict(task_times)
-                task_times[task_id] = times_for_task
-                variables["task_edited_file_times"] = task_times
-                if normalized_checkout is not None:
-                    # Clean paths leave the live ledger, but close evidence still
-                    # needs their task attribution for later transcript edits.
-                    variables.setdefault(
-                        "task_edited_file_checkouts_history_started_at", time.time()
-                    )
-                    for ledger_name in (
-                        "task_edited_file_checkouts",
-                        "task_edited_file_checkouts_history",
-                    ):
-                        raw_checkouts = variables.get(ledger_name) or {}
-                        task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
-                        raw_task_checkouts = task_checkouts.get(task_id, {})
-                        checkouts_for_task = (
-                            raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
-                        )
-                        stored_for_checkout = checkouts_for_task.get(normalized_checkout, [])
-                        files_for_checkout = (
-                            stored_for_checkout if isinstance(stored_for_checkout, list) else []
-                        )
-                        files_for_checkout = list(
-                            dict.fromkeys(str(file) for file in files_for_checkout if file)
-                        )
-                        files_for_checkout.extend(
-                            path for path in normalized_paths if path not in files_for_checkout
-                        )
-                        checkouts_for_task = dict(checkouts_for_task)
-                        checkouts_for_task[normalized_checkout] = files_for_checkout
-                        task_checkouts = dict(task_checkouts)
-                        task_checkouts[task_id] = checkouts_for_task
-                        variables[ledger_name] = task_checkouts
-            return True, True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
-
-    def release_session_dirty_files(
-        self,
-        session_id: str,
-        repo_relative_paths: list[str],
-        *,
-        checkout_root: str | None = None,
-    ) -> list[str]:
-        """Atomically drop paths git reconciled as clean from the session dirty ledger.
-
-        ``checkout_root`` is the checkout whose git reported the paths clean. A
-        path stays dirty while any other checkout still records an edit of it,
-        and a path recorded only in other checkouts is never released here.
-        """
-        from gobby.workflows.task_claim_state import (
-            normalize_task_checkout_root,
-            normalize_task_edited_path,
-        )
-
-        requested = {
-            path
-            for value in repo_relative_paths
-            if (path := normalize_task_edited_path(value)) is not None
-        }
-        root = normalize_task_checkout_root(checkout_root)
-
-        def mutate(variables: dict[str, Any]) -> tuple[list[str], bool]:
-            stored = variables.get("session_dirty_files", [])
-            values = stored if isinstance(stored, list) else []
-            dirty_checkouts = _session_dirty_file_checkouts(variables)
-            checkouts_changed = False
-            if root is not None and root in dirty_checkouts:
-                kept = [path for path in dirty_checkouts[root] if path not in requested]
-                checkouts_changed = len(kept) != len(dirty_checkouts[root])
-                if kept:
-                    dirty_checkouts[root] = kept
-                else:
-                    del dirty_checkouts[root]
-            still_dirty_elsewhere = {path for paths in dirty_checkouts.values() for path in paths}
-            released: list[str] = []
-            remaining: list[str] = []
-            for value in values:
-                normalized = normalize_task_edited_path(value)
-                if normalized is None:
-                    continue
-                releasable = normalized in requested and normalized not in still_dirty_elsewhere
-                bucket = released if releasable else remaining
-                if normalized not in bucket:
-                    bucket.append(normalized)
-            if not released and not checkouts_changed:
-                return released, False
-            variables["session_dirty_files"] = remaining
-            variables["session_dirty_file_checkouts"] = dirty_checkouts
-            return released, True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
-
-    def release_task_edited_files(
-        self,
-        session_id: str,
-        task_id: str,
-        repo_relative_paths: list[str],
-        *,
-        checkout_root: str | None = None,
-    ) -> tuple[list[str], list[str]]:
-        """Atomically release owner-confirmed paths from one task attribution ledger."""
-        from gobby.workflows.task_claim_state import (
-            normalize_task_checkout_root,
-            normalize_task_edited_path,
-            release_task_live_edit_starts,
-        )
-
-        requested = list(
-            dict.fromkeys(
-                path
-                for value in repo_relative_paths
-                if (path := normalize_task_edited_path(value)) is not None
-            )
-        )
-        requested_set = set(requested)
-        normalized_checkout = normalize_task_checkout_root(checkout_root)
-
-        def mutate(variables: dict[str, Any]) -> tuple[tuple[list[str], list[str]], bool]:
-            raw_task_files = variables.get("task_edited_files") or {}
-            task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
-            stored = task_files.get(task_id, [])
-            files_for_task = stored if isinstance(stored, list) else []
-
-            raw_checkouts = variables.get("task_edited_file_checkouts") or {}
-            task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
-            raw_task_checkouts = task_checkouts.get(task_id, {})
-            checkouts_for_task = raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
-            scoped_paths = (
-                checkouts_for_task.get(normalized_checkout, [])
-                if normalized_checkout is not None
-                else None
-            )
-            has_scoped_attribution = (
-                normalized_checkout is not None
-                and normalized_checkout in checkouts_for_task
-                and isinstance(scoped_paths, list)
-            )
-            scoped_requested = set(scoped_paths or []) & requested_set
-            retained_scoped_paths = {
-                str(path)
-                for root, paths in checkouts_for_task.items()
-                if root != normalized_checkout and isinstance(paths, list)
-                for path in paths
-            }
-
-            released: list[str] = []
-            remaining: list[str] = []
-            for value in files_for_task:
-                normalized = normalize_task_edited_path(value)
-                should_release = normalized in requested_set
-                if has_scoped_attribution:
-                    should_release = (
-                        normalized in scoped_requested and normalized not in retained_scoped_paths
-                    )
-                if should_release:
-                    if normalized is not None and normalized not in released:
-                        released.append(normalized)
-                    continue
-                if normalized is not None and normalized not in remaining:
-                    remaining.append(normalized)
-
-            if has_scoped_attribution:
-                released = [path for path in requested if path in scoped_requested]
-            if not released:
-                return (released, remaining), False
-
-            updated_task_files = dict(task_files)
-            if remaining:
-                updated_task_files[task_id] = remaining
-            else:
-                updated_task_files.pop(task_id, None)
-            variables["task_edited_files"] = updated_task_files
-            release_task_live_edit_starts(variables, task_id, released, normalized_checkout)
-            raw_times = variables.get("task_edited_file_times") or {}
-            task_times = raw_times if isinstance(raw_times, dict) else {}
-            if task_id in task_times:
-                raw_task_times = task_times.get(task_id)
-                stored_times = raw_task_times if isinstance(raw_task_times, dict) else {}
-                remaining_times = {
-                    path: stamp
-                    for path, stamp in stored_times.items()
-                    if normalize_task_edited_path(path) not in released
-                }
-                updated_task_times = dict(task_times)
-                if remaining_times:
-                    updated_task_times[task_id] = remaining_times
-                else:
-                    updated_task_times.pop(task_id, None)
-                variables["task_edited_file_times"] = updated_task_times
-            if has_scoped_attribution and normalized_checkout is not None:
-                updated_checkouts_for_task = dict(checkouts_for_task)
-                remaining_checkout_paths = [
-                    path for path in (scoped_paths or []) if path not in requested_set
-                ]
-                if remaining_checkout_paths:
-                    updated_checkouts_for_task[normalized_checkout] = remaining_checkout_paths
-                else:
-                    updated_checkouts_for_task.pop(normalized_checkout, None)
-                updated_task_checkouts = dict(task_checkouts)
-                if updated_checkouts_for_task:
-                    updated_task_checkouts[task_id] = updated_checkouts_for_task
-                else:
-                    updated_task_checkouts.pop(task_id, None)
-                variables["task_edited_file_checkouts"] = updated_task_checkouts
-            return (released, remaining), True
-
-        return self._mutate_variables(session_id, mutate, apply_defaults=True)
 
     def claim_startup_context(
         self,

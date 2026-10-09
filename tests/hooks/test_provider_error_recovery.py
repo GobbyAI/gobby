@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +12,7 @@ from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._misc import (
     PROVIDER_ERROR_RESUME_PROMPT,
+    USAGE_LIMIT_VALVE,
     _stop_failure_error,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -18,6 +20,7 @@ from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
 
 pytestmark = pytest.mark.unit
 
@@ -40,6 +43,7 @@ def _case(
     loop: asyncio.AbstractEventLoop,
     *,
     source: str = "claude",
+    terminal_manager: MagicMock | None = None,
 ) -> tuple[EventHandlers, str, TurnLifecycleReducer, AttentionStateManager]:
     sessions = SessionManager(temp_db)
     session = sessions.register(
@@ -50,7 +54,7 @@ def _case(
     )
     attention = AttentionStateManager(temp_db)
     lifecycle = TurnLifecycleReducer(sessions, attention)
-    handlers = EventHandlers(event_loop=loop)
+    handlers = EventHandlers(event_loop=loop, terminal_manager=terminal_manager)
     handlers._turn_lifecycle = lifecycle
     return handlers, session.id, lifecycle, attention
 
@@ -102,6 +106,29 @@ def test_stop_failure_uses_rendered_message_and_classifies_all_diagnostics() -> 
         "The provider is temporarily unavailable",
         True,
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "details"),
+    [
+        ("rate_limit", "You've hit your monthly spend limit · resets Oct 11 at 11pm " * 6),
+        ("api_error", '{"apiError": "usage_limit_reached"}'),
+    ],
+)
+def test_claude_usage_limit_is_terminal_and_names_the_valve(error: str, details: str) -> None:
+    error_type, message, retryable = _stop_failure_error(_event(error, details))
+
+    assert (error_type, retryable) == ("usage_limit", False)
+    assert message.endswith(USAGE_LIMIT_VALVE)
+    assert "release_composer" in message
+    assert len(message) <= 240
+
+
+def test_rate_limit_from_another_provider_stays_retryable() -> None:
+    event = _event("rate_limit", "Too many requests")
+    event.source = SessionSource.GROK
+
+    assert _stop_failure_error(event) == ("rate_limit", "Too many requests", True)
 
 
 @pytest.mark.asyncio
@@ -278,3 +305,41 @@ async def test_nonretryable_error_blocks_without_wake(
     assert current.reason == "provider_error"
     assert current.payload["message"] == "API Error: 401"
     assert wake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_usage_limit_blocks_the_composer_and_sends_no_keys(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.hooks.event_handlers import _base, _misc
+
+    ledger = ComposerLedger()
+    ledger.release("terminal-1")
+    terminals = MagicMock(name="terminal_manager")
+    terminals.get_live_for_session.return_value = SimpleNamespace(id="terminal-1")
+    handlers, session_id, lifecycle, attention = _case(
+        temp_db, sample_project, asyncio.get_running_loop(), terminal_manager=terminals
+    )
+    lifecycle.begin_turn(session_id, TurnEvidence(source="claude", provider_turn_key="turn-1"))
+    wake = RecordingWake()
+    coordinator = SimpleNamespace(composer_ledger=ledger)
+    monkeypatch.setattr(
+        _base, "get_app_context", lambda: SimpleNamespace(write_coordinator=coordinator)
+    )
+    monkeypatch.setattr(_misc, "get_app_context", lambda: SimpleNamespace(wake_dispatcher=wake))
+    monkeypatch.setattr(_misc, "PROVIDER_ERROR_BACKOFF_SECONDS", (0.0, 0.0, 0.0))
+
+    handlers.handle_stop_failure(
+        _event("rate_limit", "You've hit your monthly spend limit", session_id)
+    )
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(wake.called.wait(), 0.2)
+
+    assert wake.calls == []
+    terminals.get_live_for_session.assert_called_with(session_id)
+    assert ledger.read("terminal-1") == LedgerRead("blocked", "provider_limit")
+    current = attention.get(session_attention_entry_id(session_id))
+    assert current is not None
+    assert (current.state, current.reason) == ("blocked", "provider_error")
+    assert current.payload["error_type"] == "usage_limit"
+    assert current.payload["message"] == "You've hit your monthly spend limit" + USAGE_LIMIT_VALVE

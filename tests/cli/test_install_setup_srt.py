@@ -59,14 +59,25 @@ def test_download_verified_tarball_rejects_checksum_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    rejected = b"not-the-pinned-tarball"
     monkeypatch.setattr(
         install_setup_srt,
         "urlopen",
-        lambda *_args, **_kwargs: FakeDownloadResponse(b"not-the-pinned-tarball"),
+        lambda *_args, **_kwargs: FakeDownloadResponse(rejected),
     )
 
-    with pytest.raises(SrtRuntimeError, match="checksum mismatch"):
-        install_setup_srt._download_verified_tarball(tmp_path / "runtime.tgz")
+    destination = tmp_path / "runtime.tgz"
+    with pytest.raises(SrtRuntimeError, match="checksum mismatch") as error:
+        install_setup_srt._download_verified_tarball(destination)
+
+    message = str(error.value)
+    assert "artifact=runtime.tgz" in message
+    assert f"source={SRT_RELEASE.tarball_url}" in message
+    assert f"expected_sha256={SRT_RELEASE.tarball_sha256}" in message
+    assert f"actual_sha256={hashlib.sha256(rejected).hexdigest()}" in message
+    assert f"downloaded_bytes={len(rejected)}" in message
+    assert "content_length=None" in message
+    assert not destination.exists()
 
 
 def test_download_verified_tarball_retries_checksum_mismatch(
@@ -176,10 +187,13 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     install_lock = MagicMock()
 
     def fake_npm_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
         cwd = Path(kwargs["cwd"])
+        write_srt_proxy_fixture(cwd, patched=False)
         npm_commands.append((command, cwd))
         package_dir = cwd / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-        package_dir.mkdir(parents=True)
+        package_dir.mkdir(parents=True, exist_ok=True)
         (package_dir / "package.json").write_text(
             json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
             encoding="utf-8",
@@ -225,13 +239,21 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["package"] == SRT_RELEASE.package
     assert receipt["version"] == SRT_RELEASE.version
+    assert receipt["http_proxy_sha256"] == SRT_RELEASE.http_proxy_sha256
+    assert receipt["mux_proxy_sha256"] == SRT_RELEASE.mux_proxy_sha256
+    from gobby.agents.srt_package_patch import verify_srt_proxy_patch
+
+    verify_srt_proxy_patch(target)
     install_lock.__enter__.assert_called_once_with()
     install_lock.__exit__.assert_called_once()
 
 
 def _write_runtime_tree(root: Path, marker: str) -> None:
+    from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(root)
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-    package_dir.mkdir(parents=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
     (package_dir / "package.json").write_text(
         json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
         encoding="utf-8",
@@ -264,8 +286,8 @@ def installed_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "node_dependency_status",
         lambda: DependencyStatus(
             state="healthy",
-            installed_version="20.11.0",
-            minimum_version="20.11.0",
+            installed_version="22.12.0",
+            minimum_version="22.12.0",
             expected_version=None,
             path="/usr/bin/node",
             error=None,
@@ -402,8 +424,11 @@ def test_install_cleans_immutable_staging_after_failure(
     def fake_npm_run(
         command: list[str], *, cwd: Path, **_kwargs: object
     ) -> subprocess.CompletedProcess[str]:
+        from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+        write_srt_proxy_fixture(cwd, patched=False)
         package_dir = cwd / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-        package_dir.mkdir(parents=True)
+        package_dir.mkdir(parents=True, exist_ok=True)
         (package_dir / "package.json").write_text(
             json.dumps({"name": SRT_RELEASE.package, "version": SRT_RELEASE.version}),
             encoding="utf-8",

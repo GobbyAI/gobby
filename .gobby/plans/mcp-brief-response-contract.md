@@ -317,40 +317,69 @@ Consumers unchanged:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/tasks/_formatters.py::*` — scope-reason: `task_summary_payload` and its dependency rows drop `id`, `seq_num`, and `path_cache`
+- `src/gobby/mcp_proxy/tools/tasks/_formatters.py::*` — scope-reason: `task_summary_payload` drops `seq_num` and `path_cache`, and its dependency rows drop `id`
 - `src/gobby/mcp_proxy/tools/tasks/_crud.py::*` — scope-reason: the `get_task` description and `brief` parameter description gain the debugging-only wording, and `build_task_tree` moves out
 - `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py`
-- `tests/mcp_proxy/tools/test_tasks_crud_coverage.py::*` — scope-reason: `SUMMARY_TASK_KEYS` and the brief `id` assertions change
-- `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::*` — scope-reason: the brief `payload["id"]` assertion changes
+- `tests/mcp_proxy/tools/test_tasks_crud_coverage.py::*` — scope-reason: `SUMMARY_TASK_KEYS` loses `seq_num` and `path_cache`, and the dependency-row `id` assertion changes
 - `tests/mcp_proxy/tools/tasks/test_create_task.py::*` — scope-reason: imports `build_task_tree` from its new module
+
+Consumers unchanged:
+- `src/gobby/install/shared/workflows/agents/developer.yaml` — no-edit-reason: the `route_skills` and `submit` `get_task` handlers read `id`, `ref`, and `state`, all kept.
+- `src/gobby/mcp_proxy/services/result_offload.py` — no-edit-reason: an offloaded card's envelope keeps `id` and `state` when the card carries them.
+- `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py` — no-edit-reason: its `task_summary_payload` test asserts `ref`, `id`, `title`, and `validation_criteria`, all kept.
+- `tests/mcp_proxy/services/test_result_offload.py` — no-edit-reason: `_summary_card` builds a `task_summary_payload` card, and `test_oversized_task_card_preserves_its_identity_and_flat_state` asserts the offloaded envelope keeps `id` and `state`, both kept.
 
 **Research context:**
 - `_formatters.py::task_summary_payload` emits `ref, id, seq_num, title, task_type, category,
   priority, path_cache, description, validation_criteria, labels, parent_task_id, created_at,
   updated_at, state{...}, dependencies{blocked_by, blocking}` (rows carry `ref, id, title, state,
-  dep_type`), and `allow_automation, unattended, isolation, assigned_agent,
+  dep_type`), and `allow_automation, unattended, checkout_mode, assigned_agent,
   implementation_domain, additional_skills`.
-- `ref` is derived from `seq_num`. No rule, observer, web, or skill consumer reads `id`,
-  `seq_num`, or `path_cache` from brief `get_task`. The agent `on_mcp_success` observers read
-  `success`, `result.state.is_closed`, and `result.state.current_stage`.
+- `ref` is derived from `seq_num`, so `seq_num` and `path_cache` duplicate it. No rule,
+  observer, web, or skill consumer reads `seq_num` or `path_cache` from brief `get_task`, and
+  none reads a dependency row's `id`.
+- `id` stays in the brief card because the developer definition reads it. Since #22997, two
+  `get_task` `on_mcp_success` handlers in
+  `src/gobby/install/shared/workflows/agents/developer.yaml` match
+  `(tool_output.get('result') or tool_output).get('id') == vars.get('assigned_task_id')`
+  (approximate lines 198 and 395 on `0.5.0` at `f17a855761`):
+  - `route_skills` matches it before it sets `assigned_task_ref` from the card's `ref`;
+  - `submit`'s close reset matches it together with `state.is_closed`, then sets
+    `task_claimed` to false after a reviewed close.
+  `assigned_task_id` is the UUID `claim_task` returns as `task_id`. Decision Record 5 keeps a
+  field that an agent workflow acts on, and the Constraints require every workflow reader to keep
+  working, so this deliverable names `id` as kept.
+- An oversized card is offloaded. `ToolResultOffloader` then keeps `id` and `state` in the
+  envelope, but only when the card carries them (`result_offload.py::_SCALAR_FIELD_PRIORITY`,
+  `_summarize_scalar_fields`). The `submit` close reset relies on that for large cards.
+- Rejected: moving both handlers to `ref`. `claim_task` returns only `task_id` and `title`, and
+  `assigned_task_ref` is set only after the first matching `get_task`, so a `ref` comparison has
+  nothing to compare against unless `claim_task`'s payload changes. That change is outside this
+  plan.
+- The other agents' `get_task` `on_mcp_success` observers read `success`,
+  `result.state.is_closed`, and `result.state.current_stage`. The `track-task-claim` and
+  `disclose-claimed-task-extra-skills` rules read `id` only from `claim_task` and `create_task`
+  output.
 - `parent_task_id` stays: it is a UUID used as an argument, and a parent ref is not in the payload.
-- `_crud.py` is 996 lines. The split: move the module-level `build_task_tree` (lines 917–996)
-  from `_crud.py` into the new `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py`. Its only
-  importer is `tests/mcp_proxy/tools/tasks/test_create_task.py`.
+- `_crud.py` is 969 lines on `0.5.0` at `f17a855761`. The split: move the module-level
+  `build_task_tree` (approximately lines 890–969) from `_crud.py` into the new
+  `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py`. Its only importer is
+  `tests/mcp_proxy/tools/tasks/test_create_task.py`.
 
 **Implementation:**
-- Remove `id`, `seq_num`, and `path_cache` from `task_summary_payload` and `id` from its
-  dependency rows. The full view is unchanged.
+- Remove `seq_num` and `path_cache` from `task_summary_payload` and `id` from its dependency
+  rows. The card keeps `ref` and `id`. The full view is unchanged.
 - In `get_task`, the `brief` description becomes: "If true (default), return the actionable
-  card. Set false only for debugging; it adds ids, commits, closure, validation, merge and
-  dispatch details, escalation fields, links, dates, and full dependency rows."
+  card. Set false only for debugging; it adds seq_num, path_cache, project and session ids,
+  commits, closure, validation, merge and dispatch details, escalation fields, links, dates, and
+  full dependency rows."
 
 **Acceptance:**
-- 1.5.1 - test: `tests/mcp_proxy/tools/test_tasks_crud_coverage.py::test_get_task_brief_has_no_duplicate_identity` asserts brief `get_task` has `ref` and has none of `id`, `seq_num`, `path_cache`, and dependency rows carry no `id`.
+- 1.5.1 - test: `tests/mcp_proxy/tools/test_tasks_crud_coverage.py::test_get_task_brief_has_no_duplicate_identity` asserts brief `get_task` has `ref` and `id`, has neither `seq_num` nor `path_cache`, and dependency rows carry no `id`.
 - 1.5.2 - `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py` holds `build_task_tree`, and `_crud.py` is below 950 lines. file: `src/gobby/mcp_proxy/tools/tasks/_crud_tree.py`.
 - 1.5.3 - The `get_task` `brief` parameter description in `src/gobby/mcp_proxy/tools/tasks/_crud.py` contains "only for debugging". file: `src/gobby/mcp_proxy/tools/tasks/_crud.py`.
 
-**Verification:** run `tests/mcp_proxy/tools/test_tasks_crud_coverage.py`, `tests/mcp_proxy/tools/tasks/`, and `tests/mcp_proxy/tools/test_tasks_schema_coverage.py` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
+**Verification:** run `tests/mcp_proxy/tools/test_tasks_crud_coverage.py`, `tests/mcp_proxy/tools/tasks/`, `tests/mcp_proxy/tools/test_tasks_schema_coverage.py`, and `tests/mcp_proxy/services/test_result_offload.py::test_oversized_task_card_preserves_its_identity_and_flat_state` with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
 ### 1.6 Brief close_task replaces response_detail [category: code]
 `kind: deliverable`
@@ -443,27 +472,26 @@ Consumers unchanged:
 
 Targets:
 - `src/gobby/install/shared/workflows/agents/analyst.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
-- `src/gobby/install/shared/workflows/agents/researcher.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
 - `src/gobby/install/shared/workflows/agents/architect.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
 - `src/gobby/install/shared/workflows/agents/tech-writer.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
 - `src/gobby/install/shared/workflows/agents/product-manager.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
-- `src/gobby/install/shared/workflows/agents/frontend-developer.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
-- `src/gobby/install/shared/workflows/agents/fullstack-developer.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
-- `src/gobby/install/shared/workflows/agents/backend-developer.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
 - `src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml::*` — scope-reason: step and prompt prose prescribes `get_task(brief=false)`
 - `src/gobby/install/shared/skills/gobby/references/tasks/overview.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/implementation.md`
 - `src/gobby/install/shared/skills/gobby/references/build/starting.md`
 - `src/gobby/install/shared/skills/gobby/references/review/epic.md`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: the claim response text prescribes `get_task(brief=false)`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py::*` — scope-reason: step guidance text prescribes `get_task(brief=false)`
 - `src/gobby/storage/tasks/_models.py::*` — scope-reason: a model docstring or guidance string prescribes `get_task(brief=false)`
 - `tests/workflows/test_workflows_agent_definitions.py::*` — scope-reason: a guard test asserting no bundled definition prescribes `get_task(brief=false)` is added beside the existing bundled-definition checks
 
 **Research context:**
-- The caller audit found `get_task(brief=false)` prescribed for ordinary task reading in nine
-  agent definitions, four skill references, `_lifecycle_claim.py` (near line 252),
-  `spawn_agent/_step_state.py` (near line 104), and `storage/tasks/_models.py` (near line 470).
+- The caller audit, re-run on `0.5.0` at `f17a855761`, finds `get_task(brief=false)` prescribed
+  for ordinary task reading in five agent definitions, four skill references,
+  `spawn_agent/_step_state.py` (near line 104), and `storage/tasks/_models.py` (near lines 454
+  and 458, spelled `brief=False`). #22997 replaced `frontend-developer.yaml`,
+  `fullstack-developer.yaml`, and `backend-developer.yaml` with one `developer.yaml`, which reads
+  the card with plain `get_task`. `researcher.yaml` and `_lifecycle_claim.py` no longer prescribe
+  full mode.
 - The brief card already carries description, validation criteria, labels, state, execution
   settings, and dependency summaries, which is everything those instructions ask agents to read.
   Under Decision Record 2, prescribing full mode for normal work contradicts the contract.
@@ -478,7 +506,7 @@ dependencies and acceptance criteria. Keep any wording that is explicitly about 
 **Acceptance:**
 - 1.7.1 - `gcode grep -F "brief=false" src/gobby/install/shared/workflows/agents -m 50` returns no `get_task` prescription. behavior: no bundled agent definition prescribes `get_task(brief=false)`.
 - 1.7.2 - `gcode grep -F "brief=false" src/gobby/install/shared/skills/gobby/references -m 50` returns no `get_task` prescription outside debugging wording. behavior: no skill reference prescribes `get_task(brief=false)` for ordinary reads.
-- 1.7.3 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py`, `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`, and `src/gobby/storage/tasks/_models.py` no longer prescribe `get_task(brief=false)`. file: `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py`.
+- 1.7.3 - `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py` and `src/gobby/storage/tasks/_models.py` no longer prescribe `get_task(brief=false)` in either spelling. file: `src/gobby/mcp_proxy/tools/spawn_agent/_step_state.py`.
 - 1.7.4 - test: `tests/workflows/test_workflows_agent_definitions.py::test_no_bundled_definition_prescribes_full_get_task` loads every bundled agent YAML and asserts no prompt or step text contains `get_task(brief=false)`; the module's existing bundled-definition tests pass for every edited definition.
 
 **Granularity:** more than six Target files, all one mechanical text change with one reason. Splitting by file type would create per-file chores, which the drafting rules forbid.
@@ -687,7 +715,10 @@ Consumers unchanged:
 Targets:
 - `src/gobby/mcp_proxy/tools/skills/get_skill.py::*` — scope-reason: the `get_skill` and `get_skill_file` descriptions state the debugging and skill-management exception
 - `src/gobby/mcp_proxy/tools/agent_messaging.py::*` — scope-reason: the `send_message` description states debugging-only full mode
-- `src/gobby/mcp_proxy/tools/workflows/_pipelines.py::*` — scope-reason: the `list_pipeline_executions` description states debugging-only full mode
+- `src/gobby/mcp_proxy/tools/workflows/_pipelines.py::*` — scope-reason: the `list_pipeline_executions` description states debugging-only full mode, and `_auto_subscribe_lineage` moves out
+- `src/gobby/mcp_proxy/tools/workflows/_pipeline_lineage.py`
+- `tests/events/test_wake_wiring.py::*` — scope-reason: two tests import `_auto_subscribe_lineage` from its new module
+- `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::*` — scope-reason: two tests import `_auto_subscribe_lineage` from its new module
 - `src/gobby/mcp_proxy/instructions.py::*` — scope-reason: the server instructions describe brief as debugging or skill management only
 - `src/gobby/install/shared/prompts/mcp/progressive-discovery.md`
 - `src/gobby/install/shared/skills/gobby/references/skills/loading.md`
@@ -704,13 +735,25 @@ Targets:
     say `brief=false` is for management work.
 - Josh's exception (Decision Record 2): `get_skill` / `get_skill_file` allow `brief=false` for
   skill management (ids, `content_hash`, version). Every other tool is debugging only.
+- `_pipelines.py` is 855 lines on `0.5.0` at `f17a855761`, over the 850-line split trigger in
+  the Constraints. The split: move the module-level `_auto_subscribe_lineage` (approximately
+  lines 291–340) into the new `src/gobby/mcp_proxy/tools/workflows/_pipeline_lineage.py`, beside
+  the existing `_pipeline_discovery`, `_pipeline_execution`, `_pipeline_exposed`, and
+  `_pipeline_query` siblings. `_pipelines.py` imports it for its three uses in
+  `register_pipeline_tools`: the `auto_subscribe_lineage=` argument and the calls in
+  `_run_pipeline` and `_resume_pipeline`. The function is self-contained: it uses a module
+  logger and lazy imports of `ChildSessionManager` and `CompletionSubscriberManager`. Its only
+  test importers are `tests/events/test_wake_wiring.py` and
+  `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py`, and neither
+  patches it through `_pipelines`.
 
 **Acceptance:**
 - 1.12.1 - The `send_message` and `list_pipeline_executions` descriptions contain "only for debugging". file: `src/gobby/mcp_proxy/tools/agent_messaging.py`.
 - 1.12.2 - The `get_skill` and `get_skill_file` descriptions, `src/gobby/mcp_proxy/instructions.py`, `src/gobby/install/shared/prompts/mcp/progressive-discovery.md`, `references/skills/loading.md`, and `references/skills/lifecycle.md` say `brief=false` is only for debugging or skill management (ids, hash, version). file: `src/gobby/mcp_proxy/instructions.py`.
 - 1.12.3 - test: `tests/mcp_proxy/test_instructions.py::test_instructions_describe_brief_contract` asserts the server instructions say `brief=false` is only for debugging or skill management.
+- 1.12.4 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_lineage.py` holds `_auto_subscribe_lineage`, and `_pipelines.py` is below 850 lines. file: `src/gobby/mcp_proxy/tools/workflows/_pipeline_lineage.py`.
 
-**Verification:** run `tests/mcp_proxy/test_instructions.py` and the skills and messaging tool tests with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
+**Verification:** run `tests/mcp_proxy/test_instructions.py`, `tests/events/test_wake_wiring.py`, `tests/mcp_proxy/tools/workflows/`, and the skills and messaging tool tests with `GOBBY_TEST_PROTECT=1`; ruff and mypy on the touched sources.
 
 ## P6: Verification
 `kind: framing`
@@ -761,7 +804,7 @@ Targets:
   its call kwargs from the fixtures above), `must_match` (the handle and outcome values, list
   items by id: `success` everywhere; `memories[].id`; `memory.id`, `similar_existing[].id`,
   `auto_superseded`; `candidates[].id`, `source_task_id`, `pending_reviews_complete`; `ref`,
-  `state.is_closed`; `closed`, `can_close`, `error`, `reviewer_run_id`; `run_id`, `status`,
+  `id`, `state.is_closed`; `closed`, `can_close`, `error`, `reviewer_run_id`; `run_id`, `status`,
   `result`, `error`, `terminal_reason`; `found`, `claimed_task_refs`, `parent_session_id`,
   `agent_run_id`; `found_work`, `found_work_gate_armed`; the `name` of every listed rule),
   `derived` (keys brief may add: `summary`, `when`, `gates_passed`, `task_ref`, `ref`), and

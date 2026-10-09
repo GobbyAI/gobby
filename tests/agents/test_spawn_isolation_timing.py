@@ -115,6 +115,7 @@ def test_idle_baseline_breakdown_is_complete(clock: Clock) -> None:
         ("clone", False),
         ("clone", True),
         ("reused-worktree", False),
+        ("resumed-worktree", False),
     ],
 )
 async def test_isolation_paths_share_spawn_timing_map(
@@ -155,13 +156,21 @@ async def test_isolation_paths_share_spawn_timing_map(
     else:
         monkeypatch.setattr(_worktree_reuse, "repair_isolation_environment", repair)
         monkeypatch.setattr(_worktree_reuse, "sync_reused_worktree_to_base", sync)
-        reused_context, _ = await _worktree_reuse.prepare_reused_worktree(
-            existing_worktree=existing,
-            git_manager=git,
-            worktree_storage=storage,
-            spawn_config=config,
-            main_repo_path=str(tmp_path),
-        )
+        if kind == "resumed-worktree":
+            reused_context, _ = await _worktree_reuse.prepare_resumed_worktree(
+                existing_worktree=existing,
+                spawn_config=config,
+                main_repo_path=str(tmp_path),
+            )
+            sync.assert_not_awaited()
+        else:
+            reused_context, _ = await _worktree_reuse.prepare_reused_worktree(
+                existing_worktree=existing,
+                git_manager=git,
+                worktree_storage=storage,
+                spawn_config=config,
+                main_repo_path=str(tmp_path),
+            )
         assert reused_context.cwd == str(tmp_path)
         assert config.phase_timings_ms == {"python_env_seed": 1000}
         return

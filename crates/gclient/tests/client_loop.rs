@@ -5631,6 +5631,163 @@ async fn pending_control_survives_until_the_daemon_is_ready() {
     mock.shutdown().await;
 }
 
+#[tokio::test]
+async fn wheel_focuses_reporting_panes_without_taking_peer_control() {
+    for peer_held in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        mock.use_unique_attachment_ids();
+        mock.seed_workspace(
+            "project-1",
+            &[(&["terminal-a", "terminal-b"], "terminal-a")],
+        );
+        let holder = peer_held.then(|| {
+            json!({
+                "attachment_id": "peer-attachment", "kind": "gclient", "session_ref": "gobby#peer"
+            })
+        });
+        if let Some(holder) = &holder {
+            mock.set_attach_lease_holder("terminal-b", holder.clone());
+        }
+        for _ in 0..2 {
+            mock.enqueue("GET", "/api/terminals?", 200, json!({
+            "items": [
+                {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
+                {"terminal_id": "terminal-b", "backend": "native", "state": "live", "lease_holder": holder}
+            ],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+            }));
+        }
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-1");
+        workspace
+            .reconcile_subscribe_first()
+            .await
+            .expect("attachments");
+        let target = workspace
+            .pane_for_terminal("terminal-b")
+            .expect("target pane");
+        let attachment = workspace.pane(target).attachment_id().to_string();
+        mock.send_event_and_wait(json!({
+            "type": "terminal_frame", "terminal_id": "terminal-b", "attachment_id": attachment,
+            "encoding": "bincode-b64", "payload": encode_frame(&reporting_frame("mouse app"))
+        }))
+        .await;
+        workspace
+            .recv_pane_frame(target)
+            .await
+            .expect("tracking frame applied");
+        assert_eq!(
+            workspace.pane(target).has_take_back(),
+            peer_held,
+            "initial peer lease reflected"
+        );
+
+        let mut chrome = pinned_chrome();
+        sync_live_chrome(&mut workspace, &mut chrome);
+        chrome.compute_view(&workspace, Rect::new(0, 0, 120, 40));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+        let mut hits = None;
+        terminal
+            .draw(|frame| hits = Some(render_workspace(frame, &workspace, &chrome)))
+            .expect("draw");
+        chrome.view.apply_hits(hits.expect("hit map"));
+        let inner = chrome
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| chrome.pane_for_slot(info.id) == Some(target))
+            .expect("target drawn")
+            .inner_rect;
+        let cell = (inner.x + 1, inner.y + 1);
+        assert!(matches!(
+            hit_test(&chrome.view, cell.0, cell.1),
+            Hit::Pane { .. }
+        ));
+        let (input_tx, input_rx) = mpsc::channel(32);
+        let driver = async {
+            wait_for_take_control_of(&mock, "terminal-a").await;
+            send_mouse(
+                &input_tx,
+                MouseEventKind::ScrollUp,
+                cell.0,
+                cell.1,
+                KeyModifiers::NONE,
+            )
+            .await;
+            if peer_held {
+                wait_for_websocket_requests(&mock, "terminal_release_control", 1).await;
+            } else {
+                wait_for_take_control_of(&mock, "terminal-b").await;
+                wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+                send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+                wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+                send_mouse(
+                    &input_tx,
+                    MouseEventKind::ScrollDown,
+                    cell.0,
+                    cell.1,
+                    KeyModifiers::NONE,
+                )
+                .await;
+                wait_for_websocket_requests(&mock, "terminal_input", 3).await;
+            }
+            drop(input_tx);
+        };
+        let mut switch = TerminalGuard::recording().0;
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        );
+        result.expect("wheel loop exits");
+        assert_eq!(chrome.focused_pane(), Some(target));
+        let takes = websocket_requests(&mock, "terminal_take_control");
+        assert_eq!(
+            takes.len(),
+            if peer_held { 1 } else { 2 },
+            "peer_held={peer_held}: {takes:?}"
+        );
+        assert!(takes.iter().all(|take| take["takeover"] == false));
+        let writes = websocket_requests(&mock, "terminal_input");
+        if peer_held {
+            assert!(
+                writes.is_empty(),
+                "the wheel cannot write to a peer-held pane"
+            );
+            assert!(
+                workspace.pane(target).has_take_back(),
+                "peer control remains held"
+            );
+        } else {
+            assert!(workspace.pane(target).writable());
+            assert_eq!(
+                writes
+                    .iter()
+                    .map(|write| write["data"].as_str().expect("data"))
+                    .collect::<Vec<_>>(),
+                ["\u{1b}[<64;2;2M", "x", "\u{1b}[<65;2;2M"]
+            );
+            assert!(writes
+                .iter()
+                .all(|write| write["terminal_id"] == "terminal-b"));
+        }
+        assert_eq!(
+            websocket_requests(&mock, "terminal_release_control")[0]["terminal_id"],
+            "terminal-a"
+        );
+        mock.shutdown().await;
+    }
+}
+
 /// 3.3: a pane whose app tracks the mouse gets SGR reports for its presses
 /// and releases; a press in another such pane focuses it and takes the lease
 /// before the report; a pane left observed by alt+click gets nothing; a
@@ -12973,6 +13130,140 @@ async fn an_unknown_sidebar_id_still_resolves_to_no_pane() {
         assert_eq!(chrome.focused_pane(), Some(pane), "{entry} moves nothing");
     }
     mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn occupied_worktree_mouse_and_keyboard_activation_reuse_the_agent_pane() {
+    for keyboard in [false, true] {
+        for attention in [false, true] {
+            let mock = MockDaemon::start("local-token").await;
+            mock.use_unique_attachment_ids();
+            mock.seed_workspace(
+                "project-1",
+                &[
+                    (&["terminal-a"], "terminal-a"),
+                    (&["terminal-b"], "terminal-b"),
+                ],
+            );
+            let mut entry = sidebar_roster_entry("session:session-b", "run-b", "terminal-b");
+            entry["session_id"] = json!("session-b");
+            if attention {
+                entry["attention"] = json!({"attention_id": "att-b", "kind": "actionable"});
+            }
+            mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+            mock.enqueue(
+                "GET",
+                "/api/source-control/worktrees?",
+                200,
+                json!({"worktrees": [{
+                    "id": "wt-b", "project_id": "project-1", "branch_name": "lane-b",
+                    "worktree_path": "/repo-wt/lane-b", "status": "active",
+                    "workspace_role": "task",
+                }]}),
+            );
+            mock.enqueue(
+                "GET",
+                "/api/sessions?project_id=project-1",
+                200,
+                json!({"sessions": [{
+                    "id": "session-b", "worktree_id": "wt-b", "status": "active",
+                }], "count": 1, "next_cursor": null}),
+            );
+            mock.enqueue(
+                "GET",
+                "/api/attention/roster",
+                200,
+                json!({"epoch": "attention-1", "seq": 1, "entries": [entry]}),
+            );
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                terminal_page(&["terminal-a", "terminal-b"]),
+            );
+            let daemon = LiveDaemon::connect(mock.url(), "local-token")
+                .await
+                .expect("connect live daemon");
+            let mut workspace = Workspace::live(daemon);
+            workspace.select_project("project-1");
+            workspace
+                .reconcile_subscribe_first()
+                .await
+                .expect("install occupied worktree");
+            let target = workspace
+                .pane_for_terminal("terminal-b")
+                .expect("agent pane");
+
+            let area = Rect::new(0, 0, 120, 40);
+            let mut probe = pinned_chrome();
+            sync_live_chrome(&mut workspace, &mut probe);
+            probe.sidebar.toggle_group("project-1");
+            probe.compute_view(&workspace, area);
+            let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe");
+            let mut hits = None;
+            probe_terminal
+                .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
+                .expect("draw occupied worktree");
+            probe.view.apply_hits(hits.expect("probe hits"));
+            let (_, row) = probe
+                .view
+                .worktree_hit_areas
+                .iter()
+                .find(|(id, _)| id == "wt-b")
+                .expect("worktree row drawn");
+            let anchor = (row.x + 2, row.y);
+
+            let mut chrome = pinned_chrome();
+            chrome.sidebar.toggle_group("project-1");
+            if keyboard {
+                chrome.mode = Mode::Navigate;
+                chrome.sidebar.selected = 1;
+            }
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+            let (input_tx, input_rx) = mpsc::channel(32);
+            let driver = async {
+                wait_for_take_control_of(&mock, "terminal-a").await;
+                if keyboard {
+                    send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
+                } else {
+                    send_mouse(
+                        &input_tx,
+                        MouseEventKind::Down(MouseButton::Left),
+                        anchor.0,
+                        anchor.1,
+                        KeyModifiers::NONE,
+                    )
+                    .await;
+                }
+                wait_for_take_control_of(&mock, "terminal-b").await;
+                drop(input_tx);
+            };
+            let mut switch = TerminalGuard::recording().0;
+            let (result, ()) = tokio::join!(
+                run_live_loop(
+                    &mut workspace,
+                    &mut terminal,
+                    &mut chrome,
+                    input_rx,
+                    &mut switch
+                ),
+                driver
+            );
+            result.expect("occupied worktree activation completes");
+            assert_eq!(
+                chrome.focused_pane(),
+                Some(target),
+                "keyboard={keyboard}, bell={attention}"
+            );
+            assert_eq!(chrome.tabs().tabs.len(), 2, "existing tab reused");
+            assert!(
+                workspace_ops(&mock, "tab.create").is_empty(),
+                "no shell tab created"
+            );
+            assert!(websocket_requests(&mock, "terminal_create").is_empty());
+            mock.shutdown().await;
+        }
+    }
 }
 
 /// `open in new tab` on a bare terminal row reveals that terminal.

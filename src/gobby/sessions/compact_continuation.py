@@ -47,6 +47,7 @@ from gobby.terminals.pane_io import (
     SUBMIT_UNVERIFIED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
+    DrainResult,
     SubmitResult,
     clear_composer,
     composer_gate_for_write,
@@ -628,11 +629,6 @@ async def _send_handoff_compact_continuation(
     return sent
 
 
-#: Composer reads before an unclassifiable frame refuses the pull prompt, one
-#: verify interval apart: enough for Claude's post-compact redraw to settle.
-CONTINUATION_COMPOSER_PROBES = 3
-
-
 def _refuse_continuation(session_id: str, reason: str) -> SubmitResult:
     logger.warning(
         "Skipping set_handoff continuation for %s: %s",
@@ -671,38 +667,29 @@ async def _type_handoff_compact_continuation(
         ):
             return _refuse_continuation(session_id, refusal)
         # An operator draft in the composer would be submitted with the pull
-        # prompt, so require an empty composer or the exact pending prompt.
-        # Only an unprobed composer keeps the blind drain: after a confirmed-empty
-        # read it could only delete keystrokes the operator typed since.
-        # SessionStart(compact) can arrive before Claude redraws its composer, so an
-        # unclassifiable frame is re-read after it settles; foreign drafts are refused.
-        for probe in range(1, CONTINUATION_COMPOSER_PROBES + 1):
-            writable, refuse_reason, composer_state = await composer_gate_for_write(
-                pane,
-                cli_source,
-                composer_read,
-                action="the set_handoff continuation",
-                pending_payload=prompt,
-            )
-            if writable or composer_state != "unknown" or probe == CONTINUATION_COMPOSER_PROBES:
-                break
-            await asyncio.sleep(verify_seconds)
-        if not writable:
-            return _refuse_continuation(
-                session_id, f"{refuse_reason} (composer {composer_state} after {probe} probe(s))"
-            )
-        ok, reason = (
-            (True, None)
-            if composer_state in {"empty", "held"}
-            else await clear_composer(pane, cli_source)
+        # prompt, so require an empty composer or the exact pending prompt; only
+        # stale daemon text is drained.
+        writable, refuse_reason, composer_state = await composer_gate_for_write(
+            pane, action="the set_handoff continuation", pending_payload=prompt
         )
-        if not ok:
+        if not writable:
+            return _refuse_continuation(session_id, f"{refuse_reason} (composer {composer_state})")
+        # Stale daemon text of unknown length refuses only on a positive draft frame
+        # after the drain; an unknown frame proceeds (the gobby#15866 stall).
+        drain = (
+            DrainResult(True)
+            if composer_state in {"empty", "held"}
+            else await clear_composer(
+                pane, cli_source, composer_read, verify_seconds=verify_seconds
+            )
+        )
+        if not drain.ok:
             logger.warning(
                 "Failed clearing the composer before set_handoff continuation for %s: %s",
                 session_id,
-                reason,
+                drain.reason,
             )
-            return SubmitResult(False, reason)
+            return SubmitResult(False, drain.reason)
         if db is not None and (
             refusal := await asyncio.to_thread(continuation_write_refusal, db, session_id)
         ):
@@ -738,12 +725,12 @@ async def _type_handoff_compact_continuation(
                 "error_code": result.error_code,
             },
         )
-        cleared, clear_reason = await clear_composer(pane, cli_source)
-        if not cleared:
+        drain = await clear_composer(pane, cli_source, composer_read, verify_seconds=verify_seconds)
+        if not drain.ok:
             logger.error(
                 "Composer still holds the unsubmitted continuation prompt for session %s: %s",
                 session_id,
-                clear_reason,
+                drain.reason,
             )
         return result
     except Exception:

@@ -35,11 +35,12 @@ _COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}(?:[^\n]*[─━])?\s*$")
 _CODEX_PROMPT_RE = re.compile(r"^\s*›(?:[ \t].*)?$")
 _CODEX_MODEL_RE = re.compile(r"^\s{2,}\S.* · .*$")
 # Codex drops the agents hint and appends a warnings indicator when it has any, so
-# both are optional. A footer this does not recognise leaves no region, which reads
-# ``unknown`` and strands a stale-active seat (#23102).
+# both are optional; a narrow pane abbreviates the indicator to ``⚠ 1 · f2``. A
+# footer this does not recognise leaves no region, which reads ``unknown`` and
+# strands a stale-active seat (#23102).
 _CODEX_FOOTER_RE = re.compile(
     r"^\s*(?:← for agents · )?\? for shortcuts"
-    r"(?:\s{2,}⚠️? \d+ warnings? · f2 to view)?\s*$"
+    r"(?:\s{2,}⚠️? \d+(?: warnings?)? · f2(?: to view)?)?\s*$"
 )
 
 # The rules a manifest needs before any composer probe of it can mean anything.

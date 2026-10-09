@@ -1,6 +1,6 @@
 """Session lifecycle routes.
 
-Handles lookup, status updates, expiry, and renaming.
+Handles lookup, status updates, expiry, composer release, and renaming.
 """
 
 import logging
@@ -16,6 +16,7 @@ from gobby.sessions.context_usage import (
 )
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.storage.projects import LocalProjectManager
+from gobby.terminals.composer_ledger import ComposerReleaseError, release_composer
 from gobby.terminals.termination import kill_terminal
 
 if TYPE_CHECKING:
@@ -406,6 +407,22 @@ def register_lifecycle_routes(
         except Exception as e:
             logger.exception("Expire session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    @router.post("/{session_id}/release-composer")
+    async def release_session_composer(session_id: str, request: Request) -> dict[str, Any]:
+        """Vouch that the session's composer is empty, so automatic writes resume."""
+        terminal_manager = getattr(getattr(server, "services", None), "terminal_manager", None)
+        if terminal_manager is None:
+            raise HTTPException(status_code=503, detail="Terminal manager not available")
+        caller = request.headers.get("X-Gobby-Session-Id", "").strip() or None
+        try:
+            terminal_id = await server.run_db(
+                release_composer, terminal_manager, session_id, caller_session_id=caller
+            )
+        except ComposerReleaseError as exc:
+            status = {"self_release": 403, "no_live_terminal": 404}.get(exc.code, 503)
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        return {"status": "released", "session_id": session_id, "terminal_id": terminal_id}
 
     @router.post("/{session_id}/rename")
     async def rename_session(session_id: str, request: Request) -> dict[str, Any]:

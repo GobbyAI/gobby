@@ -73,11 +73,11 @@ impl FrontDoor {
         {
             request = match challenge::answer(&self.state.auth.bootstrap_path, request).await {
                 Ok(request) => request,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
         }
         if let Err(response) = self.state.auth.authenticate(request.headers_mut()).await {
-            return response;
+            return *response;
         }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&self.state, request).await

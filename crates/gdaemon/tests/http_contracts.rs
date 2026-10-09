@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use common::TIMEOUT;
 use gobby_core::bootstrap::RouteBackend;
-use gobby_daemon::front_door::health::SERVED_BY_HEADER;
+use gobby_daemon::front_door::health::{HealthFamily, SERVED_BY_HEADER};
 use gobby_daemon::front_door::routes::{FAMILIES, RouteFamily, unimplemented_families};
 use gobby_daemon::serve::{PublicListener, serve};
 use http_body_util::{BodyExt, Full};
@@ -534,6 +534,7 @@ fn every_native_family_has_corpus_cases() {
 
 #[test]
 fn precheck_rejects_missing_or_mismatched_parity() {
+    let registered: &[&dyn RouteFamily] = &[&HealthFamily];
     let families = |value: Value| value.as_object().expect("families").clone();
     let cases = |names: &[&str]| -> BTreeSet<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -542,7 +543,7 @@ fn precheck_rejects_missing_or_mismatched_parity() {
     let missing_case = parity_violations(
         &families(json!({"health": {"parity": "native", "origin": "python"}})),
         &cases(&[]),
-        FAMILIES,
+        registered,
     );
     assert_eq!(
         missing_case,
@@ -552,7 +553,7 @@ fn precheck_rejects_missing_or_mismatched_parity() {
     let proxied = parity_violations(
         &families(json!({"health": {"parity": "proxy", "origin": "python"}})),
         &cases(&["health"]),
-        FAMILIES,
+        registered,
     );
     assert_eq!(
         proxied,
@@ -566,7 +567,7 @@ fn precheck_rejects_missing_or_mismatched_parity() {
             "front_door": {"parity": "native", "origin": "gdaemon"},
         })),
         &cases(&["health", "tasks", "front_door"]),
-        FAMILIES,
+        registered,
     );
     assert_eq!(
         unregistered,

@@ -68,6 +68,11 @@ fn version_flag_prints_and_exits_zero() {
 
 #[test]
 fn daemon_url_overrides_bootstrap_before_raw_mode() {
+    // Nextest runs this synchronous test in its own process. Clear the seat
+    // credential before any client/runtime threads start so fixture homes
+    // exercise bootstrap discovery, including the missing-token path.
+    // SAFETY: this test process has no concurrent environment access.
+    unsafe { std::env::remove_var(gobby_core::local_token::AGENT_API_TOKEN_ENV) };
     let root = tempfile::tempdir().expect("temp project");
     let gobby_dir = root.path().join(".gobby");
     std::fs::create_dir(&gobby_dir).expect("create .gobby");
@@ -815,6 +820,8 @@ fn detached_gclient() -> Command {
     use std::os::unix::process::CommandExt;
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_gclient"));
+    // Each subprocess uses its fixture's credentials, not the agent seat's.
+    command.env_remove(gobby_core::local_token::AGENT_API_TOKEN_ENV);
     // SAFETY: setsid is async-signal-safe and touches nothing the parent
     // shares with the child.
     unsafe {

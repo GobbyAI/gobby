@@ -72,6 +72,18 @@ async def test_registry_reports_awaiting_until_notified() -> None:
     [
         ("claude", THINKING_PANE),
         ("codex", CODEX_WORKING_PANE),
+        ("codex", "• Waiting for background terminal (6m 12s • esc to interrupt)\n\n› \n"),
+        # A narrow pane cuts the status row inside its elapsed counter.
+        ("codex", "• Waiting for background terminal (6m…\n\n› Ask Codex to do anything\n"),
+        ("codex", "• Working (4m…\n\n› Ask Codex to do anything\n"),
+        ("codex", "• Working (4m 58…\n\n› \n"),
+        # Wake probes read an ANSI snapshot: a dim counter and a shimmering header.
+        ("codex", "• Working \x1b[2m(4m…\x1b[0m\n\n› \n"),
+        (
+            "codex",
+            "\x1b[1m•\x1b[0m \x1b[38;2;120;120;120mWor\x1b[38;2;200;200;200mking\x1b[0m"
+            " \x1b[2m(4m…\x1b[0m\n\n› \n",
+        ),
         ("grok", GROK_WORKING_PANE),
     ],
 )

@@ -12,9 +12,13 @@ from gobby.storage.terminals import (
     native_locator_key,
     tmux_locator_key,
 )
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.utils.machine_id import require_machine_id
 
 _SOCKET = "/private/tmp/tmux-501/default"
+
+# The ledger a live spawn records into, as native commit_spawn does; tests/agents binds it.
+spawn_ledger: ComposerLedger | None = None
 
 
 def make_pending_terminal(
@@ -62,7 +66,11 @@ def make_live_terminal(
     host_epoch: str | None = None,
     spawn_key: str | None = None,
 ) -> Terminal:
-    """Create a live terminal row for ``run`` and persist the link."""
+    """Create a live terminal row for ``run`` and persist the link.
+
+    With ``spawn_ledger`` bound, the spawn starts with a clean composer, so automatic
+    writes are admitted until a test seeds a draft or block for ``live.id``.
+    """
     if db is None:
         raise TypeError("make_live_terminal requires db=")
     pending = make_pending_terminal(run, backend, db=db, spawn_key=spawn_key)
@@ -98,6 +106,8 @@ def make_live_terminal(
             title=title,
         )
     assert live is not None
+    if spawn_ledger is not None:
+        spawn_ledger.record_spawn(live.id, "")
     return live
 
 
