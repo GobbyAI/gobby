@@ -446,7 +446,7 @@ def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
     assert 'grep -q "$reason" "$report_path"' in script
     assert 'uv_run pytest "${PYTEST_SELECTION_ARGS[@]}" -v --tb=line -rFEsw' in script
     assert 'check_pytest_postgres_skip_guard "$PYTEST_REPORT"' in script
-    assert "GOBBY_RUN_AGY_PROBE=1" in script
+    assert 'GOBBY_RUN_AGY_PROBE="$PYTEST_AGY_PROBE"' in script
     assert "GOBBY_RUN_POSTGRES_TMPFS_FILL_TEST=1" in script
     assert "GOBBY_OTEL_COLLECTOR_SMOKE=1" in script
     assert (

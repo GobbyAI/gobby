@@ -21,6 +21,8 @@ jobs:
     name: Release Branch CI
     runs-on: ubuntu-latest
     env:
+      GOBBY_TEST_FALKOR_HOST: "127.0.0.1"
+      GOBBY_TEST_FALKOR_PORT: "16379"
       GOBBY_POSTGRES_TEST_CONTAINER: postgres-test
       GOBBY_POSTGRES_TEST_DB: gobby_test
       GOBBY_POSTGRES_TEST_IMAGE: gobby-postgres-local:18-pgsearch
@@ -29,6 +31,41 @@ jobs:
       GOBBY_POSTGRES_TEST_USER: gobby_test
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
+      - name: Start isolated FalkorDB test service
+        run: |
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "GOBBY_TEST_FALKOR_PASSWORD=$password" >> "$GITHUB_ENV"
+          export REDIS_ARGS="--requirepass $password --appendonly no"
+          export REDISCLI_AUTH="$password"
+          docker run -d --name falkordb-test \
+            -e REDIS_ARGS -e REDISCLI_AUTH \
+            -p "127.0.0.1:${GOBBY_TEST_FALKOR_PORT}:6379" \
+            --tmpfs /var/lib/falkordb/data \
+            falkordb/falkordb:latest
+          for _ in $(seq 1 30); do
+            if docker exec falkordb-test redis-cli PING | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
 
       - name: Load Postgres test image metadata
         run: |
@@ -107,6 +144,13 @@ jobs:
         run: npm ci
         working-directory: web
 
+      # Python integration tests invoke the actual schema authority and Ask CLI.
+      - name: Build Python test native helpers
+        run: |
+          cargo build -p gobby-daemon -p gobby-code
+          cargo build -p gobby-daemon --example pid_claim_fixture
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+
       - name: Run pre-push suite
         run: ./pre-push-test.sh
 
@@ -119,3 +163,7 @@ jobs:
           test -n "$wheel"
           GOBBY_TEST_PROTECT=1 GOBBY_RUN_WHEEL_UI_SMOKE=1 GOBBY_WHEEL_PATH="$wheel" \
             uv run pytest tests/packaging/test_installed_wheel_ui_smoke.py -v
+
+      - name: Remove isolated test services
+        if: always()
+        run: docker rm -f falkordb-test "${GOBBY_POSTGRES_TEST_CONTAINER}"
