@@ -113,12 +113,13 @@ class ComposerRead:
 
     ``empty`` and ``draft`` are positive reads; ``unknown`` covers no snapshot, no
     frame, a frame the manifest cannot classify, or a blocked or untracked ledger
-    entry. Only the ledger reads ``held``: daemon text with no human input since,
-    with ``line`` when the ledger knows it.
+    entry, whose block ``reason`` the ledger names. Only the ledger reads ``held``:
+    daemon text with no human input since, with ``line`` when the ledger knows it.
     """
 
     state: ComposerState
     line: str | None = None
+    reason: str | None = None
 
     def holds_payload(self, payload: str) -> bool:
         """Match the whole draft, ignoring whitespace introduced by visual wrapping."""

@@ -547,9 +547,9 @@ def test_first_deploy_seat_reads_unknown_until_an_operator_releases_it(
 ) -> None:
     seat, terminals = _seat()
 
-    assert read_composer(seat.id) == ComposerRead("unknown")
+    assert read_composer(seat.id) == ComposerRead("unknown", reason="untracked")
     record_composer_submit(seat.id)
-    assert read_composer(seat.id) == ComposerRead("unknown")
+    assert read_composer(seat.id) == ComposerRead("unknown", reason="untracked")
 
     released = release_composer(terminals, "seat-session", caller_session_id="assistant")
 
