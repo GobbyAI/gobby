@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
 from gobby.runtime_grants.schema import GrantBundle, GrantDeployment, PostgresDirect
 from gobby.runtime_grants.signing import sign_grant
 from gobby.utils.local_token import (
@@ -123,6 +124,8 @@ def materialize_managed_launch(
     token = _issue_grant_capability(grant, signing_key, deadline_seconds)
     grant_path = write_grant_file(dest_dir / "grant.json", grant, managed_api_token=token)
     env = {
+        "HOME": str(Path.home().resolve()),
+        "GOBBY_HOME": str(get_gobby_home().resolve()),
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
         "GOBBY_AGENT_API_TOKEN": token,
         "GOBBY_PROJECT_ID": grant.principal.project_id,
@@ -207,6 +210,8 @@ _CHILD_ENV_BASE_KEYS = (
     "XDG_STATE_HOME",
 )
 _CHILD_ENV_OVERLAY_KEYS = (
+    "HOME",
+    "GOBBY_HOME",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     "GOBBY_AGENT_API_TOKEN",
     "GOBBY_PROJECT_ID",
