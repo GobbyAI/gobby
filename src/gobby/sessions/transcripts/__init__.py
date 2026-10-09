@@ -8,14 +8,12 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 __all__ = [
     "TranscriptParser",
     "ParsedMessage",
     "ClaudeTranscriptParser",
     "GrokTranscriptParser",
-    "QwenTranscriptParser",
     "CodexTranscriptParser",
     "DroidTranscriptParser",
     "AgyTranscriptParser",
@@ -26,7 +24,6 @@ __all__ = [
 PARSER_REGISTRY: dict[str, type[TranscriptParser]] = {
     "claude": ClaudeTranscriptParser,
     "grok": GrokTranscriptParser,
-    "qwen": QwenTranscriptParser,
     "codex": CodexTranscriptParser,
     "droid": DroidTranscriptParser,
     "agy": AgyTranscriptParser,
@@ -42,7 +39,7 @@ def get_parser(
     Get a transcript parser instance for the given source.
 
     Args:
-        source: CLI source name (e.g., 'claude', 'qwen', 'codex', 'droid')
+        source: CLI source name (e.g., 'claude', 'codex', 'droid', 'grok')
         session_id: Optional session identifier.
         transcript_path: Optional transcript path for parsers that need sidecars.
 

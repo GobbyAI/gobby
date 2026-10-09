@@ -670,7 +670,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="list-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 
@@ -692,7 +692,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="filter-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         session_manager.update_status(s1.id, "paused")
@@ -1656,7 +1656,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="other-terminal-socket",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="droid",
             project_id=sample_project["id"],
             terminal_context={
                 "tmux_pane": "%226",
@@ -2103,7 +2103,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="count-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 
@@ -2125,7 +2125,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="count-filter-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
         session_manager.update_status(s1.id, "paused")
@@ -2341,7 +2341,7 @@ class TestSessionManagerLifecycle:
         session_manager.register(
             external_id="list-all-2",
             machine_id="20000000-0000-4000-8000-000000000001",
-            source="qwen",
+            source="codex",
             project_id=sample_project["id"],
         )
 

@@ -84,7 +84,7 @@ def test_refresh_and_reload_reuse_unchanged_fingerprint() -> None:
 @pytest.mark.unit
 def test_bundled_manifests_cover_supported_providers_and_rule_contract() -> None:
     manifests_path = get_bundled_detection_manifests_path()
-    providers = {"agy", "claude", "codex", "droid", "grok", "qwen"}
+    providers = {"agy", "claude", "codex", "droid", "grok"}
     required_rule_ids = {
         "trust_prompt",
         "loop_prompt",

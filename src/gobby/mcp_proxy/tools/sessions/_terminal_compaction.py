@@ -45,7 +45,6 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "claude": "/compact",
     "codex": "/compact",
     "grok": "/compact",
-    "qwen": "/compress",
     "droid": "/compress",
 }
 _DEFAULT_COMPACT_INTERRUPT_KEY: NamedKey = "escape"

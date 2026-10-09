@@ -1,6 +1,6 @@
 """ACP plan-capture broadcast (1b, #15615).
 
-ACP CLIs (Grok/Qwen) present a plan as a normal assistant turn (no
+ACP CLIs (Grok) present a plan as a normal assistant turn (no
 ExitPlanMode tool). The shared ``ACPManagedChatSession.send_message`` hook
 must, when a plan-mode turn finishes with a ``<proposed_plan>``-tagged prose
 plan (or a structured ``plan_update``), broadcast a single

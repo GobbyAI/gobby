@@ -309,7 +309,6 @@ class TestFormatStatusMessage:
                     "claude": "installed",
                     "codex": "installed",
                     "droid": None,
-                    "qwen": None,
                     "hooks": {"claude": True},
                 },
             },
@@ -345,7 +344,7 @@ class TestFormatStatusMessage:
                     "ghook": None,
                     "ghook_path": None,
                 },
-                "coding_clis": {"claude": "installed", "qwen": None, "codex": None, "hooks": {}},
+                "coding_clis": {"claude": "installed", "codex": None, "hooks": {}},
                 "dependencies": {
                     "required": {
                         "git": {
@@ -430,13 +429,12 @@ class TestFormatStatusMessage:
         assert "not installed" in lines["gclient"]
         assert "1.8.0" in lines["gcode"]
 
-    def test_coding_clis_include_qwen_and_droid(self) -> None:
+    def test_coding_clis_include_droid(self) -> None:
         result = format_status_message(
             running=True,
             api_data={
                 "provider_models": {
                     "droid": {"source": "live", "model_count": 24, "error": None},
-                    "qwen": {"source": "live", "model_count": 3, "error": None},
                 },
             },
             deps_info={
@@ -444,14 +442,11 @@ class TestFormatStatusMessage:
                     "claude": "installed",
                     "codex": "installed",
                     "droid": "installed",
-                    "qwen": "installed",
-                    "hooks": {"droid": True, "qwen": True},
+                    "hooks": {"droid": True},
                 },
             },
         )
 
-        assert "Qwen CLI:" in result
-        assert "hooks installed, 3 models available" in _status_line(result, "Qwen CLI")
         assert "Droid CLI:" in result
         assert "hooks installed, 24 models available" in _status_line(result, "Droid CLI")
 

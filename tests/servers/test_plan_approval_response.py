@@ -367,7 +367,7 @@ async def test_option_yolo_managed_drives_bypass_and_auto_continues() -> None:
 async def test_option_act_managed_drives_normal_mode_and_auto_continues() -> None:
     """approve_act -> normal mode + auto-continue on a managed CLI."""
     host = _make_host()
-    session = _make_session(provider="qwen", has_pending_plan=True, plan_auto_switch=False)
+    session = _make_session(provider="grok", has_pending_plan=True, plan_auto_switch=False)
     host._chat_sessions["c"] = session
 
     await SessionControlMixin._handle_plan_approval_response(

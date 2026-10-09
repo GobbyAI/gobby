@@ -11,7 +11,7 @@ function makeEntry(
     id: "entry-1",
     type: "session",
     label: "#1: Session",
-    provider: "qwen",
+    provider: "grok",
     status: "active",
     sessionType: "web_chat",
     inputTokens: 0,

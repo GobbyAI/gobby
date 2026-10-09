@@ -308,7 +308,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["claude", "droid", "grok", "qwen"])
+@pytest.mark.parametrize("provider", ["claude", "droid", "grok"])
 async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
     provider: str,
     temp_db: HubDatabase,

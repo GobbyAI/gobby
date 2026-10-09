@@ -18,7 +18,6 @@ from gobby.sessions.transcripts.codex_items import (
 )
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
-from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.sessions.transcripts.tool_activity import (
     ACTIVITY_HEADER,
     ToolActivityEntry,
@@ -448,64 +447,6 @@ def test_ledger_escapes_control_characters_before_caps() -> None:
             id="grok",
         ),
         pytest.param(
-            QwenTranscriptParser,
-            [
-                {"type": "user", "message": {"parts": [{"text": "inspect"}]}},
-                {
-                    "type": "assistant",
-                    "message": {
-                        "parts": [
-                            {
-                                "functionCall": {
-                                    "id": outcome,
-                                    "name": "Read",
-                                    "args": {"path": f"{outcome}.txt"},
-                                }
-                            }
-                            for outcome in ("success", "failed", "pending")
-                        ]
-                    },
-                },
-                {
-                    "type": "tool_result",
-                    "toolCallResult": {"callId": "success", "status": "completed"},
-                    "message": {
-                        "parts": [
-                            {
-                                "functionResponse": {
-                                    "id": "success",
-                                    "name": "Read",
-                                    "response": {"output": "ok"},
-                                }
-                            }
-                        ]
-                    },
-                },
-                {
-                    "type": "tool_result",
-                    "toolCallResult": {"callId": "failed", "status": "error"},
-                    "message": {
-                        "parts": [
-                            {
-                                "functionResponse": {
-                                    "id": "failed",
-                                    "name": "Read",
-                                    "response": {"output": "permission denied"},
-                                }
-                            }
-                        ]
-                    },
-                },
-                {"type": "assistant", "message": {"parts": [{"text": "done"}]}},
-            ],
-            [
-                "- Read success.txt",
-                "- Read failed.txt ! failed: permission denied",
-                "- Read pending.txt (no result recorded)",
-            ],
-            id="qwen",
-        ),
-        pytest.param(
             DroidTranscriptParser,
             [
                 {
@@ -658,48 +599,6 @@ def _represented_call_count(rendered: str) -> int:
 
 def test_observational_scans_leave_parser_state_untouched() -> None:
     timestamp = "2026-08-26T12:00:00Z"
-
-    qwen = QwenTranscriptParser(session_id="qwen-session")
-    qwen_control = QwenTranscriptParser(session_id="qwen-session")
-    qwen._last_tool_use_id = qwen_control._last_tool_use_id = "seed"
-    qwen_turns = [
-        {"type": "user", "timestamp": timestamp, "message": {"parts": [{"text": "inspect"}]}},
-        {
-            "type": "assistant",
-            "timestamp": timestamp,
-            "message": {
-                "parts": [{"functionCall": {"id": "call-1", "name": "Read", "args": {"path": "x"}}}]
-            },
-        },
-    ]
-    qwen_before = _private_state(qwen)
-    qwen_messages = qwen.extract_last_messages(qwen_turns, include_tool_activity=True)
-    qwen_fresh_messages = QwenTranscriptParser(session_id="qwen-session").extract_last_messages(
-        qwen_turns,
-        include_tool_activity=True,
-    )
-    qwen_following = [
-        {
-            "type": "tool_result",
-            "timestamp": timestamp,
-            "toolCallResult": {"status": "completed"},
-            "message": {
-                "parts": [
-                    {
-                        "functionResponse": {
-                            "name": "Read",
-                            "response": {"output": "ok"},
-                        }
-                    }
-                ]
-            },
-        }
-    ]
-
-    assert _private_state(qwen) == qwen_before == _private_state(qwen_control)
-    assert qwen.snapshot_state() == qwen_control.snapshot_state()
-    assert qwen_messages == qwen_fresh_messages
-    assert _parse_events(qwen, qwen_following) == _parse_events(qwen_control, qwen_following)
 
     codex = CodexTranscriptParser(session_id="codex-session")
     codex_control = CodexTranscriptParser(session_id="codex-session")

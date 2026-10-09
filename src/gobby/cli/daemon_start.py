@@ -205,9 +205,9 @@ def _launch_direct_runner(
     if verbose:
         cmd.append("--verbose")
 
-    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex", "qwen")):
+    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex")):
         click.secho(
-            "warning: no Anthropic/OpenAI/Qwen API/provider credential env vars detected. "
+            "warning: no Anthropic/OpenAI API/provider credential env vars detected. "
             "Spawned agents may prompt for login unless the CLI has on-disk credentials.",
             fg="yellow",
         )

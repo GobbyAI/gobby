@@ -73,22 +73,56 @@ def test_small_budget_refuses() -> None:
         balanced_layout(layout, 79)
 
 
-@pytest.mark.parametrize("count,columns,rows", [(7, 165, 48), (9, 165, 60), (9, 80, 60)])
-def test_crowded_lane_refuses_instead_of_squeezing_height(
-    count: int, columns: int, rows: int
-) -> None:
-    layout: LayoutNode = {"kind": "pane", "pane_id": str(uuid4())}
-    for _ in range(count - 1):
+def squeezed(count: int) -> tuple[LayoutNode, list[str]]:
+    """A lane tab after each launch split the newest pane in half."""
+    panes = [str(uuid4()) for _ in range(count)]
+    layout: LayoutNode = {"kind": "pane", "pane_id": panes[0]}
+    for pane in panes[1:]:
         layout = {
             "kind": "split",
             "axis": "horizontal",
             "ratio": 0.5,
-            "children": [layout, {"kind": "pane", "pane_id": str(uuid4())}],
+            "children": [layout, {"kind": "pane", "pane_id": pane}],
         }
-    before = layout_pane_ids(layout)
-    with pytest.raises(InvalidWorkspaceOpError, match="cannot fit"):
-        balanced_layout(layout, columns, rows)
-    assert layout_pane_ids(layout) == before
+    return layout, panes
+
+
+@pytest.mark.parametrize(
+    "count,columns,rows,grid",
+    [
+        (7, 186, 47, [3, 3, 1]),  # the Lane 4 tab refused on 2026-10-09
+        (7, 165, 48, [3, 3, 1]),
+        (9, 165, 60, [3, 3, 3]),
+        (9, 80, 60, [3, 3, 3]),
+        (2, 80, 24, [1, 1]),
+    ],
+)
+def test_crowded_lane_tiles_the_viewport_like_gclient_arrange(
+    count: int, columns: int, rows: int, grid: list[int]
+) -> None:
+    layout, panes = squeezed(count)
+    tiled = balanced_layout(layout, columns, rows)
+    sizes = pane_sizes(tiled, columns, rows)
+    assert layout_pane_ids(tiled) == panes
+    heights: list[int] = []
+    offset = 0
+    for length in grid:
+        row = [sizes[pane] for pane in panes[offset : offset + length]]
+        offset += length
+        widths = [width for width, _ in row]
+        assert sum(widths) + length - 1 == columns
+        assert max(widths) - min(widths) <= 1
+        assert len({height for _, height in row}) == 1
+        heights.append(row[0][1])
+    assert sum(heights) + len(grid) - 1 == rows
+    assert max(heights) - min(heights) <= 1
+
+
+def test_viewport_too_small_for_any_grid_refuses() -> None:
+    layout, panes = squeezed(50)
+    with pytest.raises(InvalidWorkspaceOpError, match="50 panes cannot fit 80x12"):
+        balanced_layout(layout, 80, 12)
+    assert layout_pane_ids(layout) == panes
 
 
 def test_nine_seat_lane_fits_three_columns_at_height_floor() -> None:

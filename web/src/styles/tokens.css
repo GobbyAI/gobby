@@ -155,7 +155,6 @@
   --source-gemini: oklch(72% 0.16 145);
   --source-grok: oklch(72% 0.14 20);
   --source-agy: oklch(74% 0.09 185);
-  --source-qwen: oklch(78% 0.15 75);
   --source-codex: oklch(70% 0.14 240);
   --source-droid: oklch(72% 0.13 200);
   --source-pipeline: oklch(60% 0.005 125);
@@ -169,7 +168,6 @@
   --provider-gemini: oklch(72% 0.16 145);
   --provider-grok: oklch(72% 0.14 20);
   --provider-agy: oklch(74% 0.09 185);
-  --provider-qwen: oklch(78% 0.15 75);
   --provider-codex: oklch(70% 0.14 240);
   --provider-droid: oklch(72% 0.13 200);
   --provider-cursor: oklch(70% 0.14 240);
@@ -421,7 +419,6 @@
   --source-gemini: oklch(42% 0.18 145);
   --source-grok: oklch(42% 0.16 20);
   --source-agy: oklch(42% 0.12 185);
-  --source-qwen: oklch(45% 0.18 75);
   --source-codex: oklch(42% 0.16 240);
   --source-droid: oklch(45% 0.15 200);
   --source-pipeline: oklch(40% 0.005 125);
@@ -435,7 +432,6 @@
   --provider-gemini: oklch(42% 0.18 145);
   --provider-grok: oklch(42% 0.16 20);
   --provider-agy: oklch(42% 0.12 185);
-  --provider-qwen: oklch(45% 0.18 75);
   --provider-codex: oklch(42% 0.16 240);
   --provider-droid: oklch(45% 0.15 200);
   --provider-cursor: oklch(42% 0.16 240);

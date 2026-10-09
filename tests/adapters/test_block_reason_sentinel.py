@@ -12,7 +12,6 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse
 
 pytestmark = pytest.mark.unit
@@ -57,28 +56,6 @@ def test_claude_pre_tool_use_blank_reason_uses_sentinel(
     assert any(
         record.name == "gobby.adapters.claude_code"
         and "ClaudeCodeAdapter translated deny without reason at adapter boundary" in record.message
-        for record in caplog.records
-    )
-
-
-def test_qwen_block_blank_reason_uses_sentinel(
-    enable_log_propagation, caplog: pytest.LogCaptureFixture
-) -> None:
-    adapter = QwenAdapter()
-    response = HookResponse(decision="block", reason="")
-
-    with caplog.at_level(logging.WARNING, logger="gobby"):
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
-
-    assert result["continue"] is True
-    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert (
-        result["hookSpecificOutput"]["permissionDecisionReason"]
-        == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
-    )
-    assert any(
-        record.name == "gobby.adapters.qwen"
-        and "QwenAdapter translated block without reason at adapter boundary" in record.message
         for record in caplog.records
     )
 

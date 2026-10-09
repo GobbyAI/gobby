@@ -163,15 +163,6 @@ def get_codex_cli_version() -> str | None:
     return None
 
 
-def get_qwen_cli_version() -> str | None:
-    """Get Qwen CLI version."""
-    output = _run_cmd(["qwen", "--version"])
-    if output:
-        match = re.search(r"(\d+\.\d+\.\d+)", output)
-        return match.group(1) if match else output
-    return None
-
-
 def get_agy_cli_version() -> str | None:
     """Get AGY CLI version."""
     output = _run_cmd(["agy", "--version"])
@@ -197,7 +188,6 @@ def _coding_cli_hook_paths() -> dict[str, Path]:
         "grok": Path.home() / ".grok" / "hooks" / "gobby.json",
         "agy": _agy_hooks_file(),
         "codex": Path.home() / ".codex" / "hooks.json",
-        "qwen": Path.home() / ".qwen" / "settings.json",
         "droid": _droid_hooks_file(),
     }
 
@@ -693,7 +683,6 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
         "coding_clis.grok": get_grok_cli_version,
         "coding_clis.codex": get_codex_cli_version,
         "coding_clis.droid": get_droid_cli_version,
-        "coding_clis.qwen": get_qwen_cli_version,
         "coding_clis.agy": get_agy_cli_version,
         "coding_clis.hooks": get_coding_cli_hooks_status,
         "coding_clis.hook_drift": get_coding_cli_hook_drift,
@@ -734,7 +723,6 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "grok": value("coding_clis.grok"),
             "codex": value("coding_clis.codex"),
             "droid": value("coding_clis.droid"),
-            "qwen": value("coding_clis.qwen"),
             "agy": value("coding_clis.agy"),
             "hooks": value("coding_clis.hooks", {}),
             "hook_drift": value("coding_clis.hook_drift", {}),

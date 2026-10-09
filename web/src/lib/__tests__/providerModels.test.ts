@@ -87,21 +87,6 @@ const catalog: ProviderModelEntry[] = [
       },
     ],
   },
-  {
-    provider: "qwen",
-    available: true,
-    source: "live",
-    models: [
-      {
-        value: "coder-model(qwen-oauth)",
-        label: "Qwen Coder (OAuth)",
-      },
-      {
-        value: "gpt-5(openai)",
-        label: "gpt-5",
-      },
-    ],
-  },
 ];
 
 describe("providerModels", () => {
@@ -227,24 +212,6 @@ describe("providerModels", () => {
     );
   });
 
-  it("only applies the Pro tier to Gemini model tokens", () => {
-    const qwenCatalog: ProviderModelEntry[] = [
-      {
-        provider: "qwen",
-        available: true,
-        source: "live",
-        models: [
-          { value: "improved-99", label: "improved-99" },
-          { value: "gemini-2.5-pro", label: "gemini-2.5-pro" },
-        ],
-      },
-    ];
-
-    expect(getModelsForProvider(qwenCatalog, "qwen")[0]?.value).toBe(
-      "gemini-2.5-pro",
-    );
-  });
-
   it("derives reasoning options and defaults from the provider catalog", () => {
     expect(getReasoningOptionsForModel(catalog, "codex", "gpt-5.4")).toEqual([
       { value: "auto", label: "Auto" },
@@ -361,11 +328,11 @@ describe("providerModels", () => {
 
   it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
-    expect(getOrderedProviders(["qwen", "droid", "claude", "codex"])).toEqual([
+    expect(getOrderedProviders(["grok", "droid", "claude", "codex"])).toEqual([
       "claude",
       "codex",
       "droid",
-      "qwen",
+      "grok",
     ]);
   });
 
@@ -404,10 +371,10 @@ describe("providerModels", () => {
     expect(getProviderDisplayName("grok")).toBe("Grok");
     expect(getProviderDisplayName("agy")).toBe("Antigravity");
     expect(getProviderDisplayNameFromEntry(entries[1])).toBe("Antigravity");
-    expect(getOrderedProviders(["qwen", "agy", "grok"])).toEqual([
+    expect(getOrderedProviders(["droid", "agy", "grok"])).toEqual([
       "agy",
+      "droid",
       "grok",
-      "qwen",
     ]);
     expect(
       getModelsForProvider(entries, "grok").map(({ value, label }) => ({
@@ -416,16 +383,6 @@ describe("providerModels", () => {
       })),
     ).toEqual([{ value: "grok-build", label: "Grok Build" }]);
     expect(entries[1].source).toBe("unsupported");
-  });
-
-  it("uses curated backend Qwen labels and humanizes raw-id labels", () => {
-    expect(
-      getModelsForProvider(catalog, "qwen").map((model) => model.label),
-    ).toEqual(["GPT 5", "Qwen Coder (OAuth)"]);
-    expect(getModelLabel(catalog, "qwen", "gpt-5(openai)")).toBe("GPT 5");
-    expect(getModelLabel(catalog, "qwen", "coder-model(qwen-oauth)")).toBe(
-      "Qwen Coder (OAuth)",
-    );
   });
 
   it("falls back to the preferred model when the provider is unknown", () => {
@@ -743,7 +700,7 @@ describe("providerModels", () => {
           null,
           { provider: "codex", available: true, source: "live" },
           {
-            provider: "qwen",
+            provider: "grok",
             available: true,
             source: "live",
             models: [null],

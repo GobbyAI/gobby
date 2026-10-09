@@ -42,7 +42,6 @@ _PROVIDER_DOMAINS: dict[str, tuple[str, ...]] = {
     "claude": ("api.anthropic.com", "*.anthropic.com"),
     "codex": ("api.openai.com", "*.openai.com", "chatgpt.com", "*.chatgpt.com"),
     "gemini": ("generativelanguage.googleapis.com", "oauth2.googleapis.com"),
-    "qwen": ("dashscope.aliyuncs.com", "*.aliyuncs.com"),
     "droid": ("api.factory.ai", "*.factory.ai"),
     "grok": ("api.x.ai", "*.x.ai", "grok.com", "*.grok.com"),
     "agy": (
@@ -69,7 +68,6 @@ _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
     "claude": ("~/.claude", "~/Library/Caches/claude-cli-nodejs"),
     "codex": ("~/.codex",),
     "gemini": ("~/.gemini", "~/.config/gemini"),
-    "qwen": ("~/.qwen",),
     "droid": ("~/.factory",),
     "grok": ("~/.grok",),
     "agy": (
@@ -94,7 +92,6 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
     "codex": ("OPENAI_API_KEY",),
     "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-    "qwen": ("DASHSCOPE_API_KEY", "QWEN_API_KEY"),
     "droid": ("FACTORY_API_KEY",),
     "grok": ("XAI_API_KEY",),
     # AGY never accepts env auth; the spawner strips these same keys.

@@ -83,8 +83,8 @@ _CODEX_TOOLS = {
     "view_image",
 }
 
-# QwenCode native tools.
-_QWEN_TOOLS = {
+# Snake-case native tool names shared by ACP and Gemini-lineage CLIs (Grok).
+_SNAKE_CASE_CLI_TOOLS = {
     "edit_file",
     "glob",
     "google_web_search",
@@ -121,7 +121,7 @@ NATIVE_TOOL_CATALOG: frozenset[str] = frozenset(
     _CLAUDE_CODE_TOOLS
     | _CLAUDE_CODE_LEGACY_TOOLS
     | _CODEX_TOOLS
-    | _QWEN_TOOLS
+    | _SNAKE_CASE_CLI_TOOLS
     | _GOBBY_PROXY_ALIASES
 )
 

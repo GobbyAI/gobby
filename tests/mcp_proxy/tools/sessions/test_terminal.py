@@ -204,7 +204,7 @@ class TestIsSpeedCommand:
 class TestRegisterTerminalTools:
     """Tests for terminal interaction tool registration."""
 
-    @pytest.mark.parametrize("source", ["claude", "codex", "grok", "qwen", "droid"])
+    @pytest.mark.parametrize("source", ["claude", "codex", "grok", "droid"])
     def test_set_handoff_stages_before_terminal_delivery(self, source: str) -> None:
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock(
@@ -365,7 +365,7 @@ class TestRegisterTerminalTools:
             id="session-1",
             project_id="project-1",
             session_type="terminal",
-            source="qwen",
+            source="claude",
             status="active",
             terminal_context={"tmux_pane": "%12"},
         )

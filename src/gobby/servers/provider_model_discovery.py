@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import tomllib
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -24,9 +24,7 @@ if TYPE_CHECKING:
 
 Which = Callable[[str], str | None]
 DeepMerge = Callable[[dict[str, Any], dict[str, Any]], None]
-TrustAuthorizer = Callable[[str, Path], Awaitable[object]]
-ModelDiscoveryCwd = Callable[[str], Awaitable[tuple[Path, bool]]]
-CleanupTree = Callable[[Path], object]
+ModelDiscoveryCwd = Callable[[str], Awaitable[Path]]
 ACPDiscoverer = Callable[[type[ACPClient]], Awaitable[list[dict[str, Any]]]]
 ContextLengthResolver = Callable[[str | None, str | None], int | None]
 
@@ -121,52 +119,6 @@ async def discover_codex_models(
     return models
 
 
-def codex_uses_loopback_model_endpoint(config: Mapping[str, Any]) -> bool:
-    """Return whether Codex's active model provider uses a loopback endpoint."""
-    provider_id = config.get("model_provider")
-    providers = config.get("model_providers")
-    if not isinstance(provider_id, str) or not isinstance(providers, Mapping):
-        return False
-    provider = providers.get(provider_id)
-    return isinstance(provider, Mapping) and is_loopback_model_endpoint(provider.get("base_url"))
-
-
-def claude_uses_loopback_model_endpoint(
-    settings: Mapping[str, Any],
-    *,
-    environment: Mapping[str, str] | None = None,
-) -> bool:
-    """Return whether Claude's effective Anthropic endpoint is loopback-backed."""
-    effective_environment = os.environ if environment is None else environment
-    base_url = effective_environment.get("ANTHROPIC_BASE_URL")
-    if base_url is None:
-        configured_environment = settings.get("env")
-        if isinstance(configured_environment, Mapping):
-            base_url = configured_environment.get("ANTHROPIC_BASE_URL")
-    return is_loopback_model_endpoint(base_url)
-
-
-def qwen_uses_loopback_model_endpoint(settings: Mapping[str, Any]) -> bool:
-    """Return whether Qwen's active model uses a configured loopback endpoint."""
-    model = settings.get("model")
-    providers = settings.get("modelProviders")
-    if not isinstance(model, Mapping) or not isinstance(providers, Mapping):
-        return False
-    model_name = model.get("name")
-    if not isinstance(model_name, str) or not model_name.strip():
-        return False
-
-    for configured_models in providers.values():
-        if not isinstance(configured_models, list):
-            continue
-        for configured_model in configured_models:
-            if not isinstance(configured_model, Mapping):
-                continue
-            if configured_model.get("id") == model_name:
-                return is_loopback_model_endpoint(configured_model.get("baseUrl"))
-    return False
-
-
 def is_loopback_model_endpoint(value: object) -> bool:
     if not isinstance(value, str):
         return False
@@ -209,22 +161,6 @@ def load_claude_settings(
     )
 
 
-def load_qwen_settings(
-    *,
-    deep_merge: DeepMerge,
-    logger: logging.Logger,
-) -> dict[str, Any]:
-    return _load_merged_json_settings(
-        (
-            Path.home() / ".qwen" / "settings.json",
-            Path.cwd() / ".qwen" / "settings.json",
-        ),
-        provider="Qwen",
-        deep_merge=deep_merge,
-        logger=logger,
-    )
-
-
 def _load_merged_json_settings(
     settings_paths: Sequence[Path],
     *,
@@ -256,28 +192,12 @@ async def discover_acp_models(
     client_cls: type[ACPClient],
     which: Which,
     model_discovery_cwd: ModelDiscoveryCwd,
-    authorize_trust: TrustAuthorizer,
-    cleanup_tree: CleanupTree,
     logger: logging.Logger,
 ) -> list[dict[str, Any]]:
     if not which(client_cls.cli_name):
         raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
 
-    cwd, created_cwd = await model_discovery_cwd(client_cls.cli_name)
-    try:
-        await authorize_trust(client_cls.cli_name, cwd)
-    except Exception:
-        if created_cwd:
-            try:
-                await asyncio.to_thread(cleanup_tree, cwd)
-            except Exception as cleanup_exc:
-                logger.exception(
-                    "Failed to remove %s model-discovery cwd %s after authorization failure: %s",
-                    client_cls.cli_name,
-                    cwd,
-                    cleanup_exc,
-                )
-        raise
+    cwd = await model_discovery_cwd(client_cls.cli_name)
     client = client_cls(
         cwd=os.fspath(cwd),
         purpose="model-discovery",

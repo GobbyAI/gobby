@@ -3,7 +3,7 @@ Sessions package for multi-CLI session management.
 
 This package provides:
 - SessionManager: Session registration, handoff, and context restoration
-- Transcript parsers: CLI-specific transcript parsing (Claude, Codex, Qwen, etc.)
+- Transcript parsers: CLI-specific transcript parsing (Claude, Codex, Grok, etc.)
 """
 
 from __future__ import annotations

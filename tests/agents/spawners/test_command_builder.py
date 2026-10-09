@@ -132,7 +132,6 @@ class TestBuildCliCommand:
         ("cli", "approval_args"),
         [
             ("claude", ["--dangerously-skip-permissions"]),
-            ("qwen", ["--approval-mode", "yolo"]),
         ],
     )
     def test_auto_approve_flags_precede_sandbox_args(
@@ -425,20 +424,6 @@ class TestBuildCliCommand:
                     "--effort",
                     "high",
                     "--dangerously-skip-permissions",
-                    "--sandbox",
-                    "continue",
-                ],
-            ),
-            (
-                "qwen",
-                [
-                    "qwen",
-                    "--model",
-                    "model-x",
-                    "--approval-mode",
-                    "yolo",
-                    "--resume",
-                    "native-123",
                     "--sandbox",
                     "continue",
                 ],

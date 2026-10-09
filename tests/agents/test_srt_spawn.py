@@ -41,7 +41,6 @@ def test_srt_runner_uses_portable_preflight_and_finally_cleanup() -> None:
     [
         "_spawn_claude_terminal",
         "_spawn_codex_terminal",
-        "_spawn_qwen_terminal",
         "_spawn_grok_terminal",
         "_spawn_droid_terminal",
     ],

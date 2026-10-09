@@ -2521,7 +2521,7 @@ class TestCloneIsolationHandler:
             base_branch="main",
             project_id="proj-123",
             project_path="/path/to/source/repo",
-            provider="qwen",
+            provider="codex",
             parent_session_id="sess-456",
         )
 
@@ -2601,7 +2601,7 @@ class TestPatchMcpConfigForIsolation:
         Path(isolated_path).mkdir()
         main_repo = "/path/to/main/repo"
 
-        await _patch_mcp_config_for_isolation(main_repo, isolated_path, "qwen")
+        await _patch_mcp_config_for_isolation(main_repo, isolated_path, "codex")
 
         mcp_json = Path(isolated_path) / ".mcp.json"
         assert mcp_json.exists()
@@ -2632,7 +2632,7 @@ class TestPatchMcpConfigForIsolation:
         assert "gobby" in project_config["mcpServers"]
 
     @pytest.mark.asyncio
-    async def test_does_not_patch_claude_json_for_qwen(self, tmp_path: Path) -> None:
+    async def test_does_not_patch_claude_json_for_codex(self, tmp_path: Path) -> None:
         """For non-claude provider, does not touch ~/.claude.json."""
         isolated_path = str(tmp_path / "worktree")
         Path(isolated_path).mkdir()
@@ -2641,7 +2641,7 @@ class TestPatchMcpConfigForIsolation:
         # File doesn't exist initially
 
         with patch("pathlib.Path.home", return_value=tmp_path):
-            await _patch_mcp_config_for_isolation("/main", isolated_path, "qwen")
+            await _patch_mcp_config_for_isolation("/main", isolated_path, "codex")
 
         # Should NOT have created ~/.claude.json
         assert not fake_claude_json.exists()
@@ -2702,7 +2702,7 @@ class TestProviderMcpConfigPreflight:
     """Tests for provider_mcp_config_error."""
 
     def test_reports_missing_mcp_json(self, tmp_path: Path) -> None:
-        error = provider_mcp_config_error(str(tmp_path), "qwen")
+        error = provider_mcp_config_error(str(tmp_path), "codex")
         assert error is not None
         assert error.startswith("provider_mcp_config_missing:")
 
@@ -2720,7 +2720,7 @@ class TestProviderMcpConfigPreflight:
             )
         )
 
-        assert provider_mcp_config_error(str(tmp_path), "qwen") is None
+        assert provider_mcp_config_error(str(tmp_path), "codex") is None
 
     def test_requires_claude_project_config(self, tmp_path: Path) -> None:
         (tmp_path / ".mcp.json").write_text(

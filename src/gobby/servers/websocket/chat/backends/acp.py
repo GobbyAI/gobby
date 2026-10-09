@@ -2,7 +2,7 @@
 
 Hosts a single subprocess speaking the Agent Communication Protocol and
 multiplexes session attach/detach/send across managed chat sessions. Per-CLI
-concretes (``GrokWebChatBackend``, ``QwenWebChatBackend``) override the
+concretes (``GrokWebChatBackend``) override the
 class attributes ``provider``, ``display_name``, ``start_timeout_seconds``,
 and ``acp_client_cls``.
 """

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Collection, Mapping
 from typing import Literal, TypedDict
 
@@ -41,58 +42,58 @@ def balanced_layout(
 ) -> LayoutNode:
     """Keep pane order and IDs, filling columns of evenly sized rows.
 
-    Reserve a cell for every column divider. A narrow viewport uses one column
-    rather than shrinking panes below the width needed by interactive agents.
+    Reserve a cell for every divider. Columns keep each pane at the width and
+    height interactive agents need, and a narrow viewport uses one column. A lane
+    too crowded for that floor tiles the whole viewport instead, as gclient's
+    Arrange > Tiled does: ceil(sqrt N) even rows, each filled left to right.
     """
     if not isinstance(columns, int) or isinstance(columns, bool) or columns < MIN_PANE_COLUMNS:
         raise InvalidWorkspaceOpError(f"A lane tab needs at least {MIN_PANE_COLUMNS} columns")
     if not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS:
         raise InvalidWorkspaceOpError(f"Supply the tab viewport rows (at least {MIN_PANE_ROWS})")
-    panes = layout_pane_ids(layout)
+    panes: list[LayoutNode] = [_leaf(pane_id) for pane_id in layout_pane_ids(layout)]
     count = min(len(panes), (columns + 1) // (MIN_PANE_COLUMNS + 1))
-    width, extra = divmod(columns - count + 1, count)
-    widths = [width + (index < extra) for index in range(count)]
     per_column, remainder = divmod(len(panes), count)
-    largest = per_column + bool(remainder)
-    minimum_rows = largest * (MIN_PANE_ROWS + 1) - 1
-    if rows < minimum_rows:
+    if rows >= (per_column + bool(remainder)) * (MIN_PANE_ROWS + 1) - 1:
+        stacks: list[LayoutNode] = []
+        offset = 0
+        for index in range(count):
+            size = per_column + (index < remainder)
+            stacks.append(_join(panes[offset : offset + size], _even(rows, size), "vertical"))
+            offset += size
+        return _join(stacks, _even(columns, count), "horizontal")
+    per_row = math.ceil(len(panes) / (math.isqrt(len(panes) - 1) + 1))
+    tiers = [panes[start : start + per_row] for start in range(0, len(panes), per_row)]
+    if len(tiers) * 2 - 1 > rows or per_row * 2 - 1 > columns:
         raise InvalidWorkspaceOpError(
-            f"{len(panes)} panes cannot fit {columns}x{rows} at an {MIN_PANE_COLUMNS}x{MIN_PANE_ROWS} floor; "
-            f"{count} columns need at least {minimum_rows} rows. Enlarge the tab before retrying."
+            f"{len(panes)} panes cannot fit {columns}x{rows}, even tiled {len(tiers)} rows "
+            "deep. Enlarge the tab before retrying."
         )
-    groups: list[LayoutNode] = []
-    offset = 0
+    return _join(
+        [_join(tier, _even(columns, len(tier)), "horizontal") for tier in tiers],
+        _even(rows, len(tiers)),
+        "vertical",
+    )
 
-    def stack(ids: list[str], height: int) -> LayoutNode:
-        if len(ids) == 1:
-            return _leaf(ids[0])
-        middle = len(ids) // 2
-        cell_height, extra_height = divmod(height - len(ids) + 1, len(ids))
-        first = middle * cell_height + min(middle, extra_height) + middle - 1
-        return _split(
-            "vertical",
-            first / (height - 1),
-            [stack(ids[:middle], first), stack(ids[middle:], height - first - 1)],
-        )
 
-    for index in range(count):
-        size = per_column + (index < remainder)
-        groups.append(stack(panes[offset : offset + size], rows))
-        offset += size
+def _even(total: int, count: int) -> list[int]:
+    """Split ``total`` cells into ``count`` extents within one cell of each other."""
+    size, extra = divmod(total - count + 1, count)
+    return [size + (index < extra) for index in range(count)]
 
-    def join(nodes: list[LayoutNode], sizes: list[int]) -> LayoutNode:
-        if len(nodes) == 1:
-            return nodes[0]
-        middle = len(nodes) // 2
-        left = sum(sizes[:middle]) + middle - 1
-        right = sum(sizes[middle:]) + len(nodes) - middle - 1
-        return _split(
-            "horizontal",
-            left / (left + right),
-            [join(nodes[:middle], sizes[:middle]), join(nodes[middle:], sizes[middle:])],
-        )
 
-    return join(groups, widths)
+def _join(nodes: list[LayoutNode], sizes: list[int], axis: LayoutAxis) -> LayoutNode:
+    """Lay ``nodes`` along ``axis`` at ``sizes`` cells, one divider cell between each."""
+    if len(nodes) == 1:
+        return nodes[0]
+    middle = len(nodes) // 2
+    first = sum(sizes[:middle]) + middle - 1
+    second = sum(sizes[middle:]) + len(nodes) - middle - 1
+    return _split(
+        axis,
+        first / (first + second),
+        [_join(nodes[:middle], sizes[:middle], axis), _join(nodes[middle:], sizes[middle:], axis)],
+    )
 
 
 def validate_layout(value: object) -> LayoutNode:

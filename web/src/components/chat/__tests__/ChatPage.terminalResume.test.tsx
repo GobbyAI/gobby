@@ -59,11 +59,11 @@ describe("ChatPage – terminal resume", () => {
             viewingSessionId: "terminal-resume-only",
             viewingSessionMeta: {
               ref: "#153",
-              source: "qwen",
+              source: "grok",
               title: "Resume Only Terminal",
               status: "awaiting_handoff",
               canProxyAttach: false,
-              model: "qwen3-coder",
+              model: "grok-build",
               externalId: "term-153",
               sessionType: "terminal",
             },

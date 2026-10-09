@@ -45,7 +45,7 @@
     "source": {
       "type": "string",
       "minLength": 1,
-      "description": "Source CLI identifier passed to the daemon (claude, codex, qwen, droid, grok, agy)."
+      "description": "Source CLI identifier passed to the daemon (claude, codex, droid, grok, agy)."
     },
     "headers": {
       "type": "object",

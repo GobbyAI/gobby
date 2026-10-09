@@ -18,7 +18,6 @@ _GLOBAL_CLI_CONFIGS: tuple[tuple[str, str], ...] = (
     ("claude", ".claude/settings.json"),
     ("grok", ".grok/hooks/gobby.json"),
     ("agy", ".gemini/config/hooks.json"),
-    ("qwen", ".qwen/settings.json"),
     ("codex", ".codex/hooks.json"),
     ("droid", ".factory/hooks/hooks.json"),
 )
@@ -97,7 +96,7 @@ def uninstall(components: tuple[str, ...], working_dir: Path | None) -> None:
     never touched. `gobby uninstall COMPONENT...` removes only those
     components; git-hooks targets the repository given with -C.
 
-    Components: claude, codex, grok, qwen, droid, agy, git-hooks, rtk,
+    Components: claude, codex, grok, droid, agy, git-hooks, rtk,
     impeccable.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()

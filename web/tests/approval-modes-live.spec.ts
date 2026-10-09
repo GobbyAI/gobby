@@ -387,7 +387,7 @@ async function loadInteractiveTerminalSession(
 }
 
 test.describe("Live approval mode verification", () => {
-  test("Claude, Qwen, and Codex prompt in Act and suppress prompts in YOLO", async ({
+  test("Claude and Codex prompt in Act and suppress prompts in YOLO", async ({
     page,
     request,
   }, testInfo) => {
@@ -405,8 +405,8 @@ test.describe("Live approval mode verification", () => {
     const providersToVerify = (
       requestedProviders.length > 0
         ? requestedProviders
-        : ["claude", "qwen", "codex"]
-    ) as Array<"claude" | "qwen" | "codex">;
+        : ["claude", "codex"]
+    ) as Array<"claude" | "codex">;
     const runId = Date.now().toString(36);
 
     for (const providerName of providersToVerify) {

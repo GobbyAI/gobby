@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ProviderPicker } from "../ProviderPicker";
 import { clearProviderModelCache } from "../../../lib/providerModels";
 
-function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
+function buildCatalog(grokModels: { value: string; label: string }[] = []) {
   return {
     providers: [
       {
@@ -17,9 +17,9 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
         source: "static",
       },
       {
-        provider: "qwen",
+        provider: "grok",
         available: true,
-        models: qwenModels,
+        models: grokModels,
         source: "live",
       },
       {
@@ -193,10 +193,7 @@ describe("ProviderPicker", () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () =>
-        buildCatalog([
-          { value: "coder-model(qwen-oauth)", label: "Qwen Coder (OAuth)" },
-          { value: "gpt-5(openai)", label: "gpt-5" },
-        ]),
+        buildCatalog([{ value: "grok-build", label: "Grok Build" }]),
     }) as typeof fetch;
   });
 
@@ -206,14 +203,14 @@ describe("ProviderPicker", () => {
     vi.clearAllMocks();
   });
 
-  it("shows friendly Codex labels plus Qwen catalog entries", async () => {
+  it("shows friendly Codex labels plus Grok catalog entries", async () => {
     render(
       <ProviderPicker
         open={true}
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "grok", "codex", "droid"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
         onSwitchProvider={vi.fn()}
@@ -222,15 +219,12 @@ describe("ProviderPicker", () => {
     );
 
     await waitFor(() => {
-      // Labels are transformed by parseCodex/parseQwen to friendly
+      // Codex labels are transformed by parseCodexModelInfo to friendly
       // display forms by resolveVisibleModels in providerModels.ts.
       expect(screen.getByText("GPT 5.4")).toBeTruthy();
       expect(screen.getByText("GPT 5.4 Mini")).toBeTruthy();
       expect(screen.getByText("GPT 5.3 Codex")).toBeTruthy();
-      expect(screen.getByText("Qwen Coder (OAuth)")).toBeTruthy();
-      expect(screen.getByText("GPT 5")).toBeTruthy();
-      expect(screen.queryByText(/qwen oauth/i)).toBeNull();
-      expect(screen.queryByText(/openai/i)).toBeNull();
+      expect(screen.getByText("Grok Build")).toBeTruthy();
     });
   });
 
@@ -241,7 +235,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["qwen", "droid", "claude", "codex"]}
+        availableProviders={["grok", "droid", "claude", "codex"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
         onSwitchProvider={vi.fn()}
@@ -252,9 +246,9 @@ describe("ProviderPicker", () => {
     await screen.findByText("GPT 5.4");
 
     const providerLabels = screen
-      .getAllByText(/^(Claude|Codex|Droid|Qwen)$/)
+      .getAllByText(/^(Claude|Codex|Droid|Grok)$/)
       .map((element) => element.textContent);
-    expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Qwen"]);
+    expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Grok"]);
   });
 
   it("shows Grok and hides AGY entirely", async () => {
@@ -262,7 +256,9 @@ describe("ProviderPicker", () => {
       ok: true,
       json: async () => ({
         providers: [
-          ...buildCatalog([{ value: "default", label: "Default" }]).providers,
+          ...buildCatalog().providers.filter(
+            (entry) => entry.provider !== "grok",
+          ),
           {
             provider: "grok",
             available: true,
@@ -313,7 +309,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "grok", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}
@@ -628,7 +624,7 @@ describe("ProviderPicker", () => {
     expect(screen.queryByText("connection refused")).toBeNull();
   });
 
-  it("falls back to a default model entry for Qwen when the catalog is empty", async () => {
+  it("falls back to a default model entry for Grok when the catalog is empty", async () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();
     const onSwitchProvider = vi.fn();
@@ -644,7 +640,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "grok", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}
@@ -654,9 +650,9 @@ describe("ProviderPicker", () => {
 
     await userEvent.click(await screen.findByText("Default"));
 
-    expect(onProviderChange).toHaveBeenCalledWith("qwen");
+    expect(onProviderChange).toHaveBeenCalledWith("grok");
     expect(onModelChange).toHaveBeenCalledWith("default");
-    expect(onSwitchProvider).toHaveBeenCalledWith("qwen");
+    expect(onSwitchProvider).toHaveBeenCalledWith("grok");
     nowSpy.mockRestore();
   });
 

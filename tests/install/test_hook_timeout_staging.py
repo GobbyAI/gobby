@@ -41,7 +41,7 @@ def test_hook_timeout_layers_leave_ordered_cleanup_windows() -> None:
 
 @pytest.mark.parametrize(
     ("provider", "expected_timeout"),
-    [("agy", 45), ("droid", 120), ("grok", 120), ("qwen", 120_000)],
+    [("agy", 45), ("droid", 120), ("grok", 120)],
 )
 def test_explicit_provider_hook_timeouts_use_outer_ceiling(
     provider: str,

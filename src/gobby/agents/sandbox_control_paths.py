@@ -23,15 +23,6 @@ GROK_CONTROL_FILES = (
     "sandbox.toml",
     "bin",
 )
-QWEN_CONTROL_FILES = (
-    "settings.json",
-    "trustedFolders.json",
-    "agents",
-    "skills",
-    "commands",
-    "extensions",
-    "extension-store",
-)
 
 _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
     ".claude": (
@@ -47,7 +38,6 @@ _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
         "plugins/known_marketplaces.json",
     ),
     ".codex": ("hooks.json", "config.toml", "rules", "plugins/cache"),
-    ".qwen": QWEN_CONTROL_FILES,
     ".factory": (
         "hooks.json",
         "settings.json",
@@ -79,7 +69,6 @@ _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
 _CONFIG_HOME_ENV = {
     "CLAUDE_CONFIG_DIR": ".claude",
     "CODEX_HOME": ".codex",
-    "QWEN_HOME": ".qwen",
 }
 
 

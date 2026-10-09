@@ -45,8 +45,6 @@ from gobby.servers.websocket.chat.backends import (
     GrokManagedChatSession,
     GrokWebChatBackend,
     ProviderBackendHealth,
-    QwenManagedChatSession,
-    QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 
@@ -133,7 +131,6 @@ class WebChatRuntimeManager:
                 transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
             )
         self._grok_backend = GrokWebChatBackend()
-        self._qwen_backend = QwenWebChatBackend()
         self._droid_backend = DroidWebChatBackend()
         self._agy_backend = AgyWebChatBackend()
         # Discovered ACP SessionInfo payloads keyed by (provider, sessionId).
@@ -186,7 +183,6 @@ class WebChatRuntimeManager:
         for backend in self._codex_endpoint_backends.values():
             await backend.start()
         await self._grok_backend.start()
-        await self._qwen_backend.start()
         await self._droid_backend.start()
         await self._agy_backend.start()
 
@@ -194,7 +190,6 @@ class WebChatRuntimeManager:
         """Stop daemon-owned provider backends."""
         await self._agy_backend.stop()
         await self._droid_backend.stop()
-        await self._qwen_backend.stop()
         await self._grok_backend.stop()
         for backend in self._codex_endpoint_backends.values():
             await backend.stop()
@@ -206,8 +201,6 @@ class WebChatRuntimeManager:
             return self._codex_backend.health()
         if provider == "grok":
             return self._grok_backend.health()
-        if provider == "qwen":
-            return self._qwen_backend.health()
         if provider == "agy":
             from gobby.providers.version_gate import peek_agy_support
 
@@ -249,7 +242,6 @@ class WebChatRuntimeManager:
         return {
             "claude": self.health("claude").to_dict(),
             "grok": self.health("grok").to_dict(),
-            "qwen": self.health("qwen").to_dict(),
             "agy": self.health("agy").to_dict(),
             "codex": self.health("codex").to_dict(),
             "droid": self.health("droid").to_dict(),
@@ -258,10 +250,10 @@ class WebChatRuntimeManager:
     def acp_backends(self) -> dict[str, ACPWebChatBackend]:
         """Return ACP-routed provider backends keyed by provider.
 
-        Only Grok and Qwen route through the ACP backend; there is no literal
+        Only Grok routes through the ACP backend; there is no literal
         ``"acp"`` provider.
         """
-        return {"grok": self._grok_backend, "qwen": self._qwen_backend}
+        return {"grok": self._grok_backend}
 
     def acp_backend(self, provider: str) -> ACPWebChatBackend | None:
         """Return the daemon-owned ACP backend for a provider, or ``None``."""
@@ -327,7 +319,7 @@ class WebChatRuntimeManager:
             raise RuntimeError(
                 f"{provider} cannot prove the sensitive-root contract under provider-native sandbox"
             )
-        if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
+        if provider not in {"claude", "codex", "droid", "grok", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
             from gobby.providers.version_gate import ensure_agy_support
@@ -337,14 +329,7 @@ class WebChatRuntimeManager:
                 raise RuntimeError(record.reason)
         local_context_provider = provider in {"claude", "codex"}
         session: ChatSessionProtocol
-        if provider == "qwen":
-            session = QwenManagedChatSession(
-                conversation_id=conversation_id,
-                _backend=self._qwen_backend,
-                _model=model,
-                reasoning_effort=reasoning_effort,
-            )
-        elif provider == "grok":
+        if provider == "grok":
             session = GrokManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._grok_backend,

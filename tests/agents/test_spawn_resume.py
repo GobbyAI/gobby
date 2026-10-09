@@ -70,7 +70,6 @@ def test_relaunch_seeds_only_absent_step_instance(
     [
         ("claude", "--resume"),
         ("codex", "resume"),
-        ("qwen", "--resume"),
         ("grok", "--resume"),
         ("droid", "--session-id"),
         ("agy", "--conversation"),
