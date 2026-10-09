@@ -102,6 +102,10 @@ _LIMITS = (
     "--last-failed",
     "--sw",
     "--stepwise",
+    "--sw-skip",
+    "--stepwise-skip",
+    "--override-ini",
+    "--config-file",
     "--collect-only",
     "--deselect",
     "--ignore",
@@ -110,7 +114,12 @@ _LIMITS = (
 
 
 def _full_pytest(run: TranscriptValidationRun) -> bool:
-    if run.wrapped or run.core_command is None or pytest_targets(run.core_command) is None:
+    if (
+        "PYTEST_ADDOPTS" in run.command
+        or run.wrapped
+        or run.core_command is None
+        or pytest_targets(run.core_command) is None
+    ):
         return False
     words = shlex.split(run.core_command)
     pytest_index = next(i for i, word in enumerate(words) if word.rsplit("/", 1)[-1] == "pytest")
@@ -119,7 +128,11 @@ def _full_pytest(run: TranscriptValidationRun) -> bool:
         "::" in word
         or word == limit
         or word.startswith(limit + "=")
-        or (word.startswith("-") and not word.startswith("--") and set(word[1:]) & {"k", "m", "x"})
+        or (
+            word.startswith("-")
+            and not word.startswith("--")
+            and set(word[1:]) & {"k", "m", "x", "o", "c"}
+        )
         for word in arguments
         for limit in _LIMITS
     )

@@ -342,6 +342,52 @@ def test_non_validation_rerun_never_earns_confinement_credit(
     assert _credit(candidate, context, green=green) == (frozenset(), [])
 
 
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--sw-skip",
+        "--stepwise-skip",
+        "-o addopts=--co",
+        "-oaddopts=--co",
+        "--override-ini addopts=--co",
+        "--override-ini=addopts=--co",
+        "-o 'addopts = -k chosen'",
+        "-qoaddopts=--co",
+        "-o=addopts=--co",
+        "-o python_functions=test_one",
+        "PYTEST_ADDOPTS=--co",
+        "PYTEST_ADDOPTS='-k chosen'",
+        "env PYTEST_ADDOPTS=--co",
+        "-c other.ini",
+        "-qcother.ini",
+        "--config-file=other.ini",
+    ],
+)
+@pytest.mark.parametrize("side", ["failure", "rerun"])
+def test_hidden_pytest_limits_never_earn_confinement_credit(
+    case: tuple[CloseCandidate, ConfinementContext], option: str, side: str
+) -> None:
+    candidate, context = case
+    failure = _run(Path(candidate.root), 1, failed=True)
+    green = _run(Path(candidate.root), 4)
+    run = failure if side == "failure" else green
+    command = f"{option} {run.command}" if "PYTEST_ADDOPTS" in option else f"{run.command} {option}"
+    if side == "failure":
+        failure = replace(failure, command=command)
+        context = replace(
+            context,
+            handoffs=(
+                replace(
+                    context.handoffs[0],
+                    content=f"Failing command: {failure.command}; {FOREIGN}: AssertionError; blocks close.",
+                ),
+            ),
+        )
+    else:
+        green = replace(green, command=command)
+    assert _credit(candidate, context, failure=failure, green=green) == (frozenset(), [])
+
+
 @pytest.mark.parametrize("option", ["--co", "--setup-plan"])
 @pytest.mark.parametrize("confined", [False, True])
 def test_close_gate_does_not_credit_non_validation_pytest_coverage(
