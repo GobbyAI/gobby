@@ -945,8 +945,11 @@ def srt_root(tmp_path: Path) -> Iterator[Path]:
 
 
 def _write_valid_srt_install(root: Path, *, helper_mode: int = 0o755) -> None:
+    from tests.srt_fixture_helpers import write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(root)
     package_dir = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime"
-    package_dir.mkdir(parents=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
     for architecture in ("arm64", "x64"):
         helper = package_dir / "vendor" / "seccomp" / architecture / "apply-seccomp"
         helper.parent.mkdir(parents=True)
@@ -1040,6 +1043,28 @@ def test_verify_srt_installation_rejects_unmanifested_package_content(
     injected.write_text("export default 'persisted payload';\n", encoding="utf-8")
 
     with pytest.raises(SrtRuntimeError, match="content manifest"):
+        verify_srt_installation()
+
+
+@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js"])
+def test_verify_srt_installation_rejects_unpatched_proxy_with_rewritten_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    srt_root: Path,
+    name: str,
+) -> None:
+    from gobby.agents.srt_package_patch import HTTP_PROXY_PATH
+    from tests.srt_fixture_helpers import upstream_proxy_bytes
+
+    _write_valid_srt_install(srt_root)
+    _patch_srt_verification_runtime(monkeypatch, srt_root)
+    proxy = (srt_root / HTTP_PROXY_PATH).with_name(name)
+    proxy.chmod(0o644)
+    proxy.write_bytes(upstream_proxy_bytes(name.removesuffix(".js")))
+    (srt_root / "content-manifest.json").chmod(0o644)
+    srt_runtime.write_srt_content_manifest(srt_root)
+    srt_runtime.make_srt_installation_immutable(srt_root)
+
+    with pytest.raises(SrtRuntimeError, match=f"{name} checksum mismatch"):
         verify_srt_installation()
 
 
