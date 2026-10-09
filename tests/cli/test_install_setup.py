@@ -115,7 +115,10 @@ class TestEnsureDaemonConfig:
 
         shared_file = tmp_path / "shared" / "config" / "bootstrap.yaml"
         shared_file.parent.mkdir(parents=True)
-        shared_file.write_text("datastore_mode: local\ndaemon_port: 60887\nbind_host: localhost\n")
+        bundled = (
+            Path(__file__).resolve().parents[2] / "src/gobby/install/shared/config/bootstrap.yaml"
+        )
+        shared_file.write_text(bundled.read_text())
 
         mock_get_dir.return_value = tmp_path
 
@@ -124,6 +127,7 @@ class TestEnsureDaemonConfig:
         res = ensure_daemon_config(files_home=files_home)
         assert res["created"]
         assert res["source"] == "shared"
+        assert yaml.safe_load(target.read_text())["bind_host"] == "127.0.0.1"
         assert yaml.safe_load(target.read_text())["files_home"] == str(files_home.resolve())
         _assert_fresh_local_dsn(target.read_text())
         assert (tmp_path / ".bootstrap.yaml.lock").exists()
@@ -159,6 +163,7 @@ class TestEnsureDaemonConfig:
         res = ensure_daemon_config(files_home=files_home)
         assert res["created"]
         assert res["source"] == "generated"
+        assert yaml.safe_load(target.read_text())["bind_host"] == "127.0.0.1"
         assert target.exists()
         _assert_fresh_local_dsn(target.read_text())
         assert "daemon_port: 60887" in target.read_text()

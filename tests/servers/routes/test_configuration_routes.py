@@ -14,6 +14,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST
 from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.identity import hash_password
@@ -203,7 +204,7 @@ class TestSecretsEndpoints:
     def test_mutations_require_verified_identity_when_web_login_is_unconfigured(
         self, server: Any, mock_machine_id: Any
     ) -> None:
-        assert server.startup_config.bind_host == "localhost"
+        assert server.startup_config.bind_host == DEFAULT_DAEMON_BIND_HOST
         unauthenticated = TestClient(server.app)
 
         create_response = unauthenticated.post(

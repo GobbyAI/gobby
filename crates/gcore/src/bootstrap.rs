@@ -446,6 +446,7 @@ mod tests {
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "other_field: value\n").unwrap();
         assert_eq!(read_daemon_endpoint_at(&path), DaemonEndpoint::default());
+        assert_eq!(read_daemon_endpoint_at(&path).host, "127.0.0.1");
     }
 
     #[test]
@@ -703,7 +704,7 @@ mod tests {
         let parsed = parse_hub_database_bootstrap("database_url: postgresql://x\n")
             .unwrap()
             .unwrap();
-        assert_eq!(parsed.bind_host, DEFAULT_BIND_HOST);
+        assert_eq!(parsed.bind_host, "127.0.0.1");
         assert_eq!(parsed.daemon_port, DEFAULT_DAEMON_PORT);
         assert_eq!(parsed.websocket_port, DEFAULT_WEBSOCKET_PORT);
         assert_eq!(parsed.front_door, FrontDoorBootstrap::default());
