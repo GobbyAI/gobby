@@ -41,7 +41,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
         // Each section's options live under Sidebar ▸ in a submenu of their
-        // own; the state legend is Help › Keys.
+        // own; the state legend is Help › Keybinds.
         MenuBarMenu::View => vec![
             item(
                 appearance_row_label(chrome),
@@ -126,7 +126,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
             ]
         }
         MenuBarMenu::Help => vec![
-            act("Keys", Action::Help),
+            act("Keybinds", Action::Help),
             item("Alerts…", MenuAction::ShowAlerts),
             item("Daemon", MenuAction::ShowDaemon),
             item("About Gobby", MenuAction::ShowAbout),

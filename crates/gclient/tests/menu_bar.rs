@@ -207,7 +207,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
     );
     assert_eq!(
         labels(MenuBarMenu::Help),
-        ["Keys", "Alerts…", "Daemon", "About Gobby"]
+        ["Keybinds", "Alerts…", "Daemon", "About Gobby"]
     );
     assert_eq!(
         labels(MenuBarMenu::Gobby),
@@ -573,7 +573,7 @@ async fn the_appearance_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
     fixture.mock.shutdown().await;
 }
 
-/// A search hides the legend; Help opened again from Help › Keys drops
+/// A search hides the legend; Help opened again from Help › Keybinds drops
 /// that search and shows the legend.
 #[tokio::test]
 async fn help_reopened_from_the_legend_row_drops_the_old_search() {
