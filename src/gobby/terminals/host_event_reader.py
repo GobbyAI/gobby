@@ -76,7 +76,9 @@ async def recover_event_gap(manager: TerminalHostManager, stream: HostEventStrea
     client = manager._client
     if client is None:
         raise ConnectionError("gterm control client unavailable")
-    snapshot, replay = await collect_gap_cut(stream, client.list_inventory)
+    snapshot, replay = await collect_gap_cut(
+        stream, client.list_inventory, manager.composer_ledger.observe_host_event
+    )
     await manager.reconcile(
         host_rows=list(snapshot.rows),
         host_epoch=snapshot.epoch,
@@ -91,19 +93,27 @@ async def recover_event_gap(manager: TerminalHostManager, stream: HostEventStrea
 async def event_reader_loop(manager: TerminalHostManager) -> None:
     while not manager._stop_requested:
         stream: HostEventStream | None = None
+        ledger = manager.composer_ledger
         try:
-            since = (
-                manager.last_event_seq
-                if manager.last_event_epoch is not None
+            # The composer ledger's cursor, restored across daemon restarts, trails the
+            # manager's; replaying from it lets the ledger see input the manager skips.
+            cursor = ledger.host_cursor
+            since: int | None = None
+            if cursor is not None and cursor[0] == manager.host_epoch:
+                since = cursor[1]
+            elif (
+                manager.last_event_epoch is not None
                 and manager.last_event_epoch == manager.host_epoch
-                else None
-            )
+            ):
+                since = manager.last_event_seq
             previous_epoch = manager.last_event_epoch
             stream = await connect_event_stream(manager, since)
             manager._event_stream = stream
+            ledger.resume_host(stream.epoch, stream.seq, since=since, gap=stream.gap)
             if previous_epoch is None or stream.gap or stream.epoch != previous_epoch:
                 await recover_event_gap(manager, stream)
             async for event in stream:
+                ledger.observe_host_event(event)
                 if event.epoch != manager.last_event_epoch:
                     break
                 await apply_host_event(manager, event)

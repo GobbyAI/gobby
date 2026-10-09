@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import UUID
 
@@ -19,6 +18,7 @@ from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, UnregisteredBackendError
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
@@ -32,7 +32,7 @@ from tests.terminals.fakes import (
 )
 
 if TYPE_CHECKING:
-    from gobby.runner import GobbyRunner
+    pass
 
 pytestmark = pytest.mark.unit
 
@@ -457,18 +457,11 @@ async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
     assert [record.getMessage() for record in caplog.records if "Settling" in record.getMessage()]
 
 
-def _provider_composer_frame(source: str, text: str = "") -> str:
-    if source == "claude":
-        return f"done\n{'─' * 20}\n❯\xa0{text}\n{'─' * 20}\n"
-    footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
-    return f"done\n› {text}\n\n{footer}"
-
-
 @pytest.mark.parametrize("source", ["claude", "codex"])
-@pytest.mark.parametrize("state", ["empty", "draft", "unknown", "error"])
+@pytest.mark.parametrize("state", ["empty", "draft", "blocked", "untracked", "error"])
 async def test_real_probe_settles_old_wake_only_after_confirmed_empty(
     managed_chain: ManagedChain,
-    monkeypatch: pytest.MonkeyPatch,
+    composer_ledger: ComposerLedger,
     source: str,
     state: str,
 ) -> None:
@@ -477,29 +470,20 @@ async def test_real_probe_settles_old_wake_only_after_confirmed_empty(
     managed_chain.store.persist_unresolved_write(
         managed_chain.row.id, wake_key, "automatic", daemon_epoch="earlier-daemon"
     )
-    registry = BundledDetectionRegistry()
-    frame = (
-        "unreadable provider frame"
-        if state == "unknown"
-        else _provider_composer_frame(source, "operator draft" if state != "empty" else "")
-    )
-    managed_chain.native.snapshot_text = frame
-    if state == "error":
-        monkeypatch.setattr(
-            managed_chain.native, "snapshot", AsyncMock(side_effect=RuntimeError("probe failed"))
+    terminal_id = str(managed_chain.row.id)
+    if state != "untracked":
+        composer_ledger.record_spawn(terminal_id, "")
+    if state == "draft":
+        composer_ledger.observe_write(
+            terminal_id, origin="operator", kind="text", payload="operator draft"
         )
-    else:
-        assert IdleDetector(registry, source).composer_read(frame).state == state
-    runner = cast(
-        "GobbyRunner",
-        SimpleNamespace(
-            detection_registry=registry,
-            terminal_services=SimpleNamespace(runtime_for=lambda _terminal: managed_chain.native),
-        ),
+    elif state == "blocked":
+        composer_ledger.block(terminal_id, "gap")
+    probe: ActivityProbe = (
+        AsyncMock(side_effect=RuntimeError("probe failed"))
+        if state == "error"
+        else probe_terminal_activity
     )
-
-    async def probe(session: Any, terminal: Any | None) -> TerminalActivity:
-        return await probe_terminal_activity(runner, session, terminal)
 
     manager = _session_manager(NATIVE_TERMINAL_CONTEXT)
     manager.get.return_value.source = source
@@ -524,7 +508,6 @@ async def test_real_probe_settles_old_wake_only_after_confirmed_empty(
             assert result["delivered"] is False
             assert wake_key in unresolved
             assert managed_chain.native.write_log == []
-            assert managed_chain.native.snapshot_text == frame
     finally:
         retries = list(dispatcher._composer_retries.values())
         for retry in retries:
@@ -823,7 +806,7 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     assert managed_chain.native.write_log == []
     messages = [record.getMessage() for record in caplog.records]
-    assert any("operator draft (11 chars)" in message for message in messages)
+    assert any("composer holds an operator draft" in message for message in messages)
     assert not any("hello draft" in message for message in messages)
 
 

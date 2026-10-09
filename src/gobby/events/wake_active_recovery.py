@@ -42,15 +42,19 @@ def restart_activity_allows_recovery(activity: TerminalActivity) -> bool:
     return activity.turn_in_flight_fingerprint is None and activity.composer.state in {
         "empty",
         "draft",
+        "held",
     }
 
 
 def idle_prompt_allows_wake(activity: TerminalActivity) -> bool:
-    """An empty prompt with no in-flight turn can accept a deferred wake.
+    """An empty prompt, or one holding daemon text a wake drains, can accept a deferred wake.
 
     A draft is the user typing, so it stays active. ``unknown`` is not a prompt.
     """
-    return activity.turn_in_flight_fingerprint is None and activity.composer.state == "empty"
+    return activity.turn_in_flight_fingerprint is None and activity.composer.state in {
+        "empty",
+        "held",
+    }
 
 
 def session_precedes_restart_horizon(

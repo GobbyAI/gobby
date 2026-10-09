@@ -29,7 +29,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 | `--workspace WORKSPACE` | The workspace to attach: a ref (`1`, or `2:1`, whose node overrides `--node`) or a name. Defaults to `default`, which is created on first use. See [Workspaces](#workspaces). |
 | `--node NODE` | The node that owns the workspace: a ref (`2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
-| `--token-file PATH` | Bearer token file. Defaults to `~/.gobby/local_cli_token`. |
+| `--token-file PATH` | Explicit plaintext API-key file. Without this flag, the client reads `api_key` from `~/.gobby/bootstrap.yaml`. |
 | `--frame-delivery auto\|direct\|proxy` | How terminal frames arrive, and with them your keystrokes. `auto` tries the local frame socket first and falls back to the daemon's WebSocket proxy per pane. Forcing `proxy` puts typing back on the daemon for every pane. |
 | `--no-mouse` | Leave mouse events to your terminal emulator. Same as turning off `Mouse capture` in settings, for this run only. |
 | `--version`, `-V` | Print the version and exit. |

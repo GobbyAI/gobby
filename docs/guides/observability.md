@@ -32,11 +32,11 @@ curl -sS http://localhost:60887/api/health
 
 Use the configured daemon address if it differs from the default above.
 Admin status, usage, metrics, and trace routes require authentication. For
-example, with `GOBBY_API_TOKEN` set to the local CLI token from
-`~/.gobby/local_cli_token`, fetch Prometheus metrics:
+example, with `GOBBY_API_KEY` set to a valid hub-issued API key, fetch
+Prometheus metrics:
 
 ```bash
-curl -sS -H "Authorization: Bearer ${GOBBY_API_TOKEN}" \
+curl -sS -H "Authorization: Bearer ${GOBBY_API_KEY}" \
   http://localhost:60887/api/admin/metrics
 ```
 
