@@ -72,6 +72,19 @@ def test_untracked_terminal_is_blocked_until_released() -> None:
     assert ledger.read("t1") == _EMPTY
 
 
+def test_submit_record_adopts_a_terminal_bound_before_the_ledger_tracked_it() -> None:
+    ledger = ComposerLedger()
+    ledger.resume_host("e1", 40, since=None, gap=False)
+    ledger.observe_host_event(_host(41, submit=None))
+    assert ledger.read("t1") == _UNTRACKED
+
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _EMPTY
+
+    ledger.observe_host_event(_host(42))
+    assert ledger.read("t1") == _DRAFT
+
+
 def test_submit_flagged_host_input_is_consumed_by_the_next_record() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1))
@@ -528,15 +541,23 @@ def _seat(session_id: str = "seat-session") -> tuple[Terminal, MemoryTerminalSto
     return seat, MemoryTerminalStore(seat)
 
 
+def test_first_deploy_seat_reads_unknown_until_a_provider_submit_vouches_for_it(
+    composer_ledger: ComposerLedger,
+) -> None:
+    seat, _terminals = _seat()
+
+    assert read_composer(seat.id) == ComposerRead("unknown")
+    record_composer_submit(seat.id)
+
+    assert read_composer(seat.id) == ComposerRead("empty")
+
+
 def test_first_deploy_seat_reads_unknown_until_an_operator_releases_it(
     composer_ledger: ComposerLedger,
 ) -> None:
     seat, terminals = _seat()
 
     assert read_composer(seat.id) == ComposerRead("unknown")
-    record_composer_submit(seat.id)
-    assert read_composer(seat.id) == ComposerRead("unknown")
-
     released = release_composer(terminals, "seat-session", caller_session_id="assistant")
 
     assert released == seat.id

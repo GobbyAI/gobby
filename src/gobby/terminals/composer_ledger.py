@@ -8,7 +8,8 @@ submit-flagged input that a later provider submit record (``BEFORE_AGENT``, a ma
 daemon typed itself. An interrupt key, a host event gap and a provider limit block
 until a later submit is recorded or an operator releases the terminal. A terminal
 the ledger never tracked reads blocked, so nothing types into a composer whose
-history is unknown; a new host epoch drops the old host's terminals.
+history is unknown, until a provider submit record or an operator release starts it
+clean; a new host epoch drops the old host's terminals.
 """
 
 from __future__ import annotations
@@ -217,11 +218,14 @@ class ComposerLedger:
     def record_submit(self, terminal_id: str) -> None:
         """A provider recorded a submit: flagged input up to now left the composer.
 
-        The prompt reached the composer, so no dialog held the input before it.
+        The prompt reached the composer, so no dialog held the input before it. An
+        untracked terminal, such as one bound before the ledger existed, starts clean
+        at the submit: the provider just consumed its composer.
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
             if entry is None:
+                self._entries[terminal_id] = _Entry(clean_seq=self._next())
                 return
             _close_wait(entry, "resumed")
             seq = self._next()
