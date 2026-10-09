@@ -21,10 +21,10 @@ __all__ = [
 def effective_ui_host(ui_host: str, bind_host: str) -> str:
     """Return the host the dev UI server listens on.
 
-    A `localhost` UI follows a non-`localhost` daemon bind, so the dev server is
+    A `localhost` UI follows a non-loopback daemon bind, so the dev server is
     reachable wherever the daemon is.
     """
-    if bind_host != "localhost" and ui_host == "localhost":
+    if not is_loopback_bind_host(bind_host) and ui_host == "localhost":
         return bind_host
     return ui_host
 

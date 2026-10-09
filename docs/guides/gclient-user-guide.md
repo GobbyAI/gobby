@@ -89,7 +89,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Sidebar ▸ |
 | Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
-| Help | Keys, Alerts…, Daemon, About Gobby |
+| Help | Keybinds, Alerts…, Daemon, About Gobby |
 
 **File › New project…** creates a directory (or uses an existing empty one),
 initializes Git, registers the checkout with Gobby, and attaches its default
@@ -120,7 +120,7 @@ Monochrome** toggles monochrome (below). **View › Sidebar** holds:
 | Terminals ▸ | New terminal, Destroy orphaned terminals… |
 
 A `✓` marks the value or toggle in force. The attention legend lives in
-**Help › Keys**, where it opens first.
+**Help › Keybinds**, where it opens first.
 
 **Monochrome.** **View › Monochrome**, or `Monochrome` in settings, draws the
 client's own chrome in grays: every token of the theme in force keeps its
@@ -150,8 +150,8 @@ setting:
 
 | Appearance | Themes |
 | --- | --- |
-| Dark, Light | Restored, Moss, Your proposal, Staircase, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Moss band |
-| System | Restored, Moss, Your proposal, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Ink, Host-matched |
+| Dark, Light | Restored, Moss, Midnight moss, Staircase, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Moss band |
+| System | Restored, Moss, Midnight moss, Inverse bar, Gobby bar, Contrast chrome, Moss chrome, Ink, Host-matched |
 
 While the OS appearance is light, System draws each theme's Light fills and
 does not offer Ink or Host-matched. A saved theme that the appearance in
@@ -559,7 +559,7 @@ the focused terminal.
 | `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
-The **Help › Keys** overlay shows the current bindings after overrides. In a
+The **Help › Keybinds** overlay shows the current bindings after overrides. In a
 narrow window it hides binding names, keeping chords and descriptions readable;
 you can still search by a binding name.
 
@@ -873,7 +873,7 @@ close.
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
 | **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
 | **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
-| **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |
+| **Help** on the menu bar (click) | Keybinds, Alerts…, Daemon, About Gobby |
 
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `Right-click passthrough` setting does the same for every pane
