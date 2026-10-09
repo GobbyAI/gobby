@@ -57,9 +57,10 @@ gobby health
 docker compose -f ~/.gobby/services/docker-compose.yml ps
 ```
 
-Keep secure copies of `~/.gobby/.secret_kek` and `~/.gobby/local_cli_token`. Each
-client needs the same two files. Never copy the hub's `machine_id`; every machine must
-retain its own identity.
+Keep a secure copy of `~/.gobby/.secret_kek` for clients that use the shared
+datastores. Enroll each client with its own hub-issued API key, stored as `api_key`
+in that client's owner-only bootstrap. Never copy the hub's `machine_id` or its
+API key; every machine retains its own identity.
 
 ## Client setup
 
@@ -74,7 +75,7 @@ postgres_pool:
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
 daemon_port: 60887
-bind_host: "localhost"
+bind_host: "127.0.0.1"
 websocket_port: 60888
 ui_port: 60889
 ```
@@ -90,13 +91,15 @@ credentials and bootstrap to the owner:
 
 ```bash
 scp <hub>:~/.gobby/.secret_kek ~/.gobby/.secret_kek
-scp <hub>:~/.gobby/local_cli_token ~/.gobby/local_cli_token
-chmod 600 ~/.gobby/.secret_kek ~/.gobby/local_cli_token ~/.gobby/bootstrap.yaml
+chmod 600 ~/.gobby/.secret_kek ~/.gobby/bootstrap.yaml
 ```
 
-Run the remote installer and start the client daemon:
+Enroll this node, then run the remote installer and start the client daemon.
+Use an HTTPS hub; an intentional non-loopback HTTP connection requires
+`gobby auth login --insecure`:
 
 ```bash
+gobby auth login
 gobby install
 gobby start
 gobby status

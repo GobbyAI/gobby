@@ -2,12 +2,12 @@
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.models import CapacityRecoveryState
+from gobby.agents.watchdog.recovery import pane_has_capacity_message
 from gobby.agents.watchdog.registry import WatchdogReaderRegistry
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
@@ -19,7 +19,6 @@ from gobby.terminals.runtime import Delivered, TerminalRuntimeRegistry, Terminal
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 
 logger = logging.getLogger(__name__)
-_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
 
 
 @dataclass
@@ -62,9 +61,7 @@ class InteractiveCapacityRecovery:
 
     async def check(self, session: Session, terminal: Terminal, pane_output: str) -> bool:
         reader = self._readers.for_provider(session.source or "")
-        if reader is None or not reader.capacity_pane_message:
-            return False
-        if reader.capacity_pane_message not in " ".join(_ANSI_RE.sub("", pane_output).split()):
+        if reader is None or not pane_has_capacity_message(pane_output, reader):
             return False
         if not session.transcript_path:
             return False

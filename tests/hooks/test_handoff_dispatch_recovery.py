@@ -90,7 +90,11 @@ def _claim(hub_db: HubDatabase, *, clear_session: bool = False) -> ClaimedHandof
         )
     else:
         stage_handoff_attempt(
-            hub_db, SESSION_ID, attempt_id=ATTEMPT_ID, handoff=handoff, clear_session=False
+            hub_db,
+            SESSION_ID,
+            attempt_id=ATTEMPT_ID,
+            handoff=handoff,
+            clear_session=False,
         )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,
@@ -194,10 +198,15 @@ async def test_dispatch_killed_after_claim_redelivers_exactly_once(
             return_value=True,
         ),
         patch(f"{_DELIVERY}.shielded_terminal_delivery", side_effect=_run_operation),
+        patch(
+            f"{_DELIVERY}.confirm_reclaimed_compact",
+            new=AsyncMock(return_value={"compacted": False, "reason": "confirm-only path"}),
+        ) as confirm,
     ):
         await submit.call_args.args[0]
 
     assert submissions == 1
+    confirm.assert_not_awaited()
     assert _receipts(hub_db) == 1
     variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE].get("delivery_failed") is not True

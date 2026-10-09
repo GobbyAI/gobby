@@ -40,10 +40,9 @@ def _nested_runner_socket_root() -> Path:
     sandbox-runtime allocates that socket under ``os.tmpdir()``, which the
     runner takes from GOBBY_SRT_TMPDIR. The directory cannot live inside
     ``tmp_path``: macOS limits ``sun_path`` to 104 bytes and pytest's temp
-    directories exceed it. Inside a managed execution the outer Seatbelt
-    profile only allows Unix-socket binds under the tmux socket roots, so a
-    nested runner fails with ``listen EPERM``; probe the bind instead of
-    guessing from environment flags.
+    directories exceed it. Managed executions permit sockets under their
+    canonical current-run temp directory. Probe the bind rather than guessing
+    from environment flags.
     """
     root = Path(tempfile.gettempdir())
     probe_path = root / f"srt-probe-{os.getpid()}.sock"
@@ -101,6 +100,17 @@ async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launc
     backend: Literal["srt", "provider-native"],
     provider: Literal["claude"] | None,
 ) -> None:
+    seatbelt = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if seatbelt.returncode != 0 and "sandbox_apply: Operation not permitted" in seatbelt.stderr:
+        pytest.skip("host-level SRT proof requires permission to apply a nested Seatbelt profile")
+    assert seatbelt.returncode == 0, seatbelt.stderr
+
     gobby_home = tmp_path / "gobby-home"
     workspace = tmp_path / "workspace"
     workspace.mkdir()

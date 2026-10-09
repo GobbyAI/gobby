@@ -10,6 +10,8 @@ import click
 import pytest
 
 from gobby.cli import daemon_preflight
+from gobby.cli.runtime import CliRuntime
+from gobby.config.app import DaemonConfig
 from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.storage import schema_divergence
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
@@ -22,7 +24,7 @@ _BOOTSTRAP_URL = "postgresql://bootstrap.example/gobby"
 
 @pytest.fixture
 def ctx() -> click.Context:
-    return click.Context(click.Command("restart"))
+    return click.Context(click.Command("restart"), obj=CliRuntime(config_file=None))
 
 
 @pytest.fixture
@@ -48,11 +50,62 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
+    config = DaemonConfig()
+    config.agent_sandbox.enabled = False
+    config.web_chat_sandbox.enabled = False
+    monkeypatch.setattr(CliRuntime, "read_only_operational_config", lambda _runtime: config)
     monkeypatch.setattr(
         daemon_preflight,
         "load_bootstrap",
         lambda: SimpleNamespace(database_url=_BOOTSTRAP_URL),
     )
+
+
+@pytest.mark.parametrize("candidate", [None, _CANDIDATE], ids=["restart", "cutover"])
+@pytest.mark.parametrize("sandbox", ["agent_sandbox", "web_chat_sandbox"])
+def test_runner_checksum_mismatch_refuses_before_schema_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx: click.Context,
+    plan_calls: list[tuple[str, Path | None]],
+    candidate: Path | None,
+    sandbox: str,
+) -> None:
+    from gobby.agents import srt_runtime
+
+    config = DaemonConfig()
+    config.agent_sandbox.enabled = sandbox == "agent_sandbox"
+    config.web_chat_sandbox.enabled = sandbox == "web_chat_sandbox"
+    monkeypatch.setattr(CliRuntime, "read_only_operational_config", lambda _runtime: config)
+    monkeypatch.setattr(daemon_preflight, "_candidate_identity_refusal", lambda *_a, **_k: None)
+
+    def checksum_mismatch() -> None:
+        raise srt_runtime.SrtRuntimeError("SRT runner checksum does not match the pinned release")
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", checksum_mismatch)
+
+    refusal = daemon_preflight.restart_start_refusal(ctx, candidate)
+
+    assert refusal == (
+        "Managed SRT sandbox preflight failed: "
+        "SRT runner checksum does not match the pinned release"
+    )
+    assert plan_calls == []
+
+
+def test_disabled_sandboxes_skip_srt_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx: click.Context,
+    plan_calls: list[tuple[str, Path | None]],
+) -> None:
+    from gobby.agents import srt_runtime
+
+    def unexpected_verification() -> None:
+        pytest.fail("disabled sandboxes must not require an SRT installation")
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verification)
+
+    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert plan_calls == [(_BOOTSTRAP_URL, None)]
 
 
 def _raising_plan(message: str) -> Callable[..., str]:

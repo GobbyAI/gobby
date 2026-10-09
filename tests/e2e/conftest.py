@@ -416,6 +416,14 @@ def prepare_daemon_env(
     else:
         env.pop(RUN_ID_ENV, None)
 
+    from tests.fixtures.external_write_audit import LOG_ENV, ROOT_ENV
+
+    for name in (ROOT_ENV, LOG_ENV):
+        if value := os.environ.get(name):
+            env[name] = value
+        else:
+            env.pop(name, None)
+
     # Set PYTHONPATH so the daemon can import gobby modules
     root_dir = Path(__file__).parent.parent.parent
     src_dir = root_dir / "src"
@@ -2112,69 +2120,58 @@ def _is_production_daemon_artifact(rel_path: str) -> bool:
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def external_write_audit_environment(tmp_path_factory: pytest.TempPathFactory) -> Generator[None]:
+    """Keep write attribution active through daemon startup and shutdown."""
+    from tests.fixtures.external_write_audit import LOG_ENV, ROOT_ENV, daemon_writes, observe_writes
+
+    root = Path.home() / ".gobby"
+    log = tmp_path_factory.mktemp("external-write-audit") / "writes.jsonl"
+    log.touch()
+    with pytest.MonkeyPatch.context() as patch, observe_writes(root, log):
+        patch.setenv(ROOT_ENV, str(root))
+        patch.setenv(LOG_ENV, str(log))
+        yield
+        leaked = daemon_writes()
+        if leaked:
+            pytest.fail("E2E-owned process attempted real-home writes:\n" + "\n".join(leaked))
+
+
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
-    """Fail the test if the E2E daemon created new files in real ~/.gobby/.
+    """Fail on writes attributed to pytest or the isolated Python daemon.
 
-    This catches regressions where a new feature uses an un-overridden
-    default path (database, qdrant, session_summaries, MCP config, etc.)
-    that resolves to the user's real home directory instead of the test
-    temp dir.
-
-    When a production daemon is running concurrently, existing files
-    (database, logs) will be modified by that daemon — so we only flag
-    *newly created* files. In CI where no production daemon runs,
-    we flag both creations and modifications.
-
-    Known daemon artifacts (PID files, log files) are ignored when a
-    production daemon is detected, since these are created by the
-    daemon's lifecycle, not by the test.
+    The daemon installs the same audit hook in readiness_bootstrap. Concurrent
+    live processes have no observer and cannot produce records in our temp log.
+    When no production daemon is present before or after the test, retain the
+    snapshot verdict for uninstrumented children and native filesystem writes.
+    In live mode these remain outside the Python audit attribution boundary.
     """
-    real_gobby = Path.home() / ".gobby"
+    from tests.fixtures.external_write_audit import daemon_writes, observe_writes, write_log_offset
+
+    root = Path.home() / ".gobby"
     prod_before = _production_daemon_running()
-    before = _snapshot_dir(real_gobby)
-
-    yield
-
-    after = _snapshot_dir(real_gobby)
+    before = _snapshot_dir(root) if not prod_before else {}
+    offset = write_log_offset()
+    with observe_writes(root) as observer:
+        yield
+    leaked = list(dict.fromkeys(observer.writes + daemon_writes(offset)))
     prod_after = _production_daemon_running()
-
-    # If production daemon was running at any point, it's the likely source
-    prod_running = prod_before or prod_after
-
-    leaked: list[str] = []
-    for rel_path, mtime in after.items():
-        if rel_path not in before:
-            # CREATED file — check if it's a known daemon artifact
+    if not prod_before and not prod_after:
+        for rel_path, mtime in _snapshot_dir(root).items():
             basename = Path(rel_path).name
-            if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
-                continue
-            if basename in _ALWAYS_EXEMPT_BASENAMES:
-                continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
-            if prod_running and _is_production_daemon_artifact(rel_path):
-                continue  # Known production daemon artifact
-            leaked.append(f"  CREATED: ~/.gobby/{rel_path}")
-        elif mtime != before[rel_path] and not prod_running and not rel_path.startswith("logs/"):
-            # Only flag modifications when no production daemon is running,
-            # since a running daemon continuously writes to its db and logs.
-            # Log file mtime changes are always the production daemon (test
-            # daemon writes to its temp dir), so exempt them unconditionally.
-            # PostgreSQL WAL/SHM files can be touched by any process that opens
-            # the database (even read-only), so exempt them as well.
-            basename = Path(rel_path).name
-            if _is_shallow_snapshot_child(f"{rel_path}/"):
-                # A shallow-snapshotted directory's mtime changes whenever its
-                # concurrent owner writes a direct child.
-                continue
-            if basename.endswith(("-shm", "-wal", "-journal")):
-                continue
-            leaked.append(f"  MODIFIED: ~/.gobby/{rel_path}")
-
+            if rel_path not in before:
+                if rel_path.startswith(_ALWAYS_EXEMPT_PREFIXES):
+                    continue
+                if basename not in _ALWAYS_EXEMPT_BASENAMES:
+                    leaked.append(f"CREATED: ~/.gobby/{rel_path}")
+            elif mtime != before[rel_path] and not rel_path.startswith("logs/"):
+                if _is_shallow_snapshot_child(f"{rel_path}/"):
+                    continue
+                if not basename.endswith(("-shm", "-wal", "-journal")):
+                    leaked.append(f"MODIFIED: ~/.gobby/{rel_path}")
     if leaked:
-        pytest.fail(
-            "E2E test wrote to real ~/.gobby/ — the daemon escaped its sandbox!\n"
-            + "\n".join(leaked)
-        )
+        pytest.fail("E2E-owned process attempted real-home writes:\n" + "\n".join(leaked))
 
 
 # --- Process Cleanup ---

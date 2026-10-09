@@ -347,7 +347,7 @@ def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> Non
     caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
     event = _completion(SessionSource.CLAUDE, _staged_output())
     variable_manager = MagicMock()
-    variable_manager.get_variables.return_value = {
+    variable_manager.get_variable_subset.return_value = {
         PENDING_HANDOFF_VARIABLE: {
             "attempt_id": ATTEMPT_ID,
             "dispatch_started_at": "2026-09-03T21:47:00+00:00",
@@ -399,7 +399,7 @@ def test_duplicate_completion_schedules_only_the_claimed_attempt(
     event_loop.is_closed.return_value = False
     scheduled = MagicMock()
     variable_manager = MagicMock()
-    variable_manager.get_variables.return_value = {}
+    variable_manager.get_variable_subset.return_value = {}
 
     with (
         patch(
@@ -522,7 +522,7 @@ def test_unclaimed_idle_attempt_is_failed_with_retry_guidance(
     caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
     event = _completion(SessionSource.CLAUDE, _staged_output())
     variable_manager = MagicMock()
-    variable_manager.get_variables.return_value = {
+    variable_manager.get_variable_subset.return_value = {
         PENDING_HANDOFF_VARIABLE: {
             "attempt_id": ATTEMPT_ID,
             "clear_session": False,
@@ -734,7 +734,7 @@ async def test_background_delivery_success_is_logged(caplog: pytest.LogCaptureFi
 # tells the agent not to stage again (occurrence 2 of #22364 re-staged nine times).
 def _variable_manager(failures: int | None) -> MagicMock:
     manager = MagicMock()
-    manager.get_variables.return_value = (
+    manager.get_variable_subset.return_value = (
         {} if failures is None else {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
     )
     manager.merge_variables.return_value = True

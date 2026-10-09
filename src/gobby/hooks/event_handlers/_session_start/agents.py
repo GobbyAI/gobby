@@ -25,8 +25,8 @@ def resolve_agent_name(
     from gobby.workflows.state_manager import SessionVariableManager
 
     if existing_vars is None:
-        existing_vars = SessionVariableManager(handler._session_manager.db).get_variables(
-            session_id
+        existing_vars = SessionVariableManager(handler._session_manager.db).get_variable_subset(
+            session_id, ("_agent_type",)
         )
     existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
 
@@ -91,7 +91,7 @@ def _seed_parent_turn_seq(handler: Any, session_id: str) -> None:
 
     sv_mgr = SessionVariableManager(handler._session_manager.db)
 
-    existing = sv_mgr.get_variables(session_id)
+    existing = sv_mgr.get_variable_subset(session_id, ("parent_turn_seq",))
     if "parent_turn_seq" not in (existing or {}):
         sv_mgr.merge_variables(session_id, {"parent_turn_seq": 0})
 
@@ -116,7 +116,7 @@ def activate_default_agent(
 
     db = handler._session_manager.db
     sv_mgr = SessionVariableManager(db)
-    existing = sv_mgr.get_variables(session_id)
+    existing = sv_mgr.get_variable_subset(session_id, ("_agent_type",))
     expected_agent_type = existing.get("_agent_type")
     if agent_name_override and is_role_change(db, existing, agent_name_override):
         handler.logger.warning(

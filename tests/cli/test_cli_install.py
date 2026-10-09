@@ -28,7 +28,7 @@ from gobby.cli.install_components import COMPONENTS, UNINSTALLABLE_COMPONENTS
 from gobby.cli.install_setup import MANAGED_NATIVE_BINARY_NAMES
 from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
-from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST, BootstrapConfig
 from gobby.storage.auth import hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -228,7 +228,7 @@ class TestEnsureDaemonConfig:
         assert bootstrap_path.exists()
         content = yaml.safe_load(bootstrap_path.read_text())
         assert content["daemon_port"] == 60887
-        assert content["bind_host"] == "localhost"
+        assert content["bind_host"] == DEFAULT_DAEMON_BIND_HOST
         assert content["postgres_pool"] == {
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,

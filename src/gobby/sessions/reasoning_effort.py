@@ -29,6 +29,10 @@ def observed_reasoning_effort(data: Mapping[str, Any]) -> str | None:
     """Prefer an effective effort, then the requested or configured fallback."""
     sources = [data]
     sources.extend(value for key in _NESTED_KEYS if isinstance((value := data.get(key)), Mapping))
+    # Codex rollout turn metadata keeps the effective effort inside its payload.
+    # Tool/message payloads can contain arbitrary user data and are not metadata.
+    if data.get("type") == "turn_context" and isinstance(payload := data.get("payload"), Mapping):
+        sources.append(payload)
     for keys in (_EFFECTIVE_KEYS, _FALLBACK_KEYS):
         for source in sources:
             for key in keys:

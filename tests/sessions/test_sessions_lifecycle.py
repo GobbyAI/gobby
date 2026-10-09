@@ -35,7 +35,9 @@ AGY_STATS_FIXTURE = Path(__file__).parent / "fixtures" / "agy" / "print_tool_cal
 
 
 class EmptyTokenEventStore:
-    def delete_session_events(self, _session_id: str, *, origin: str) -> None:
+    def delete_session_events(
+        self, _session_id: str, *, origin: str, retention_cutoff: datetime | None = None
+    ) -> None:
         _ = origin
 
     def get_session_totals(self, _session_id: str) -> dict[str, int]:
@@ -46,12 +48,16 @@ class EmptyTokenEventStore:
             "cache_read_tokens": 0,
         }
 
-    def record_batch(self, events: list[object]) -> list[bool]:
+    def record_batch(
+        self, events: list[object], *, retention_cutoff: datetime | None = None
+    ) -> list[bool]:
         return [False for _ in events]
 
 
 class InsertingTokenEventStore(EmptyTokenEventStore):
-    def record_batch(self, events: list[object]) -> list[bool]:
+    def record_batch(
+        self, events: list[object], *, retention_cutoff: datetime | None = None
+    ) -> list[bool]:
         return [True for _ in events]
 
 
@@ -366,7 +372,9 @@ class TestSessionLifecycleManager:
         }
 
         class _ThreadRecordingStore:
-            def delete_session_events(self, _session_id: str, *, origin: str) -> int:
+            def delete_session_events(
+                self, _session_id: str, *, origin: str, retention_cutoff: datetime | None = None
+            ) -> int:
                 _ = origin
                 db_threads["delete_session_events"].append(threading.get_ident())
                 return 0
@@ -380,7 +388,9 @@ class TestSessionLifecycleManager:
                     "cache_read_tokens": 0,
                 }
 
-            def record_batch(self, events: list[object]) -> list[bool]:
+            def record_batch(
+                self, events: list[object], *, retention_cutoff: datetime | None = None
+            ) -> list[bool]:
                 db_threads["record_batch"].append(threading.get_ident())
                 return [True] * len(events)
 
@@ -545,7 +555,9 @@ class TestSessionLifecycleManager:
                 self.calls: list[str] = []
                 self.batch_sizes: list[int] = []
 
-            def delete_session_events(self, _session_id: str, *, origin: str) -> int:
+            def delete_session_events(
+                self, _session_id: str, *, origin: str, retention_cutoff: datetime | None = None
+            ) -> int:
                 _ = origin
                 self.calls.append("delete_session_events")
                 return 0
@@ -559,7 +571,9 @@ class TestSessionLifecycleManager:
                     "cache_read_tokens": 0,
                 }
 
-            def record_batch(self, events: list[object]) -> list[bool]:
+            def record_batch(
+                self, events: list[object], *, retention_cutoff: datetime | None = None
+            ) -> list[bool]:
                 self.calls.append("record_batch")
                 self.batch_sizes.append(len(events))
                 return [True] * len(events)
@@ -1680,7 +1694,7 @@ class TestProcessSessionTranscriptParsers:
             dict(zero_totals),
             dict(zero_totals),
         ]
-        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+        manager.token_event_store.record_batch.side_effect = InsertingTokenEventStore().record_batch
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1751,7 +1765,7 @@ class TestProcessSessionTranscriptParsers:
             dict(zero_totals),
             dict(zero_totals),
         ]
-        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+        manager.token_event_store.record_batch.side_effect = InsertingTokenEventStore().record_batch
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1848,7 +1862,7 @@ class TestProcessSessionTranscriptParsers:
         manager.token_event_store.get_session_totals.side_effect = lambda *_, **__: dict(
             zero_totals
         )
-        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+        manager.token_event_store.record_batch.side_effect = InsertingTokenEventStore().record_batch
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1935,7 +1949,7 @@ class TestProcessSessionTranscriptParsers:
             dict(zero_totals),
             dict(zero_totals),
         ]
-        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+        manager.token_event_store.record_batch.side_effect = InsertingTokenEventStore().record_batch
 
         await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -2129,7 +2143,7 @@ class TestProcessSessionTranscriptTokenPreservation:
                 "cache_read_tokens": 0,
             },
         ]
-        manager.token_event_store.record_batch.side_effect = lambda events: [True] * len(events)
+        manager.token_event_store.record_batch.side_effect = InsertingTokenEventStore().record_batch
         message = MagicMock(spec=ParsedMessage)
         message.model = "claude-opus-4-8"
         message.raw_json = {}

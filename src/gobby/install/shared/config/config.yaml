@@ -1,2 +1,2 @@
-bind_host: localhost
+bind_host: 127.0.0.1
 daemon_port: 60887

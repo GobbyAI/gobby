@@ -84,3 +84,28 @@ def test_reasoning_effort_accepts_strings_and_structured_levels() -> None:
 )
 def test_reasoning_effort_ignores_empty_or_malformed_values(effort: Any) -> None:
     assert observed_reasoning_effort({"effort": effort}) is None
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ({"type": "turn_context", "payload": {"effort": "xhigh"}}, "xhigh"),
+        ({"type": "turn_context", "payload": {"effort": {"level": " high "}}}, "high"),
+        ({"type": "turn_context", "payload": {"effort": {"level": 3}}}, None),
+        ({"type": "turn_context", "payload": "high"}, None),
+        ({"type": "response_item", "payload": {"effort": "xhigh"}}, None),
+        ({"type": "event_msg", "payload": {"effort": "xhigh"}}, None),
+        (
+            {
+                "type": "turn_context",
+                "effort": "medium",
+                "payload": {"effective_reasoning_effort": "high"},
+            },
+            "high",
+        ),
+    ],
+)
+def test_reasoning_effort_reads_only_turn_metadata_payload(
+    record: dict[str, Any], expected: str | None
+) -> None:
+    assert observed_reasoning_effort(record) == expected

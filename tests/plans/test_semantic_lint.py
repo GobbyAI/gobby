@@ -18,7 +18,7 @@ from gobby.plans.semantic_lint import (
     iter_description_target_lines,
     lint_plan_document,
 )
-from gobby.plans.symbol_targets import parse_target_line
+from gobby.plans.symbol_targets import parse_target_line, validate_symbol_targets
 
 pytestmark = pytest.mark.unit
 
@@ -1518,6 +1518,60 @@ def test_delete_lines_proof_entry_is_one_target(tmp_path: Path) -> None:
     assert collect_target_inventory(plan_doc, section) == {"src/app/big.py"}
     assert [(target.file_path, target.wildcard) for target in targets] == [("src/app/big.py", True)]
     assert issues == []
+
+
+SCHEMA_TOOL = "scripts/schema_tool.py"
+
+
+class _NoIndexRecord:
+    """A fresh project code index that holds no record for any file."""
+
+    def get_project_stats(self, project_id: str) -> object:
+        return object()
+
+    def get_file(self, project_id: str, file_path: str) -> None:
+        return None
+
+    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[object]:
+        return []
+
+    def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
+        return []
+
+
+def _schema_tool_proof(root: Path) -> str:
+    lines = "".join(f"def item_{index}() -> None: ...\n" for index in range(900))
+    blob = _write_source(root, SCHEMA_TOOL, "import re\n" + lines)
+    return (
+        f"`{SCHEMA_TOOL}::*` — operation: delete-lines — base-blob: {blob} — lines: 1"
+        " — scope-reason: drop the unused import"
+    )
+
+
+def test_delete_lines_proof_for_unindexed_file_validates_clean(tmp_path: Path) -> None:
+    plan_text = _size_plan([_schema_tool_proof(tmp_path)])
+    plan_path = tmp_path / "unindexed-plan.md"
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    symbol_result = validate_symbol_targets(
+        parse_plan(plan_path, parse_mode="draft"),
+        project_context={"id": "project-1", "project_path": str(tmp_path)},
+        code_index=_NoIndexRecord(),
+        required=True,
+    )
+
+    assert _size_issues(tmp_path, plan_text) == []
+    assert symbol_result.status == "passed"
+    assert symbol_result.issues == ()
+
+
+def test_delete_lines_proof_bare_path_still_fails_the_grammar(tmp_path: Path) -> None:
+    proof = _schema_tool_proof(tmp_path).replace(f"`{SCHEMA_TOOL}::*`", f"`{SCHEMA_TOOL}`")
+
+    (issue,) = _size_issues(tmp_path, _size_plan([proof]))
+
+    assert issue.details["file_path"] == SCHEMA_TOOL
+    assert str(issue.details["proof_error"]).startswith("entry does not match `<path>::*`")
 
 
 def test_iter_description_target_lines_skips_fenced_blocks() -> None:

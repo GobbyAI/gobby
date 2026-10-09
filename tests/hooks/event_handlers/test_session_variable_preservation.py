@@ -8,7 +8,7 @@ internal/metadata keys that reflect current agent configuration.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,17 @@ def _make_agent_body(
         prompts={"agent": "Work."},
         workflows=make_agent_workflows(variables=variables or {}),
     )
+
+
+def _configure_scoped_reads(mock_svm_cls: MagicMock, mock_svm: MagicMock) -> None:
+    """Project the configured stored values for each consumer's requested keys."""
+
+    def project(_session_id: str, keys: Sequence[str]) -> dict[str, Any]:
+        stored: dict[str, Any] = mock_svm.get_variables.return_value
+        return {key: stored[key] for key in keys if key in stored}
+
+    mock_svm.get_variable_subset.side_effect = project
+    mock_svm_cls.return_value = mock_svm
 
 
 def _get_merged_changes(mock_svm: MagicMock) -> dict[str, Any]:
@@ -212,7 +223,7 @@ class TestNewSessionGetsAllDefaults:
         )
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {}  # New session — no existing vars
 
         handlers._activate_default_agent(
@@ -246,7 +257,7 @@ class TestReturningSessionPreservesUserVariables:
         mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "mode_level": 1,
@@ -280,7 +291,7 @@ class TestReturningSessionPreservesUserVariables:
         mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "stop_attempts": 3,  # Incremented during session
@@ -312,7 +323,7 @@ class TestReturningSessionPreservesUserVariables:
         mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "stop_attempts": 5,
@@ -349,7 +360,7 @@ class TestReturningSessionPreservesUserVariables:
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body()
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "unlocked_tools": ["gobby-tasks:create_task"],
@@ -391,7 +402,7 @@ class TestReturningSessionPreservesUserVariables:
         )
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "stepper",
             "is_spawned_agent": True,
@@ -427,7 +438,7 @@ class TestReturningSessionReappliesInternalKeys:
         mock_resolve.return_value = _make_agent_body("default")
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "mode_level": 1,
@@ -453,7 +464,7 @@ class TestReturningSessionReappliesInternalKeys:
         mock_resolve.return_value = _make_agent_body("default")
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "_active_rule_names": ["old-rule"],
@@ -498,7 +509,7 @@ class TestMixedNewAndExistingVariables:
         mock_resolve.return_value = _make_agent_body()
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {
             "_agent_type": "default",
             "mode_level": 1,
@@ -532,7 +543,7 @@ class TestMixedNewAndExistingVariables:
         )
 
         mock_svm = MagicMock()
-        mock_svm_cls.return_value = mock_svm
+        _configure_scoped_reads(mock_svm_cls, mock_svm)
         mock_svm.get_variables.return_value = {}
 
         result = handlers._activate_default_agent(

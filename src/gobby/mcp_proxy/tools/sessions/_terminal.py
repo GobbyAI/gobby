@@ -323,7 +323,10 @@ def register_terminal_tools(
 
         session_id = get_current_session_id()
         if session_id is not None:
-            variables = SessionVariableManager(db).get_variables(session_id)
+            variables = SessionVariableManager(db).get_variable_subset(
+                session_id,
+                (HANDOFF_DISPATCH_GATE_VARIABLE, FAILED_HANDOFF_VARIABLE, PENDING_HANDOFF_VARIABLE),
+            )
             gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
             failed = variables.get(FAILED_HANDOFF_VARIABLE)
             if (
@@ -413,9 +416,9 @@ def register_terminal_tools(
 
         variable_manager = SessionVariableManager(db)
         submitted = (
-            variable_manager.get_variables(resolved_session_id).get(
-                "_gobby_feedback_epoch_submitted"
-            )
+            variable_manager.get_variable_subset(
+                resolved_session_id, ("_gobby_feedback_epoch_submitted",)
+            ).get("_gobby_feedback_epoch_submitted")
             is True
         )
         project_id = getattr(session, "project_id", None)

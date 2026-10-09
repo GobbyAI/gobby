@@ -539,6 +539,20 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             await self._emit("tab.removed", target.workspace.id, tabs=change.removed_tabs)
         return change
 
+    async def tab_rebalance(
+        self,
+        actor: str,
+        tab: str,
+        columns: int = 80,
+        rows: int | None = None,
+        *,
+        node: str | None = None,
+    ) -> WorkspaceTab:
+        target = _tab_of(await self._enter(tab, node), tab)
+        updated = await self._db_guarded(self._workspaces.rebalance_tab, target.id, columns, rows)
+        await self._emit("pane.resized", updated.workspace_id, tabs=(updated,))
+        return updated
+
     async def pane_resize(
         self, actor: str, pane: str, ratio: float, *, node: str | None = None
     ) -> WorkspaceTab:

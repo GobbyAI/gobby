@@ -11,7 +11,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.completed_turn_recovery import completed_turn_recovery_due
 from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
 from gobby.agents.watchdog.quota import detect_provider_quota
-from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator
+from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator, pane_has_capacity_message
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.sessions.activity import last_session_activity
 from gobby.sessions.machine_scope import is_local_machine_owner
@@ -388,7 +388,7 @@ class IdleCheckHandler:
             )
             await self._recovery.fail_provider_quota_agent(run, quota)
             return 1
-        capacity_candidate = self._recovery._pane_has_capacity_message(pane_output, reader)
+        capacity_candidate = pane_has_capacity_message(pane_output, reader)
         status = idle_detector.detect(pane_output)
 
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None

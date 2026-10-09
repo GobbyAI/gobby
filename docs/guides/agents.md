@@ -33,13 +33,63 @@ Agent definitions have explicit `surfaces`:
 
 | Surface | Runtime tool | What happens |
 | --- | --- | --- |
-| `persona` | `gobby-agents:apply_persona` | Updates the current session's persona and active skill selection for the next user turn. |
+| `persona` | `gobby-agents:apply_persona` or `gobby-agents:apply_agent_definition` | Switches the persona prompt and skills live, or activates the whole definition on the current session. |
 | `spawn` | `gobby-agents:spawn_agent` or `dispatch_batch` | Starts a child session, records an agent run, and optionally creates or reuses isolation. |
 
 `apply_persona` is intentionally narrow. It sets prompt-facing persona state,
 skill selection, and reinjection flags; it does not change provider, model,
 isolation, active rules, tool restrictions, or inline step workflow state.
 The `prompts.persona` block is the complete interactive preamble.
+
+### Definition Activation
+
+Use `gobby-agents:apply_agent_definition(agent="<name>")` to activate a whole
+definition on the caller's own session. It applies identity, prompt, rule and
+skill selection, variables, tool blocks, and any step workflow. It requires a
+`persona` surface. A definition with `workflows.pipeline` is refused with
+`pipeline_requires_spawn`; use the spawn surface for that definition.
+
+Activation stores `_agent_type` and the content pin `_agent_definition_hash`
+alongside the selected rules, skills, variables, and tool restrictions. The
+configured base agent can activate a seat. The same definition with the same
+pin returns `status: unchanged`: it writes nothing, reinjects nothing, and
+ignores optional `variables` and `task_id`. Task context never claims a task.
+An unknown definition, missing surface, unresolved task, or variable collision
+is refused before writing.
+
+A different definition on an already seated terminal, including a return to
+the base agent, is refused with `role_change_requires_relaunch`. Relaunch the
+pane with the requested definition. Web-chat agent changes restart the CLI
+process on the conversation's existing session row and apply the new definition;
+definition-owned variables and the previous step instance are replaced, while
+runtime conversation variables remain. Spawned sessions refuse activation with
+`spawned_session_definition_fixed`: their definition is fixed at spawn.
+
+`apply_persona` remains a live overlay. Its prompt, skill selection, and skill
+format survive compaction and resume while the seat's rules, variables, tool
+blocks, and step workflow remain in force. `apply_persona(agent="default")`
+removes the overlay and restores the active definition's own prompt and skills
+(or the default persona on a base-agent session). A definition activation that
+writes clears the overlay; an `unchanged` receipt or refusal keeps it.
+
+On later same-seat activation, a changed content pin applies the current
+definition, stores the new pin, and reports one drift line on the next turn.
+An existing step instance keeps its current step and snapshot until that unit
+of work ends. A failed initial step-instance save is repaired by reconciliation
+on a later hook event.
+
+| Boundary | Definition and runtime continuity |
+| --- | --- |
+| Compaction | Same session; reactivation by `_agent_type` preserves the seat and running step instance. A persona overlay keeps its prompt and skills. |
+| Pane resume | Reactivates the same session and preserves its running step instance, as compaction does. |
+| Staged `/clear` | The successor inherits `_agent_type` and `_agent_definition_hash`, then starts a fresh step instance at the current definition's first step. A spawned interactive seat's live run, terminal binding, and run back-pointer move to the successor; the pane's managed identity addresses that successor. |
+| Spawned-run resume | Reuses the session row and persisted launch snapshot; the spawned definition remains fixed. |
+
+Run lifetime is separate from activation. `execution_mode` and
+`idle_ttl_seconds` affect spawned runs; activating a hand-launched pane writes
+neither. See [Lifecycle Model](#lifecycle-model) for standing seats and TTLs.
+The activation implementation is
+[`apply_agent_definition.py`](../../src/gobby/mcp_proxy/tools/apply_agent_definition.py).
 
 Spawned runs use the full runtime path. They can inherit or override execution
 settings, register inline step workflows, receive task/session variables, and
@@ -61,9 +111,10 @@ closure batch.
 Agent definitions are stored in `agent_definitions`. An optional one-to-one
 `agent_step_workflows` child holds the nested `step_workflow` payload
 (`steps`, `variables`, `exit_condition`). Runtime sessions snapshot that
-child onto `agent_step_instances` at spawn. Turn-start reconciliation may
-restore a missing snapshot only for a spawned or agent-run-backed session with
-an assigned or active task. Persona activation never creates a step instance.
+child onto `agent_step_instances` at spawn or whole-definition activation.
+Reconciliation restores a missing instance whenever the active definition
+declares steps, including interactive sessions without a task. A persona
+switch never creates a step instance.
 Definitions are managed through `gobby-workflows`.
 
 Bundled definitions live in:
@@ -100,11 +151,13 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | --- | --- |
 | `name` | Unique definition name |
 | `description` | Human-readable summary |
+| `version` | Optional human-readable string stored inside `definition_json` |
 | `sources` | Optional CLI-source filter |
 | `surfaces` | `spawn`, `persona`, or both |
 | `prompts.persona` | Complete interactive guidance for the `persona` surface |
 | `prompts.agent` | Complete automated-run guidance for the `spawn` surface |
 | `execution_mode` | `one_shot` (default) or `interactive` for a standing spawned seat |
+| `idle_ttl_seconds` | Optional positive integer, valid only with `execution_mode: interactive`; expires an idle spawned seat |
 | `provider` | Provider override or `inherit` |
 | `model` | Optional model override |
 | `reasoning_effort` | Optional normalized reasoning effort string |
@@ -123,9 +176,84 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `enabled` | Whether the definition is active |
 
 Every declared surface requires its prompt block. Legacy `role`, `goal`,
-`personality`, and `instructions` fields are rejected with a migration hint.
-Older YAML may contain a `mode` field; new definitions should use `surfaces`
-plus the runtime tool choice instead.
+`personality`, `instructions`, and the top-level `skills` map are rejected.
+Use `workflows.skill_selectors` for discovery and
+`step_workflow.variables.required_skills` for required loads. Use `surfaces`
+plus the runtime tool choice instead of the retired `mode` field.
+
+### Versioning
+
+`version` is a human marker inside `definition_json`, not a separate identity
+or database column. Quote it in YAML, for example `version: "1.0"`.
+Activation pins the resolved body's content hash through
+[`compute_definition_hash`](../../src/gobby/storage/definitions/_shared.py).
+A version bump changes that hash like any other body edit. Bundled sync refreshes
+managed definition drift; subsequent same-seat activation reports the new pin.
+
+## Seats
+
+Standing seats share the same typed definition shape. The current bundled
+catalogue is pinned by
+[`test_seat_definitions.py`](../../tests/workflows/test_seat_definitions.py):
+
+| Definition | Responsibility |
+| --- | --- |
+| `assistant` | Communicates with the user and coordinates decisions |
+| `orchestrator` | Assigns and coordinates repository work |
+| `lane-manager` | Routes lane work, relays landings, and releases closes |
+| `developer` | Implements one claimed task at a time in its assigned lane |
+| `code-reviewer` | Reviews candidates, lands approved commits, and reports retests |
+| `researcher` | Answers bounded research requests |
+| `archivist` | Maintains the operational digest |
+| `log-monitor` | Monitors health and admits heavy work and close reviews |
+| `inbox-manager` | Consolidates lane reports for the Orchestrator |
+| `merge-manager` | Tracks landed sources and pending activation evidence |
+
+These templates are global installed definitions tagged `gobby` in storage;
+their YAML `seat` tag marks the file-based catalogue. They declare both
+`spawn` and `persona` surfaces, share one anchored prompt between the two,
+inherit provider and checkout mode, omit a model override, and use
+`execution_mode: interactive` with `timeout: 0`. Definitions never select a
+terminal backend. The researcher additionally declares `idle_ttl_seconds: 900`.
+
+Shared seat guidance is injected by the `roles` rules. Spawn and pipeline-launch
+restrictions prevent seats from bypassing their assigned role; the automatic
+task-close reviewer is the permitted managed review path. Definitions declare
+tool blocks; path-aware rules constrain seats with bounded write scopes.
+Seats with required skills or a fixed loop declare a step workflow. Message-driven
+seats need no empty serve loop. Inspect installed rows and selectors for effective
+policy; editing a bundled YAML alone does not activate it.
+
+All lanes use the single `developer` definition. After claiming, it reads the
+task and routes additional skills by the touched paths:
+
+| Task paths | Additional skills |
+| --- | --- |
+| `web/` | `impeccable`, `typescript` |
+| `crates/` | `rust` |
+| Python only | No addition beyond the required skill set |
+| Docs only | `tech-writer` |
+
+Task-specific skills and named methodologies are added; `tdd:required` adds
+`test-driven-development`. Required loads precede implementation. Lane identity
+comes from task and queue ownership and coordinator instructions, rather than a
+separate developer definition per language. Seat continuity is prompt guidance,
+not a schema field: seats compact in place under context pressure. Developers,
+researchers, and code reviewers also compact between units of work. Task
+completion does not end the standing seat.
+
+### Planning Runbook Agents
+
+`plan-writer`, `plan-enhancer`, and `plan-adversary` are run-scoped planning
+agents, separate from the standing-seat catalogue. The planning runbook launches
+them; they complete their run through `end_agent_run`. Their own definitions
+control provider, lifetime, and workflow choices, so standing-seat invariants
+do not apply to them.
+
+Build routing still names definitions whose bodies now serve standing seats.
+Stages that depend on those bodies terminating can degrade. That limitation is
+accepted during build retirement; this catalogue does not supply compatibility
+one-shot copies. See [Orchestration](./orchestration.md) for dispatch behavior.
 
 ## Strict Execution Fields
 
@@ -240,8 +368,8 @@ step_workflow:
 
 ## Inline Step Workflows
 
-A nested `step_workflow.steps` list constrains phased behavior for spawned
-runs. Each step can define:
+A nested `step_workflow.steps` list constrains phased behavior for spawned runs
+and activated interactive sessions. Each step can define:
 
 | Field | Purpose |
 | --- | --- |
@@ -291,14 +419,21 @@ persisted in the run's launch snapshot and survives daemon-stop resume.
 
 Interactive seats remain available at idle prompts, after task closure, and after
 runbook completion. Completing a runbook releases its step instance and dispatch
-mutex while retaining the seat. The idle watchdog does not reprompt, recover,
-complete, or fail these seats for idleness or missing `end_agent_run`. End a seat
-explicitly with `end_agent_run`, `stop_agent`, or `kill_agent`; process-exit cleanup
+mutex while retaining the seat. Without an idle TTL, the watchdog does not
+reprompt, recover, complete, or fail a seat for idleness or missing `end_agent_run`.
+End a seat explicitly with `end_agent_run`, `stop_agent`, or `kill_agent`; process-exit cleanup
 still applies. Provider quota exhaustion, terminal provider errors, and a full context
 window still fail a seat; a provider capacity error gets bounded continue prompts that
 never ask the seat to end its run. One-shot runs retain completed-turn recovery and bounded idle
 reprompts. This lifetime choice is separate from provider launch options such as
 `droid_mode`.
+
+An interactive definition may set a positive `idle_ttl_seconds`. Spawn persists
+it only when the effective mode is interactive; a one-shot override drops it.
+At expiry, the watchdog uses its wrap, handoff, and end ladder. A coordinator-owned
+wait holds the seat ahead of TTL expiry. Interactive seats with no TTL remain
+available while idle. These exceptions do not bypass provider-failure or
+dead-terminal cleanup.
 
 Use `gobby-agents:stop_agent` when a parent wants to cancel a pending or running
 run. Use `gobby-agents:kill_agent` for targeted process termination and runtime
@@ -315,6 +450,7 @@ Run tools:
 - `spawn_agent`
 - `dispatch_batch`
 - `apply_persona`
+- `apply_agent_definition`
 - `get_agent_result`
 - `get_agent_capture`
 - `get_agent_live_output`
@@ -504,4 +640,4 @@ provides the concrete worktree or clone context.
 - [Pipelines](./pipelines.md) for deterministic automation
 - [Orchestration](./orchestration.md) for stage dispatch and review flow
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-08_

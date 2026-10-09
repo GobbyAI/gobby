@@ -87,7 +87,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 report_to=report_to,
                 require_report_to=require_report_to,
             )
-        except (RunbookSeatRefusal, ValueError) as exc:
+        except RunbookSeatRefusal as exc:
+            return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}
+        except ValueError as exc:
             return {"success": False, "error": str(exc)}
         # No "error" key on success: execute_mcp_step fails any result that carries one.
         return {"success": True, **asdict(admitted), **resolved}

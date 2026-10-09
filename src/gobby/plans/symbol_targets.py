@@ -17,6 +17,7 @@ from gobby.plans.parser import Kind, PlanDocument
 from gobby.plans.semantic_lint import (
     collect_unchanged_consumers,
     has_generated_header,
+    is_delete_lines_entry,
     iter_target_block_lines,
 )
 
@@ -95,6 +96,8 @@ class SymbolTarget:
     wildcard: bool
     scope_reason: str | None
     raw: str
+    # The Targets entry is a delete-lines proof, which production-size-growth validates.
+    delete_lines: bool = False
 
     @property
     def reference(self) -> str:
@@ -348,11 +351,14 @@ def parse_target_line(
         tokens = [token.strip() for token in stripped.split(",")]
         trailing = reason_suffix
 
+    delete_lines = is_delete_lines_entry(line)
     targets: list[SymbolTarget] = []
     issues: list[SymbolValidationIssue] = []
     for index, token in enumerate(tokens):
         token_trailing = trailing if index == len(tokens) - 1 else ""
-        target, issue = _parse_target_token(token, token_trailing, section_id)
+        target, issue = _parse_target_token(
+            token, token_trailing, section_id, delete_lines=delete_lines
+        )
         if target is not None:
             targets.append(target)
         if issue is not None:
@@ -364,6 +370,8 @@ def _parse_target_token(
     token: str,
     trailing: str,
     section_id: str,
+    *,
+    delete_lines: bool = False,
 ) -> tuple[SymbolTarget | None, SymbolValidationIssue | None]:
     raw = token
     reason: str | None = None
@@ -419,6 +427,7 @@ def _parse_target_token(
         wildcard=wildcard,
         scope_reason=reason,
         raw=raw,
+        delete_lines=delete_lines,
     )
     if wildcard and not reason:
         return target, SymbolValidationIssue(
@@ -576,7 +585,8 @@ def _validate_unindexed_targets(
     for target in targets:
         if target.section_id in completed_section_ids:
             continue
-        if target.symbol is not None or target.wildcard:
+        # A delete-lines proof must use `::*`; production-size-growth checks it against the bytes.
+        if target.symbol is not None or (target.wildcard and not target.delete_lines):
             issues.append(
                 SymbolValidationIssue(
                     code=UNRESOLVED_SYMBOL,
