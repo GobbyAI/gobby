@@ -749,7 +749,7 @@ Targets:
     `test_managed_config_declares_gobby_mcp_server` and
     `test_operator_gobby_mcp_server_is_replaced_and_others_kept`.
   - Every prepare rewrites the entry, so it needs no repair.
-- `tests/agents/test_spawn_executor.py::test_codex_terminal_direct_spawn`
+- `tests/agents/test_spawn_executor.py::TestExecuteSpawn.test_codex_terminal_direct_spawn`
   asserts the Codex `-c` override
   `args=["run","--no-sync","--project","/main/repo","gobby","mcp-server"]`.
   1.5 also edits that file, so this leaf depends on 1.5.
@@ -1232,6 +1232,21 @@ root is #23275. Drafting creates no tasks, labels, or edges.
     whose router test must name the retired route. The searches now allow
     only negative retirement assertions in the tests that 1.7.1, 1.7.6, and
     1.7.7 name. The collect-only pytest run uses the isolated test hub.
+- 2026-10-09: Renewed consensus between the Plan Writer gobby#15860 and the
+  Plan Adversary gobby#15401 on the refresh, after F1's repair at
+  `d2c0bf751b`.
+  - The Adversary found no further blocking findings. Its nit N1, the
+    `TestExecuteSpawn` class missing from the 1.6 test locator, is fixed in
+    this entry's commit.
+  - The Adversary verified the following:
+    - auth reuse and renewal, including the fail-closed refusal;
+    - the three new acceptance items;
+    - the Grok entry replacement and preservation;
+    - the 1.6 dependency on 1.5 for the shared file;
+    - the literal consumers.
+  - The leaf routing from the previous M1 is kept, with the new edge from 1.6
+    to 1.5. The Adversary derives and applies a fresh M1 from this commit.
+  - No disagreement went to the Orchestrator.
 
 ## V2: Verification
 `kind: verification`
