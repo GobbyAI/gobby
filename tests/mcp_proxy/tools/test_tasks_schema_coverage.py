@@ -4,6 +4,8 @@ from inspect import Parameter, signature
 
 import pytest
 
+from gobby.mcp_proxy.services.argument_validation import check_arguments
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -12,7 +14,9 @@ pytestmark = pytest.mark.unit
 class TestToolSchemas:
     """Tests for tool input schemas."""
 
-    def test_create_task_schema_has_required_fields(self, task_registry) -> None:
+    def test_create_task_schema_has_required_fields(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """Test create_task schema has required title field."""
         schema = task_registry.get_schema("create_task")
 
@@ -20,7 +24,9 @@ class TestToolSchemas:
         assert "title" in schema["inputSchema"]["properties"]
         assert "title" in schema["inputSchema"]["required"]
 
-    def test_create_task_schema_has_claim_parameter(self, task_registry) -> None:
+    def test_create_task_schema_has_claim_parameter(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """Test create_task schema includes optional claim parameter."""
         schema = task_registry.get_schema("create_task")
 
@@ -33,7 +39,9 @@ class TestToolSchemas:
         # claim should NOT be in required
         assert "claim" not in schema["inputSchema"]["required"]
 
-    def test_create_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
+    def test_create_task_schema_category_enum_includes_refactor(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """The create_task category enum must include refactor.
 
         Refactor remains a valid standalone task category; without the enum accepting it,
@@ -56,7 +64,9 @@ class TestToolSchemas:
             "manual",
         }
 
-    def test_create_task_schema_has_implementation_domain(self, task_registry) -> None:
+    def test_create_task_schema_has_implementation_domain(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """Code task creation exposes implementation_domain for deterministic routing."""
         schema = task_registry.get_schema("create_task")
 
@@ -65,7 +75,9 @@ class TestToolSchemas:
         assert set(implementation_domain["enum"]) == {"backend", "frontend", "fullstack"}
         assert "implementation_domain" not in schema["inputSchema"]["required"]
 
-    def test_create_task_schema_has_skill_and_file_metadata(self, task_registry) -> None:
+    def test_create_task_schema_has_skill_and_file_metadata(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """Task creation exposes proactive skill-loading metadata fields."""
         schema = task_registry.get_schema("create_task")
 
@@ -79,7 +91,9 @@ class TestToolSchemas:
         assert "additional_skills" not in schema["inputSchema"]["required"]
         assert "affected_files" not in schema["inputSchema"]["required"]
 
-    def test_update_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
+    def test_update_task_schema_category_enum_includes_refactor(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """The update_task category enum must match create_task and accept refactor."""
         schema = task_registry.get_schema("update_task")
 
@@ -97,7 +111,7 @@ class TestToolSchemas:
             "manual",
         }
 
-    def test_update_task_schema_has_all_fields(self, task_registry) -> None:
+    def test_update_task_schema_has_all_fields(self, task_registry: InternalToolRegistry) -> None:
         """Test update_task schema includes all updatable fields."""
         schema = task_registry.get_schema("update_task")
 
@@ -137,7 +151,7 @@ class TestToolSchemas:
         assert props["affected_files"]["type"] == "array"
         assert props["affected_files"]["items"]["type"] == "string"
 
-    def test_close_task_schema_has_all_fields(self, task_registry) -> None:
+    def test_close_task_schema_has_all_fields(self, task_registry: InternalToolRegistry) -> None:
         """Test close_task schema includes all options."""
         schema = task_registry.get_schema("close_task")
 
@@ -162,7 +176,9 @@ class TestToolSchemas:
         assert "without launching review or closing" in props["preview"]["description"].lower()
         assert "in the same call" in schema["description"].lower()
 
-    def test_close_task_schema_requires_changes_summary(self, task_registry) -> None:
+    def test_close_task_schema_requires_changes_summary(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
         """Test close_task schema has changes_summary in properties (enforced at runtime)."""
         schema = task_registry.get_schema("close_task")
 
@@ -170,7 +186,7 @@ class TestToolSchemas:
         props = schema["inputSchema"]["properties"]
         assert "changes_summary" in props, "changes_summary must be in properties"
 
-    def test_list_tasks_schema_has_filters(self, task_registry) -> None:
+    def test_list_tasks_schema_has_filters(self, task_registry: InternalToolRegistry) -> None:
         """Test list_tasks schema includes filter options."""
         schema = task_registry.get_schema("list_tasks")
 
@@ -191,6 +207,41 @@ class TestToolSchemas:
 
         for prop in expected_props:
             assert prop in props, f"Missing property: {prop}"
+
+    def test_list_tasks_accepts_daemon_lookup_paging_arguments(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
+        schema = task_registry.get_schema("list_tasks")
+        assert schema is not None
+        arguments = {
+            "project": "project-1",
+            "label": "covers:cli-plan:1.1:1.1.1",
+            "limit": 50,
+            "offset": 50,
+            "sort_by": "created_at",
+        }
+        assert check_arguments(arguments, schema["inputSchema"]) == []
+        properties = schema["inputSchema"]["properties"]
+        assert properties["offset"]["type"] == "integer"
+        assert properties["offset"]["default"] == 0
+        assert properties["sort_by"]["type"] == "string"
+
+    def test_registered_task_signatures_are_declared_in_schemas(
+        self, task_registry: InternalToolRegistry
+    ) -> None:
+        missing: dict[str, list[str]] = {}
+        for entry in task_registry.list_tools():
+            tool = task_registry.get_tool_metadata(entry["name"])
+            assert tool is not None
+            parameters = {
+                name
+                for name, parameter in signature(tool.func).parameters.items()
+                if parameter.kind not in {Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD}
+            }
+            undeclared = parameters - tool.input_schema.get("properties", {}).keys()
+            if undeclared:
+                missing[tool.name] = sorted(undeclared)
+        assert missing == {}
 
 
 # =============================================================================
