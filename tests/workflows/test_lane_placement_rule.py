@@ -6,13 +6,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
@@ -70,6 +71,7 @@ async def _decide(
     server: str = "gobby-tasks",
     variables: dict[str, Any] | None = None,
     proxy_tool: str = "mcp__gobby__call_tool",
+    cwd: str | None = None,
 ) -> HookResponse:
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -77,13 +79,16 @@ async def _decide(
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         project_id=project_id,
+        cwd=cwd,
         data={
             "tool_name": proxy_tool,
             "tool_input": {"server_name": server, "tool_name": tool, "arguments": arguments},
         },
     )
     engine = RuleEngine(tasks.db, task_manager=tasks)
-    return await engine.evaluate(event, session_id=SESSION_ID, variables=dict(variables or {}))
+    return await engine.evaluate(
+        event, session_id=SESSION_ID, variables=variables if variables is not None else {}
+    )
 
 
 def _refused(response: HookResponse) -> bool:
@@ -208,6 +213,37 @@ async def test_expansion_and_plan_import_check_their_target_parent(
     assert (
         await _decide(tasks, project_id, "build_task", build_existing, server=ops)
     ).decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_failed_project_resolution_is_retried_on_the_next_creation(
+    tasks: LocalTaskManager, project_id: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _epic(tasks, project_id, "Lane A", labels=["lane"])
+    real_get = LocalProjectManager.get
+    lookups = 0
+
+    def flaky_get(manager: LocalProjectManager, ref: str) -> Project | None:
+        nonlocal lookups
+        lookups += 1
+        if lookups == 1:
+            raise psycopg.OperationalError("hub unavailable")
+        return real_get(manager, ref)
+
+    monkeypatch.setattr(LocalProjectManager, "get", flaky_get)
+    session_variables: dict[str, Any] = {}
+    loose = {"title": "Loose"}
+
+    await _decide(
+        tasks, project_id, "create_task", loose, variables=session_variables, cwd=str(tmp_path)
+    )
+    assert session_variables["project"]["id"] == "unknown"
+
+    response = await _decide(
+        tasks, project_id, "create_task", loose, variables=session_variables, cwd=str(tmp_path)
+    )
+    assert _refused(response)
+    assert session_variables["project"]["id"] == project_id
 
 
 @pytest.mark.asyncio
