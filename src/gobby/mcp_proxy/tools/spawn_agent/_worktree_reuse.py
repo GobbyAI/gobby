@@ -26,7 +26,7 @@ async def prepare_reused_worktree(
     spawn_config: SpawnConfig,
     main_repo_path: str,
 ) -> tuple[IsolationContext, Any]:
-    """Prepare an explicit reused worktree for agent continuation."""
+    """Prepare an explicit reused worktree for a new run, synced onto its base."""
     sync_result: ReusedWorktreeSyncResult = await sync_reused_worktree_to_base(
         git_manager=git_manager,
         worktree_path=existing_worktree.worktree_path,
@@ -58,6 +58,34 @@ async def prepare_reused_worktree(
             worktree_id=existing_worktree.id,
             isolation_type="worktree",
             extra=extra,
+        ),
+        get_isolation_handler("none"),
+    )
+
+
+async def prepare_resumed_worktree(
+    *,
+    existing_worktree: Any,
+    spawn_config: SpawnConfig,
+    main_repo_path: str,
+) -> tuple[IsolationContext, Any]:
+    """Return a resumed seat to its worktree exactly as the seat left it.
+
+    A resume continues in-flight work, so it neither requires a clean tree nor
+    rebases onto the base: uncommitted files and unlanded commits stay as they are.
+    """
+    await repair_isolation_environment(
+        main_repo_path=main_repo_path,
+        isolated_path=existing_worktree.worktree_path,
+        provider=spawn_config.provider,
+    )
+    return (
+        IsolationContext(
+            cwd=existing_worktree.worktree_path,
+            branch_name=existing_worktree.branch_name,
+            worktree_id=existing_worktree.id,
+            isolation_type="worktree",
+            extra={"main_repo_path": main_repo_path, "reused_worktree": True},
         ),
         get_isolation_handler("none"),
     )

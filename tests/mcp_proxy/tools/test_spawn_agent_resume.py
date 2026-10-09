@@ -1,6 +1,7 @@
 """Explicit crew relaunch refuses invalid targets before allocating a seat."""
 
 import asyncio
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,7 @@ from gobby.agents.isolation import IsolationContext
 from gobby.agents.spawn import PreparedSpawn
 from gobby.mcp_proxy.tools.spawn_agent import _factory as factory
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
+from gobby.mcp_proxy.tools.spawn_agent import _worktree_reuse as worktree_reuse
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.workflows.agent_models import AgentStepWorkflowBody
@@ -168,9 +170,40 @@ async def test_resume_binds_existing_identity_and_passes_native_thread() -> None
     persist.assert_called_once()
 
 
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _lane_with_in_flight_work(tmp_path: Path, in_flight: str) -> Path:
+    repo, lane = tmp_path / "repo", tmp_path / "lane"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "work.txt").write_text("base\n")
+    _git(repo, "add", "work.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "worktree", "add", "-b", "lane-3", str(lane))
+    (lane / "work.txt").write_text("seat edit\n")
+    if in_flight == "unlanded":
+        _git(lane, "commit", "-am", "unlanded")
+    (repo / "later.txt").write_text("base moved on\n")
+    _git(repo, "add", "later.txt")
+    _git(repo, "commit", "-m", "later")
+    return lane
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("stub_srt_verifier")
-async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path) -> None:
+@pytest.mark.parametrize("in_flight", ["uncommitted", "unlanded"])
+async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_flight: str) -> None:
+    lane_path = _lane_with_in_flight_work(tmp_path, in_flight)
+    head_before = _git(lane_path, "rev-parse", "HEAD")
+    status_before = _git(lane_path, "status", "--porcelain")
     target = SimpleNamespace(
         id="existing",
         project_id="project",
@@ -192,19 +225,13 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path) -> No
     )
     lane = SimpleNamespace(
         id="lane-worktree",
-        worktree_path=str(tmp_path),
+        worktree_path=str(lane_path),
         branch_name="lane-3",
         project_id="project",
     )
     worktrees = MagicMock()
     worktrees.resolve_reference.return_value = lane.id
     worktrees.get.return_value = lane
-    reused = IsolationContext(
-        cwd=lane.worktree_path,
-        branch_name=lane.branch_name,
-        worktree_id=lane.id,
-        isolation_type="worktree",
-    )
     handler = MagicMock()
     handler.build_context_prompt.return_value = "Continue"
     prepared = PreparedSpawn(
@@ -223,9 +250,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path) -> No
             return_value={"id": "project", "project_path": "/workspace"},
         ),
         patch.object(implementation, "get_machine_id", return_value="machine"),
-        patch.object(
-            implementation, "prepare_reused_worktree", AsyncMock(return_value=(reused, handler))
-        ) as reuse,
+        patch.object(worktree_reuse, "repair_isolation_environment", AsyncMock()) as repair,
         patch.object(implementation, "WorktreeIsolationHandler", return_value=handler),
         patch.object(implementation, "provider_mcp_config_error", return_value=None),
         patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared),
@@ -248,8 +273,11 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path) -> No
         )
         await asyncio.gather(*implementation._spawn_background_tasks.values())
     assert result["success"] is True, result
-    assert reuse.call_args.kwargs["existing_worktree"] is lane
     assert execute.call_args.args[0].cwd == lane.worktree_path
+    assert repair.call_args.kwargs["isolated_path"] == lane.worktree_path
+    assert _git(lane_path, "rev-parse", "HEAD") == head_before
+    assert _git(lane_path, "status", "--porcelain") == status_before
+    assert (lane_path / "work.txt").read_text() == "seat edit\n"
 
 
 @pytest.mark.asyncio

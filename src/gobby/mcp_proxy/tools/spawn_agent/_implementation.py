@@ -76,7 +76,7 @@ from ._spawn_guards import (
 )
 from ._spawn_phase import SpawnPhase
 from ._step_state import persist_initial_step_instance_if_resolved
-from ._worktree_reuse import prepare_reused_worktree
+from ._worktree_reuse import prepare_resumed_worktree, prepare_reused_worktree
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -493,13 +493,20 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            isolation_ctx, handler = await prepare_reused_worktree(
-                existing_worktree=existing_worktree,
-                git_manager=target_git_manager,
-                worktree_storage=worktree_storage,
-                spawn_config=spawn_config,
-                main_repo_path=resolved_project_path,
-            )
+            if resume_target is not None:
+                isolation_ctx, handler = await prepare_resumed_worktree(
+                    existing_worktree=existing_worktree,
+                    spawn_config=spawn_config,
+                    main_repo_path=resolved_project_path,
+                )
+            else:
+                isolation_ctx, handler = await prepare_reused_worktree(
+                    existing_worktree=existing_worktree,
+                    git_manager=target_git_manager,
+                    worktree_storage=worktree_storage,
+                    spawn_config=spawn_config,
+                    main_repo_path=resolved_project_path,
+                )
             effective_checkout_mode = "worktree"
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
