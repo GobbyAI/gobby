@@ -1,17 +1,21 @@
 """Regression tests for live agent-run activity counters."""
 
 import json
+import tracemalloc
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from psycopg.abc import Buffer
 
+from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer, WaitKind
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
+from gobby.storage.hub.postgres_pool import _JsonContainerTextLoader
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
@@ -36,7 +40,7 @@ def agent_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
 
 def _register_session(
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     external_id: str,
     *,
     parent_session_id: str | None = None,
@@ -93,7 +97,7 @@ def _only(runs: list[AgentRun]) -> AgentRun:
 def test_active_read_methods_use_child_session_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     temp_db: HubDatabase,
 ) -> None:
     """Active run reads return live child-session counters over persisted zeros."""
@@ -163,10 +167,61 @@ def test_summary_query_skips_detail_metadata_and_freezes_terminal_count(
     assert len(json.dumps(listed, default=str)) < 10_000
 
 
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_settled_recovery_scan_allocation_ignores_unrelated_metadata(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_id = _register_session(session_manager, sample_project, "recovery-allocation")
+    classifier = MagicMock()
+    handler = TaskRecoveryHandler(LocalTaskManager(temp_db), agent_manager, classifier)
+    decoded_sizes: list[int] = []
+    original_load = _JsonContainerTextLoader.load
+
+    def counting_load(loader: _JsonContainerTextLoader, data: Buffer) -> Any:
+        decoded_sizes.append(len(data))
+        return original_load(loader, data)
+
+    monkeypatch.setattr(_JsonContainerTextLoader, "load", counting_load)
+    peaks: list[int] = []
+    largest_decodes: list[int] = []
+    for unrelated_bytes in (1024, 4 * 1024 * 1024):
+        run = agent_manager.create(
+            parent_session_id=parent_id,
+            provider="codex",
+            prompt="Recovery allocation fixture",
+            resume_metadata_json={"unrelated": "x" * unrelated_bytes},
+        )
+        assert agent_manager.fail(run.id, error="Synthetic terminal failure") is not None
+        # Steady-state scans must skip this run without materializing its metadata.
+        handler._settled_run_ids.add(run.id)
+        decoded_sizes.clear()
+        tracemalloc.start()
+        try:
+            assert await handler.recover_tasks_from_terminal_agents() == 0
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        peaks.append(peak)
+        largest_decodes.append(max(decoded_sizes, default=0))
+        assert run.id in handler._settled_run_ids
+
+    classifier.for_provider.assert_not_called()
+    measurements = {"peak_bytes": peaks, "largest_json_bytes": largest_decodes}
+    print(measurements)
+    # Allow 512 KiB for query/row bookkeeping, independent of the unrelated blob.
+    assert peaks[1] < peaks[0] + 512 * 1024, measurements
+    assert max(largest_decodes) < 4096, measurements
+
+
 def test_task_id_filters_apply_to_agent_run_list_queries(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     temp_db: HubDatabase,
 ) -> None:
     """Task-scoped run lookups should only return matching task IDs."""
@@ -214,7 +269,7 @@ def test_task_id_filters_apply_to_agent_run_list_queries(
 def test_active_run_without_child_session_uses_parent_session_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     temp_db: HubDatabase,
 ) -> None:
     """Active runs fall back to parent-session counters when no child row exists."""
@@ -238,7 +293,7 @@ def test_active_run_without_child_session_uses_parent_session_stats(
 def test_terminal_run_without_child_session_keeps_persisted_stats(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     temp_db: HubDatabase,
 ) -> None:
     """Terminal history remains based on persisted agent_runs counters."""
@@ -265,7 +320,7 @@ def test_terminal_run_without_child_session_keeps_persisted_stats(
 def test_to_brief_includes_activity_counters(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     temp_db: HubDatabase,
 ) -> None:
     """Brief agent-run payloads include the derived activity counters."""
@@ -285,7 +340,9 @@ def test_to_brief_includes_activity_counters(
     agent_manager.start(run.id)
     _set_session_stats(temp_db, child_id, tool_calls_count=7, turns_used=3)
 
-    brief = agent_manager.get(run.id).to_brief()
+    stored_run = agent_manager.get(run.id)
+    assert stored_run is not None
+    brief = stored_run.to_brief()
 
     assert brief["tool_calls_count"] == 7
     assert brief["turns_used"] == 3
@@ -294,7 +351,7 @@ def test_to_brief_includes_activity_counters(
 def test_to_brief_includes_agent_identity(
     agent_manager: LocalAgentRunManager,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     """Brief agent-run payloads expose enough identity for orchestration filters."""
     parent_id = _register_session(session_manager, sample_project, "parent-identity")
@@ -314,7 +371,9 @@ def test_to_brief_includes_agent_identity(
         model="sonnet",
     )
 
-    brief = agent_manager.get(run.id).to_brief()
+    stored_run = agent_manager.get(run.id)
+    assert stored_run is not None
+    brief = stored_run.to_brief()
 
     assert brief["agent_name"] == "merge-worker"
     assert brief["workflow_name"] == "merge-orchestrator"

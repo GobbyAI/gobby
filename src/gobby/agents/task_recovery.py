@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 RECOVERABLE_TERMINAL_STATUSES = ("error", "timeout", "cancelled")
 
 if TYPE_CHECKING:
+    from gobby.storage.agents._models import AgentRunListRow
     from gobby.storage.tasks import LocalTaskManager
 
 
@@ -56,12 +57,12 @@ class _AgentRun(Protocol):
 class _AgentRunManager(Protocol):
     def get(self, run_id: str) -> _AgentRun | None: ...
 
-    def list_by_status(
+    def list_by_status_summary(
         self,
         status: str | None = ...,
         limit: int = ...,
         project_id: str | None = ...,
-    ) -> Sequence[_AgentRun]: ...
+    ) -> Sequence[AgentRunListRow]: ...
 
 
 class _StallClassifier(Protocol):
@@ -336,16 +337,21 @@ class TaskRecoveryHandler:
         swept: set[str] = set()
         for status in RECOVERABLE_TERMINAL_STATUSES:
             runs = await self._run_db(
-                self._agent_run_manager.list_by_status,
+                self._agent_run_manager.list_by_status_summary,
                 status,
                 limit_per_status,
             )
             outcome: Literal["failed", "cancelled"] = (
                 "cancelled" if status == "cancelled" else "failed"
             )
-            for db_run in runs:
-                swept.add(db_run.id)
-                if db_run.id in self._settled_run_ids or is_daemon_stop_parked(db_run):
+            for row in runs:
+                run_id = str(row.projection["id"])
+                swept.add(run_id)
+                if run_id in self._settled_run_ids:
+                    continue
+                db_run = await self._run_db(self._agent_run_manager.get, run_id)
+                # A listed terminal run may have been deleted or revived before hydration.
+                if db_run is None or db_run.status != status or is_daemon_stop_parked(db_run):
                     continue
                 if await self.recover_task_from_terminal_agent(db_run, outcome=outcome):
                     recovered += 1
