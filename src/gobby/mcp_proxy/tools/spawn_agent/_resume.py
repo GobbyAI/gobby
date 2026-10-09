@@ -7,6 +7,9 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.workflows.state_manager import SessionVariableManager
+
+_RETYPE_REFUSED = frozenset({"assistant", "orchestrator", "default"})
 
 
 def resolve_resume_target(
@@ -15,6 +18,7 @@ def resolve_resume_target(
     project_id: str | None,
     provider: str | None,
     run_storage: Any,
+    agent_type: str,
 ) -> Session:
     if session_manager is None or not project_id:
         raise ValueError("Resume requires a session manager and project context")
@@ -43,6 +47,20 @@ def resolve_resume_target(
         or (thread == session.id and session.source != "claude")
     ):
         raise ValueError(f"Resume target {ref} has no recorded provider thread")
+    # A resume merges the requested definition's variables into the session, so it
+    # re-types the seat. Moving onto another seat definition stays open; becoming the
+    # Assistant or Orchestrator would bypass seat rules, and the 'default' an omitted
+    # agent resolves to would silently drop the seat's definition.
+    stored_type = (
+        SessionVariableManager(session_manager.db)
+        .get_variable_subset(session.id, ("_agent_type",))
+        .get("_agent_type")
+    ) or "default"
+    if agent_type != stored_type and agent_type in _RETYPE_REFUSED:
+        raise ValueError(
+            f"Resume target {ref} is a {stored_type!r} session; resume it with "
+            f"agent={stored_type!r}, not {agent_type!r}"
+        )
     return session
 
 

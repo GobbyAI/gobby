@@ -2,6 +2,7 @@
 
 import asyncio
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
@@ -13,6 +14,7 @@ from gobby.agents.isolation import IsolationContext
 from gobby.agents.spawn import PreparedSpawn
 from gobby.mcp_proxy.tools.spawn_agent import _factory as factory
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
+from gobby.mcp_proxy.tools.spawn_agent import _resume as resume
 from gobby.mcp_proxy.tools.spawn_agent import _worktree_reuse as worktree_reuse
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
@@ -24,6 +26,91 @@ from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def stored_agent_type() -> Iterator[MagicMock]:
+    """Every resume target is a stored 'developer' seat unless a test says otherwise."""
+    with patch.object(resume, "SessionVariableManager") as manager:
+        manager.return_value.get_variable_subset.return_value = {"_agent_type": "developer"}
+        yield manager.return_value.get_variable_subset
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "requested"),
+    [
+        ({"_agent_type": "developer"}, "orchestrator"),
+        ({"_agent_type": "lane-manager"}, "assistant"),
+        ({"_agent_type": "developer"}, None),
+        ({}, "orchestrator"),
+    ],
+)
+async def test_resume_refuses_a_different_agent_type(
+    stored_agent_type: MagicMock, stored: dict[str, str], requested: str | None
+) -> None:
+    stored_agent_type.return_value = stored
+    target = SimpleNamespace(
+        id="existing-session",
+        project_id="project",
+        source="codex",
+        external_id="recorded-thread",
+        status="expired",
+        agent_run_id=None,
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = target.id
+    sessions.get.return_value = target
+    runner = MagicMock()
+    result = await spawn_agent_impl(
+        prompt="Resume your seat",
+        runner=runner,
+        session_manager=sessions,
+        parent_session_id="parent",
+        target_project_id="project",
+        resume_session_id="gobby#123",
+        agent_body=(
+            None
+            if requested is None
+            else make_agent_definition(name=requested, prompts={"agent": "Continue"})
+        ),
+    )
+    assert result["success"] is False
+    stored_type = stored.get("_agent_type", "default")
+    assert f"agent={stored_type!r}, not {requested or 'default'!r}" in result["error"]
+    assert stored_agent_type.call_args.args == ("existing-session", ("_agent_type",))
+    runner.can_spawn.assert_not_called()
+    runner.child_session_manager.create_child_session.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("stored", "requested"),
+    [
+        ({}, "developer"),
+        ({"_agent_type": "developer"}, "lane-manager"),
+        ({"_agent_type": "orchestrator"}, "orchestrator"),
+        ({}, "default"),
+    ],
+)
+def test_resume_allows_a_seat_definition_or_the_stored_type(
+    stored_agent_type: MagicMock, stored: dict[str, str], requested: str
+) -> None:
+    stored_agent_type.return_value = stored
+    target = SimpleNamespace(
+        id="existing-session",
+        project_id="project",
+        source="codex",
+        external_id="recorded-thread",
+        status="expired",
+        agent_run_id=None,
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = target.id
+    sessions.get.return_value = target
+    resolved = resume.resolve_resume_target(
+        sessions, "gobby#123", "project", None, MagicMock(), requested
+    )
+    assert resolved.id == target.id
 
 
 @pytest.mark.asyncio

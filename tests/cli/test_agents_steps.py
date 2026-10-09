@@ -232,6 +232,18 @@ def test_variables_get_and_set_use_session_scope_model(runner: CliRunner) -> Non
     assert close_manager.call_count >= 3
 
 
+@pytest.mark.parametrize("name", ["_agent_type", "operator_claim_hold"])
+def test_variables_set_refuses_runtime_managed_names(runner: CliRunner, name: str) -> None:
+    with patch("gobby.cli.variables.get_session_var_manager") as get_manager:
+        result = runner.invoke(cli, ["variables", "set", name, "orchestrator", "--session", "s"])
+
+    assert result.exit_code == 1
+    assert f"{name} is managed by the workflow runtime and cannot be set directly." in (
+        result.output
+    )
+    get_manager.assert_not_called()
+
+
 def test_sync_reinstall_uses_registry_without_legacy_sql(runner: CliRunner) -> None:
     sync_source = (_REPO / "src" / "gobby" / "cli" / "sync.py").read_text()
     assert "workflow_definitions" not in sync_source

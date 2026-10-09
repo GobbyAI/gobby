@@ -156,6 +156,7 @@ async def spawn_agent_impl(
                 resume_project_id,
                 concrete_provider(provider),
                 runner.run_storage,
+                agent_body.name if agent_body is not None else "default",
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}

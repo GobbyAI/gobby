@@ -11,6 +11,7 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.json_helpers import json_dumps
+from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.state_manager import SessionVariableManager
 
 _db_instance: HubDatabase | None = None
@@ -78,6 +79,10 @@ def set_variable(name: str, value: str, session_id: str | None, json_format: boo
 
     Reads still layer project/global defaults under session values.
     """
+    if is_reserved_workflow_variable(name):
+        raise click.ClickException(
+            f"{name} is managed by the workflow runtime and cannot be set directly."
+        )
     with session_var_manager_context() as manager:
         resolved = resolve_session_id(session_id)
         parsed = _parse_variable_value(value)
