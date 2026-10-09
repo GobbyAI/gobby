@@ -1551,7 +1551,7 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         with patch(
-            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            "gobby.storage.sessions._contested_expiry.read_session_variables",
             return_value={
                 "model_id": "gpt-5.4",
                 "_effective_reasoning_effort": "high",
