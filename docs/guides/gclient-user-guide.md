@@ -854,7 +854,10 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 
 When a pane's application tracks the mouse (a TUI, `vim`, `less` with mouse on),
 clicks, drags, and the wheel are forwarded to it as mouse reports. Hold `shift`
-to keep a gesture for the client instead.
+to keep a gesture for the client instead. A wheel notch in an unfocused pane
+focuses it and claims control if it is free, so subsequent typing goes there. If another
+viewer holds control, the wheel focuses the pane without taking control or
+forwarding the report.
 
 **Menus.** Right-click opens a context menu; clicking a title on row 0 opens
 that menu. Use `j` / `k` or the arrows to move, `enter` or `space` to activate,
