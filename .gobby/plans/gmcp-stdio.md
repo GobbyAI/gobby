@@ -851,7 +851,7 @@ Targets:
 - `tests/cli/test_cli.py::*` — scope-reason: the `mcp-server` command and help assertions leave
 - `tests/config/test_servers.py::*` — scope-reason: the `tool_timeouts` cases leave
 - `tests/config/test_config_registry.py::*` — scope-reason: the `tool_timeouts` mapping pattern leaves the expected set
-- `tests/servers/routes/mcp_endpoints/test_bridge.py::*` — scope-reason: the three tool-timeouts tests leave, and `test_router_registers_bridge_routes` asserts that route is absent
+- `tests/servers/routes/mcp_endpoints/test_bridge.py::*` — scope-reason: the three tool-timeouts tests leave, and `test_router_registers_bridge_routes` asserts that route is absent from the router and the agent route matrix
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py::*` — scope-reason: the config stub drops `tool_timeouts={}`
 - `tests/e2e/test_daemon_lifecycle.py::*` — scope-reason: `TestBridgeAutoStart` and its `_BRIDGE_AUTO_START` script leave with `daemon_control.py` (Decision 5); the helpers `TestFrontDoor` shares stay
 - `tests/utils/test_posix_spawn.py::*` — scope-reason: `_NOT_DAEMON` drops its `mcp_proxy/daemon_control.py` and `mcp_proxy/stdio` entries
@@ -917,8 +917,9 @@ Targets:
   HTTP config-schema snapshot. The close-orchestration stub drops the key.
 - Delete `get_bridge_tool_timeouts`, its registration, its agent route, its
   `http-endpoints.md` row, and its three tests.
-  `test_router_registers_bridge_routes` asserts the route is absent and
-  `/bridge/ready` is present.
+  `test_router_registers_bridge_routes` asserts that
+  `GET /api/mcp/bridge/tool-timeouts` is absent from both the router and the
+  agent route matrix, and that `/bridge/ready` is still registered.
 - The MCP & Tools settings section drops the `tool_timeouts` path and editor,
   and `configFields.tsx` drops `NumberMapConfigField`. The unit test replaces
   the editor case with `omitsRetiredPerToolTimeoutsEditor`, and both web
@@ -936,13 +937,18 @@ after their reader is gone.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/ tests/cli/test_cli.py tests/config/ tests/skills/ tests/contracts/test_http_corpus.py tests/servers/routes/mcp_endpoints/test_bridge.py tests/utils/test_posix_spawn.py -q`
-and `uv run pytest tests/e2e/test_daemon_lifecycle.py --collect-only -q`,
+and `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_daemon_lifecycle.py --collect-only -q`,
 then `npx vitest run src/components/settings/sections/__tests__/McpToolsSection.test.tsx`
-and `npx tsc --noEmit` in `web/`, `uv run ruff check src/`, `uv run mypy src/`,
-and `gcode grep -F "mcp_proxy.stdio" src tests`,
-`gcode grep -w "daemon_control" src tests`,
-`gcode grep -F "tool_timeouts" src tests web`, and
-`gcode grep -F "tool-timeouts" src tests web docs/guides` with no hits.
+and `npx tsc --noEmit` in `web/`, `uv run ruff check src/`, and `uv run mypy src/`.
+Then run these four searches:
+- `gcode grep -F "mcp_proxy.stdio" src tests`
+- `gcode grep -w "daemon_control" src tests`
+- `gcode grep -F "tool_timeouts" src tests web`
+- `gcode grep -F "tool-timeouts" src tests web docs/guides`
+
+They must find no consumer in production code, docs, the settings editor, or
+tests of the retired wrapper. The only hits allowed are negative retirement
+assertions in the tests that 1.7.1, 1.7.6, and 1.7.7 name.
 
 **Acceptance:**
 
@@ -1222,6 +1228,10 @@ root is #23275. Drafting creates no tasks, labels, or edges.
     withdrawal route, the whole `## M1 Task Manifest` block is withdrawn; its
     bytes stay in Git history at `e4e60efccd`. The Adversary derives a fresh
     M1 after delta review.
+  - Delta finding F1 (blocking): 1.7's no-hit searches conflicted with 1.7.7,
+    whose router test must name the retired route. The searches now allow
+    only negative retirement assertions in the tests that 1.7.1, 1.7.6, and
+    1.7.7 name. The collect-only pytest run uses the isolated test hub.
 
 ## V2: Verification
 `kind: verification`
