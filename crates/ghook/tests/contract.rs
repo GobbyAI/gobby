@@ -22,11 +22,7 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
         ("codex", "SessionEnd", 2),
         ("codex", "PreCompact", 2),
         ("codex", "Stop", 1),
-        ("qwen", "SessionStart", 2),
-        ("qwen", "SessionEnd", 2),
-        ("qwen", "PreCompact", 2),
-        ("qwen", "Stop", 1),
-        ("qwen", "PreToolUse", 1),
+        ("codex", "PreToolUse", 1),
         ("droid", "SessionStart", 1),
         ("droid", "SessionEnd", 1),
         ("droid", "PreCompact", 1),
@@ -417,9 +413,6 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
         ("codex", "SessionStart"),
         ("codex", "SessionEnd"),
         ("codex", "PreCompact"),
-        ("qwen", "SessionStart"),
-        ("qwen", "SessionEnd"),
-        ("qwen", "PreCompact"),
         ("grok", "session_start"),
         ("grok", "session_end"),
         ("grok", "pre_compact"),
@@ -449,8 +442,6 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
         ("grok", "stop"),
         ("claude", "Stop"),
         ("droid", "Stop"),
-        ("qwen", "PreToolUse"),
-        ("qwen", "Stop"),
         ("codex", "Stop"),
         ("codex", "PreToolUse"),
     ] {
@@ -535,8 +526,7 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
         ("grok", "stop", true),
         ("claude", "Stop", true),
         ("droid", "Stop", true),
-        ("qwen", "AfterAgent", true),
-        ("qwen", "PreToolUse", false),
+        ("codex", "PreToolUse", false),
     ] {
         let noncritical =
             run_diagnose_with_dirs(home.path(), gobby_home.path(), cli, hook_type, &daemon_url)?;
@@ -564,7 +554,6 @@ fn lifecycle_hooks_enqueue_exact_agent_run_identity() -> TestResult {
     for (cli, hook_type) in [
         ("claude", "session-end"),
         ("codex", "Stop"),
-        ("qwen", "AfterAgent"),
         ("agy", "PostInvocation"),
         ("grok", "session_end"),
         ("droid", "SessionEnd"),
@@ -1118,30 +1107,6 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     assert_stderr_empty(&grok_pre_tool_output, "grok pre_tool_use block")?;
     assert!(grok_pre_tool_request.contains("\"hook_type\":\"pre_tool_use\""));
 
-    for (hook_type, body) in [
-        (
-            "SessionStart",
-            r#"{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"ready"}}"#,
-        ),
-        (
-            "PreToolUse",
-            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"policy"}}"#,
-        ),
-        (
-            "Stop",
-            r#"{"continue":true,"decision":"block","reason":"keep working"}"#,
-        ),
-    ] {
-        let (qwen_url, qwen_daemon) = start_daemon(http_ok_json(body))?;
-        let qwen_output = run_temp_ghook("qwen", hook_type, &qwen_url, VALID_STDIN, &[])?;
-        let qwen_request = join_daemon(qwen_daemon)?;
-
-        assert_eq!(qwen_output.status.code(), Some(0), "qwen {hook_type}");
-        assert_json_stdout(&qwen_output, serde_json::from_str(body)?)?;
-        assert_stderr_empty(&qwen_output, &format!("qwen {hook_type}"))?;
-        assert!(qwen_request.contains(&format!("\"hook_type\":\"{hook_type}\"")));
-    }
-
     for hook_type in [
         "SessionStart",
         "UserPromptSubmit",
@@ -1474,7 +1439,7 @@ fn daemon_retry_backpressure_continues_noncritical_hook_and_keeps_envelope() -> 
     let output = run_ghook_with_dirs(
         home.path(),
         gobby_home.path(),
-        Some("qwen"),
+        Some("droid"),
         Some("PreToolUse"),
         &daemon_url,
         VALID_STDIN,
@@ -1668,7 +1633,7 @@ fn daemon_503_without_retry_body_keeps_noncritical_fail_open() -> TestResult {
     let output = run_ghook_with_dirs(
         home.path(),
         gobby_home.path(),
-        Some("qwen"),
+        Some("codex"),
         Some("PreToolUse"),
         &daemon_url,
         VALID_STDIN,

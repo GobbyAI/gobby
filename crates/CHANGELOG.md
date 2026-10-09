@@ -56,6 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+#### ghook
+
+- **Qwen Code CLI support** — `--cli=qwen` is no longer recognized and exits
+  `2` with empty JSON like any unknown CLI. The Qwen structured-response and
+  fail-closed `Stop` paths are gone. Version: `0.9.10`.
+
+#### gobby-client
+
+- **Qwen provider label** — the sidebar no longer maps the `qwen` source.
+  Version: `0.1.26`.
+
+#### gobby-core
+
+- **Qwen in the runtime config contract** — the embedded contract's provider
+  descriptions no longer name `qwen`. Dependents rebuilt: gcode `1.9.17`,
+  gdaemon `0.4.12`.
+
 #### gcode
 
 - **`gcode codewiki` CLI surface** — the CodeWiki engine moved to
