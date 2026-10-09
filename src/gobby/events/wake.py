@@ -360,8 +360,8 @@ class WakeDispatcher:
 
     async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
         delay = COMPOSER_RETRY_BASE_SECONDS
+        await self._composer_retry_wait(delay)
         while True:
-            await self._composer_retry_wait(delay)
             lock = self._live_wake_locks.get(session_id)
             if lock is None:
                 lock = asyncio.Lock()
@@ -375,15 +375,27 @@ class WakeDispatcher:
                 raise
             except Exception:
                 delay = min(delay * 2, COMPOSER_RETRY_MAX_SECONDS)
+                await self._composer_retry_wait(delay)
                 continue
             skipped = result.get("skipped")
             if skipped not in RETRYABLE_WAKE_SKIPS:
                 return
             if skipped == "session_active":
-                # Active rows have their own lifecycle refresh path.
-                self._schedule_deferred_refresh(session_id, priority=priority)
-                return
+                # Keep this retry alive: scheduling the still-registered deferred
+                # refresh again would leave an interrupted turn without a wake.
+                if self._lifecycle_refresh is not None:
+                    try:
+                        await self._lifecycle_refresh(session_id)
+                        idle = await self._pause_idle_prompt(session_id)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        idle = "error"
+                    if idle == "paused":
+                        # Reconciliation proved an idle composer; dispatch now.
+                        continue
             delay = min(delay * 2, COMPOSER_RETRY_MAX_SECONDS)
+            await self._composer_retry_wait(delay)
 
     async def _composer_retry_wait(self, delay: float) -> None:
         """Sleep between composer retries; tests replace this to avoid real time."""
@@ -460,7 +472,10 @@ class WakeDispatcher:
         skipped = result.get("skipped")
         # The refresh may have unpaused the row only to find a composer that was
         # not confirmed empty: the withheld message still owes a retry.
-        self._schedule_wake_followup(session_id, result, priority=priority)
+        if skipped == "session_active":
+            self._schedule_composer_retry(session_id, priority=priority)
+        else:
+            self._schedule_wake_followup(session_id, result, priority=priority)
         # A debounced skip is routine; session_active stays at INFO because it is
         # the only trace of a session stranded as active (#22887).
         logger.log(

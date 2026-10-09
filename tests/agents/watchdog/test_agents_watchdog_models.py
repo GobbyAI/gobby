@@ -190,28 +190,33 @@ def test_snapshot_conclusive_properties_require_valid_order_and_timestamp() -> N
     assert active_after_completion.has_conclusive_turn_completed is False
 
 
-def test_open_tool_call_stays_live_past_the_idle_window() -> None:
+@pytest.mark.parametrize(("provider", "stale_live"), [("grok", True), ("agy", False)])
+def test_open_tool_call_stays_live_past_the_idle_window(provider: str, stale_live: bool) -> None:
     started = datetime(2026, 9, 15, 1, 32, 30, tzinfo=UTC)
     snapshot = WatchdogTranscriptSnapshot(
-        provider="grok",
+        provider=provider,
         latest_turn_kind="started",
         tail=(TranscriptEventSummary(1, started, "session_update", "tool_call"),),
     )
     later = started + timedelta(minutes=11)
 
     assert snapshot.has_open_tool_call is True
-    assert snapshot.is_live_transcript_activity(idle_timeout_seconds=60, now=later) is True
+    assert snapshot.is_live_transcript_activity(idle_timeout_seconds=60, now=started) is True
+    assert snapshot.is_live_transcript_activity(idle_timeout_seconds=60, now=later) is stale_live
 
 
-def test_closed_tool_is_idle_once_the_window_elapses() -> None:
+@pytest.mark.parametrize(
+    ("provider", "result_payload"), [("grok", "tool_call_update"), ("agy", "tool_result")]
+)
+def test_closed_tool_is_idle_once_the_window_elapses(provider: str, result_payload: str) -> None:
     started = datetime(2026, 9, 15, 1, 32, 30, tzinfo=UTC)
     snapshot = WatchdogTranscriptSnapshot(
-        provider="grok",
+        provider=provider,
         latest_turn_kind="started",
         tail=(
             TranscriptEventSummary(1, started, "session_update", "tool_call"),
             TranscriptEventSummary(
-                2, started + timedelta(seconds=2), "session_update", "tool_call_update"
+                2, started + timedelta(seconds=2), "session_update", result_payload
             ),
         ),
     )
