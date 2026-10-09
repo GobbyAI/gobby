@@ -19,6 +19,7 @@ from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
@@ -268,7 +269,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
             reserved_run_id="new-run",
             agent_body=make_agent_definition(name="developer", prompts={"agent": "Continue"}),
             worktree_storage=worktrees,
-            git_manager=MagicMock(),
+            git_manager=WorktreeGitManager(tmp_path / "repo"),
             db=MagicMock(),
         )
         await asyncio.gather(*implementation._spawn_background_tasks.values())
