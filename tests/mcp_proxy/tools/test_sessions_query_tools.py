@@ -60,7 +60,7 @@ def _fetch_side_effect(session_ids: list[str]) -> dict[str, dict[str, list[int]]
 
 def _session_manager(*sessions: Session) -> MagicMock:
     manager = MagicMock()
-    manager.list.return_value = list(sessions)
+    manager.list_brief.return_value = list(sessions)
     manager.count.return_value = len(sessions)
     manager.fetch_task_refs_by_session.side_effect = _fetch_side_effect
     manager.load_task_refs.side_effect = lambda rows: SessionManager.load_task_refs(manager, rows)
