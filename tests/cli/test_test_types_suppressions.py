@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -53,13 +54,18 @@ def sample() -> None:
     ]
 
 
-@pytest.mark.parametrize("target", [".", ".gobby/tmp", ".gobby/tmp/broken.py"])
+@pytest.mark.parametrize(
+    "target", [".", ".gobby/tmp", ".gobby/tmp/broken.py", ".gobby/scratchpads"]
+)
 def test_scan_excludes_gobby_scratch_even_when_explicitly_targeted(
     tmp_path: Path, target: str
 ) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _write(tmp_path / ".gitignore", ".gobby/tmp/\n.gobby/scratchpads/\n")
     _write(tmp_path / "src" / "owned.py", "value = 1  # noqa: F401\n")
     _write(tmp_path / ".gobby" / "scripts" / "owned.py", "value = 2  # noqa: F401\n")
     _write(tmp_path / ".gobby" / "tmp" / "broken.py", "value = (\n")
+    _write(tmp_path / ".gobby" / "scratchpads" / "broken.py", "value = (\n")
 
     scan = scan_suppressions((target,), root=tmp_path)
     scoped = scan_suppressions(("src", ".gobby/scripts"), root=tmp_path)
@@ -74,10 +80,57 @@ def test_scan_excludes_gobby_scratch_even_when_explicitly_targeted(
         assert scan.sites == ()
 
 
+def test_git_scan_includes_tracked_ignored_and_new_files_with_scoped_targets(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _write(tmp_path / ".gitignore", "generated/\nvendor/\n*.ignored.py\n")
+    tracked = tmp_path / "generated" / "owned.py"
+    _write(tracked, "value = 1  # noqa: F401\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "generated/owned.py"], check=True)
+    _write(tmp_path / "src" / "new file.py", "value = 2  # noqa: F401\n")
+    _write(tmp_path / "src" / "broken.ignored.py", "value = (\n")
+    _write(tmp_path / "vendor" / "untracked.py", "value = (\n")
+    _write(tmp_path / "vendor" / "tracked.py", "value = 3  # noqa: F401\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "vendor/tracked.py"], check=True)
+
+    scan = scan_suppressions((".",), root=tmp_path)
+    scoped = scan_suppressions(("src", "generated/owned.py", "src/new file.py"), root=tmp_path)
+    vendor = scan_suppressions(("vendor/tracked.py",), root=tmp_path)
+    subdirectory = scan_suppressions((".",), root=tmp_path / "src")
+
+    assert scan == scoped
+    assert scan.files_scanned == 2
+    assert scan.errors == ()
+    assert [site.path for site in scan.sites] == ["generated/owned.py", "src/new file.py"]
+    assert vendor.files_scanned == 0
+    assert vendor.sites == ()
+    assert subdirectory.files_scanned == 1
+    assert [site.path for site in subdirectory.sites] == ["new file.py"]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "error"])
+def test_git_discovery_failure_does_not_fall_back_to_unfiltered_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    def failed_git(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("git", 30)
+        return subprocess.CompletedProcess(["git"], 128, b"", b"fatal: permission denied")
+
+    monkeypatch.setattr("gobby.test_types.suppressions.subprocess.run", failed_git)
+    _write(tmp_path / "broken.py", "value = (\n")
+
+    with pytest.raises(ValueError, match="Could not discover Git-visible Python source"):
+        scan_suppressions((".",), root=tmp_path)
+
+
 def test_scan_reports_each_malformed_source_and_continues(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     _write(tmp_path / "a_broken.py", "value = 1  # noqa: F401\nvalue = (\n")
     _write(tmp_path / "b_broken.py", 'value = """\n')
     _write(tmp_path / "z_valid.py", "value = 2  # noqa: F401\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
 
     scan = scan_suppressions((".",), root=tmp_path)
 
