@@ -224,6 +224,9 @@ def test_projected_mutations_sanitize_nul_variable_names(
         "step-recovery",
         "terminal-stop",
         "start-context",
+        "memory-tracking",
+        "lesson-tracking",
+        "path-owners",
     ],
 )
 def test_small_read_consumers_do_not_decode_unrelated_variables(
@@ -244,6 +247,7 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
         DELIVERY_VARIABLE,
         handle_ack_pending_inbox_envelope,
     )
+    from gobby.hooks.receipt_effects import staged_session_variable, worker_staging_scope
     from gobby.hooks.rule_evaluator import _committed_set_values
     from gobby.hooks.session_activation import _ensure_step_instance
     from gobby.hooks.terminal_handoff_delivery import (
@@ -255,6 +259,9 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
     from gobby.mcp_proxy.tools.memory_session import ACCESSED_MEMORY_IDS_VARIABLE
     from gobby.sessions.handoff import HANDOFF_DELIVERY_FAILURES_VARIABLE
     from gobby.storage.session_tasks import SessionTaskManager
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.workflows.commit_guard import _active_path_owners
+    from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
 
     manager = SessionVariableManager(temp_db)
     unrelated = "x" * (4 * 1024 * 1024)
@@ -268,6 +275,9 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
             "_active_skill_names": ["persona-skill"],
             "_agent_context_injected": True,
             "seen": ["one"],
+            "_memory_surface_seq": 5,
+            "surfaced_memory_ids": ["recent@5", "old@1"],
+            "injected_review_lesson_ids": ["reviewed"],
             HANDOFF_DELIVERY_FAILURES_VARIABLE: 3,
             ACCESSED_MEMORY_IDS_VARIABLE: [{"task_id": "task-one", "memory_id": "memory-one"}],
             DELIVERY_VARIABLE: {
@@ -276,6 +286,23 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
             },
         },
     )
+    session = session_manager.get(mutation_session)
+    assert session is not None
+    task = None
+    if operation == "path-owners":
+        task = LocalTaskManager(temp_db).create_task(
+            project_id=session.project_id,
+            title="Bounded path ownership",
+            task_type="bug",
+            category="code",
+            implementation_domain="backend",
+            validation_criteria="Path ownership is preserved without decoding unrelated values.",
+            claimed_by_session_id=mutation_session,
+        )
+        manager.merge_variables(
+            mutation_session,
+            {"task_edited_file_checkouts": {task.id: {str(tmp_path): ["owned.py"]}}},
+        )
     decode_sizes: list[int] = []
     decode = state_manager._decode_variables_payload
 
@@ -364,6 +391,32 @@ def test_small_read_consumers_do_not_decode_unrelated_variables(
             is_existing_session=True,
         )
         assert decision.mode == "live"
+    elif operation == "memory-tracking":
+        tracker = InjectionTrackingMixin()
+        tracker.db = temp_db
+        with worker_staging_scope():
+            new_memories = tracker._filter_and_track_new_memories(
+                [{"id": key} for key in ("memory-one", "recent", "old", "new")],
+                mutation_session,
+            )
+            assert [memory["id"] for memory in new_memories] == ["old", "new"]
+            assert staged_session_variable("_memory_surface_seq") == 6
+    elif operation == "lesson-tracking":
+        tracker = InjectionTrackingMixin()
+        tracker.db = temp_db
+        with worker_staging_scope():
+            new_lessons = tracker._filter_and_track_new_review_lessons(
+                [{"memory_id": "reviewed"}, {"memory_id": "new"}], mutation_session
+            )
+            assert new_lessons == [{"memory_id": "new"}]
+    elif operation == "path-owners":
+        assert task is not None
+        owners = _active_path_owners(
+            temp_db, project_id=session.project_id, checkout_root=str(tmp_path)
+        )
+        assert set(owners) == {"owned.py"}
+        assert owners["owned.py"][0].owner_task_id == task.id
+        assert owners["owned.py"][0].owner_session_id == mutation_session
     else:
         assert (
             _ensure_step_instance(
