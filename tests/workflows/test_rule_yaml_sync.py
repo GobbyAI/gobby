@@ -943,7 +943,7 @@ class TestDispositionMigration:
             source="installed",
             tags=["user"],
         )
-        original_list = RuleDefinitionManager.list_all
+        original_list = RuleDefinitionManager.list_delivery_disposition_candidates
 
         def list_then_edit(
             self: RuleDefinitionManager,
@@ -954,7 +954,9 @@ class TestDispositionMigration:
             self.update(target.id, description="edited concurrently")
             return rows
 
-        monkeypatch.setattr(RuleDefinitionManager, "list_all", list_then_edit)
+        monkeypatch.setattr(
+            RuleDefinitionManager, "list_delivery_disposition_candidates", list_then_edit
+        )
 
         result = migrate_rule_delivery_dispositions(db)
 

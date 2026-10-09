@@ -5,9 +5,11 @@ tagged `runbook` whose steps place agent seats. Find one with
 `gobby-workflows:list_pipelines(tag="runbook")` or
 `gobby pipelines list --tag runbook`.
 
-Launch only from an operator surface (CLI, web, gclient) or an authorized cron
-`pipeline` job. Agent seats are blocked from `run_pipeline`, the exposed
-`pipeline:<name>` tools and a shell `gobby pipelines run`. Pass every
+Launch from an operator surface (CLI, web, gclient), an authorized cron
+`pipeline` job, or the Orchestrator seat; the Assistant seat launches only
+while the Orchestrator is down. Every other agent seat is blocked from
+`run_pipeline`, the exposed `pipeline:<name>` tools and a shell
+`gobby pipelines run`, and sends the request to the Orchestrator. Pass every
 project-specific value as an input. The bundled `planning` runbook takes
 `workspace` and a `seats` string such as `writer,enhancer,adversary`:
 `gobby pipelines run planning -i workspace=<name> -i seats=<names>`.

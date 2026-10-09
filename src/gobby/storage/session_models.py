@@ -194,7 +194,7 @@ class Session:
             last_completion_output_tokens=cls._get_optional(row, "last_completion_output_tokens"),
             model=cls._get_optional(row, "model"),
             is_local=is_local,
-            terminal_context=cls._parse_terminal_context(row["terminal_context"]),
+            terminal_context=cls.parse_terminal_context(row["terminal_context"]),
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
             chat_mode=row["chat_mode"] if "chat_mode" in row.keys() else "plan",
@@ -232,7 +232,7 @@ class Session:
         )
 
     @classmethod
-    def _parse_terminal_context(cls, raw: str | None) -> dict[str, Any] | None:
+    def parse_terminal_context(cls, raw: str | None) -> dict[str, Any] | None:
         """Parse terminal_context JSON, returning None on malformed data.
 
         Args:

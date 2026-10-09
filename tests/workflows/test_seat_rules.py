@@ -147,6 +147,16 @@ async def test_seat_common_rearms_after_compact(engine: RuleEngine) -> None:
     assert GUIDANCE_HEADING in await _turn_context(engine, variables)
 
 
+PIPELINE_LAUNCHES = (
+    _proxy_call("gobby-workflows", "run_pipeline", {"name": "nightly"}),
+    _proxy_call("gobby-workflows", "pipeline:nightly"),
+    _shell("cd /tmp && uv run gobby pipelines run nightly"),
+    _shell("gobby --config /tmp/gobby.yaml pipelines run nightly"),
+    _shell("python -m gobby.cli pipelines run nightly"),
+    _shell("uv run --module gobby.cli pipelines run nightly"),
+)
+
+
 @pytest.mark.asyncio
 async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
     for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER, PLAN_ENHANCER):
@@ -157,25 +167,41 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
             assert blocked.decision == "block", (seat, tool)
             assert "Seats do not spawn agents" in (blocked.reason or "")
 
-    launches = [
-        _proxy_call("gobby-workflows", "run_pipeline", {"name": "nightly"}),
-        _proxy_call("gobby-workflows", "pipeline:nightly"),
-        _shell("gobby agents spawn developer --task '#1'"),
-        _shell("cd /tmp && uv run gobby pipelines run nightly"),
-    ]
-    for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER, PLAN_ENHANCER):
-        for launch in launches:
-            blocked = await _decide(engine, launch, seat)
-            assert blocked.decision == "block", (seat, launch)
-            assert "send the request to the Orchestrator" in (blocked.reason or "")
+    shell_spawn = _shell("gobby agents spawn developer --task '#1'")
+    for seat in (DEVELOPER, ASSISTANT, ORCHESTRATOR, PLAN_WRITER, PLAN_ENHANCER):
+        blocked = await _decide(engine, shell_spawn, seat)
+        assert blocked.decision == "block", seat
+        assert "send the request to the Orchestrator" in (blocked.reason or "")
         allowed = await _decide(
             engine, _proxy_call("gobby-workflows", "set_variable", {"name": "x"}), seat
         )
         assert allowed.decision == "allow", seat
 
     non_seat = {"_agent_type": "default"}
-    for call in (_proxy_call("gobby-agents", "spawn_agent"), launches[0], launches[2]):
+    for call in (_proxy_call("gobby-agents", "spawn_agent"), shell_spawn, *PIPELINE_LAUNCHES):
         assert (await _decide(engine, call, non_seat)).decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent_type", ("lane-manager", "developer", "code-reviewer", "archivist", "plan-writer")
+)
+async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_type: str) -> None:
+    for launch in PIPELINE_LAUNCHES:
+        blocked = await _decide(engine, launch, {"_agent_type": agent_type})
+        assert blocked.decision == "block", launch
+        assert "Only the Orchestrator launches pipelines" in (blocked.reason or "")
+        assert "send the request to the Orchestrator" in (blocked.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ("orchestrator", "assistant"))
+async def test_orchestrator_and_assistant_launch_pipelines(
+    engine: RuleEngine, agent_type: str
+) -> None:
+    for launch in PIPELINE_LAUNCHES:
+        allowed = await _decide(engine, launch, {"_agent_type": agent_type})
+        assert allowed.decision == "allow", launch
 
 
 RECOVERY_SEATS = ("assistant", "orchestrator", "lane-manager")
@@ -214,14 +240,21 @@ async def test_other_seats_cannot_resume_or_spawn(engine: RuleEngine, agent_type
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_still_cannot_spawn_from_the_shell(engine: RuleEngine) -> None:
+@pytest.mark.parametrize("seat", (ORCHESTRATOR, ASSISTANT))
+async def test_orchestrator_still_cannot_spawn_from_the_shell(
+    engine: RuleEngine, seat: dict[str, Any]
+) -> None:
     for command in (
         "gobby agents spawn developer --task '#1'",
         "uv run gobby agents spawn developer --resume gobby#15771",
+        "gobby --config /tmp/gobby.yaml agents spawn developer",
+        "python -m gobby.cli agents spawn developer",
+        "uv run -m gobby.cli agents spawn developer",
+        "gobby pipelines run nightly && gobby agents spawn developer",
     ):
-        refused = await _decide(engine, _shell(command), ORCHESTRATOR)
+        refused = await _decide(engine, _shell(command), seat)
         assert refused.decision == "block", command
-        assert "Seats do not spawn agents or launch pipelines" in (refused.reason or "")
+        assert "Seats do not spawn agents from the shell" in (refused.reason or "")
 
 
 def _seat_definitions() -> list[str]:
@@ -259,11 +292,83 @@ def test_every_seat_scoped_rule_covers_every_seat_definition() -> None:
         "inject-seat-common",
         "seat-no-spawn",
         "seat-no-pipeline-launch",
+        "seat-no-pipeline-cli",
         "seat-no-launch-cli",
         "seat-no-ask-user-question",
     } <= set(scoped)
     for name, when in scoped.items():
         assert [seat for seat in seats if f"'{seat}'" not in when] == [], name
+
+
+PROJECT_CREATES = (
+    {"tool_name": "mcp__gobby__init_project", "tool_input": {"name": "scratch"}},
+    _shell("gobby init"),
+    _shell("uv run gobby init --help"),
+    _shell("uv run --directory /tmp/scratch gobby init"),
+    _shell("uv --directory /tmp/scratch run gobby init --help"),
+    _shell("uv run --project /tmp/scratch gobby init"),
+    _shell("GOBBY_HOME=/tmp/home gobby init --name scratch"),
+    _shell("/Users/josh/.local/bin/gobby init"),
+    _shell("gobby --config /tmp/gobby.yaml init"),
+    _shell("python -m gobby.cli init"),
+    _shell("uv run python -m gobby.cli init"),
+    _shell("uv run -m gobby.cli init"),
+    _shell("uv run -qm gobby.cli init"),
+    _shell("python3 -m gobby.cli install --no-interactive"),
+    _shell("cd /tmp/scratch; gobby init"),
+    _shell("true && gobby init"),
+    _shell("false || gobby init"),
+    _shell("echo y | gobby init"),
+    _shell("(cd /tmp/scratch && gobby init)"),
+    _shell("bash -c 'gobby init'"),
+    _shell("gobby install --no-interactive"),
+    _shell("curl -s -X POST http://127.0.0.1:60887/api/projects/init -d '{}'"),
+    _shell("python -c \"import httpx; httpx.post('http://127.0.0.1:60887/api/projects/init')\""),
+    _shell("grep -c init setup.cfg; curl -X POST http://127.0.0.1:60887/api/projects/init"),
+)
+NOT_PROJECT_CREATES = (
+    _shell("git init /tmp/scratch"),
+    _shell("gobby initial"),
+    _shell("grep -rn 'gobby init' docs"),
+    _shell("echo gobby init"),
+    _shell("gobby install"),
+    _shell("grep -rn /api/projects/init src"),
+    _shell("gcode grep -F /api/projects/init -m 5 src"),
+)
+PROJECT_CREATE_BLOCKED: tuple[dict[str, Any], ...] = (
+    DEVELOPER,
+    {"_agent_type": "lane-manager"},
+    {"is_spawned_agent": True},
+    {"_agent_type": "default", "is_spawned_agent": True},
+    {"_agent_type": "task-close-reviewer", "is_spawned_agent": True},
+)
+PROJECT_CREATE_ALLOWED: tuple[dict[str, Any], ...] = (
+    ASSISTANT,
+    ORCHESTRATOR,
+    {"_agent_type": "orchestrator", "is_spawned_agent": True},
+    {"_agent_type": "default"},
+    {},
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variables", PROJECT_CREATE_BLOCKED)
+async def test_agents_cannot_create_projects(engine: RuleEngine, variables: dict[str, Any]) -> None:
+    for call in PROJECT_CREATES:
+        blocked = await _decide(engine, call, variables)
+        assert blocked.decision == "block", call
+        assert "project creation needs Josh's go through the Orchestrator" in (blocked.reason or "")
+    for call in NOT_PROJECT_CREATES:
+        assert (await _decide(engine, call, variables)).decision == "allow", call
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variables", PROJECT_CREATE_ALLOWED)
+async def test_assistant_orchestrator_and_root_sessions_create_projects(
+    engine: RuleEngine, variables: dict[str, Any]
+) -> None:
+    for call in PROJECT_CREATES:
+        assert (await _decide(engine, call, variables)).decision == "allow", call
 
 
 def _write(project: Path, file_path: str) -> dict[str, Any]:

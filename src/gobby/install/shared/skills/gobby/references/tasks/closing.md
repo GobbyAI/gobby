@@ -99,7 +99,9 @@ live, a live session in the task's project takes over that authority with
 `transfer_task_authority(task_id, reason)`. It becomes the delegator, the
 delegation receiver is kept, and the reason is appended to the delegation reason.
 It refuses a closed task, the claimant, a task-close reviewer, and any caller
-while a creator that is not the claimant, or a delegator, is still live.
+while a creator that is not the claimant, or a delegator, is still live. A paused
+holder counts as ended once every agent run linked to it ended or its recorded
+process exited on this machine; a lost terminal or wake binding alone does not.
 Re-running it is a no-op for the session already holding authority.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit

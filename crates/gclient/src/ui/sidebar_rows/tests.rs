@@ -441,13 +441,100 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_second_line(&nested, 60, &chrome)),
-        "      Working task 123 Review auth"
+        " │    Working task 123 Review auth"
     );
+    assert_eq!(
+        line_text(&row_third_line(&nested, 60, &chrome)),
+        " │    gpt-5"
+    );
+    let descendant = SidebarRow {
+        ancestor_branches: vec![true],
+        last_child: true,
+        ..nested.clone()
+    };
+    assert_eq!(
+        line_text(&row_line(&descendant, 60, &chrome, 0)),
+        " │  └─ ⍾ #123: Backend"
+    );
+    assert_eq!(
+        line_text(&row_second_line(&descendant, 60, &chrome)),
+        " │       Working task 123 Review auth"
+    );
+    assert_eq!(
+        line_text(&row_third_line(&descendant, 60, &chrome)),
+        " │       gpt-5"
+    );
+    let last = SidebarRow {
+        last_child: true,
+        ..nested
+    };
+    assert_eq!(
+        line_text(&row_third_line(&last, 60, &chrome)),
+        "      gpt-5"
+    );
+    for width in 0..12 {
+        for line in [
+            row_second_line(&descendant, width, &chrome),
+            row_third_line(&descendant, width, &chrome),
+        ] {
+            assert!(
+                line.width() <= usize::from(width),
+                "width {width}: {line:?}"
+            );
+        }
+    }
     let bare = SidebarRow { task: None, ..row };
     assert_eq!(
         line_text(&row_second_line(&bare, 60, &chrome)),
         "   No assigned task"
     );
+}
+
+#[test]
+fn parents_connect_to_their_first_child_on_both_continuation_lines() {
+    let chrome = Chrome::dark();
+    let parent = SidebarRow {
+        kind: RowKind::Agent,
+        model_slug: "codex".into(),
+        has_children: true,
+        ..SidebarRow::default()
+    };
+    let nested_parent = SidebarRow {
+        nested: true,
+        last_child: true,
+        ..parent.clone()
+    };
+    let branching_parent = SidebarRow {
+        ancestor_branches: vec![true],
+        ..nested_parent.clone()
+    };
+    for (row, prefix) in [
+        (&parent, " │ "),
+        (&nested_parent, "    │ "),
+        (&branching_parent, " │     │ "),
+    ] {
+        assert_eq!(
+            line_text(&row_second_line(row, 60, &chrome)),
+            format!("{prefix}No assigned task")
+        );
+        assert_eq!(
+            line_text(&row_third_line(row, 60, &chrome)),
+            format!("{prefix}codex")
+        );
+        for width in 0..12 {
+            for line in [
+                row_second_line(row, width, &chrome),
+                row_third_line(row, width, &chrome),
+            ] {
+                assert!(
+                    line.width() <= usize::from(width),
+                    "width {width}: {line:?}"
+                );
+                let visible_prefix: String = prefix.chars().take(usize::from(width)).collect();
+                assert!(line_text(&line).starts_with(&visible_prefix));
+            }
+        }
+    }
 }
 
 #[test]

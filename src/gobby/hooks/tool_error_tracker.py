@@ -371,7 +371,7 @@ def load_open_tool_errors(db: HubDatabase | None, session_id: str) -> list[dict[
 
     from gobby.workflows.state_manager import SessionVariableManager
 
-    variables = SessionVariableManager(db).get_variables(session_id)
+    variables = SessionVariableManager(db).get_variable_subset(session_id, ("open_tool_errors",))
     return normalize_open_tool_error_records(variables.get("open_tool_errors", []))
 
 

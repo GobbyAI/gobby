@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.step_binding import release_lost_binding
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 logger = logging.getLogger(__name__)
@@ -48,20 +49,31 @@ class IncompleteStepWorkflow:
 def get_active_step_workflow_context(
     db: HubDatabase,
     session_id: str | None,
+    session_variables: dict[str, Any] | None = None,
 ) -> StepWorkflowContext | None:
-    """Return the first active step-workflow context using synchronous DB reads."""
+    """Return the first active step-workflow context using synchronous DB reads.
+
+    With ``session_variables``, a binding whose task claim left the session is
+    first returned to its binding step.
+    """
     if not session_id:
         return None
-    return _get_active_step_workflow_context(db, session_id)
+    return _get_active_step_workflow_context(db, session_id, session_variables)
 
 
 def _get_active_step_workflow_context(
     db: HubDatabase,
     session_id: str,
+    session_variables: dict[str, Any] | None = None,
 ) -> StepWorkflowContext | None:
     """Read step workflow state, ignoring malformed workflow definitions."""
 
-    for instance in _iter_active_step_instances(db, session_id):
+    for active in _iter_active_step_instances(db, session_id):
+        instance = (
+            active
+            if session_variables is None
+            else release_lost_binding(db, active, session_variables)
+        )
         if not instance.current_step:
             continue
         step = instance.snapshot.get_step(instance.current_step)
