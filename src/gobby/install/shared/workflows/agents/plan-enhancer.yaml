@@ -12,6 +12,7 @@ provider: codex
 model: gpt-5.6-sol
 reasoning_effort: xhigh
 checkout_mode: none
+send_message_targets: [parent, session]
 # The enhancer is advisory-only and must never edit the plan artifact.
 blocked_tools:
   - "EnterWorktree"
