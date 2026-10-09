@@ -1,12 +1,24 @@
-# Upstream issue draft: CONNECT and mux close can truncate a backpressured HTTPS response
+# Local regression evidence: CONNECT and mux response-tail truncation
 
-Prepared for Josh to file in anthropics/sandbox-runtime. This draft has not been posted.
+The upstream report already exists: [issue 606](https://github.com/anthropics/sandbox-runtime/issues/606).
+[PR 612](https://github.com/anthropics/sandbox-runtime/pull/612) addresses CONNECT,
+SOCKS and mux close handling; [PR 377](https://github.com/anthropics/sandbox-runtime/pull/377)
+addresses CONNECT and SOCKS. This document records Gobby's local evidence and
+temporary mitigation. No duplicate report was posted.
 
 ## Versions and environment
 
 Reproduced with `@anthropic-ai/sandbox-runtime@0.0.76`, Node.js 26.10.0, macOS arm64.
-Read-only inspection of the 0.0.79 npm tarball found the same CONNECT close handler;
-the behavioral reproduction below was run against 0.0.76.
+The upgraded pin is 0.0.79, which requires Node.js >=22.12.0 and retains both
+close handlers. The original 0.0.76 observations below establish the diagnosis;
+the same portable proof validates the upgrade. On 0.0.79, all three original
+transfers were short (3,850,140 bytes), all ten CONNECT-only transfers were full,
+and all thirty both-drain transfers were full with matching digests (exit 0).
+The earlier CONNECT-only failure remains the reason to retain both changes.
+
+Local preflight resolves Node to `/opt/homebrew/Cellar/node/26.10.0_2/bin/node`.
+The Orchestrator's read-only process check confirmed the daemon-launched SRT
+runners use the same executable, satisfying the upgraded minimum.
 
 ## Expected and observed behavior
 
@@ -51,12 +63,12 @@ In `dist/sandbox/mux-proxy.js`, after the mux pipes:
 Draining the CONNECT hop alone leaves the mux hop able to discard the same tail.
 Existing socket-error
 handlers still destroy failed connections, and downstream close still destroys the
-upstream. Please review error/abort and half-open cleanup alongside the normal-close
+upstream. Error/abort and half-open cleanup remain distinct from the normal-close
 case; the reproduction specifically proves the response-tail loss boundary.
 
 ## Local-only reproduction
 
-Attach `docs/repros/srt-connect-tail.mjs`. It serves synthetic bytes on loopback,
+Run `docs/repros/srt-connect-tail.mjs`. It serves synthetic bytes on loopback,
 generates a disposable self-signed certificate, imports the runtime modules, and
 compares original, CONNECT-only, and both-drain in-memory modules. It never modifies the package,
 accesses credentials, or contacts an external service during the reproduction.
@@ -64,7 +76,7 @@ accesses credentials, or contacts an external service during the reproduction.
 From a disposable directory, install the upstream package, then run:
 
 ```sh
-npm install --ignore-scripts --no-audit --no-fund @anthropic-ai/sandbox-runtime@0.0.76
+npm install --ignore-scripts --no-audit --no-fund @anthropic-ai/sandbox-runtime@0.0.79
 node /path/to/srt-connect-tail.mjs ./node_modules/@anthropic-ai/sandbox-runtime
 ```
 

@@ -266,9 +266,9 @@ def test_rendering_keeps_write_denies_under_each_pinned_default_grant(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    # Independently captured from getDefaultWritePaths() in verified SRT 0.0.76.
+    # Independently captured from getDefaultWritePaths() in verified SRT 0.0.79.
     # A pin bump requires refreshing this contract, without a network fetch in pytest.
-    assert SRT_RELEASE.version == "0.0.76"
+    assert SRT_RELEASE.version == "0.0.79"
     defaults = (
         "/dev/stdout",
         "/dev/stderr",
@@ -981,8 +981,8 @@ def _patch_srt_verification_runtime(
         "node_dependency_status",
         lambda: DependencyStatus(
             state="healthy",
-            installed_version="20.11.0",
-            minimum_version="20.11.0",
+            installed_version="22.12.0",
+            minimum_version="22.12.0",
             expected_version=None,
             path="/usr/bin/node",
             error=None,
