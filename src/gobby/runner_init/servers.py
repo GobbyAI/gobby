@@ -476,10 +476,19 @@ def issue_grant_postgres(
                 expires_at=expires_at,
             )
         else:
-            managed = credentials.rotate(
+            reusable = credentials.reuse_current_during_drain(
                 managed_execution_id=execution_id,
-                expires_at=expires_at,
+                owner_kind="tool_chat" if principal.kind == "tool_chat" else "agent_run",
+                session_id=UUID(principal.session_id),
+                project_id=UUID(principal.project_id),
             )
+            if reusable is None:
+                managed = credentials.rotate(
+                    managed_execution_id=execution_id,
+                    expires_at=expires_at,
+                )
+            else:
+                managed = reusable
         return PostgresDirect(
             dsn=managed_bootstrap_dsn(managed.bootstrap_path),
             role_name=managed.role_name,

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import secrets
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
+from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.errors import UniqueViolation
 
@@ -435,6 +437,107 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         if credential is None:
             raise CredentialIssuanceError("managed credential rotation lost binding race")
         return credential
+
+    def reuse_current_during_drain(
+        self,
+        *,
+        managed_execution_id: UUID,
+        owner_kind: OwnerKind,
+        session_id: UUID,
+        project_id: UUID,
+    ) -> ManagedCredential | None:
+        """Reuse proven current authority while its predecessor legitimately drains."""
+        now = datetime.now(UTC)
+        bindings = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+        ]
+        draining = [
+            row
+            for row in bindings
+            if isinstance(_row_value(row, "predecessor_drain_deadline"), datetime)
+            and _row_value(row, "predecessor_drain_deadline") > now
+        ]
+        if not draining:
+            return None
+        if len(bindings) != 2 or not self._rotation_owner_is_live(managed_execution_id):
+            raise CredentialAuthorizationError("managed rotation binding is not live")
+        current = [
+            row
+            for row in bindings
+            if _row_value(row, "revocation_requested_at") is None
+            and _row_value(row, "predecessor_drain_deadline") is None
+        ]
+        if len(current) != 1:
+            raise CredentialAuthorizationError("managed rotation binding is ambiguous")
+        binding = current[0]
+        expiry = _row_value(binding, "expires_at")
+        if (
+            _row_value(binding, "owner_kind") != owner_kind
+            or str(_row_value(binding, "session_id")) != str(session_id)
+            or str(_row_value(binding, "project_id")) != str(project_id)
+            or str(_row_value(binding, "agent_run_id"))
+            != str(managed_execution_id if owner_kind == "agent_run" else None)
+            or _row_value(binding, "login_capable") is not True
+            or not isinstance(expiry, datetime)
+            or expiry <= now
+        ):
+            raise CredentialAuthorizationError("managed rotation authority does not match")
+        generation = int(_row_value(binding, "credential_generation"))
+        role_name = str(_row_value(binding, "role_name"))
+        bootstrap_path = self._execution_root(managed_execution_id) / "bootstrap.json"
+        try:
+            with os.fdopen(
+                os.open(bootstrap_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            ) as stream:
+                metadata = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                    or metadata.st_uid != os.getuid()
+                ):
+                    raise ValueError("bootstrap is not private")
+                payload = json.load(stream)
+            dsn = conninfo_to_dict(payload["database_url"])
+            password = dsn.get("password")
+            if (
+                payload["managed_execution_id"] != str(managed_execution_id)
+                or payload["credential_generation"] != generation
+                or payload["role_name"] != role_name
+                or datetime.fromisoformat(payload["expires_at"]) != expiry
+                or not isinstance(password, str)
+                or not password
+                or dsn
+                != conninfo_to_dict(self._scoped_dsn(role_name, password, managed_execution_id))
+            ):
+                raise ValueError("bootstrap does not match current authority")
+        except (OSError, ValueError, TypeError, KeyError, ProgrammingError):
+            # Parsing diagnostics may contain credential material.
+            raise CredentialIssuanceError("managed current bootstrap is unavailable") from None
+        # A concurrent publication or revocation must never turn stale file data
+        # into a grant. This is a state recheck, not a retry or another rotation.
+        latest = [
+            row
+            for row in self._database.fetchall(
+                f"SELECT * FROM {self.auth_schema}.managed_binding_states(%s)",
+                (self._machine_id,),
+            )
+            if str(_row_value(row, "managed_execution_id")) == str(managed_execution_id)
+        ]
+        if latest != bindings or not self._rotation_owner_is_live(managed_execution_id):
+            raise CredentialAuthorizationError("managed rotation authority changed")
+        return ManagedCredential(
+            managed_execution_id=managed_execution_id,
+            role_name=role_name,
+            credential_generation=generation,
+            issued_at=now,
+            expires_at=expiry,
+            bootstrap_path=bootstrap_path,
+        )
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
