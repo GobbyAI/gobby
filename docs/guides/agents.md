@@ -416,6 +416,9 @@ For a standing seat, pass `execution_mode="interactive"` to `spawn_agent`, or se
 `execution_mode: interactive` in its agent definition. The spawn argument overrides
 the definition. Use `timeout: 0` for an unlimited lifetime. The resolved mode is
 persisted in the run's launch snapshot and survives daemon-stop resume.
+An explicit `spawn_agent(resume_session_id=...)` defaults to interactive when
+`execution_mode` is omitted, including when the definition defaults to one-shot.
+Pass `execution_mode="one_shot"` explicitly to resume as a finite worker.
 
 Interactive seats remain available at idle prompts, after task closure, and after
 runbook completion. Completing a runbook releases its step instance and dispatch

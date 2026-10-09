@@ -163,7 +163,12 @@ async def spawn_agent_impl(
                 resume_isolation, resume_target, runner.run_storage
             )
     try:
-        run_lifetime = resolve_run_lifetime(agent_body, execution_mode)
+        run_lifetime = resolve_run_lifetime(
+            agent_body,
+            "interactive"
+            if resume_target is not None and execution_mode is None
+            else execution_mode,
+        )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
     try:

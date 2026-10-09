@@ -629,7 +629,11 @@ class AgentLifecycleMonitor:
                 self._draft_grace_observations.pop(run.id, None)
                 continue
             try:
-                result = await self._run_db(self._stuck_detector.is_stuck, session_id)
+                result = await self._run_db(
+                    self._stuck_detector.is_stuck,
+                    session_id,
+                    progress_since=run.started_at or run.created_at,
+                )
             except Exception as e:
                 logger.warning("Autonomous stuck detection failed for %s: %s", session_id, e)
                 continue

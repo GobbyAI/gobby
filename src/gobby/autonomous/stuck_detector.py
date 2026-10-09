@@ -227,11 +227,14 @@ class StuckDetector:
 
         return StuckDetectionResult(is_stuck=False)
 
-    def detect_progress_stagnation(self, session_id: str) -> StuckDetectionResult:
+    def detect_progress_stagnation(
+        self, session_id: str, *, progress_since: datetime | None = None
+    ) -> StuckDetectionResult:
         """Detect progress stagnation using ProgressTracker.
 
         Args:
             session_id: The session to check
+            progress_since: Earliest progress baseline for the active run
 
         Returns:
             StuckDetectionResult indicating if progress is stagnant
@@ -239,7 +242,7 @@ class StuckDetector:
         if not self.progress_tracker:
             return StuckDetectionResult(is_stuck=False)
 
-        summary = self.progress_tracker.get_summary(session_id)
+        summary = self.progress_tracker.get_summary(session_id, progress_since=progress_since)
 
         if summary.is_stagnant:
             logger.info(
@@ -392,7 +395,9 @@ class StuckDetector:
 
         return StuckDetectionResult(is_stuck=False)
 
-    def is_stuck(self, session_id: str) -> StuckDetectionResult:
+    def is_stuck(
+        self, session_id: str, *, progress_since: datetime | None = None
+    ) -> StuckDetectionResult:
         """Run all stuck detection checks.
 
         Checks all three layers in order of severity:
@@ -402,6 +407,7 @@ class StuckDetector:
 
         Args:
             session_id: The session to check
+            progress_since: Earliest progress baseline for the active run
 
         Returns:
             StuckDetectionResult from first layer that detects stuck state,
@@ -413,7 +419,7 @@ class StuckDetector:
             return result
 
         # Layer 2: Progress stagnation
-        result = self.detect_progress_stagnation(session_id)
+        result = self.detect_progress_stagnation(session_id, progress_since=progress_since)
         if result.is_stuck:
             return result
 

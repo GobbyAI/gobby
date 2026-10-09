@@ -61,6 +61,7 @@ from gobby.terminals.runtime import (
 )
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
+from gobby.utils.host_sleep import AwakeClock
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal, make_pending_terminal
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -1037,6 +1038,64 @@ def _make_terminal_run(
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
     return stored_run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_age", "run_age", "expected_handled"),
+    [
+        (ProgressType.FILE_MODIFIED, 11428, 5, 0),
+        (ProgressType.TOOL_STARTED, 11428, 5, 0),
+        (ProgressType.TOOL_STARTED, 11428, 120, 1),
+        (None, 0, 120, 1),
+        (ProgressType.FILE_MODIFIED, 5, 120, 0),
+        (ProgressType.TOOL_STARTED, 90, 120, 0),
+    ],
+)
+async def test_resumed_run_stagnation_starts_at_new_run(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    event_type: ProgressType | None,
+    event_age: int,
+    run_age: int,
+    expected_handled: int,
+) -> None:
+    now = datetime.now(UTC)
+    clock = AwakeClock(wall=lambda: now.timestamp(), monotonic=lambda: 0.0)
+    tracker = ProgressTracker(temp_db, stagnation_threshold=60, clock=clock)
+    if event_type is not None:
+        tracker.record_event(sample_session["id"], event_type)
+        temp_db.execute(
+            "UPDATE loop_progress SET recorded_at = %s WHERE session_id = %s",
+            (now - timedelta(seconds=event_age), sample_session["id"]),
+        )
+    run = _make_terminal_run(agent_run_manager, sample_session)
+    run = replace(run, started_at=now - timedelta(seconds=run_age))
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        stuck_detector=StuckDetector(temp_db, progress_tracker=tracker),
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+    with (
+        patch.object(monitor, "_get_active_terminal_runs", return_value=[run]),
+        patch.object(monitor, "_defer_stagnation_for_live_pane", AsyncMock(return_value=False)),
+        patch.object(
+            monitor._idle_check_handler,
+            "current_provider_error_snapshot",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(monitor._cleanup_handler, "cleanup_agent", AsyncMock()) as cleanup,
+    ):
+        handled = await monitor.check_autonomous_stuck_agents()
+    assert handled == expected_handled
+    assert cleanup.await_count == expected_handled
+    if expected_handled:
+        assert cleanup.call_args.kwargs["terminal_payload"] == (
+            "autonomous stuck: No progress events for 120 seconds"
+        )
 
 
 def _make_progress_stagnation_monitor(
