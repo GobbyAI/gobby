@@ -272,7 +272,7 @@ def _discover_python_files(targets: Sequence[Path], *, root: Path) -> Iterator[P
         resolved = candidate.resolve()
         if (
             resolved in seen
-            or (git_files is None and _is_excluded_directory(resolved.parent, root=root))
+            or _is_excluded_directory(resolved.parent, root=root)
             or _is_generated_file(resolved)
         ):
             continue
@@ -298,6 +298,7 @@ def _git_python_files(root: Path) -> tuple[Path, ...] | None:
                 "*.pyi",
             ],
             capture_output=True,
+            env={**os.environ, "LC_ALL": "C"},
             timeout=30,
             check=False,
         )

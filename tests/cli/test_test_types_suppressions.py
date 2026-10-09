@@ -84,22 +84,27 @@ def test_git_scan_includes_tracked_ignored_and_new_files_with_scoped_targets(
     tmp_path: Path,
 ) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    _write(tmp_path / ".gitignore", "vendor/\n*.ignored.py\n")
-    tracked = tmp_path / "vendor" / "owned.py"
+    _write(tmp_path / ".gitignore", "generated/\nvendor/\n*.ignored.py\n")
+    tracked = tmp_path / "generated" / "owned.py"
     _write(tracked, "value = 1  # noqa: F401\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "vendor/owned.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "generated/owned.py"], check=True)
     _write(tmp_path / "src" / "new file.py", "value = 2  # noqa: F401\n")
     _write(tmp_path / "src" / "broken.ignored.py", "value = (\n")
     _write(tmp_path / "vendor" / "untracked.py", "value = (\n")
+    _write(tmp_path / "vendor" / "tracked.py", "value = 3  # noqa: F401\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", "vendor/tracked.py"], check=True)
 
     scan = scan_suppressions((".",), root=tmp_path)
-    scoped = scan_suppressions(("src", "vendor/owned.py", "src/new file.py"), root=tmp_path)
+    scoped = scan_suppressions(("src", "generated/owned.py", "src/new file.py"), root=tmp_path)
+    vendor = scan_suppressions(("vendor/tracked.py",), root=tmp_path)
     subdirectory = scan_suppressions((".",), root=tmp_path / "src")
 
     assert scan == scoped
     assert scan.files_scanned == 2
     assert scan.errors == ()
-    assert [site.path for site in scan.sites] == ["src/new file.py", "vendor/owned.py"]
+    assert [site.path for site in scan.sites] == ["generated/owned.py", "src/new file.py"]
+    assert vendor.files_scanned == 0
+    assert vendor.sites == ()
     assert subdirectory.files_scanned == 1
     assert [site.path for site in subdirectory.sites] == ["new file.py"]
 
