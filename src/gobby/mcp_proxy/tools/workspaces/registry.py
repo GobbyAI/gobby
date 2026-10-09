@@ -221,7 +221,10 @@ def create_workspaces_registry(
         return await _run(lambda actor: ops().pane_swap(actor, pane, other, node=node))
 
     @registry.tool(
-        description=f"Balance a tab at an 80-column, 12-row floor using viewport dimensions. {_NODE}"
+        description=(
+            "Balance a tab from viewport dimensions: at an 80-column, 12-row floor when it "
+            f"fits, else tiled evenly across the viewport. {_NODE}"
+        )
     )
     async def rebalance_tab(
         tab: str, rows: int, columns: int = 80, node: str | None = None
