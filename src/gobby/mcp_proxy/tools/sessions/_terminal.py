@@ -34,6 +34,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command as _send_terminal_compaction_command_impl,
 )
+from gobby.mcp_proxy.tools.sessions._terminal_release import register_release_composer_tool
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _authorize_send_keys_target as _authorize_send_keys_target,
 )
@@ -284,6 +285,7 @@ def register_terminal_tools(
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
     )
+    register_release_composer_tool(registry, session_manager, terminal_manager=terminal_manager)
 
     def _validated_found_work(entries: list[dict[str, Any]] | None) -> list[FoundWorkEntry]:
         """Hold each handed-off finding to the ladder with the feedback tool's task rules."""

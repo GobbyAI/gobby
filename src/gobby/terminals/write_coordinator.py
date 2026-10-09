@@ -15,6 +15,7 @@ from functools import partial
 from typing import Literal, Protocol
 
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
+from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
@@ -152,10 +153,12 @@ class WriteCoordinator:
         registry: TerminalRuntimeRegistry,
         *,
         lease_registry: TerminalLeaseRegistry,
+        composer_ledger: ComposerLedger | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self.lease_registry = lease_registry
+        self.composer_ledger = composer_ledger if composer_ledger is not None else ComposerLedger()
         self._daemon_epoch = lease_registry.daemon_epoch
         self._attention_gate: Callable[[Terminal], Awaitable[None]] | None = None
         self._logical_action_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -745,6 +748,14 @@ class WriteCoordinator:
             # KeyError subclass propagate would leave the latch persisted and
             # suppress every later automatic write to this terminal.
             raise RuntimeUnavailableError(terminal.backend) from exc
+        # Recorded before dispatch: an indeterminate write may still have landed.
+        self.composer_ledger.observe_write(
+            request.terminal_id,
+            origin=request.origin,
+            kind=request.kind,
+            payload=request.payload,
+            submit=request.submit,
+        )
         try:
             if request.kind == "text":
                 return await runtime.write_text(terminal, request.payload, request.submit)

@@ -1760,7 +1760,7 @@ class TestComposerGate:
     async def test_draft_deferral_never_logs_the_draft_text(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Operator drafts are user content and may hold secrets; log state and length only."""
+        """Operator drafts are user content and may hold secrets; log the state only."""
         draft = "export TOKEN=s3cret-value"
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", draft)))
         dispatcher = self._dispatcher(probe, AsyncMock())
@@ -1769,7 +1769,7 @@ class TestComposerGate:
             await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         logged = "\n".join(record.getMessage() for record in caplog.records)
-        assert f"{len(draft)} chars" in logged
+        assert "composer holds an operator draft" in logged
         assert "s3cret" not in logged
         assert "TOKEN" not in logged
 

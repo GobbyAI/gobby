@@ -897,6 +897,35 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_terminal_release.py",
+        "symbol": "register_release_composer_tool.release_composer_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "release_composer"
+    },
+    {
+      "surface": "http",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/terminals.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
+        "symbol": "register_lifecycle_routes.release_session_composer"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "operator/client",
+      "route": "POST /api/sessions/{session_id}/release-composer"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/workspaces.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/workspaces/registry.py",
