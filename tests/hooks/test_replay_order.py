@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks import envelope_dedupe, inbox
+from gobby.hooks import envelope_dedupe, inbox, inbox_envelopes
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
@@ -109,7 +109,7 @@ async def test_backlog_keeps_later_same_session_events(
     assert after is not None and after.status == "paused"
     expected_start = times[types.index("UserPromptSubmit")]
     assert TurnLifecycleReducer(session_manager).get(session.id).started_at == expected_start
-    assert not inbox.get_hook_quarantine_dir(pending).exists()
+    assert not inbox_envelopes.get_hook_quarantine_dir(pending).exists()
 
 
 @pytest.mark.asyncio
@@ -158,7 +158,7 @@ async def test_missed_stop_after_live_same_status_prompt_is_archived(
     assert manager.posted == [HookEventType.BEFORE_AGENT, HookEventType.BEFORE_AGENT]
     after = session_manager.get(session.id)
     assert after is not None and after.status == "active"
-    archive = inbox.get_hook_quarantine_dir(pending) / f"{old_stop.name}.meta.json"
+    archive = inbox_envelopes.get_hook_quarantine_dir(pending) / f"{old_stop.name}.meta.json"
     assert json.loads(archive.read_text())["reason"] == "superseded_hook"
     # Reordered live starts must never move the durable event clock backwards.
     assert (
