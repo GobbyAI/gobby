@@ -31,7 +31,9 @@ def has_deferred_help_activation(manager: Any, event: HookEvent) -> bool:
     session_id = event.metadata.get("_platform_session_id")
     if not session_id or manager._session_manager is None:
         return False
-    variables = SessionVariableManager(manager._session_manager.db).get_variables(session_id)
+    variables = SessionVariableManager(manager._session_manager.db).get_variable_subset(
+        session_id, (_HELP_DEFERRED_ACTIVATION,)
+    )
     return variables.get(_HELP_DEFERRED_ACTIVATION) is True
 
 

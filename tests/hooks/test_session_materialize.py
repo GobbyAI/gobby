@@ -100,7 +100,7 @@ def test_help_defers_startup_until_work(source: SessionSource, suffix: str) -> N
         state.update(values)
 
     with patch("gobby.hooks.session_materialize.SessionVariableManager") as variables:
-        variables.return_value.get_variables.return_value = state
+        variables.return_value.get_variable_subset.return_value = state
         variables.return_value.merge_variables.side_effect = merge
         assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
         assert not has_deferred_help_activation(manager, event)
@@ -110,6 +110,9 @@ def test_help_defers_startup_until_work(source: SessionSource, suffix: str) -> N
 
         event.data["prompt"] = "Implement the change"
         assert has_deferred_help_activation(manager, event)
+        variables.return_value.get_variable_subset.assert_called_once_with(
+            "platform-session", ("_help_deferred_activation",)
+        )
         assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
         assert event.metadata["_startup_context"] == [
             ("claimed_tasks", "Pending startup instructions")
