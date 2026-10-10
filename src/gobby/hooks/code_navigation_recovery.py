@@ -12,6 +12,7 @@ from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.hooks._path_scope import (
+    _shares_git_repository,
     checkout_root,
     code_navigation_may_touch_project,
     current_project_root,
@@ -278,6 +279,11 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
     if not isinstance(segments, list):
         segments = [dict(metadata)] if metadata.get("canonical_code_navigation_action") else []
     root, cwd = current_project_root(data), current_tool_cwd(data)
+    # Tool workdir overrides resolve targets, but do not change the session's
+    # admitted gcode overlay. Managed principals retain the primary checkout,
+    # but repository membership cannot prove authority over a sibling overlay.
+    session_base = resolve_tool_path(data.get("cwd"), None) or root
+    session_root = checkout_root(session_base) if session_base is not None else None
     segment_paths: list[list[Path | None]] = []
     for segment in segments:
         paths = segment.get("canonical_file_paths") or []
@@ -294,6 +300,19 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
             paths,
             cwd=cwd,
             project_root=root,
+        )
+        target_roots = [checkout_root(path) if path is not None else None for path in resolved]
+        segment["canonical_code_navigation_checkout_scope"] = not (
+            session_root is not None
+            and target_roots
+            and all(
+                target is not None
+                and target != session_root
+                and not (
+                    (target / ".git").is_dir() and _shares_git_repository(target, session_root)
+                )
+                for target in target_roots
+            )
         )
         segment_paths.append(resolved)
     in_project = {
@@ -325,8 +344,8 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
                 segment["canonical_narrow_source_context"] = True
                 segment["canonical_source_line_count"] = line_count
     metadata["canonical_code_navigation_segments"] = segments
-    # gcode refuses another linked checkout's file unless --project names it,
-    # so the read redirect must name the one sibling checkout every read targets.
+    # Interactive callers need --project to retrieve another checkout's file.
+    # Managed seats skip unadmitted overlays in navigation_requires_index below.
     read_roots = {
         checkout_root(path)
         for segment, resolved in zip(segments, segment_paths, strict=True)
@@ -500,6 +519,10 @@ def navigation_requires_index(
         if (
             segment.get("canonical_code_index_navigation")
             or segment.get("canonical_code_navigation_repo_scope") is False
+            or (
+                segment.get("canonical_code_navigation_checkout_scope") is False
+                and variables.get("is_spawned_agent")
+            )
             or segment.get("canonical_search_revision_scoped")
         ):
             continue

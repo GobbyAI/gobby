@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_error_tracker import extract_target_key, track_proxy_outcome
 from gobby.skills.formatting import skill_fetch_directive
@@ -4613,9 +4613,10 @@ class TestCodeIndexNavigationRules:
         assert event.data["canonical_code_navigation_repo_scope"] is False
         assert response.decision == "allow"
 
+    @pytest.mark.parametrize("is_spawned_agent", [False, True])
     @pytest.mark.asyncio
-    async def test_linked_worktree_conflict_search_redirects_to_gcode_grep(
-        self, db: HubDatabase, tmp_path: Path
+    async def test_linked_worktree_conflict_search_respects_spawned_scope(
+        self, db: HubDatabase, tmp_path: Path, is_spawned_agent: bool
     ) -> None:
         _sync_bundled(db)
         primary, linked = self._linked_checkouts(tmp_path)
@@ -4625,45 +4626,50 @@ class TestCodeIndexNavigationRules:
             cwd=str(primary),
             project_path=str(primary),
         )
+        variables = {**self._variables(loaded=False), "is_spawned_agent": is_spawned_agent}
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=False),
+            variables=variables,
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
-        assert response.decision == "block"
-        assert 'gcode grep -F "literal"' in (response.reason or "")
+        assert response.decision == ("allow" if is_spawned_agent else "block")
 
+    @pytest.mark.parametrize("loaded", [False, True])
+    @pytest.mark.parametrize("is_spawned_agent", [False, True])
     @pytest.mark.asyncio
-    async def test_sibling_checkout_read_redirect_names_gcode_project(
-        self, db: HubDatabase, tmp_path: Path
+    async def test_sibling_checkout_read_redirect_respects_spawned_scope(
+        self, db: HubDatabase, tmp_path: Path, loaded: bool, is_spawned_agent: bool
     ) -> None:
         _sync_bundled(db)
-        # A space and an apostrophe in the root prove the rendered command quotes it.
+        # A space and an apostrophe exercise shell target resolution too.
         primary, linked = self._linked_checkouts(tmp_path / "team's checkouts")
         for checkout in (primary, linked):
             (checkout / "src/long.py").write_text("value = 1\n" * 60, encoding="utf-8")
         engine = RuleEngine(db)
 
-        async def reason(target: Path) -> str:
+        async def response_for(target: Path) -> HookResponse:
             event = self._normalized_bash_event(
                 f"cat {shlex.quote(str(target))}", cwd=str(primary), project_path=str(primary)
             )
             response = await engine.evaluate(
-                event, session_id=SESSION_ID, variables=self._variables(loaded=True)
+                event,
+                session_id=SESSION_ID,
+                variables={**self._variables(loaded=loaded), "is_spawned_agent": is_spawned_agent},
             )
-            assert response.decision == "block"
-            return response.reason or ""
+            return response
 
-        sibling = await reason(linked / "src/long.py")
-        own = await reason(primary / "src/long.py")
-
-        outline, symbol_at = sibling.split("`")[1:4:2]
-        assert shlex.split(outline) == ["gcode", "--project", str(linked), "outline", "<file>"]
-        assert shlex.split(symbol_at)[:3] == ["gcode", "--project", str(linked)]
-        assert "gcode outline <file>" in own
-        assert "--project" not in own
+        sibling = await response_for(linked / "src/long.py")
+        own = await response_for(primary / "src/long.py")
+        assert sibling.decision == ("allow" if is_spawned_agent else "block")
+        assert own.decision == "block"
+        if loaded and not is_spawned_agent:
+            outline, symbol_at = (sibling.reason or "").split("`")[1:4:2]
+            assert shlex.split(outline) == ["gcode", "--project", str(linked), "outline", "<file>"]
+            assert shlex.split(symbol_at)[:3] == ["gcode", "--project", str(linked)]
+            assert "gcode outline <file>" in (own.reason or "")
+            assert "--project" not in (own.reason or "")
 
     @pytest.mark.asyncio
     async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
@@ -4687,9 +4693,10 @@ class TestCodeIndexNavigationRules:
         assert event.data["canonical_code_navigation_repo_scope"] is True
         assert response.decision == "block"
 
+    @pytest.mark.parametrize("is_spawned_agent", [False, True])
     @pytest.mark.asyncio
     async def test_primary_checkout_search_from_worktree_redirects_to_gcode_grep(
-        self, db: HubDatabase, tmp_path: Path
+        self, db: HubDatabase, tmp_path: Path, is_spawned_agent: bool
     ) -> None:
         _sync_bundled(db)
         primary, linked = self._linked_checkouts(tmp_path)
@@ -4702,7 +4709,7 @@ class TestCodeIndexNavigationRules:
         response = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables=self._variables(loaded=False),
+            variables={**self._variables(loaded=False), "is_spawned_agent": is_spawned_agent},
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
