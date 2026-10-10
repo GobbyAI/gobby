@@ -2,7 +2,7 @@
 # Gobby does not start or supervise these containers.
 #
 # Required host paths (never copied into this repository):
-#   ${GOBBY_METRICS_KEY_FILE}      plaintext API key, mounted read-only
+#   ${GOBBY_METRICS_KEY_FILE}      dedicated minted API key, owner-only, read-only mount
 #   ${HOME}/.gobby/logs             daemon log surfaces, read-only, logs profile
 #   ${HOME}/.gobby/otelcol          collector checkpoints, logs profile;
 #                                   `mkdir -p` it before the first logs run

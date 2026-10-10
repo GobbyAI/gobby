@@ -399,12 +399,16 @@ is promoted and nothing is stopped.
 ### `gobby auth`
 
 Reset the sole installed user's browser password, enroll a node with its hub,
-and show which hub API key the node is enrolled with.
+and manage the node's hub-issued API keys.
 
 ```bash
 gobby auth credentials
 gobby auth login [--hub URL] [--email EMAIL] [--fingerprint sha256:...] [--label LABEL] [--insecure]
 gobby auth key --show
+gobby auth key --rotate
+gobby auth key --mint LABEL
+gobby auth key list
+gobby auth key revoke KEY_ID
 ```
 
 | Command or option | Purpose |
@@ -416,6 +420,16 @@ gobby auth key --show
 | `login --label LABEL` | Label the minted key (default: this hostname). |
 | `login --insecure` | Allow plain `http://` to a non-loopback hub. Plain HTTP never pins a certificate. |
 | `key --show` | Print the enrolled key's hint and id, never the key. |
+| `key --rotate` | Mint and publish a replacement bootstrap key, verify it, then revoke the old key. Invalidates outstanding managed capability tokens; restart spawned agents. |
+| `key --mint LABEL` | Mint an additional key without changing bootstrap. Prints the plaintext once; save it securely. |
+| `key list` | List your keys and metadata, marking the bootstrap's current key. |
+| `key revoke KEY_ID` | Revoke one of your keys. Refuses the bootstrap's current key; use `--rotate` for that key. |
+
+The key options and subcommands are mutually exclusive. `gobby auth key` without
+an option or subcommand prints help. If rotation reports uncertain publication
+or failed revocation, follow its recovery diagnostics: inspect `key --show`
+and `key list` before revoking the reported extra key. An additional minted key
+survives bootstrap-key rotation until explicitly revoked.
 
 `login` refuses a `datastore_mode: local` bootstrap; set the node up first as
 [Client setup](shared-stack.md#client-setup) describes. Over HTTPS it prints the
@@ -1271,7 +1285,7 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-10-10_
 
 ## Contributor validation
 

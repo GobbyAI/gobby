@@ -47,8 +47,28 @@ for the metric taxonomy behind the panels.
    the Web UI under Settings -> Observability, or through the `gobby-config`
    MCP tools. There is no `gobby config` CLI.
 
-3. **An owner-only plaintext file containing a valid hub-issued API key.**
-   Set `GOBBY_METRICS_KEY_FILE` to its absolute path before running Compose.
+3. **A dedicated Prometheus API key in an owner-only plaintext file.**
+   On an enrolled node, mint an additional key:
+
+   ```bash
+   gobby auth key --mint prometheus
+   ```
+
+   The command prints the key once and leaves the bootstrap unchanged. Save only
+   the key value to a file outside this repository, such as
+   `~/.gobby/prometheus-api-key`, using an owner-only directory and file mode
+   `0600`. Keep command output out of shared logs and transcripts. Then set its
+   absolute path before checking metrics above or running Compose:
+
+   ```bash
+   chmod 600 ~/.gobby/prometheus-api-key
+   export GOBBY_METRICS_KEY_FILE="$HOME/.gobby/prometheus-api-key"
+   ```
+
+   `gobby auth key --rotate` rotates the bootstrap key and does not invalidate
+   this dedicated key. Use `gobby auth key list` to find its id and
+   `gobby auth key revoke KEY_ID` to retire it.
+
    Prometheus bind-mounts it read-only at `/etc/prometheus/secrets/gobby_token`
    and sends the key as its bearer credential. The file contains only the key,
    not the bootstrap YAML. Keep it outside this repository and container images.

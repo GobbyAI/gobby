@@ -426,8 +426,11 @@ the per-run cache. For workspaces with a `.pre-commit-config.yaml`, hook executi
 uses a pre-warmed, writable per-run copy of the operator's pre-commit cache. No
 other Gobby-home or shared mutable tool path is allowed.
 
-Add `GOBBY_HOME/bootstrap.yaml`, `GOBBY_HOME/.secret_kek`, the persistent
+Add `GOBBY_HOME/bootstrap.yaml`, `GOBBY_HOME/.secret_kek`,
+`GOBBY_HOME/break_glass`, `GOBBY_HOME/.break_glass-staging`, the persistent
 gcode-runtime root, and `GOBBY_HOME/tools/srt` to the sensitive-root contract.
+Managed sandboxes cannot read or write the break-glass credential or its staging
+directory.
 Sandboxed managed agents never read the operator's `bootstrap.yaml` or
 `.secret_kek`: the launcher injects a per-run `GOBBY_AGENT_API_TOKEN` capability
 plus identity variables, and `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` points at the

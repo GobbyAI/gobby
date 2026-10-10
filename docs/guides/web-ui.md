@@ -27,7 +27,8 @@ uv run gobby auth credentials
 The reset revokes that user's browser sessions. Sign in again with the account
 email and new password; restarting the daemon is not required for the reset.
 The HTTP-only `gobby_session` cookie authorizes browser API calls and the
-`/ws` proxy. Local daemon tokens remain a separate client credential path.
+`/ws` proxy. Hub-issued API keys remain a separate client credential path;
+clients read `api_key` from their owner-only bootstrap or an explicit key file.
 
 ## Navigation
 
@@ -149,4 +150,4 @@ skill, and UI visibility does not grant permission to perform an operation.
 - [gclient](gclient-user-guide.md)
 - [Frontend development](frontend-style-guide.md)
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-10-10_

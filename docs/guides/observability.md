@@ -307,6 +307,12 @@ lines share the metrics time axis. Its dashboard covers database pool and
 executor saturation, MCP tool and HTTP route p95, daemon uptime resets, and
 `ERROR`/`CRITICAL` log-record rate by surface.
 
+Authenticate the scrape with a dedicated key from
+`gobby auth key --mint prometheus`, saved by the operator to an owner-only
+plaintext file and mounted read-only. Follow the example's prerequisites for
+the file path and permissions. Bootstrap-key rotation with `--rotate` leaves
+this dedicated key valid until explicitly revoked.
+
 The route is never gated, but the exported series are: `create_metric_readers`
 in `src/gobby/telemetry/exporters.py` attaches the Prometheus reader only when
 `telemetry.metrics_enabled` and `telemetry.exporter.prometheus_enabled` are both
@@ -460,4 +466,4 @@ isolated fixture transcripts and the test hub, never live user sessions.
 - [mcp-tools.md](mcp-tools.md)
 - [testing.md](testing.md)
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_

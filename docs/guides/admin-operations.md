@@ -104,7 +104,24 @@ If an existing credential is empty or partial, startup reports its path and a
 repair hint. Remove the damaged file at that path and restart the daemon to
 recreate it. Valid existing credentials remain unchanged.
 
-### Replace Or Revoke An API Key
+### Rotate The API Key
+
+Rotate the node's enrolled bootstrap key:
+
+```bash
+gobby auth key --show
+gobby auth key --rotate
+gobby auth key list
+```
+
+The command mints a replacement, atomically publishes it to the owner-only
+bootstrap, verifies it against the hub, and revokes the previous key. If it
+reports uncertain publication or failed revocation, inspect `--show` and `list`
+and follow its recovery instructions before revoking an extra key.
+Rotation invalidates outstanding managed capability tokens because their signing
+key derives from the bootstrap API key. Restart spawned agents after rotation.
+Dedicated keys created with `gobby auth key --mint LABEL` remain valid until
+explicitly revoked.
 
 Use the authenticated key routes: `POST /api/auth/keys` issues a key for the
 caller's machine, `GET /api/auth/keys` lists its user's keys, and
@@ -116,6 +133,33 @@ bootstrap or explicit key file, and verify access before revoking the previous
 key. Explicit revocation takes effect immediately. Verify that the revoked key
 returns `401` and the replacement succeeds. Do not distribute one machine's key
 to other nodes; enroll those nodes separately.
+
+### Flag-day gterm activation
+
+The first activation of the API-key frame handshake requires a terminal-host
+cutover. The Orchestrator coordinates this procedure:
+
+1. Send a global BEFORE notice through `gobby-agents:send_message`, naming the
+   activation and its terminal interruption.
+2. Wait for a quiet window with no live spawned worker or close validator.
+3. Write an owner-only restore manifest under `~/.gobby/`. Record each native
+   terminal's terminal id, cwd, launch command, bound session ref, and seat.
+4. Request the host's `host_shutdown` through its authenticated control socket.
+5. Promote gterm alongside the coherent binary set using
+   `promote_workspace_binary_set`, then restart the daemon from the main checkout.
+6. Have each owner restore its terminal from the manifest and prove its restored
+   session binding to the Orchestrator.
+7. Send a global DAEMON BACK notice after daemon health and restored bindings
+   are verified.
+
+Later API-key rotations need no terminal drain: gterm reads the bootstrap key on
+every frame `Hello`. Spawned agents still need restarting because rotation
+invalidates their managed capability tokens. The host control socket continues
+using its separate daemon-only control credential.
+
+Source: `crates/gterminal/src/host/control.rs` (`host_shutdown`) and
+`crates/gterminal/src/host/frames.rs` (key read during `Hello`), with binary
+promotion in `src/gobby/install/bin_set_coherence.py`.
 
 ### Manual Verification Matrix
 
@@ -378,4 +422,4 @@ Use progressive discovery before calling any server.
 - [prompts.md](prompts.md)
 - [cron-scheduler.md](cron-scheduler.md)
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-10-10_

@@ -295,7 +295,7 @@ Look for:
 - **`daemon_url`** — where will the POST go? If this is wrong, check
   `GOBBY_DAEMON_URL`, `GOBBY_PORT`, then `~/.gobby/bootstrap.yaml`.
 - **`project_root` / `project_id`** — marker lookup from the current directory. Diagnose does not consume provider stdin, so this view does not include payload workspace fallback. No marker and no other managed identity makes live dispatch skip.
-- **`local_token_file_present` / `auth_401_remediation`** — local token availability and recovery instructions; never print the token itself.
+- **`api_key_present` / `auth_401_remediation`** — bootstrap API-key availability and recovery instructions; never print the key itself.
 - **`failure_dir` / `recent_failure_count` / `recent_failures`** — recorded delivery failure diagnostics.
 - **`install_method` / `install_source_url`** — how this `ghook` binary got installed (e.g. `github-release`, `crates-binstall`, `cargo-install`). Both are `null` when the binary was installed without a sidecar-writing installer (e.g. plain `cargo install gobby-hooks`). Useful in bug reports — it tells maintainers exactly which install path a user is on.
 
@@ -377,4 +377,4 @@ detaching does not grant filesystem access.
 
 Envelopes carry `schema_version: 1`. If the daemon rejects envelopes for being a newer version than it understands, the daemon needs updating. ghook's `--version` command writes `~/.gobby/bin/.ghook-runtime.json` so the daemon can detect this.
 
-_Last verified: 2026-09-13_
+_Last verified: 2026-10-10_

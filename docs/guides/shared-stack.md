@@ -57,6 +57,8 @@ gobby health
 docker compose -f ~/.gobby/services/docker-compose.yml ps
 ```
 
+Back up the owner-only `~/.gobby/bootstrap.yaml` and `~/.gobby/.secret_kek`
+securely; the bootstrap contains this node's API key and PostgreSQL DSN.
 Keep a secure copy of `~/.gobby/.secret_kek` for clients that use the shared
 datastores. Enroll each client with its own hub-issued API key, stored as `api_key`
 in that client's owner-only bootstrap. Never copy the hub's `machine_id` or its
@@ -107,10 +109,10 @@ gobby health
 ```
 
 In remote mode, `gobby install` skips Docker checks and local datastore provisioning.
-Its preflight checks the copied key and token, probes the owner's `/api/files/user-md`,
+Its preflight checks the shared secret KEK and enrolled API key, probes the owner's `/api/files/user-md`,
 runs a PostgreSQL query, reads shared configuration and secrets, checks Qdrant health,
 and authenticates a FalkorDB `PING`. The remote installer does not generate or rotate
-the copied token. A profile probe against a standby or remote target is not success.
+the enrolled API key. A profile probe against a standby or remote target is not success.
 Any failed check aborts installation with endpoint-specific diagnostics.
 
 ## Tailnet-only web UI
@@ -278,4 +280,4 @@ zero with memory diagnostics. The project HTTP API counts live sessions and open
 tasks instead. Separate aggregate queries are not one consistent snapshot.
 On `success=false`, inspect the error; an unavailable hub database is not an empty hub.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_

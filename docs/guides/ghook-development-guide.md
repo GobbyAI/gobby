@@ -146,7 +146,7 @@ pub struct DiagnoseOutput {
     pub cli_recognized: bool,
     pub install_method: Option<String>,           // from .ghook-install.json sidecar
     pub install_source_url: Option<String>,       // from .ghook-install.json sidecar
-    pub local_token_file_present: bool,
+    pub api_key_present: bool,
     pub auth_401_remediation: &'static str,
     pub failure_dir: PathBuf,
     pub recent_failure_count: usize,
@@ -448,4 +448,4 @@ The three version numbers are independent:
 
 The `release-ghook` workflow runs a guard step before publishing that asserts the pushed `ghook-v{X}` tag's version suffix equals the version in `crates/ghook/Cargo.toml`. This prevents the failure mode described in [GobbyAI/gobby-cli#4](https://github.com/GobbyAI/gobby-cli/issues/4): if the tag and the crate version drift, the public installer's `crates.io → ghook-v{version}` GitHub-asset lookup silently misses, which then collapses to slow `cargo install` fallbacks and reproduces as "bare `Blocked by hook` because users are on an old binary." The guard fails the workflow before any artifact reaches crates.io or the GitHub release.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_
