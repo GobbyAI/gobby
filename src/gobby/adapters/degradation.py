@@ -16,7 +16,11 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import record_worker_staging
-from gobby.llm.sdk_utils import PROTECTED_CONTEXT_LABELS, fit_additional_context
+from gobby.llm.sdk_utils import (
+    INLINE_CONTEXT_HEADROOM,
+    PROTECTED_CONTEXT_LABELS,
+    fit_additional_context,
+)
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
@@ -252,18 +256,20 @@ def _stage_carried_context(
 ) -> None:
     """Stage, on receipt, the dropped parts the next delivery can ship.
 
-    The staged total stays within one delivery, already-carried parts first, so
-    the backlog cannot outgrow what a delivery ships. A part that does not fit
-    is skipped; this turn's breadcrumb named it with the persisted result.
+    The staged set renders in one delivery, already-carried parts first, so the
+    backlog cannot outgrow what a delivery ships: a lone part up to the cap, and
+    a larger set with its joins inside the breadcrumb headroom. A part that does
+    not fit is skipped; this turn's breadcrumb named it with the persisted result.
     """
     keep: list[list[str]] = []
     total = 0
     carried_first = sorted(omitted, key=lambda part: not part[0].startswith(CARRIED_LABEL_PREFIX))
     for label, text in carried_first:
-        if total + len(text) > limit:
+        cost = len(text) + len("\n\n")
+        if len(text) > limit or (keep and total + cost > limit - INLINE_CONTEXT_HEADROOM):
             continue
         keep.append([label.removeprefix(CARRIED_LABEL_PREFIX), text])
-        total += len(text)
+        total += cost
     if not keep and not carried:
         return
     record_worker_staging(
