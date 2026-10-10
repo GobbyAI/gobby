@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.llm.sdk_utils import truncate_additional_context
+from gobby.llm.sdk_utils import fit_additional_context, truncate_additional_context
 
 pytestmark = pytest.mark.unit
 
@@ -65,3 +65,30 @@ def test_overflow_persists_full_text_and_names_result_id() -> None:
         content_kind="text",
         total_chars=len(full_text),
     )
+
+
+def test_agent_prompt_drops_after_every_other_part() -> None:
+    fit = fit_additional_context(
+        [("agent_prompt", "p" * 60), ("rule:big", "b" * 50), ("rule:small", "s" * 10)],
+        limit=120,
+    )
+
+    assert fit.text == "p" * 60 + "\n\n" + "s" * 10 + "\n\nomitted contributors=[rule:big]"
+    assert fit.omitted == [("rule:big", "b" * 50)]
+
+
+def test_part_larger_than_the_limit_drops_before_protected_ones() -> None:
+    fit = fit_additional_context(
+        [("agent_prompt", "p" * 60), ("rule:huge", "h" * 200), ("rule:small", "s" * 10)],
+        limit=120,
+    )
+
+    assert fit.text == "p" * 60 + "\n\n" + "s" * 10 + "\n\nomitted contributors=[rule:huge]"
+    assert fit.omitted == [("rule:huge", "h" * 200)]
+
+
+def test_fitting_text_reports_nothing_omitted() -> None:
+    fit = fit_additional_context([("a", "x"), ("b", "y")], limit=80)
+
+    assert fit.text == "x\n\ny"
+    assert fit.omitted == []

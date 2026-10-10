@@ -46,6 +46,11 @@ class ToolResultStore:
         self._db = db
         self._config_resolver = config if callable(config) else lambda: config
 
+    @property
+    def db(self) -> HubDatabase:
+        """Hub database the store writes to."""
+        return self._db
+
     def save(
         self,
         *,

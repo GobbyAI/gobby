@@ -24,6 +24,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentStepWorkflowBody
 from gobby.workflows.engine import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
@@ -916,3 +917,90 @@ class TestBuildDefinitionChanges:
         )
 
         assert changes.get("my_db_var") == "from_db"
+
+
+@pytest.fixture
+def agents_registry(db: HubDatabase) -> InternalToolRegistry:
+    registry = InternalToolRegistry("gobby-agents")
+    context = cast(AgentsRegistryContext, MagicMock(db=db, task_manager=None))
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent.create_spawn_agent_registry",
+        return_value=InternalToolRegistry("spawn"),
+    ):
+        register_agent_spawn_tools(registry, context)
+    return registry
+
+
+def session_title(db: HubDatabase, sid: str) -> str | None:
+    session = SessionManager(db).get(sid)
+    assert session is not None
+    return session.title
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("definitions")
+async def test_apply_titles_the_pane_with_the_definition_name(
+    agents_registry: InternalToolRegistry, db: HubDatabase, session_id: str
+) -> None:
+    with session_context_for_test(session_id):
+        result = await agents_registry.call("apply_agent_definition", {"agent": "x"})
+
+    assert result["title"] == "X"
+    assert session_title(db, session_id) == "X"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("definitions")
+async def test_default_title_keeps_a_manual_title_and_explicit_title_replaces_it(
+    agents_registry: InternalToolRegistry, db: HubDatabase, session_id: str
+) -> None:
+    SessionManager(db).update_title(session_id, "Lane 2 dev")
+
+    with session_context_for_test(session_id):
+        kept = await agents_registry.call("apply_agent_definition", {"agent": "x"})
+        assert "title" not in kept
+        assert session_title(db, session_id) == "Lane 2 dev"
+
+        renamed = await agents_registry.call(
+            "apply_agent_definition", {"agent": "x", "title": "Coordinator"}
+        )
+
+    assert renamed["title"] == "Coordinator"
+    assert session_title(db, session_id) == "Coordinator"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("definitions")
+async def test_empty_title_leaves_the_pane_title_alone(
+    agents_registry: InternalToolRegistry, db: HubDatabase, session_id: str
+) -> None:
+    before = session_title(db, session_id)
+
+    with session_context_for_test(session_id):
+        result = await agents_registry.call("apply_agent_definition", {"agent": "x", "title": ""})
+
+    assert result["success"] is True
+    assert "title" not in result
+    assert session_title(db, session_id) == before
+
+
+def test_default_title_spells_out_hyphenated_definition_names(
+    db: HubDatabase, session_id: str
+) -> None:
+    from gobby.mcp_proxy.tools.apply_agent_definition import title_applied_session
+
+    with session_context_for_test(session_id):
+        result = title_applied_session(db, {"success": True}, "lane-manager", None)
+
+    assert result["title"] == "Lane Manager"
+
+
+def test_failed_apply_leaves_the_title_alone(db: HubDatabase, session_id: str) -> None:
+    from gobby.mcp_proxy.tools.apply_agent_definition import title_applied_session
+
+    before = session_title(db, session_id)
+    with session_context_for_test(session_id):
+        result = title_applied_session(db, {"success": False}, "x", "Ignored")
+
+    assert result == {"success": False}
+    assert session_title(db, session_id) == before

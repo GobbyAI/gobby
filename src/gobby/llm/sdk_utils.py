@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import psycopg
@@ -44,6 +44,17 @@ ADDITIONAL_CONTEXT_LIMIT = 9_950
 
 # Reserved under the ship limit for overflow instruction + adapter metadata.
 INLINE_CONTEXT_HEADROOM = 450
+
+# Contributors dropped last when additionalContext overflows: the session's identity.
+PROTECTED_CONTEXT_LABELS: tuple[str, ...] = ("agent_prompt",)
+
+
+@dataclass(frozen=True)
+class ContextFit:
+    """Shipped additionalContext text and the whole contributors dropped to fit it."""
+
+    text: str
+    omitted: list[tuple[str, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,23 +400,31 @@ def _render_contributors(
     return f"{body}\n\n{breadcrumb}"
 
 
+def _drop_rank(
+    part: tuple[str, str], limit: int, protected: Collection[str]
+) -> tuple[bool, bool, int]:
+    """Higher ranks drop first: unshippable parts, then unprotected, then largest."""
+    label, text = part
+    return (len(text) > limit, label not in protected, len(text))
+
+
 def _truncate_contributors(
     parts: list[tuple[str, str]],
     *,
     limit: int,
     result_id: str | None = None,
-) -> str:
+    protected: Collection[str] = (),
+) -> ContextFit:
     kept = list(parts)
-    omitted: list[str] = []
+    omitted: list[tuple[str, str]] = []
     while True:
-        candidate = _render_contributors(kept, omitted, result_id)
+        candidate = _render_contributors(kept, [label for label, _ in omitted], result_id)
         if len(candidate) <= limit:
-            return candidate
+            return ContextFit(candidate, omitted)
         if not kept:
-            return candidate[:limit]
-        index = max(range(len(kept)), key=lambda i: len(kept[i][1]))
-        label, _part = kept.pop(index)
-        omitted.append(label)
+            return ContextFit(candidate[:limit], omitted)
+        index = max(range(len(kept)), key=lambda i: _drop_rank(kept[i], limit, protected))
+        omitted.append(kept.pop(index))
 
 
 def _persist_additional_context(
@@ -442,18 +461,41 @@ def truncate_additional_context(
     project_id: str | None = None,
     store: object | None = None,
 ) -> str:
-    """Join labeled contributors and fit them to the ship limit.
+    """Join labeled contributors and fit them to the ship limit; see ``fit_additional_context``."""
+    return fit_additional_context(
+        parts,
+        logger=logger,
+        limit=limit,
+        session_id=session_id,
+        project_id=project_id,
+        store=store,
+    ).text
+
+
+def fit_additional_context(
+    parts: Sequence[tuple[str, str]],
+    *,
+    logger: logging.Logger | None = None,
+    limit: int | None = None,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    store: object | None = None,
+    protected: Collection[str] = PROTECTED_CONTEXT_LABELS,
+) -> ContextFit:
+    """Join labeled contributors, fit them to the ship limit, and report what was dropped.
 
     ``parts`` is an ordered sequence of ``(label, text)`` pairs; empty texts are
     skipped and labels may repeat. Over the limit, whole contributors are dropped
-    largest first (never prefix-sliced) and the breadcrumb names each omitted
-    label. Persists the full aggregate when session, project, and store exist.
+    (never prefix-sliced): first any part larger than the limit on its own, then
+    unprotected parts largest first, then ``protected`` labels largest first. The
+    breadcrumb names each omitted label. Persists the full aggregate when session,
+    project, and store exist.
     """
     kept = [(label, part) for label, part in parts if part]
     text = "\n\n".join(part for _, part in kept)
     ship_limit = ADDITIONAL_CONTEXT_LIMIT if limit is None else limit
     if len(text) <= ship_limit:
-        return text
+        return ContextFit(text, [])
     if logger:
         logger.warning(
             "additionalContext truncated aggregate_len=%d limit=%d contributors=%s",
@@ -467,4 +509,4 @@ def truncate_additional_context(
         project_id=project_id,
         session_id=session_id,
     )
-    return _truncate_contributors(kept, limit=ship_limit, result_id=result_id)
+    return _truncate_contributors(kept, limit=ship_limit, result_id=result_id, protected=protected)

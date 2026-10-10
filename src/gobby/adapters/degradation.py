@@ -15,11 +15,16 @@ from gobby.adapters.capabilities import (
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
+from gobby.hooks.receipt_effects import record_worker_staging
+from gobby.llm.sdk_utils import PROTECTED_CONTEXT_LABELS, fit_additional_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
+
+# Session variable holding additionalContext parts dropped for space, as
+# [label, text] pairs, until a later delivery ships them.
+CARRIED_CONTEXT_VARIABLE = "_carried_context"
 
 
 class AdditionalContextPersistKwargs(TypedDict):
@@ -168,8 +173,17 @@ def truncate_context_for_adapter(
     project_id: str | None = None,
     store: object | None = None,
 ) -> str:
-    """Join labeled context parts, bound them, and record telemetry on truncation."""
+    """Join labeled context parts, bound them, and record telemetry on truncation.
+
+    On the additionalContext channel, parts dropped only for space carry over to
+    the session's next delivery: they are prepended there and dropped last, so
+    once-only context (agent prompts, injected rules, piggybacked messages) is
+    never lost to a crowded turn.
+    """
     ship_limit = additional_context_limit_for(provider)
+    carry_session = session_id if destination_channel == ContextChannel.ADDITIONAL_CONTEXT else None
+    carried = _carried_context(store, carry_session) if carry_session else []
+    parts = [*carried, *parts]
     aggregate_len = len("\n\n".join(part for _, part in parts if part))
     if aggregate_len > ship_limit:
         record_adapter_degradation(
@@ -181,11 +195,65 @@ def truncate_context_for_adapter(
             detail=f"aggregate_len={aggregate_len} limit={ship_limit}",
             event_logger=event_logger,
         )
-    return truncate_additional_context(
+    fit = fit_additional_context(
         parts,
         logger=event_logger,
         limit=ship_limit,
         session_id=session_id,
         project_id=project_id,
         store=store,
+        protected={*PROTECTED_CONTEXT_LABELS, *(label for label, _ in carried)},
+    )
+    if carry_session is not None:
+        _stage_carried_context(carry_session, carried, fit.omitted, ship_limit)
+    return fit.text
+
+
+def _carried_context(store: object | None, session_id: str) -> list[ContextPart]:
+    """Read the parts a previous delivery dropped for space."""
+    db = getattr(store, "db", None)
+    if db is None:
+        return []
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    try:
+        raw = (
+            SessionVariableManager(db)
+            .get_variable_subset(session_id, (CARRIED_CONTEXT_VARIABLE,))
+            .get(CARRIED_CONTEXT_VARIABLE)
+        )
+    except Exception:
+        logger.warning("Failed to read carried context for %s", session_id, exc_info=True)
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [
+        (item[0], item[1])
+        for item in raw
+        if isinstance(item, list | tuple)
+        and len(item) == 2
+        and isinstance(item[0], str)
+        and isinstance(item[1], str)
+        and item[1]
+    ]
+
+
+def _stage_carried_context(
+    session_id: str,
+    carried: list[ContextPart],
+    omitted: list[ContextPart],
+    limit: int,
+) -> None:
+    """Stage, on receipt, the dropped parts the next delivery can still ship."""
+    keep: list[list[str]] = []
+    total = 0
+    for label, text in omitted:
+        if total + len(text) > limit:
+            continue
+        keep.append([label, text])
+        total += len(text)
+    if not keep and not carried:
+        return
+    record_worker_staging(
+        {"session_id": session_id, "session_variables": {CARRIED_CONTEXT_VARIABLE: keep or None}}
     )

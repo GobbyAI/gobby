@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -20,8 +22,19 @@ from gobby.adapters.claude_contract import (
     CLAUDE_HOOK_EVENT_NAME_MAP,
     CLAUDE_NATIVE_HOOK_NAMES,
 )
+from gobby.adapters.degradation import CARRIED_CONTEXT_VARIABLE
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.receipt_effects import (
+    apply_acknowledged_receipt,
+    take_worker_staging,
+    worker_staging_scope,
+)
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.framing_corpus import (
     bundled_before_tool_block_reasons as _bundled_before_tool_block_reasons,
 )
@@ -1076,6 +1089,28 @@ class TestTranslateFromHookResponse:
             [*(text for _, text in rule_parts), "omitted contributors=[agent_prompt]"]
         )
 
+    def test_seat_first_prompt_keeps_agent_prompt_over_larger_rules(self) -> None:
+        # Measured Orchestrator first prompt (14,185 chars): the agent prompt was dropped.
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(decision="allow")
+        response.add_context(
+            ("rule:inject-seat-common", "s" * 2_166),
+            ("rule:project-operating-policy", "o" * 4_094),
+            ("mcp:gobby-memory/surface_memories", "m" * 1_628),
+        )
+        response.add_context(("agent_prompt", "p" * 5_914), prepend=True)
+
+        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+
+        assert result["hookSpecificOutput"]["additionalContext"] == "\n\n".join(
+            [
+                "p" * 5_914,
+                "s" * 2_166,
+                "m" * 1_628,
+                "omitted contributors=[rule:project-operating-policy]",
+            ]
+        )
+
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Welcome context")
@@ -1520,3 +1555,47 @@ class TestHandleNative:
         result = adapter.handle_native(native, mock_hook_manager)
         assert result["hookSpecificOutput"]["hookEventName"] == "Notification"
         assert "some notification context" in result["hookSpecificOutput"]["additionalContext"]
+
+
+def _deliver(adapter: ClaudeCodeAdapter, db: HubDatabase, response: HookResponse) -> str:
+    """Translate one prompt delivery and acknowledge its receipt."""
+    with worker_staging_scope():
+        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+        staged = take_worker_staging()
+    apply_acknowledged_receipt(
+        SimpleNamespace(staged_payload=staged), variable_manager=SessionVariableManager(db)
+    )
+    return str(result["hookSpecificOutput"]["additionalContext"])
+
+
+def test_parts_dropped_for_space_ship_first_on_the_next_delivery(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine = "21000000-0000-4000-8000-000000000002"
+    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
+    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
+    session_id = (
+        SessionManager(temp_db)
+        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
+        .id
+    )
+    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    variables = SessionVariableManager(temp_db)
+
+    first = HookResponse(decision="allow", metadata={"session_id": session_id})
+    first.add_context(("rule:policy", "o" * 4_000), ("rule:oversized", "x" * 10_000))
+    first.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+    shipped = _deliver(adapter, temp_db, first)
+
+    assert "p" * 6_000 in shipped
+    assert "o" * 4_000 not in shipped
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [["rule:policy", "o" * 4_000]]
+
+    second = HookResponse(decision="allow", metadata={"session_id": session_id})
+    second.add_context(("rule:reminder", "be brief"))
+    shipped = _deliver(adapter, temp_db, second)
+
+    assert shipped.startswith("o" * 4_000 + "\n\n")
+    assert "be brief" in shipped
+    assert variables.get_variables(session_id).get(CARRIED_CONTEXT_VARIABLE) is None

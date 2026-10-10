@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -515,3 +516,40 @@ class TestApplyPersonaImpl:
         assert result["success"] is False
         assert "#999" in result["error"]
         mock_merge.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_persona_titles_the_pane_with_the_persona_name(
+    db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
+    from gobby.mcp_proxy.tools.agents_spawn_tools import register_agent_spawn_tools
+    from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.storage.sessions import SessionManager
+    from gobby.utils.session_context import session_context_for_test
+    from tests.mcp_proxy.tools.test_apply_agent_definition import register_session
+
+    session_id = register_session(db, monkeypatch)
+    registry = InternalToolRegistry("gobby-agents")
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent.create_spawn_agent_registry",
+        return_value=InternalToolRegistry("spawn"),
+    ):
+        register_agent_spawn_tools(
+            registry, cast(AgentsRegistryContext, MagicMock(db=db, task_manager=None))
+        )
+    persona = make_agent_definition(
+        prompts={"persona": "Route the lane's work."}, name="lane-manager", surfaces=["persona"]
+    )
+    with (
+        patch(
+            "gobby.workflows.agent_resolver.resolve_agent_with_row",
+            return_value=(persona, MagicMock(step_workflow_id=None)),
+        ),
+        session_context_for_test(session_id),
+    ):
+        result = await registry.call("apply_persona", {"agent": "lane-manager"})
+
+    session = SessionManager(db).get(session_id)
+    assert result["title"] == "Lane Manager"
+    assert session is not None and session.title == "Lane Manager"
