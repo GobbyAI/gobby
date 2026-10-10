@@ -95,6 +95,7 @@ def count_tasks(
     escalated: bool | None = None,
     task_type: str | None = None,
     label: str | None = None,
+    labels: list[str] | None = None,
     parent_task_id: str | None = None,
     title_like: str | None = None,
     stages: list[str] | None = None,
@@ -155,6 +156,9 @@ def count_tasks(
         label_clause, label_params = json_array_contains_condition(db, "t.labels", label)
         query += f" AND {label_clause}"
         params.extend(label_params)
+    if labels is not None:
+        query += " AND t.labels ?| %s::text[]"
+        params.append(labels)
     if parent_task_id:
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)

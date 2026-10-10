@@ -437,12 +437,67 @@ def test_validate_helper_reads_agent_completion_through_the_daemon(
     assert client.calls[0] == (
         "gobby-tasks",
         "list_tasks",
-        {"project": "project-1", "label": LABEL, "limit": 50, "offset": 0, "sort_by": "created_at"},
+        {
+            "project": "project-1",
+            "labels": [LABEL],
+            "limit": 50,
+            "offset": 0,
+            "sort_by": "created_at",
+        },
     )
     if not valid:
         assert result["errors"] == [
             "Target `docs/demo.md::*` names symbol scope for a file with no index record"
         ]
+
+
+@pytest.mark.parametrize("late_owner_closed", [False, True], ids=["late-open", "all-closed"])
+def test_validate_batches_sections_and_keeps_completion_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, late_owner_closed: bool
+) -> None:
+    plan = _write_contract_plan(
+        tmp_path, target_line="Target: `docs/demo.md::*` — scope-reason: rewrites the page"
+    )
+    plan.write_text(
+        plan.read_text()
+        + """
+### 1.2 Other work [category: docs]
+`kind: deliverable`
+
+Target: `docs/other.md::*` — scope-reason: rewrites the page
+
+**Acceptance:**
+- 1.2.1 - Other docs exist. file: `docs/other.md`
+""",
+        encoding="utf-8",
+    )
+    other_label = "covers:cli-plan:1.2:1.2.1"
+    client = FakeTaskClient(
+        [
+            task_record(),
+            task_record(
+                id="other-owner",
+                labels=[other_label],
+                closed_at="2026-10-07T03:00:00+00:00" if late_owner_closed else None,
+                closed_reason="completed" if late_owner_closed else None,
+                commits=[],
+            ),
+        ]
+    )
+    _use_agent_validation(tmp_path, monkeypatch, client)
+    monkeypatch.setattr(_FakeIndex, "get_file", lambda *_args: None)
+    result = plans_module._validate_plan_for_cli(plan, None, mode="standard")
+    assert result["valid"] is late_owner_closed, result
+    queries = [arguments for _, tool, arguments in client.calls if tool == "list_tasks"]
+    assert queries == [
+        {
+            "project": "project-1",
+            "labels": [LABEL, other_label],
+            "limit": 50,
+            "offset": 0,
+            "sort_by": "created_at",
+        }
+    ]
 
 
 @pytest.mark.parametrize("late_owner_closed", [False, True], ids=["late-open", "all-closed"])
@@ -473,7 +528,7 @@ def test_validate_helper_pages_all_agent_completion_owners(
     assert [arguments for _, tool, arguments in client.calls if tool == "list_tasks"] == [
         {
             "project": "project-1",
-            "label": LABEL,
+            "labels": [LABEL],
             "limit": 50,
             "offset": offset,
             "sort_by": "created_at",

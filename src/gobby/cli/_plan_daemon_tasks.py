@@ -36,14 +36,22 @@ class DaemonTaskLookup:
         self._tasks: dict[str, Task] = {}
 
     def list_tasks(
-        self, *, project_id: str, label: str, limit: int, offset: int, sort_by: str
+        self,
+        *,
+        project_id: str,
+        limit: int,
+        offset: int,
+        sort_by: str,
+        label: str | None = None,
+        labels: list[str] | None = None,
     ) -> list[Task]:
-        """Return a stable page of project tasks carrying ``label``."""
+        """Return a stable page of project tasks matching exact label filters."""
         page = self._call(
             "list_tasks",
             {
                 "project": project_id,
-                "label": label,
+                **({"label": label} if label is not None else {}),
+                **({"labels": labels} if labels is not None else {}),
                 "limit": limit,
                 "offset": offset,
                 "sort_by": sort_by,

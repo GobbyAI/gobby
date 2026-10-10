@@ -43,9 +43,9 @@ class CompletionTaskLookup(Protocol):
     """Task reads that resolve completed-section owners by coverage label."""
 
     def list_tasks(
-        self, *, project_id: str, label: str, limit: int, offset: int, sort_by: str
+        self, *, project_id: str, labels: list[str], limit: int, offset: int, sort_by: str
     ) -> list[Task]:
-        """Return up to ``limit`` project tasks carrying ``label``."""
+        """Return up to ``limit`` project tasks carrying any exact label."""
         ...
 
 
@@ -119,35 +119,40 @@ def _completed_plan_sections(
         raise CompletedSectionExemptionsUnavailable("no task manager")
     if not isinstance(project_id, str) or not project_id or not plan_doc.plan_id:
         raise CompletedSectionExemptionsUnavailable("no project or plan identity")
-    completed: set[str] = set()
-    executed: set[str] = set()
-    for section in plan_doc.sections:
-        if section.kind is not Kind.deliverable or not section.acceptance_items:
-            continue
-        labels = [
+    section_labels = {
+        section.section_id: [
             f"covers:{plan_doc.plan_id}:{section.section_id}:{item.item_id}"
             for item in section.acceptance_items
         ]
+        for section in plan_doc.sections
+        if section.kind is Kind.deliverable and section.acceptance_items
+    }
+    owners_by_label: dict[str, list[Task]] = {
+        label: [] for labels in section_labels.values() for label in labels
+    }
+    if owners_by_label:
+        offset = 0
         try:
-            owners: list[list[Task]] = []
-            for label in labels:
-                tasks: list[Task] = []
-                while True:
-                    page = task_manager.list_tasks(
-                        project_id=project_id,
-                        label=label,
-                        limit=50,
-                        offset=len(tasks),
-                        sort_by="created_at",
-                    )
-                    tasks.extend(page)
-                    if len(page) < 50:
-                        break
-                owners.append(tasks)
+            while True:
+                page = task_manager.list_tasks(
+                    project_id=project_id,
+                    labels=list(owners_by_label),
+                    limit=50,
+                    offset=offset,
+                    sort_by="created_at",
+                )
+                for task in page:
+                    for label in set(task.labels or []).intersection(owners_by_label):
+                        owners_by_label[label].append(task)
+                offset += len(page)
+                if len(page) < 50:
+                    break
         except psycopg.Error as exc:
-            raise CompletedSectionExemptionsUnavailable(
-                f"task lookup failed for section {section.section_id}: {exc}"
-            ) from exc
+            raise CompletedSectionExemptionsUnavailable(f"task lookup failed: {exc}") from exc
+    completed: set[str] = set()
+    executed: set[str] = set()
+    for section_id, labels in section_labels.items():
+        owners = [owners_by_label[label] for label in labels]
         if all(owners) and all(
             all(
                 task.project_id == project_id
@@ -159,7 +164,7 @@ def _completed_plan_sections(
             and any(task.closed_reason in {"completed", "already_implemented"} for task in tasks)
             for label, tasks in zip(labels, owners, strict=True)
         ):
-            executed.add(section.section_id)
+            executed.add(section_id)
         if any(len(tasks) != 1 for tasks in owners):
             continue
         task = owners[0][0]
@@ -171,7 +176,7 @@ def _completed_plan_sections(
             continue
         delivered = task.closed_at and task.closed_reason in {"completed", "already_implemented"}
         if delivered or (project_root and _task_has_landed_commit(task, project_root)):
-            completed.add(section.section_id)
+            completed.add(section_id)
     return frozenset(completed), frozenset(executed)
 
 
