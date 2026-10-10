@@ -1369,6 +1369,7 @@ class _HermeticGit:
         self.env = {
             "PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]),
             "HOME": str(tmp_path / "home"),
+            "TMPDIR": str(tmp_path),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_AUTHOR_NAME": "Test",
