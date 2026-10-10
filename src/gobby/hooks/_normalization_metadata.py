@@ -117,6 +117,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
 
     paths: list[str] = []
     mutation_paths: list[str] = []
+    edit_paths: list[str] = []
     write_paths: list[str] = []
     mutation_scope_unknown = False
     mutation_scope_resolved_by_loop_binding = True
@@ -167,6 +168,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             if item.repo_mutation
             else []
         )
+        explicit_edit_paths = item.extra.get("canonical_edit_file_paths") if item.extra else None
         if unresolved_mutation_paths:
             mutation_scope_unknown = True
             saw_unexpanded_mutation_path = True
@@ -182,6 +184,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                         resolved_path = bound_path + suffix
                         if resolved_path not in mutation_paths:
                             mutation_paths.append(resolved_path)
+                        if (
+                            explicit_edit_paths is None or resolved_path in explicit_edit_paths
+                        ) and resolved_path not in edit_paths:
+                            edit_paths.append(resolved_path)
                 else:
                     mutation_scope_resolved_by_loop_binding = False
         for path in resolvable:
@@ -189,6 +195,12 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 paths.append(path)
             if item.repo_mutation and path not in mutation_paths:
                 mutation_paths.append(path)
+            if (
+                item.repo_mutation
+                and (explicit_edit_paths is None or path in explicit_edit_paths)
+                and path not in edit_paths
+            ):
+                edit_paths.append(path)
         for path in item.write_paths:
             if not _contains_unexpanded_shell_reference(path) and path not in write_paths:
                 write_paths.append(path)
@@ -208,6 +220,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         kind = "execute"
 
     extra = _merge_code_navigation_extra(active)
+    if "canonical_edit_file_paths" in extra:
+        # Scope-only segments authorize the command without claiming a directory.
+        # Preserve actual edits in mixed commands and nested shell wrappers.
+        extra["canonical_edit_file_paths"] = edit_paths
     extra["canonical_code_navigation_segments"] = [
         {**dict(item.extra), "canonical_file_paths": list(item.paths)}
         for item in active

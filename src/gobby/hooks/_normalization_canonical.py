@@ -584,13 +584,20 @@ def _classify_shell_segment_without_redirection(
         return _classify_for_loop_header(parts, cwd)
 
     git_subcommand_index = 1
+    git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
+    git_scope_unknown = False
     if cmd == "git":
         while git_subcommand_index < len(parts):
             part = parts[git_subcommand_index]
             if part in {"-C", "-c"}:
+                if part == "-C" and git_subcommand_index + 1 < len(parts):
+                    target = parts[git_subcommand_index + 1]
+                    if target:
+                        git_cwd = _rebase_shell_paths([target], git_cwd)[0]
                 git_subcommand_index += 2
                 continue
             if part.startswith("-"):
+                git_scope_unknown = True
                 git_subcommand_index += 1
                 continue
             break
@@ -640,7 +647,22 @@ def _classify_shell_segment_without_redirection(
             repo_mutation=True,
         )
 
-    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["revert"]:
+    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] in [
+        ["revert"],
+        ["cherry-pick"],
+    ]:
+        args = parts[git_subcommand_index + 1 :]
+        if (
+            not git_scope_unknown
+            and git_cwd
+            and any(flag in args for flag in {"--quit", "--skip", "--continue"})
+        ):
+            return _ShellSegmentMetadata(
+                "write",
+                paths=(git_cwd,),
+                repo_mutation=True,
+                extra={"canonical_edit_file_paths": []},
+            )
         return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":
