@@ -122,6 +122,33 @@ def create_communications_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
+        description=(
+            "Resolve the enrolled operator's Telegram DM from its linked identity. "
+            "Returns channel, conversation_id, identity_id and the live attached session_id. "
+            "Requires exactly one operator in the channel's allow_from; never guesses a DM."
+        ),
+        read_only=True,
+    )
+    def resolve_operator_conversation(channel: str) -> dict[str, Any]:
+        try:
+            return {
+                "success": True,
+                **communications_manager.resolve_operator_conversation(channel),
+            }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        description="List live attached sessions and their channels/conversations; these sessions reply directly and need no Assistant relay.",
+        read_only=True,
+    )
+    def list_conversation_attachments() -> dict[str, Any]:
+        return {
+            "success": True,
+            "attachments": communications_manager.list_conversation_attachments(),
+        }
+
+    @registry.tool(
         description="Attach the calling live session to one Telegram conversation. Use dm:<chat_id>, group:<chat_id>, or topic:<chat_id>:<thread_id>."
     )
     def attach_conversation(channel: str, conversation_id: str) -> dict[str, Any]:

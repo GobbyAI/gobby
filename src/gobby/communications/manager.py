@@ -441,6 +441,52 @@ class CommunicationsManager:
         """Attach Telegram command and callback actions."""
         self._telegram_actions = controller
 
+    def resolve_operator_conversation(self, channel_name: str) -> dict[str, str | None]:
+        """Resolve the enrolled operator's linked Telegram DM without identity enumeration."""
+        channel = self._channel_by_name.get(channel_name)
+        if channel is None or channel.channel_type != "telegram":
+            raise ValueError("An active Telegram channel is required")
+        senders = allowed_senders(channel.config_json)
+        if len(senders) != 1:
+            raise ValueError("Telegram must have exactly one enrolled operator in allow_from")
+        identity = self.get_identity_by_external(channel.id, next(iter(senders)))
+        if identity is None:
+            raise ValueError("Operator has no linked Telegram identity; send /start to the bot")
+        chat_id = identity.metadata_json.get("telegram_dm_conversation_id")
+        if chat_id is None:
+            reference = identity.metadata_json.get("conversation_reference")
+            if isinstance(reference, dict):
+                chat_id = reference.get("conversation_id")
+        if not isinstance(chat_id, str) or not chat_id.isascii() or not chat_id.isdecimal():
+            raise ValueError("Operator has no recorded Telegram DM; send /start to the bot")
+        if int(chat_id) <= 0:
+            raise ValueError("Operator has no recorded Telegram DM; send /start to the bot")
+        conversation_id = f"dm:{chat_id}"
+        return {
+            "channel": channel.name,
+            "conversation_id": conversation_id,
+            "identity_id": identity.id,
+            "session_id": self.attached_session(channel.id, conversation_id),
+        }
+
+    def list_conversation_attachments(self) -> list[dict[str, str]]:
+        """Expose live conversation holders for relay coordination."""
+        with self._attachment_lock:
+            attachments = []
+            for (channel_id, conversation_id), session_id in self._conversation_attachments.items():
+                if self.attached_session(channel_id, conversation_id) != session_id:
+                    continue
+                channel = self.get_channel(channel_id)
+                if channel is not None:
+                    attachments.append(
+                        {
+                            "channel": channel.name,
+                            "conversation_id": conversation_id,
+                            "session_id": session_id,
+                        }
+                    )
+            return attachments
+
     def attached_session(self, channel_id: str, conversation_id: str) -> str | None:
         """Return the live holder while retaining stale bindings for status fallback."""
         with self._attachment_lock:

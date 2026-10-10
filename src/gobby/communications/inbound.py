@@ -134,6 +134,14 @@ class InboundCommunications:
                     message.metadata_json["external_user_id"] = external_user_id
                     external_username = message.metadata_json.get("external_username")
                     identity_meta: dict[str, Any] = {}
+                    if (
+                        channel.channel_type == "telegram"
+                        and message.metadata_json.get("conversation_type") == "private"
+                        and isinstance(message.metadata_json.get("chat_id"), str)
+                    ):
+                        identity_meta["telegram_dm_conversation_id"] = message.metadata_json[
+                            "chat_id"
+                        ]
                     if "conversation_reference" in message.metadata_json:
                         identity_meta["conversation_reference"] = message.metadata_json[
                             "conversation_reference"

@@ -22,6 +22,29 @@ from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 pytestmark = pytest.mark.unit
 
 
+def test_operator_conversation_discovery_tools(registry: Any, mock_manager: MagicMock) -> None:
+    destination = {
+        "channel": "telegram",
+        "conversation_id": "dm:42",
+        "identity_id": "operator",
+        "session_id": "caller",
+    }
+    mock_manager.resolve_operator_conversation.return_value = destination
+    mock_manager.list_conversation_attachments.return_value = [destination]
+    resolved = registry.get_tool("resolve_operator_conversation")(channel="telegram")
+    assert resolved == {"success": True, **destination}
+    mock_manager.resolve_operator_conversation.assert_called_once_with("telegram")
+    assert registry.get_tool("list_conversation_attachments")() == {
+        "success": True,
+        "attachments": [destination],
+    }
+    mock_manager.resolve_operator_conversation.side_effect = ValueError("No recorded DM")
+    assert registry.get_tool("resolve_operator_conversation")(channel="telegram") == {
+        "success": False,
+        "error": "No recorded DM",
+    }
+
+
 @pytest.fixture
 def mock_store() -> MagicMock:
     store = MagicMock()

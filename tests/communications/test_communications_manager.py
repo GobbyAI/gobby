@@ -10,7 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -39,6 +39,217 @@ from gobby.storage.secrets import SecretStore
 from gobby.storage.sessions import SessionManager
 
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture
+def operator_telegram() -> tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock]:
+    channel = make_channel(
+        channel_type="telegram", config_json={"allow_from": ["42"], "default_destination": "88"}
+    )
+    store = make_store([channel])
+    store.get_channel.return_value = channel
+    identity = CommsIdentity(
+        id="operator",
+        channel_id=channel.id,
+        external_user_id="42",
+        session_id="comms-session",
+        created_at=_FIXED_TS,
+        updated_at=_FIXED_TS,
+        metadata_json={"conversation_reference": {"conversation_id": "42"}},
+    )
+    store.get_identity_by_external.return_value = identity
+    store.update_identity.side_effect = lambda value: value
+    sessions = MagicMock()
+    holder = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active", source="codex")
+    sessions.get.side_effect = lambda session_id: holder if session_id == holder.id else None
+    sessions.list.return_value = []
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    return manager, channel, holder, adapter
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_operator_registration_sends_confirmation_and_replies_directly(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+) -> None:
+    manager, channel, holder, adapter = operator_telegram
+    resolved = manager.resolve_operator_conversation(channel.name)
+    assert resolved == {
+        "channel": channel.name,
+        "conversation_id": "dm:42",
+        "identity_id": "operator",
+        "session_id": None,
+    }
+    cast(MagicMock, manager.store).list_identities.assert_not_called()
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    confirmation = await manager.send_message(channel.name, "Registered", session_id=holder.id)
+    reply = await manager.send_message(channel.name, "Work complete", session_id=holder.id)
+    assert [confirmation.status, reply.status] == ["sent", "sent"]
+    assert [
+        call.args[0].metadata_json["platform_destination"]
+        for call in adapter.send_message.await_args_list
+    ] == ["42", "42"]
+    assert [call.args[0].session_id for call in adapter.send_message.await_args_list] == [
+        holder.id,
+        holder.id,
+    ]
+    assert manager.resolve_operator_conversation(channel.name)["session_id"] == holder.id
+    assert manager.list_conversation_attachments() == [
+        {"channel": channel.name, "conversation_id": "dm:42", "session_id": holder.id}
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_to", [None, "confirmation-id"])
+async def test_registered_operator_inbound_reaches_holder_mailbox(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    reply_to: str | None,
+) -> None:
+    manager, channel, holder, _ = operator_telegram
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    source = CommsMessage(
+        id="confirmation",
+        channel_id=channel.id,
+        direction="outbound",
+        content="Registered",
+        session_id=holder.id,
+        created_at=_FIXED_TS,
+    )
+    cast(MagicMock, manager.store).get_message_by_platform_id.return_value = (
+        source if reply_to else None
+    )
+    mailbox = MagicMock(send=AsyncMock(return_value=MailboxSendResult()))
+    manager.set_telegram_action_controller(
+        TelegramActionController(manager, manager._session_store, mailbox)
+    )
+    manager.event_callback = AsyncMock()
+    inbound = CommsMessage(
+        id="inbound",
+        channel_id=channel.id,
+        direction="inbound",
+        content="Continue",
+        identity_id="42",
+        created_at=_FIXED_TS,
+        metadata_json={
+            "chat_id": "42",
+            "conversation_type": "private",
+            **({"reply_to_message_id": reply_to} if reply_to else {}),
+        },
+    )
+    handled = await manager.handle_inbound_messages(channel.name, [inbound])
+    assert handled[0].session_id == holder.id
+    assert handled[0].metadata_json["session_route"] == ("reply" if reply_to else "attached")
+    mailbox.send.assert_awaited_once()
+    assert mailbox.send.await_args.kwargs["wake"] is True
+    manager.event_callback.assert_not_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("end_session", [False, True], ids=["explicit-detach", "session-end"])
+async def test_operator_registration_releases_on_request_or_session_end(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    end_session: bool,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    manager, channel, holder, _ = operator_telegram
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    if end_session:
+        holder.status = "expired"
+        await manager.handle_session_status_transition(
+            SessionStatusTransition(
+                session_id=holder.id,
+                project_id="project-1",
+                agent_run_id=None,
+                status="expired",
+                transitioned_at=_FIXED_TS,
+                seq_num=1,
+                title="Lane Developer",
+                source="codex",
+            )
+        )
+    else:
+        manager.detach_conversation(channel.name, "dm:42", holder.id)
+    assert manager.list_conversation_attachments() == []
+    assert manager.attached_destination(channel.id, holder.id) is None
+    assert manager.resolve_operator_conversation(channel.name)["session_id"] is None
+    metadata = await manager._enrich_outbound_metadata(channel, channel.name, holder.id, None)
+    assert metadata["platform_destination"] == "88"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("allow_from", [[], ["42", "43"]])
+def test_operator_resolution_rejects_missing_or_ambiguous_enrollment(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    allow_from: list[str],
+) -> None:
+    manager, channel, _, _ = operator_telegram
+    channel.config_json["allow_from"] = allow_from
+    with pytest.raises(ValueError, match="exactly one enrolled operator"):
+        manager.resolve_operator_conversation(channel.name)
+    cast(MagicMock, manager.store).get_identity_by_external.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("chat_id", [None, "-10042", "0", "not-a-chat", 42])
+def test_operator_resolution_rejects_unrecorded_dm_and_group_reference(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    chat_id: object,
+) -> None:
+    manager, channel, _, _ = operator_telegram
+    identity = manager.store.get_identity_by_external(channel.id, "42")
+    assert identity is not None
+    identity.metadata_json = {"conversation_reference": {"conversation_id": chat_id}}
+    with pytest.raises(ValueError, match="no recorded Telegram DM"):
+        manager.resolve_operator_conversation(channel.name)
+
+
+@pytest.mark.unit
+def test_operator_resolution_requires_linked_identity_and_telegram_channel(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+) -> None:
+    manager, channel, _, _ = operator_telegram
+    cast(MagicMock, manager.store).get_identity_by_external.return_value = None
+    with pytest.raises(ValueError, match="no linked Telegram identity"):
+        manager.resolve_operator_conversation(channel.name)
+    channel.channel_type = "slack"
+    with pytest.raises(ValueError, match="active Telegram channel"):
+        manager.resolve_operator_conversation(channel.name)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_operator_dm_is_remembered_after_group_identity_metadata_changes(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+) -> None:
+    manager, channel, _, _ = operator_telegram
+    message = CommsMessage(
+        id="dm",
+        channel_id=channel.id,
+        direction="inbound",
+        content="Hello",
+        identity_id="42",
+        created_at=_FIXED_TS,
+        metadata_json={"chat_id": "42", "conversation_type": "private"},
+    )
+    handled = await manager.handle_inbound_messages(channel.name, [message])
+    assert len(handled) == 1
+    identity = manager.store.get_identity_by_external(channel.id, "42")
+    assert identity is not None
+    assert identity.metadata_json["telegram_dm_conversation_id"] == "42"
+    manager._identity_manager.resolve_inbound_identity(
+        channel.id,
+        "42",
+        metadata={"conversation_reference": {"conversation_id": "-10042"}},
+        conversation_key="group:-10042",
+    )
+    assert identity.metadata_json["conversation_reference"]["conversation_id"] == "-10042"
+    assert manager.resolve_operator_conversation(channel.name)["conversation_id"] == "dm:42"
 
 
 def make_config() -> CommunicationsConfig:
