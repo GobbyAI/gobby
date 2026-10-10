@@ -3494,6 +3494,69 @@ async def test_telegram_target_survives_manager_restart(
     await restarted.stop()
 
 
+@pytest.mark.parametrize("child_depth", [0, 1])
+async def test_native_clear_transfers_dm_only_to_same_depth_successor(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    child_depth: int,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    predecessor = sessions.register(
+        external_id="native-clear-predecessor",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Lane 3",
+    )
+    # An unrelated Assistant must not take precedence over the linked successor.
+    sessions.register(
+        external_id="native-clear-other-assistant",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Assistant",
+    )
+    successor = sessions.register(
+        external_id="native-clear-successor",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Lane 3 continued",
+        parent_session_id=predecessor.id,
+        agent_depth=child_depth,
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", predecessor.id)
+
+    assert sessions.update_session_status(predecessor.id, "expired")
+    ended = sessions.get(predecessor.id)
+    assert ended is not None
+    await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+
+    expected_holder = successor.id if child_depth == 0 else predecessor.id
+    assert manager._conversation_attachments[(channel.id, "dm:42")] == expected_holder
+    assert manager.attached_session(channel.id, "dm:42") == (
+        successor.id if child_depth == 0 else None
+    )
+    assert manager.list_conversation_attachments() == (
+        [{"channel": channel.name, "conversation_id": "dm:42", "session_id": successor.id}]
+        if child_depth == 0
+        else []
+    )
+    stored = store.get_channel(channel.id)
+    assert stored is not None
+    assert stored.config_json["telegram_agent_targets"] == {"dm:42": expected_holder}
+    adapter.send_message.assert_not_awaited()
+
+
 @pytest.mark.parametrize("end", ["deleted", "staged-clear", "consumed-clear"])
 @pytest.mark.parametrize("assistant_available", [True, False])
 async def test_ended_target_falls_back_to_real_assistant_clear_successor(
