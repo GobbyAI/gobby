@@ -16,11 +16,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import record_worker_staging
-from gobby.llm.sdk_utils import (
-    INLINE_CONTEXT_HEADROOM,
-    PROTECTED_CONTEXT_LABELS,
-    fit_additional_context,
-)
+from gobby.llm.sdk_utils import PROTECTED_CONTEXT_LABELS, fit_additional_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
@@ -254,18 +250,16 @@ def _stage_carried_context(
     omitted: list[ContextPart],
     limit: int,
 ) -> None:
-    """Stage, on receipt, the dropped parts the next delivery can still ship.
+    """Stage, on receipt, every dropped part that fits a delivery on its own.
 
-    The budget leaves room for part joins and the next delivery's breadcrumb.
+    The next delivery is the budgeter: carried parts it cannot ship are dropped
+    there and staged again.
     """
-    keep: list[list[str]] = []
-    total = 0
-    for label, text in omitted:
-        cost = len(text) + len("\n\n")
-        if total + cost > limit - INLINE_CONTEXT_HEADROOM:
-            continue
-        keep.append([label.removeprefix(CARRIED_LABEL_PREFIX), text])
-        total += cost
+    keep = [
+        [label.removeprefix(CARRIED_LABEL_PREFIX), text]
+        for label, text in omitted
+        if len(text) <= limit
+    ]
     if not keep and not carried:
         return
     record_worker_staging(

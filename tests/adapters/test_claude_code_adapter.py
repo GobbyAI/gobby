@@ -1627,3 +1627,27 @@ def test_a_fresh_part_sharing_a_carried_label_drops_largest_first(
     assert "n" * 5_000 not in shipped
     carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
     assert carried == [["rule:policy", "n" * 5_000]]
+
+
+def test_every_dropped_part_under_the_cap_is_carried(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine = "21000000-0000-4000-8000-000000000004"
+    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
+    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
+    session_id = (
+        SessionManager(temp_db)
+        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
+        .id
+    )
+    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    variables = SessionVariableManager(temp_db)
+
+    response = HookResponse(decision="allow", metadata={"session_id": session_id})
+    response.add_context(("rule:near_cap", "c" * 9_700), ("rule:policy", "o" * 5_000))
+    response.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+    shipped = _deliver(adapter, temp_db, response)
+
+    assert "p" * 6_000 in shipped
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [["rule:near_cap", "c" * 9_700], ["rule:policy", "o" * 5_000]]
