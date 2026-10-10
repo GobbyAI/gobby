@@ -4133,12 +4133,12 @@ def _start_context_session(
 
 
 @pytest.mark.parametrize("status", ["active", "paused"])
-@pytest.mark.parametrize("same_process", [False, True], ids=["sibling", "same-pane"])
+@pytest.mark.parametrize("reuse", ["sibling", "same-pane", "restarted-pane", "restarted-tty"])
 async def test_context_reuse_session_start_preserves_sibling_dm(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     status: str,
-    same_process: bool,
+    reuse: str,
 ) -> None:
     from gobby.communications.telegram_fallback import fallback_telegram_targets
     from gobby.sessions.status_events import SessionStatusTransition
@@ -4171,8 +4171,15 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
     sessions.register_status_transition_listener(transitions.append)
 
     next_context = dict(context)
-    if not same_process:
-        next_context.update(tmux_pane="%2", parent_pid=4343, parent_create_time=2345.6)
+    same_terminal = reuse != "sibling"
+    if reuse != "same-pane":
+        next_context.update(parent_pid=4343, parent_create_time=2345.6)
+    if reuse == "sibling":
+        next_context["tmux_pane"] = "%2"
+    elif reuse == "restarted-tty":
+        context = {"tty": "/dev/test-reused", "parent_pid": 4242, "parent_create_time": 1234.5}
+        sessions.update(predecessor.id, terminal_context=context)
+        next_context = {"tty": "/dev/test-reused", "parent_pid": 4343, "parent_create_time": 2345.6}
     # Bootstrap recovery materializes startup rows before SessionStart activation.
     sessions.register(
         external_id="context-reuse-newcomer",
@@ -4190,16 +4197,16 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
     )
     persisted = sessions.get(predecessor.id)
     assert persisted is not None
-    assert persisted.status == ("expired" if same_process else status)
+    assert persisted.status == ("expired" if same_terminal else status)
     ended = [t for t in transitions if t.session_id == predecessor.id and t.status == "expired"]
-    assert bool(ended) is same_process
+    assert bool(ended) is same_terminal
     with patch(
         "gobby.communications.telegram_fallback.fallback_telegram_targets",
         wraps=fallback_telegram_targets,
     ) as fallback:
         for transition in transitions:
             await manager.handle_session_status_transition(transition)
-        if same_process:
+        if same_terminal:
             fallback.assert_awaited_once()
         else:
             fallback.assert_not_awaited()
