@@ -10,6 +10,7 @@ execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session, project]
+spawnable_agents: [task-close-reviewer]
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
