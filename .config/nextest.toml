@@ -67,6 +67,11 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
+filter = 'package(gobby-client) & binary(loop_liveness) & test(=a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking)'
+# Request acknowledgements govern progress; this watchdog catches a stuck test.
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.default.overrides]]
 filter = 'package(gobby-client) & binary(teardown)'
 test-group = 'gterm-pty'
 
