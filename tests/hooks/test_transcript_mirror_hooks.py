@@ -1,6 +1,7 @@
 """Only confirmed whole-turn completion schedules the final transcript mirror."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +12,22 @@ from gobby.sessions.processor_lifecycle import SessionFlushResult
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("event_type", [HookEventType.AFTER_AGENT, HookEventType.STOP])
+def test_completed_turn_without_event_loop_does_not_schedule_mirror(
+    event_handlers: EventHandlers,
+    event_type: HookEventType,
+) -> None:
+    turns = CompletedTurns()
+    event_handlers._event_loop = None
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(event_type, metadata={"_platform_session_id": "session"})
+    event.turn_disposition = "completed"
+    with patch("gobby.hooks.event_handlers._agent.asyncio.run_coroutine_threadsafe") as schedule:
+        event_handlers._mirror_completed_turn(event)
+    schedule.assert_not_called()
+    assert turns.calls == []
 
 
 class CompletedTurns:
