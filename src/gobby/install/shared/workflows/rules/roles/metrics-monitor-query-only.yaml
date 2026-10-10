@@ -1,0 +1,22 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+rules:
+  metrics-monitor-query-only:
+    description: "Metrics Monitor permits only exact read-only loopback Prometheus queries"
+    event: before_tool
+    enabled: true
+    priority: 5
+    when: >-
+      variables.get('_agent_type') == 'metrics-monitor' and (
+        str(tool_input.get('command') or tool_input.get('cmd') or '') not in [
+          '/usr/bin/curl --disable --noproxy \'*\' --fail --silent --show-error --max-time 10 --get --data-urlencode \'query={job="gobby-daemon",__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}\' http://127.0.0.1:9090/api/v1/query',
+          '/usr/bin/curl --disable --noproxy \'*\' --fail --silent --show-error --max-time 10 --get --data-urlencode \'query={job="gobby-daemon",__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}[10m]\' http://127.0.0.1:9090/api/v1/query'
+        ] or tool_input.get('shell') not in [None, '/bin/bash', '/bin/zsh']
+      )
+    effects:
+      - type: block
+        tools: [Bash]
+        reason: >-
+          Metrics Monitor permits only the two exact read-only Prometheus curl
+          commands in its definition. Never read processes, environments or
+          credentials, write files, restart services, or run other shell commands.

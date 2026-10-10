@@ -593,7 +593,14 @@ class TeamEntrypointProxy:
     [
         (
             "team-coordination",
-            ("archivist", "log-monitor", "release-manager", "inbox-manager", "recovery-steward"),
+            (
+                "archivist",
+                "log-monitor",
+                "metrics-monitor",
+                "release-manager",
+                "inbox-manager",
+                "recovery-steward",
+            ),
         ),
         ("team-planning", ("plan-writer", "plan-adversary")),
         ("team-lane", ("developer", "code-reviewer", "researcher", "lane-manager")),

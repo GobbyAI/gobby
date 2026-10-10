@@ -17,6 +17,7 @@ SEATS = {
     "team-coordination": (
         "archivist",
         "log-monitor",
+        "metrics-monitor",
         "release-manager",
         "inbox-manager",
         "recovery-steward",
@@ -47,7 +48,8 @@ def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
         for seat in SEATS[pipeline]
         for name in ("provider", "model", "reasoning_effort")
     }
-    assert set(definition.inputs) == SHARED_INPUTS | seat_inputs
+    peer_inputs = {"metrics_monitor_log_monitor"} if pipeline == "team-coordination" else set()
+    assert set(definition.inputs) == SHARED_INPUTS | seat_inputs | peer_inputs
     guard = definition.steps[0].mcp
     assert guard is not None
     assert (guard.server, guard.tool) == ("gobby-agents", "check_runbook_seats")
@@ -68,9 +70,17 @@ def test_team_placements_reference_only_defined_steps(pipeline: str) -> None:
 
 @pytest.mark.parametrize("pipeline", ["team-lane", "team-coordination", "team-planning"])
 def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
-    text = (PIPELINES / f"{pipeline}.yaml").read_text().lower()
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / f"{pipeline}.yaml").read_text())
+    )
+    launched = {
+        step.mcp.arguments["agent"]
+        for step in definition.steps
+        if step.mcp and step.mcp.tool == "spawn_agent" and step.mcp.arguments
+    }
     for retired in ("assistant", "orchestrator", "merge-manager", "merge_manager"):
-        assert retired not in text, retired
+        assert retired not in launched, retired
+        assert not any(name.startswith(f"{retired}_") for name in definition.inputs), retired
 
 
 @pytest.mark.parametrize("lane_pane", [None, "pilot:existing-pane"])
@@ -99,6 +109,8 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         report_to="gobby#14972",
     )
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    if pipeline == "team-coordination":
+        inputs["metrics_monitor_log_monitor"] = "gobby#14973"
     renderer = StepRenderer(TemplateEngine())
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
@@ -132,6 +144,8 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert "every SRT denial" in args["prompt"]
         assert "current session ref" in args["prompt"]
         assert "wait_for_coordination" in args["prompt"]
+        if step.id == "metrics-monitor":
+            assert "Log Monitor ref: gobby#14973" in args["prompt"]
         if anchor is None:
             assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
             anchor = f"pilot:{step.id}"
