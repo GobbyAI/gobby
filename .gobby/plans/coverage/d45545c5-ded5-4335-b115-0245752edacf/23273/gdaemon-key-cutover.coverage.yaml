@@ -1,9 +1,9 @@
 header:
   plan_id: gdaemon-key-cutover
-  plan_hash: 9c208ed5e9837d23bb1de792bab33bb3547b05e6bba09cc2ae8c9606382fec24
+  plan_hash: 2a3ddb5e883d78c785de36674fbe57e8bf3d686473e5fc073139d91fd525fdce
   root_task_ref: '23273'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-10T22:19:02Z'
+  generated_at: '2026-10-10T22:29:51Z'
   task_tree_source: db
   task_tree_source_hash: a94658efc958a57b0af7f88283db97279c52d4b1eb886910eb1a95754ee8b87b
   evidence_summary: []
@@ -323,14 +323,14 @@ rows:
   detail: ''
 - section_id: '1.3'
   item_id: 1.3.14
-  plan_node_hash: 418299a41238397934c7eb2fc62161cce3d572eda37f4a03aaeeee4235e0ba29
-  status: invalid
+  plan_node_hash: 676e775cdfb9867dbe29d51f63698c83f2df64a2f3837858722200992821be8b
+  status: covered
   leaves:
   - leaf_task_ref: '#23519'
     validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
       and key ids, strips client identity headers, forwards the ids with the front-door
       secret, passes `gobby-a...'
-    matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_key_routes_use_verified_front_door_identity
+    matched_artifact_ref: tests/servers/routes/test_api_key_routes.py::test_key_routes_use_verified_front_door_identity
   deferral_target: null
   detail: ''
 - section_id: '1.3'
