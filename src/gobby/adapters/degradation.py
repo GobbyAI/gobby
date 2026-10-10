@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Session variable holding additionalContext parts dropped for space, as
 # [label, text] pairs, until a later delivery ships them.
 CARRIED_CONTEXT_VARIABLE = "_carried_context"
+CARRIED_LABEL_PREFIX = "carried:"
 
 
 class AdditionalContextPersistKwargs(TypedDict):
@@ -186,7 +187,12 @@ def truncate_context_for_adapter(
     """
     ship_limit = additional_context_limit_for(provider)
     carry_session = session_id if destination_channel == ContextChannel.ADDITIONAL_CONTEXT else None
-    carried = _carried_context(store, carry_session) if carry_session else []
+    # Carried parts ship under their own label so their protection never extends
+    # to a fresh part that shares the original label.
+    carried = [
+        (f"{CARRIED_LABEL_PREFIX}{label}", text)
+        for label, text in (_carried_context(store, carry_session) if carry_session else [])
+    ]
     parts = [*carried, *parts]
     aggregate_len = len("\n\n".join(part for _, part in parts if part))
     if aggregate_len > ship_limit:
@@ -258,7 +264,7 @@ def _stage_carried_context(
         cost = len(text) + len("\n\n")
         if total + cost > limit - INLINE_CONTEXT_HEADROOM:
             continue
-        keep.append([label, text])
+        keep.append([label.removeprefix(CARRIED_LABEL_PREFIX), text])
         total += cost
     if not keep and not carried:
         return

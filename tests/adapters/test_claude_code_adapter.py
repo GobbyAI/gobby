@@ -1599,3 +1599,31 @@ def test_parts_dropped_for_space_ship_first_on_the_next_delivery(
     assert shipped.startswith("o" * 4_000 + "\n\n")
     assert "be brief" in shipped
     assert variables.get_variables(session_id).get(CARRIED_CONTEXT_VARIABLE) is None
+
+
+def test_a_fresh_part_sharing_a_carried_label_drops_largest_first(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine = "21000000-0000-4000-8000-000000000003"
+    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
+    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
+    session_id = (
+        SessionManager(temp_db)
+        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
+        .id
+    )
+    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(
+        session_id, {CARRIED_CONTEXT_VARIABLE: [["rule:policy", "o" * 4_000]]}
+    )
+
+    fresh = HookResponse(decision="allow", metadata={"session_id": session_id})
+    fresh.add_context(("rule:policy", "n" * 5_000), ("rule:small", "s" * 1_000))
+    shipped = _deliver(adapter, temp_db, fresh)
+
+    assert shipped.startswith("o" * 4_000 + "\n\n")
+    assert "s" * 1_000 in shipped
+    assert "n" * 5_000 not in shipped
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [["rule:policy", "n" * 5_000]]
