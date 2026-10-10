@@ -62,7 +62,10 @@ class FakeTaskClient:
             rows = [
                 {"id": task["id"]}
                 for task in self.tasks.values()
-                if arguments["label"] in task["labels"]
+                if (
+                    arguments.get("label") in task["labels"]
+                    or set(arguments.get("labels", [])).intersection(task["labels"])
+                )
                 and task["project_id"] == arguments["project"]
             ]
             offset = arguments.get("offset", 0)

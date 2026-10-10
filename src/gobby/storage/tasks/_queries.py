@@ -142,6 +142,7 @@ def list_tasks(
     escalated: bool | None = None,
     task_type: str | None = None,
     label: str | None = None,
+    labels: list[str] | None = None,
     parent_task_id: str | None = None,
     title_like: str | None = None,
     stages: list[str] | None = None,
@@ -164,6 +165,7 @@ def list_tasks(
         escalated: Filter by escalated state
         task_type: Filter by task type
         label: Filter by label
+        labels: Filter by any exact label; an empty list matches no tasks
         parent_task_id: Filter by parent task
         title_like: Filter by title (partial match)
         limit: Maximum tasks to return
@@ -223,6 +225,9 @@ def list_tasks(
         label_clause, label_params = json_array_contains_condition(db, "tasks.labels", label)
         where += f" AND {label_clause}"
         params.extend(label_params)
+    if labels is not None:
+        where += " AND tasks.labels ?| %s::text[]"
+        params.append(labels)
     if parent_task_id:
         where += " AND parent_task_id = %s"
         params.append(parent_task_id)

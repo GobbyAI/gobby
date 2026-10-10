@@ -117,7 +117,7 @@ def test_unavailable_completion_is_distinct_from_target_failures(
     plan, index = landed_plan
     manager = MagicMock(spec=LocalTaskManager)
     manager.list_tasks.side_effect = [
-        [_task(closed=True)],
+        [_task(closed=True)] * 50,
         psycopg.OperationalError("lookup unavailable"),
     ]
     result = validate_plan_file(
@@ -399,15 +399,13 @@ def test_cli_rechecks_size_growth_with_completion_evidence(
     assert result["symbol_validation"]["checked_symbols"] == ["src/large.py::run"]
     assert plan.read_bytes() == before
     open_db.assert_called_once_with()
-    assert manager.list_tasks.call_count == 3
-    for item, call in enumerate(manager.list_tasks.call_args_list, 1):
-        assert call.kwargs == {
-            "project_id": PROJECT_ID,
-            "label": f"covers:landed-lint:1.1:1.1.{item}",
-            "limit": 50,
-            "offset": 0,
-            "sort_by": "created_at",
-        }
+    manager.list_tasks.assert_called_once_with(
+        project_id=PROJECT_ID,
+        labels=[f"covers:landed-lint:1.1:1.1.{item}" for item in (1, 2, 3)],
+        limit=50,
+        offset=0,
+        sort_by="created_at",
+    )
 
 
 def test_closed_repair_owner_preserves_symbol_scope_exemption(
@@ -438,8 +436,8 @@ def test_size_growth_requires_every_covering_leaf_closed(
     repair.labels = ["covers:landed-lint:1.1:1.1.2"]
     manager = MagicMock(spec=LocalTaskManager)
 
-    def covering_tasks(*, label: str, **kwargs: Any) -> list[Task]:
-        return [task for task in (original, repair) if label in (task.labels or [])]
+    def covering_tasks(*, labels: list[str], **kwargs: Any) -> list[Task]:
+        return [task for task in (original, repair) if set(labels).intersection(task.labels or [])]
 
     manager.list_tasks.side_effect = covering_tasks
     result = validate_plan_file(
@@ -506,8 +504,10 @@ def test_each_acceptance_item_requires_delivered_coverage(
     abandoned.closed_reason = "duplicate"
     manager = MagicMock(spec=LocalTaskManager)
 
-    def covering_tasks(*, label: str, **kwargs: Any) -> list[Task]:
-        return [task for task in (delivered, abandoned) if label in (task.labels or [])]
+    def covering_tasks(*, labels: list[str], **kwargs: Any) -> list[Task]:
+        return [
+            task for task in (delivered, abandoned) if set(labels).intersection(task.labels or [])
+        ]
 
     manager.list_tasks.side_effect = covering_tasks
     result = validate_plan_file(
@@ -571,7 +571,7 @@ def test_plan_validation_pages_through_schema_validating_daemon_client(
 
     class SchemaValidatingClient:
         def __init__(self) -> None:
-            self.pages: list[tuple[str, int]] = []
+            self.pages: list[tuple[list[str], int]] = []
 
         def call_mcp_tool(
             self, server_name: str, tool_name: str, arguments: dict[str, Any]
@@ -588,7 +588,7 @@ def test_plan_validation_pages_through_schema_validating_daemon_client(
             assert arguments["project"] == PROJECT_ID
             assert arguments["sort_by"] == "created_at"
             offset, limit = arguments["offset"], arguments["limit"]
-            self.pages.append((arguments["label"], offset))
+            self.pages.append((arguments["labels"], offset))
             page = tasks[offset : offset + limit]
             return {
                 "success": True,
@@ -605,6 +605,5 @@ def test_plan_validation_pages_through_schema_validating_daemon_client(
         require_symbol_validation=True,
     )
     assert result["valid"] is True, result
-    assert client.pages == [
-        (f"covers:landed-lint:1.1:1.1.{item}", offset) for item in (1, 2, 3) for offset in (0, 50)
-    ]
+    labels = [f"covers:landed-lint:1.1:1.1.{item}" for item in (1, 2, 3)]
+    assert client.pages == [(labels, 0), (labels, 50)]
