@@ -442,7 +442,7 @@ Targets:
 - `tests/runtime_grants/test_maintenance_principal.py::*` — scope-reason: `_recompute_capability_signature` and `verify_agent_api_token` take the derived key
 - `tests/runtime_grants/test_maintenance_launch.py::*` — scope-reason: the factory is built without a key and signs with the key read at `open()`; gains 1.2.7
 - `tests/servers/routes/test_agents_routes.py::*` — scope-reason: signs agent tokens with the derived key its `AuthService` reads
-- `tests/servers/routes/test_api_keys.py::*` — scope-reason: its managed-capability rejection case signs with the derived key
+- `tests/servers/routes/test_api_key_routes.py::*` — scope-reason: its managed-capability rejection case signs with the derived key
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: issues and verifies capabilities with the derived key
 - `tests/servers/routes/test_runtime_handshake.py::*` — scope-reason: the managed challenge case expects the derived key; gains 1.2.4
 - `tests/servers/test_mcp_programmatic_boundary.py::*` — scope-reason: signs agent tokens with the derived key its `AuthService` reads
@@ -553,7 +553,7 @@ call-site swaps.
 - No golden vector changes. Grants keep `grant_signing_secret`.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/utils/test_local_token.py tests/servers/test_auth_service.py tests/agents/test_agent_constants.py tests/agents/test_isolation.py tests/agents/test_spawn.py tests/agents/test_spawn_executor.py tests/ai/test_managed_tool_chat_lease.py tests/mcp_proxy/test_workspaces_registry.py tests/runner_init/test_grant_issuance.py tests/runtime_grants/ tests/servers/routes/test_agents_routes.py tests/servers/routes/test_api_keys.py tests/servers/routes/test_runtime_config.py tests/servers/routes/test_runtime_handshake.py tests/servers/test_mcp_programmatic_boundary.py tests/storage/test_managed_credentials.py tests/agents/test_cargo_target.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/utils/test_local_token.py tests/servers/test_auth_service.py tests/agents/test_agent_constants.py tests/agents/test_isolation.py tests/agents/test_spawn.py tests/agents/test_spawn_executor.py tests/ai/test_managed_tool_chat_lease.py tests/mcp_proxy/test_workspaces_registry.py tests/runner_init/test_grant_issuance.py tests/runtime_grants/ tests/servers/routes/test_agents_routes.py tests/servers/routes/test_api_key_routes.py tests/servers/routes/test_runtime_config.py tests/servers/routes/test_runtime_handshake.py tests/servers/test_mcp_programmatic_boundary.py tests/storage/test_managed_credentials.py tests/agents/test_cargo_target.py -q`,
 then `uv run ruff check` and `uv run mypy` on the touched modules.
 `tests/e2e/test_stateless_ambient_session.py` runs in V2.
 
@@ -671,7 +671,7 @@ Targets:
 - `tests/servers/routes/test_runtime_handshake.py::*` — scope-reason: the interactive challenge is refused and the handshake binds the forwarded machine
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: authenticates with front-door identity
 - `tests/servers/routes/test_agents_routes.py::*` — scope-reason: same
-- `tests/servers/routes/test_api_keys.py::*` — scope-reason: key routes resolve the principal from front-door identity
+- `tests/servers/routes/test_api_key_routes.py::*` — scope-reason: key routes resolve the principal from front-door identity
 - `tests/servers/routes/test_configuration_routes.py::*` — scope-reason: drops `verify_bearer` use
 - `tests/servers/routes/test_configuration_effective_routes.py::*` — scope-reason: uses front-door identity and another restricted key
 - `tests/servers/routes/test_config_values_api.py::*` — scope-reason: its restricted-value case uses another registered restricted key
@@ -972,7 +972,7 @@ V2.
 - 1.3.11 - After the bootstrap key changes, the next frames hello with the new key is accepted and one with the old key is refused with `invalid_token`, an attached connection keeps streaming, and an empty or unreadable bootstrap key is refused. test: `crates/gterminal/tests/frame_protocol.rs::rotated_key_applies_to_next_hello`.
 - 1.3.12 - With gdaemon's key resolution failing, a loopback request carrying only the break-glass header passes the front door unchanged and Python admits it with no front-door identity. test: `crates/gdaemon/tests/front_door.rs::break_glass_header_passes_through_when_resolver_fails`.
 - 1.3.13 - A resolver database error answers 503 `key_resolver_unavailable`, and gdaemon refuses to start without `GOBBY_FRONT_DOOR_SECRET`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_secret_refuses_start`.
-- 1.3.14 - The API-key routes take the principal from verified front-door identity, ignore unverified identity headers, and list or revoke only the caller's keys. test: `tests/servers/routes/test_api_keys.py::test_key_routes_use_verified_front_door_identity`.
+- 1.3.14 - The API-key routes take the principal from verified front-door identity, ignore unverified identity headers, and list or revoke only the caller's keys. test: `tests/servers/routes/test_api_key_routes.py::test_key_routes_use_verified_front_door_identity`.
 - 1.3.15 - `src/gobby/terminals/native_runtime.py` and `crates/gcore/src/grant/acquisition.rs` are below 850 production lines after their moves. file: `src/gobby/terminals/native_frames.py`.
 - 1.3.16 - `open_storage_and_config` provisions the API key and neither writes `local_cli_token` nor stores `auth.api_token_hash`. test: `tests/test_runner_init.py::test_startup_provisions_no_operator_token`.
 
@@ -1424,6 +1424,13 @@ deferral:
   re-derivation. The Adversary confirmed 1.6's routing and dependencies are
   unchanged, and its acceptance now carries the reviewed inverse, head schema
   `<H>`, the conflict review, and the Decision 9 breach evidence.
+- 2026-10-10: Renewed consensus between the Plan Writer gobby#15987 and the
+  Adversary gobby#16087, with this entry, on the Orchestrator gobby#15977's
+  ruling. The coverage regeneration at `13a53f6bc8` marked 1.3.14 invalid:
+  #23779 renamed `tests/servers/routes/test_api_keys.py` to
+  `tests/servers/routes/test_api_key_routes.py` in `f2ec9007f7`. The 1.2 and
+  1.3 Targets, the 1.2 verification command, and item 1.3.14 now cite the new
+  path. The stale M1 is withdrawn in this commit for a full re-derivation.
 
 ## V2: Verification
 `kind: verification`
@@ -1439,265 +1446,3 @@ After every leaf has passed:
    `cargo nextest run -p gobby-core grant` (heavy work) unchanged (Decision 1).
 5. After D1: a CLI call authenticates with the bootstrap key, and a spawned
    agent's capability survives a daemon restart.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Loopback break-glass credential
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: `ensure_break_glass_credential` creates a mode-0600
-    file when it is absent and leaves an existing file byte-identical, and `break_glass_matches`
-    refuses a file with any group or other mode bit, a file owned by another uid,
-    and a wrong value. test: `tests/utils/test_break_glass.py::test_credential_is_owner_only_and_never_rewritten`.
-
-    1.1.2: With the database getter raising, a loopback request carrying the break-glass
-    header is admitted to a non-grant route, while a non-loopback peer with the header
-    and a loopback peer with a wrong or missing header get 401. The database getter
-    is never called on the admitted path. test: `tests/servers/test_break_glass.py::test_break_glass_admits_only_loopback_holder_without_database`.
-
-    1.1.3: On a grant route, the break-glass header yields the operator bearer principal
-    and the request is still refused without a grant. test: `tests/servers/test_break_glass.py::test_break_glass_still_requires_grant_on_grant_routes`.
-
-    1.1.4: `run_gobby` creates the credential before it starts the front door, in
-    the startup bootstrap''s directory even when `--config` lies outside a different
-    `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits
-    that file''s value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.
-
-    1.1.5: Managed sandboxes may neither read nor write the break-glass file or the
-    startup bootstrap, including when the daemon bootstrap is bound to a directory
-    outside a different `GOBBY_HOME` and inside an allowed root. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
-
-    1.1.6: The admin guide documents break-glass access. behavior: "Break-glass access"
-    in `docs/guides/admin-operations.md`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.1:1.1.1
-  - covers:gdaemon-key-cutover:1.1:1.1.2
-  - covers:gdaemon-key-cutover:1.1:1.1.3
-  - covers:gdaemon-key-cutover:1.1:1.1.4
-  - covers:gdaemon-key-cutover:1.1:1.1.5
-  - covers:gdaemon-key-cutover:1.1:1.1.6
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Managed capability tokens sign with a key derived from the bootstrap API
-    key
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: A capability issued with `derive_managed_signing_key(api_key)`
-    verifies with that key and fails with the raw API key, with a key derived from
-    another API key, and when signed with the API key itself; the derived key equals
-    `HMAC-SHA256(api_key, b"gobby-managed-token-v1")`. test: `tests/utils/test_local_token.py::test_managed_tokens_sign_with_derived_key`.
-
-    1.2.2: A capability issued before a restart stays valid after it: a new `AuthService`
-    over the same bootstrap, bound to a lease with a different `grant_signing_secret`,
-    still classifies it as live managed claims. test: `tests/servers/test_auth_service.py::test_managed_token_survives_restart_and_new_lease`.
-
-    1.2.3: After the bootstrap `api_key` is replaced by rename, the next request with
-    a capability signed under the old key is rejected and one signed under the new
-    key is accepted, with no refresh interval in between. test: `tests/servers/test_auth_service.py::test_rotated_bootstrap_key_invalidates_managed_tokens`.
-
-    1.2.4: The managed challenge proof uses the derived key and the interactive proof
-    is unchanged. test: `tests/servers/routes/test_runtime_handshake.py::test_managed_challenge_uses_derived_signing_key`.
-
-    1.2.5: With no bootstrap `api_key`, issuance fails closed with `signing_key_unavailable`
-    and every presented capability is rejected. test: `tests/utils/test_local_token.py::test_missing_bootstrap_key_refuses_issuance_and_verification`.
-
-    1.2.6: With the daemon bootstrap bound outside a different `GOBBY_HOME` whose
-    own bootstrap carries another key, a capability from `read_managed_signing_key()`
-    verifies in an `AuthService` built with defaults, and one signed with the `GOBBY_HOME`
-    key is rejected. test: `tests/servers/test_auth_service.py::test_managed_signing_uses_the_daemon_bootstrap`.
-
-    1.2.7: A maintenance launch opened after the bootstrap `api_key` is replaced by
-    rename, with the same factory instance and no restart, carries a capability that
-    an `AuthService` over that bootstrap accepts. With no bootstrap `api_key`, `open()`
-    raises `signing_key_unavailable` and issues no grant. test: `tests/runtime_grants/test_maintenance_launch.py::test_launch_signs_with_current_bootstrap_key`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.2:1.2.1
-  - covers:gdaemon-key-cutover:1.2:1.2.2
-  - covers:gdaemon-key-cutover:1.2:1.2.3
-  - covers:gdaemon-key-cutover:1.2:1.2.4
-  - covers:gdaemon-key-cutover:1.2:1.2.5
-  - covers:gdaemon-key-cutover:1.2:1.2.6
-  - covers:gdaemon-key-cutover:1.2:1.2.7
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: 'Shared-token cutover: gdaemon validates keys and Python trusts only the
-    front door'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  validation_criteria: '1.3.1: gdaemon resolves a valid key to user, machine, and
-    key ids, strips client identity headers, forwards the ids with the front-door
-    secret, passes `gobby-agent-v1.` bearers through, and rejects revoked keys with
-    401 and malformed or unknown-kind bearers with 401 without a database hit, on
-    HTTP and on WebSocket upgrades. test: `crates/gdaemon/tests/front_door.rs::valid_key_forwards_identity_headers`.
-
-    1.3.2: Python accepts the operator principal only with the matching front-door
-    secret on HTTP and WebSocket, and rejects the retired token, the `X-Gobby-Local-Token`
-    alias, and identity headers with a wrong or missing secret. test: `tests/servers/test_auth_service.py::test_front_door_identity_requires_secret`.
-
-    1.3.3: gdaemon answers the interactive challenge locally from a per-request bootstrap
-    read, so a rewritten bootstrap key applies to the next challenge, and forwards
-    the managed challenge to Python. It keeps the Python contract: `credential_before_proof`
-    for a request carrying `Authorization`, padded and unpadded base64url nonces decoded
-    before the HMAC, an overlong or undecodable nonce refused, `caller.kind` taking
-    precedence over `kind`, and an unknown kind refused. test: `crates/gdaemon/tests/front_door.rs::interactive_challenge_answered_locally`.
-
-    1.3.4: A node user''s interactive grant validates at the hub against the forwarded
-    machine. test: `tests/servers/test_grant_auth.py::test_interactive_grant_matches_forwarded_machine`.
-
-    1.3.5: No reference to `local_cli_token`, `LOCAL_CLI_TOKEN`, `X-Gobby-Local-Token`,
-    or `auth.api_token_hash` remains under `src/` or `crates/` or in the docs this
-    leaf targets, except the `_REMOVED_STORED_KEYS` entry and `crates/CHANGELOG.md`
-    history (literal sweep recorded in the leaf). behavior: "API key" in `docs/contracts/secrets.md`.
-
-    1.3.6: The manifest and every case carry `schema_version` 2, the auth cases are
-    re-recorded, the forged-identity case forges only `X-Gobby-Project-Id`, the two
-    `down` cases keep `backend: down`, and every Python-origin `up` case replays equal
-    in Python. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
-
-    1.3.7: The Rust harness loads the version-2 corpus and replays every case, including
-    the native `runtime_challenge` case, in its declared backend state. test: `crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state`.
-
-    1.3.8: `src/gobby/hooks/inbox.py` is below 850 lines after the move, and the moved
-    loop still drains and prunes on its own cadence. file: `src/gobby/hooks/inbox_maintenance.py`.
-
-    1.3.9: The Rust key-format helper matches 4.2''s shared vectors. test: `crates/gcore/src/api_key_format.rs::matches_shared_vectors`.
-
-    1.3.10: Startup on an install that still stores `auth.api_token_hash` deletes
-    that row before fail-closed resolution, and a different unknown stored key still
-    refuses. test: `tests/config/test_removed_config_fields.py::test_retired_auth_token_hash_row_is_deleted`.
-
-    1.3.11: After the bootstrap key changes, the next frames hello with the new key
-    is accepted and one with the old key is refused with `invalid_token`, an attached
-    connection keeps streaming, and an empty or unreadable bootstrap key is refused.
-    test: `crates/gterminal/tests/frame_protocol.rs::rotated_key_applies_to_next_hello`.
-
-    1.3.12: With gdaemon''s key resolution failing, a loopback request carrying only
-    the break-glass header passes the front door unchanged and Python admits it with
-    no front-door identity. test: `crates/gdaemon/tests/front_door.rs::break_glass_header_passes_through_when_resolver_fails`.
-
-    1.3.13: A resolver database error answers 503 `key_resolver_unavailable`, and
-    gdaemon refuses to start without `GOBBY_FRONT_DOOR_SECRET`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_secret_refuses_start`.
-
-    1.3.14: The API-key routes take the principal from verified front-door identity,
-    ignore unverified identity headers, and list or revoke only the caller''s keys.
-    test: `tests/servers/routes/test_api_keys.py::test_key_routes_use_verified_front_door_identity`.
-
-    1.3.15: `src/gobby/terminals/native_runtime.py` and `crates/gcore/src/grant/acquisition.rs`
-    are below 850 production lines after their moves. file: `src/gobby/terminals/native_frames.py`.
-
-    1.3.16: `open_storage_and_config` provisions the API key and neither writes `local_cli_token`
-    nor stores `auth.api_token_hash`. test: `tests/test_runner_init.py::test_startup_provisions_no_operator_token`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.3:1.3.1
-  - covers:gdaemon-key-cutover:1.3:1.3.2
-  - covers:gdaemon-key-cutover:1.3:1.3.3
-  - covers:gdaemon-key-cutover:1.3:1.3.4
-  - covers:gdaemon-key-cutover:1.3:1.3.5
-  - covers:gdaemon-key-cutover:1.3:1.3.6
-  - covers:gdaemon-key-cutover:1.3:1.3.7
-  - covers:gdaemon-key-cutover:1.3:1.3.8
-  - covers:gdaemon-key-cutover:1.3:1.3.9
-  - covers:gdaemon-key-cutover:1.3:1.3.10
-  - covers:gdaemon-key-cutover:1.3:1.3.11
-  - covers:gdaemon-key-cutover:1.3:1.3.12
-  - covers:gdaemon-key-cutover:1.3:1.3.13
-  - covers:gdaemon-key-cutover:1.3:1.3.14
-  - covers:gdaemon-key-cutover:1.3:1.3.15
-  - covers:gdaemon-key-cutover:1.3:1.3.16
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: '`gobby auth key` rotates, lists, revokes, and mints keys'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  validation_criteria: '1.4.1: `--rotate` mints with the old key, publishes, verifies
-    the new key, and only then revokes the old one. When verification fails, only
-    the key fields are restored, a field another writer changed meanwhile survives,
-    the new key is revoked, and the old key is never revoked. When another writer
-    replaced the key during the rotation, `--rotate` leaves that writer''s key and
-    the bootstrap untouched. test: `tests/cli/test_auth_login.py::test_rotate_verifies_before_revoke`.
-
-    1.4.2: `list` and `revoke` send the bootstrap key as the bearer, show only the
-    caller''s keys, report a foreign id as not found, and refuse to revoke the bootstrap''s
-    own key. test: `tests/cli/test_auth_login.py::test_key_list_and_revoke_send_the_bootstrap_key`.
-
-    1.4.3: `--mint LABEL` prints the new key once and leaves the bootstrap byte-identical.
-    test: `tests/cli/test_auth_login.py::test_key_mint_prints_once_and_writes_nothing`.
-
-    1.4.4: The rotation and mint options are mutually exclusive with `--show`, and
-    `--show` still prints only the hint and id. test: `tests/cli/test_auth_login.py::test_key_show_prints_hint_only`.
-
-    1.4.5: The admin reference audit maps `gobby auth key`, `gobby auth key list`,
-    and `gobby auth key revoke` to `authentication.md` with resolvable implementation
-    symbols, and maps no `gobby auth token`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.4:1.4.1
-  - covers:gdaemon-key-cutover:1.4:1.4.2
-  - covers:gdaemon-key-cutover:1.4:1.4.3
-  - covers:gdaemon-key-cutover:1.4:1.4.4
-  - covers:gdaemon-key-cutover:1.4:1.4.5
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: Guides and examples describe the API key
-  category: docs
-  task_type: chore
-  depends_on:
-  - '1.3'
-  - '1.4'
-  validation_criteria: '1.5.1: `gcode --allow-stale grep ''local_cli_token|LOCAL_CLI_TOKEN|X-Gobby-Local-Token|api_token_hash|gobby
-    auth token|local_token_file_present'' docs/ -l -m1000`, run after 1.3 and recorded
-    in the leaf, lists only paths under the excluded dated paths. behavior: "gobby
-    auth login" in `docs/guides/system-requirements.md`.
-
-    1.5.2: The admin guide carries the seven-step flag-day gterm activation procedure.
-    behavior: "Flag-day gterm activation" in `docs/guides/admin-operations.md`.
-
-    1.5.3: The observability example authenticates Prometheus with a dedicated minted
-    key in an owner-only file. behavior: "gobby auth key --mint" in `docs/examples/observability/README.md`.
-
-    1.5.4: The admin guide''s rotation procedure uses the key command and states the
-    capability-token consequence. behavior: "gobby auth key --rotate" in `docs/guides/admin-operations.md`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.5:1.5.1
-  - covers:gdaemon-key-cutover:1.5:1.5.2
-  - covers:gdaemon-key-cutover:1.5:1.5.3
-  - covers:gdaemon-key-cutover:1.5:1.5.4
-  tdd: false
-  source_section: '1.5'
-  assigned_agent: tech-writer
-- title: Rollback rehearsal keeps the operator a way in
-  category: test
-  task_type: chore
-  depends_on:
-  - '1.3'
-  - '1.4'
-  - '1.5'
-  validation_criteria: '1.6.1: After the cutover code is replaced by its reviewed,
-    hand-resolved inverse at head on the same isolated home and schema the tip ran
-    on, a daemon whose Python imports resolve under the reverted clone''s `src` and
-    whose running gdaemon is the reverted build promoted to the isolated bin dir starts
-    at the tip''s schema `<H>`, which both phases'' stamps report. It admits a loopback
-    break-glass `GET /api/admin/status` with the tip''s byte-identical break-glass
-    file, and it refuses the same request without the header with 401. The evidence
-    records the source SHAs, each conflict resolution with its non-writer review,
-    the Decision 9 breach finding for migration 464, promoted hashes, status codes,
-    and cleanup. behavior: "Break-glass admitted after revert" in `docs/evidence/gdaemon-key-cutover-rollback-rehearsal.md`.'
-  labels:
-  - covers:gdaemon-key-cutover:1.6:1.6.1
-  tdd: false
-  source_section: '1.6'
-  assigned_agent: backend-developer
-```
