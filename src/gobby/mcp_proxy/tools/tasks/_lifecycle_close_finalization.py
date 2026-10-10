@@ -516,6 +516,8 @@ def _cleanup_closed_claim(
                 evaluation.task_id,
                 "closed",
             )
+        except ValueError:
+            raise
         except Exception as exc:
             logger.debug("Best-effort session close link failed: %s", exc)
     if not evaluation.edit_session_id or not evaluation.task_id:

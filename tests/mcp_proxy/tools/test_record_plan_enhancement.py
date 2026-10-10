@@ -1,11 +1,15 @@
 """Tests for the record_plan_enhancement MCP tool wrapper."""
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import Task
 from gobby.storage.tasks._stage_states import StageState
+from gobby.storage.tasks._stage_types import StageState5
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -13,7 +17,7 @@ pytestmark = pytest.mark.unit
 _TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
 
 
-def _stage_state(state: str = "needs_review") -> StageState:
+def _stage_state(state: StageState5 = "needs_review") -> StageState:
     return StageState(
         task_id=_TASK_ID,
         stage_name="planning",
@@ -32,19 +36,19 @@ def _stage_state(state: str = "needs_review") -> StageState:
         max_review_rounds=None,
         artifact_refs=None,
         notes=None,
-        updated_at="2024-01-01T00:00:00Z",
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
     )
 
 
-def _task(*, state: str = "needs_review", claimed_by_session_id: str | None = None) -> Task:
+def _task(*, state: StageState5 = "needs_review", claimed_by_session_id: str | None = None) -> Task:
     return Task(
         id=_TASK_ID,
         project_id="11111111-1111-4111-8111-111111110001",
         title="Planning Task",
         priority=2,
         task_type="task",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         description="Plan body",
         seq_num=42,
         claimed_by_session_id=claimed_by_session_id,
@@ -53,7 +57,7 @@ def _task(*, state: str = "needs_review", claimed_by_session_id: str | None = No
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     manager = MagicMock()
     manager.db = MagicMock()
     manager.stage_states = MagicMock()
@@ -62,31 +66,38 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def stage_ops_registry(mock_task_manager):
+def stage_ops_registry(
+    mock_task_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[InternalToolRegistry, MagicMock]:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
     ctx = RegistryContext(
         task_manager=mock_task_manager,
     )
-    ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
+    monkeypatch.setattr(ctx, "resolve_session_id", MagicMock(return_value="resolved-session-abc"))
     ctx.session_manager = MagicMock()
     ctx.session_manager.get.return_value = None
-    ctx.session_task_manager = MagicMock()
+    session_links = MagicMock()
+    ctx.session_task_manager = session_links
     ctx.session_var_manager = MagicMock()
-    ctx.get_project_repo_path = MagicMock(return_value=None)
-    return create_stage_ops_registry(ctx), ctx
+    monkeypatch.setattr(ctx, "get_project_repo_path", MagicMock(return_value=None))
+    return create_stage_ops_registry(ctx), session_links
 
 
 @pytest.fixture(autouse=True)
-def _session_context():
+def _session_context() -> Iterator[None]:
     with session_context_for_test("session-abc"):
         yield
 
 
 @pytest.mark.asyncio
-async def test_record_with_suggestions_routes_to_ready(stage_ops_registry, mock_task_manager):
-    registry, ctx = stage_ops_registry
+async def test_record_with_suggestions_routes_to_ready(
+    stage_ops_registry: tuple[InternalToolRegistry, MagicMock],
+    mock_task_manager: MagicMock,
+) -> None:
+    registry, session_links = stage_ops_registry
     sample = _task(claimed_by_session_id="session-abc")
     mock_task_manager.get_task.side_effect = (
         lambda task_id: sample if task_id == sample.id else None
@@ -125,15 +136,18 @@ async def test_record_with_suggestions_routes_to_ready(stage_ops_registry, mock_
         by_session_id="resolved-session-abc",
     )
     # Suggestions route the plan back to the planner (ready).
-    ctx.session_task_manager.link_task.assert_called_once_with(
-        "resolved-session-abc", sample.id, "ready"
+    session_links.link_task.assert_called_once_with(
+        "resolved-session-abc", sample.id, "plan_enhanced"
     )
     assert notify.call_args.args[2] == "ready"
 
 
 @pytest.mark.asyncio
-async def test_record_converged_leaves_needs_review(stage_ops_registry, mock_task_manager):
-    registry, ctx = stage_ops_registry
+async def test_record_converged_leaves_needs_review(
+    stage_ops_registry: tuple[InternalToolRegistry, MagicMock],
+    mock_task_manager: MagicMock,
+) -> None:
+    registry, session_links = stage_ops_registry
     sample = _task(claimed_by_session_id="session-abc")
     mock_task_manager.get_task.side_effect = (
         lambda task_id: sample if task_id == sample.id else None
@@ -172,7 +186,7 @@ async def test_record_converged_leaves_needs_review(stage_ops_registry, mock_tas
         by_session_id="resolved-session-abc",
     )
     # A converged round leaves the planning stage in needs_review for the adversary.
-    ctx.session_task_manager.link_task.assert_called_once_with(
-        "resolved-session-abc", sample.id, "needs_review"
+    session_links.link_task.assert_called_once_with(
+        "resolved-session-abc", sample.id, "plan_enhanced"
     )
     assert notify.call_args.args[2] == "needs_review"

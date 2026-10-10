@@ -322,6 +322,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         )
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "needs_review")
+        except ValueError:
+            raise
         except Exception:
             pass  # nosec B110 # best-effort linking
         schedule_dispatcher_tick(
@@ -480,6 +482,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         )
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "review_approved")
+        except ValueError:
+            raise
         except Exception:
             pass  # nosec B110 # best-effort linking
 
@@ -629,6 +633,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         )
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "review_rejected")
+        except ValueError:
+            raise
         except Exception:
             pass  # nosec B110 # best-effort linking
 
@@ -747,7 +753,9 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
         try:
-            ctx.session_task_manager.link_task(resolved_session_id, resolved_id, new_state)
+            ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "plan_enhanced")
+        except ValueError:
+            raise
         except Exception:
             pass  # nosec B110 # best-effort linking
         schedule_dispatcher_tick(

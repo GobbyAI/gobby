@@ -94,15 +94,23 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
                         resolved_id,
                         "reopened",
                     )
+                except ValueError:
+                    raise
                 except Exception as e:
                     logger.debug("Best-effort session link update on reopen failed: %s", e)
 
             # Attribute the reopen to the calling session (best-effort)
             try:
                 resolved_session_id = ctx.resolve_session_id(session_id)
-                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "reopened")
             except Exception as e:
-                logger.debug("Best-effort reopen attribution failed: %s", e)
+                logger.debug("Best-effort reopen session resolution failed: %s", e)
+            else:
+                try:
+                    ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "reopened")
+                except ValueError:
+                    raise
+                except Exception as e:
+                    logger.debug("Best-effort reopen attribution failed: %s", e)
 
             return {}
         except ValueError as e:
@@ -334,6 +342,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 pass
             try:
                 ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "de_escalated")
+            except ValueError:
+                raise
             except Exception as e:
                 logger.debug("Best-effort de-escalation linking failed: %s", e)
 
