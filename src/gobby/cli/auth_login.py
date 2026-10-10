@@ -266,7 +266,7 @@ def _verified(response: httpx.Response, machine_id: str, prior_key_id: object) -
         return _Minted(key=key, key_id=key_id)
     reported = f": key id {key_id} (unverified)" if _is_uuid(key_id) else ""
     raise click.ClickException(
-        "the hub's enrollment response failed verification, so nothing was saved and "
+        "the hub's API-key response failed verification, so nothing was saved and "
         f"nothing was revoked. An unverified key may have been minted{reported}. "
         f"Review it with {KEY_CLEANUP}."
     )
@@ -431,7 +431,9 @@ def _key_request(
         detail = (
             "not found among your keys"
             if response.status_code == 404
-            else (f"key management request refused (HTTP {response.status_code})")
+            and method == "DELETE"
+            and path.startswith("/api/auth/keys/")
+            else (f"{method} {path} refused (HTTP {response.status_code})")
         )
         raise click.ClickException(detail)
     return response
@@ -503,7 +505,14 @@ def _rotate_key(client: httpx.Client, data: dict[str, object]) -> None:
             else "the unpublished new key was revoked"
         )
         raise click.ClickException(f"rotation publication failed: {error}; {detail}.")
-    if outcome is not _Publication.PUBLISHED:
+    if outcome is _Publication.UNRESOLVED:
+        raise click.ClickException(
+            f"rotation publication failed and could not be settled: {error}. "
+            f"The bootstrap key state is unknown; check {path} with `gobby auth key --show`. "
+            f"New key id {minted.key_id} and the old key were left live. "
+            f"Revoke the new key with {KEY_CLEANUP} only if bootstrap.yaml does not name it."
+        )
+    if outcome is _Publication.COMMITTED:
         raise click.ClickException(
             f"rotation publication could not be verified durable: {error}. "
             f"New key id {minted.key_id} and the old key were left live. "
