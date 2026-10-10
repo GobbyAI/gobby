@@ -212,6 +212,7 @@ catalogue is pinned by
 | `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
 | `archivist` | Maintains the operational digest |
 | `log-monitor` | Monitors health and admits heavy work and close reviews |
+| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to the Orchestrator and Log Monitor. `team-coordination` accepts the live Log Monitor ref through `metrics_monitor_log_monitor` |
 | `inbox-manager` | Consolidates lane reports for the Orchestrator |
 
 These templates are global installed definitions tagged `gobby` in storage;
@@ -655,4 +656,4 @@ provides the concrete worktree or clone context.
 - [Pipelines](./pipelines.md) for deterministic automation
 - [Orchestration](./orchestration.md) for stage dispatch and review flow
 
-_Last verified: 2026-10-08_
+_Last verified: 2026-10-10_
