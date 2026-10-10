@@ -8,7 +8,11 @@ from typing import Any
 
 import psycopg
 
-from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.sessions.handoff_identity import (
+    terminal_contexts_match,
+    terminal_process_contexts_match,
+)
+from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.utils import spawn
 
@@ -149,6 +153,23 @@ def retry_native_terminal_bind(
         handler.logger.info("native terminal %s not bound to session %s", terminal_id, session_id)
 
 
+def _terminal_context_reused(
+    current: Mapping[str, Any], stored: Mapping[str, Any] | str | None
+) -> bool:
+    """Recognize a reused pane or tty, including after its CLI process restarts."""
+    previous = parse_terminal_context_value(stored)
+    if not previous:
+        return False
+    pane = current.get("tmux_pane")
+    if pane and pane == previous.get("tmux_pane"):
+        # Retain socket/server scope checks without matching a shared session name.
+        return terminal_contexts_match(current, previous)
+    tty = current.get("tty")
+    if tty and tty == previous.get("tty"):
+        return True
+    return terminal_process_contexts_match(current, previous)
+
+
 def expire_stale_terminal_sessions_for_context(
     handler: Any,
     *,
@@ -204,7 +225,7 @@ def expire_stale_terminal_sessions_for_context(
             continue
         stored_context = _row_value(row, "terminal_context")
         try:
-            if not terminal_contexts_match(terminal_context, stored_context):
+            if not _terminal_context_reused(terminal_context, stored_context):
                 continue
         except Exception as e:  # Stale context scans are an owned fail-open boundary.
             handler.logger.warning(

@@ -4076,3 +4076,248 @@ async def test_send_attachment_telegram_ok_false_is_failed_not_sent(tmp_path: Pa
     assert message.status == "failed"
     assert message.platform_message_id is None
     assert message.error == "Telegram sendDocument failed: Bad Request: chat not found"
+
+
+def _start_context_session(
+    sessions: SessionManager,
+    project_id: str,
+    machine_id: str,
+    external_id: str,
+    context: dict[str, Any],
+    *,
+    source: str = "startup",
+) -> str:
+    """Exercise SessionStart with real storage and isolated runtime boundaries."""
+    from gobby.hooks.event_handlers import EventHandlers
+    from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+    from gobby.hooks.session_types import HookSessionManager
+
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, sessions),
+        get_machine_id=lambda: machine_id,
+        resolve_project_id=lambda _project, _cwd: project_id,
+    )
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent"),
+        patch.object(handlers, "_compose_session_response", return_value=HookResponse()),
+        patch(
+            "gobby.hooks.terminal_context.psutil.Process",
+            return_value=MagicMock(
+                **{
+                    "name.return_value": "claude",
+                    "create_time.return_value": context["parent_create_time"],
+                }
+            ),
+        ),
+        patch(
+            "gobby.hooks.event_handlers._session_start.profile.read_user_profile_content",
+            return_value="",
+        ),
+    ):
+        response = handlers.handle_session_start(
+            HookEvent(
+                event_type=HookEventType.SESSION_START,
+                session_id=external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=_FIXED_TS,
+                machine_id=machine_id,
+                data={"source": source, "terminal_context": context},
+            )
+        )
+    assert response.decision == "allow"
+    registered = sessions.find_by_external_id(external_id, project_id, "claude")
+    assert registered is not None
+    return registered.id
+
+
+@pytest.mark.parametrize("status", ["active", "paused"])
+@pytest.mark.parametrize("reuse", ["sibling", "same-pane", "restarted-pane", "restarted-tty"])
+async def test_context_reuse_session_start_preserves_sibling_dm(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    status: str,
+    reuse: str,
+) -> None:
+    from gobby.communications.telegram_fallback import fallback_telegram_targets
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    context = {
+        "tmux_pane": "%1",
+        "tmux_session": "fleet",
+        "tmux_socket_path": "/tmp/test-context-reuse/socket",
+        "parent_pid": 4242,
+        "parent_create_time": 1234.5,
+    }
+    predecessor = sessions.register(
+        external_id="context-reuse-predecessor",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=context,
+    )
+    sessions.update_status(predecessor.id, status)
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", predecessor.id)
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+
+    next_context = dict(context)
+    same_terminal = reuse != "sibling"
+    if reuse != "same-pane":
+        next_context.update(parent_pid=4343, parent_create_time=2345.6)
+    if reuse == "sibling":
+        next_context["tmux_pane"] = "%2"
+    elif reuse == "restarted-tty":
+        context = {"tty": "/dev/test-reused", "parent_pid": 4242, "parent_create_time": 1234.5}
+        sessions.update(predecessor.id, terminal_context=context)
+        next_context = {"tty": "/dev/test-reused", "parent_pid": 4343, "parent_create_time": 2345.6}
+    # Bootstrap recovery materializes startup rows before SessionStart activation.
+    sessions.register(
+        external_id="context-reuse-newcomer",
+        machine_id=predecessor.machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=next_context,
+    )
+    _start_context_session(
+        sessions,
+        sample_project["id"],
+        predecessor.machine_id,
+        "context-reuse-newcomer",
+        next_context,
+    )
+    persisted = sessions.get(predecessor.id)
+    assert persisted is not None
+    assert persisted.status == ("expired" if same_terminal else status)
+    ended = [t for t in transitions if t.session_id == predecessor.id and t.status == "expired"]
+    assert bool(ended) is same_terminal
+    with patch(
+        "gobby.communications.telegram_fallback.fallback_telegram_targets",
+        wraps=fallback_telegram_targets,
+    ) as fallback:
+        for transition in transitions:
+            await manager.handle_session_status_transition(transition)
+        if same_terminal:
+            fallback.assert_awaited_once()
+        else:
+            fallback.assert_not_awaited()
+            assert manager.attached_session(channel.id, "dm:42") == predecessor.id
+            stored = store.get_channel(channel.id)
+            assert stored is not None
+            assert stored.config_json["telegram_agent_targets"] == {"dm:42": predecessor.id}
+            adapter.send_message.assert_not_awaited()
+
+
+async def test_resumed_older_session_native_clear_transfers_its_dm(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    context = {"tty": "/dev/test-resume", "parent_pid": 4242, "parent_create_time": 1234.5}
+    older = sessions.register(
+        external_id="resumed-older",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=context,
+    )
+    newer = sessions.register(
+        external_id="pre-resume-newer",
+        machine_id=older.machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=context,
+    )
+    assert older.created_at < newer.created_at
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    manager._adapters[channel.name] = make_adapter(channel_type="telegram")
+    manager.attach_conversation(channel.name, "dm:42", older.id)
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+
+    resumed_id = _start_context_session(
+        sessions,
+        sample_project["id"],
+        older.machine_id,
+        older.external_id,
+        context,
+        source="resume",
+    )
+    assert resumed_id == older.id
+    resumed = sessions.get(older.id)
+    prior = sessions.get(newer.id)
+    assert resumed is not None and prior is not None
+    assert resumed.created_at == older.created_at
+    assert resumed.last_activity is not None and prior.last_activity is not None
+    assert resumed.last_activity > prior.last_activity
+    for transition in transitions:
+        await manager.handle_session_status_transition(transition)
+    transitions.clear()
+    assert manager.attached_session(channel.id, "dm:42") == older.id
+
+    successor_id = _start_context_session(
+        sessions,
+        sample_project["id"],
+        older.machine_id,
+        "resumed-clear-successor",
+        context,
+        source="clear",
+    )
+    successor = sessions.get(successor_id)
+    assert successor is not None
+    assert successor.parent_session_id == older.id
+    for transition in transitions:
+        await manager.handle_session_status_transition(transition)
+    assert manager.attached_session(channel.id, "dm:42") == successor.id
+    stored = store.get_channel(channel.id)
+    assert stored is not None
+    assert stored.config_json["telegram_agent_targets"] == {"dm:42": successor.id}
+
+
+def test_native_clear_failed_expiry_resets_parent_for_retry(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    sessions = SessionManager(temp_db)
+    context = {"tty": "/dev/test-retry", "parent_pid": 4242, "parent_create_time": 1234.5}
+    predecessor = sessions.register(
+        external_id="retry-predecessor",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=context,
+    )
+    successor = sessions.register(
+        external_id="retry-successor",
+        machine_id=predecessor.machine_id,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context=context,
+    )
+    with patch.object(sessions, "mark_session_expired", return_value=False):
+        assert sessions.bind_native_clear_successor(successor.id) is None
+    unbound = sessions.get(successor.id)
+    assert unbound is not None
+    assert unbound.parent_session_id is None
+    live = sessions.get(predecessor.id)
+    assert live is not None and live.status == "active"
+
+    ended = sessions.bind_native_clear_successor(successor.id)
+    assert ended is not None and ended.id == predecessor.id and ended.status == "expired"
+    bound = sessions.get(successor.id)
+    assert bound is not None and bound.parent_session_id == predecessor.id

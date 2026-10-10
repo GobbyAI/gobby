@@ -96,7 +96,7 @@ class _TerminalMixin:
               AND terminal_context IS NOT NULL AND id <> %s
               AND created_at <= %s
               AND terminal_context ->> 'parent_pid' = %s
-            ORDER BY created_at DESC, id DESC
+            ORDER BY last_activity DESC, id DESC
             LIMIT 250
             """,
             (
@@ -124,6 +124,7 @@ class _TerminalMixin:
                 return None
             self.update_parent_session_id(successor.id, predecessor.id)
             if not self.mark_session_expired(predecessor.id, cause="parent_registration"):
+                self.update_parent_session_id(successor.id, None)
                 return None
             ended = self.get(predecessor.id)
             if ended is not None:
