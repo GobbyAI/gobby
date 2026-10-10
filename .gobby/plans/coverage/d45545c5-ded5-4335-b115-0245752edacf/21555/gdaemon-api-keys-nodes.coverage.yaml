@@ -3,9 +3,9 @@ header:
   plan_hash: 30e9ca53fa0b80566a178fe2a1a90382a61aba064937f2fdf000d0a8b6d1f26f
   root_task_ref: '21555'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-10T22:38:47Z'
+  generated_at: '2026-10-10T22:41:25Z'
   task_tree_source: db
-  task_tree_source_hash: ec9ac00a081114bc5af2e288b47ebf33d9c8536f07a21e1682dbf2d07d38661c
+  task_tree_source_hash: dbe078884ac7a24d0392f37efdfba045e2a6de0ee50f9e65b4424edb4e3e4f5b
   evidence_summary: []
   evidence: []
 rows:
@@ -322,7 +322,7 @@ rows:
 - section_id: '4.2'
   item_id: 4.2.3
   plan_node_hash: c69239863ce6bdb83091bfe75ad3b40d455991cdaee703ffb2286c404033d9b0
-  status: invalid
+  status: covered
   leaves:
   - leaf_task_ref: '#23271'
     validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
@@ -388,7 +388,7 @@ rows:
 - section_id: '4.2'
   item_id: 4.2.10
   plan_node_hash: 49729d89f1ddfcd79e7cde72343044d779739fe843d1622aedf729521f8cc98c
-  status: invalid
+  status: covered
   leaves:
   - leaf_task_ref: '#23271'
     validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
@@ -421,7 +421,7 @@ rows:
 - section_id: '4.2'
   item_id: 4.2.6
   plan_node_hash: e3c1c5bd62b7743890736a42975456252b162c52f1de371f2a5db89536c410bf
-  status: invalid
+  status: covered
   leaves:
   - leaf_task_ref: '#23271'
     validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
