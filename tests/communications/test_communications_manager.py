@@ -3502,7 +3502,6 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
     child_depth: int,
     end_first: bool,
 ) -> None:
-    import os
     from typing import cast
 
     from gobby.hooks.event_handlers import EventHandlers
@@ -3511,7 +3510,11 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
     from gobby.sessions.status_events import SessionStatusTransition
 
     sessions = SessionManager(temp_db)
-    context = {"tty": "/dev/ttys-native-clear", "parent_pid": os.getppid()}
+    context = {
+        "parent_pid": 4242,
+        "parent_create_time": 1234.5,
+        "gobby_pane_ref": "native-clear-pane",
+    }
     predecessor = sessions.register(
         external_id="native-clear-predecessor",
         machine_id=None,
@@ -3576,6 +3579,12 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         patch.object(handlers, "_activate_default_agent"),
         patch.object(handlers, "_compose_session_response", return_value=HookResponse()),
         patch(
+            "gobby.hooks.terminal_context.psutil.Process",
+            return_value=MagicMock(
+                **{"name.return_value": "claude", "create_time.return_value": 1234.5}
+            ),
+        ),
+        patch(
             "gobby.hooks.event_handlers._session_start.profile.read_user_profile_content",
             return_value="",
         ),
@@ -3612,44 +3621,53 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         ({}, True),
         ({"parent_pid": 43}, False),
         ({"parent_pid": None}, False),
-        ({"tmux_socket_path": "/tmp/other.sock"}, False),
-        ({"tmux_socket_path": None}, False),
+        ({"parent_create_time": 1235.5}, False),
+        ({"parent_create_time": None}, False),
     ],
 )
-def test_native_clear_matching_requires_socket_and_parent_process(
+def test_native_clear_matching_requires_cli_process_identity(
     changes: dict[str, Any], expected: bool
 ) -> None:
-    from gobby.sessions.handoff_identity import terminal_contexts_match_for_replacement
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
 
-    context = {"tmux_pane": "%1", "tmux_socket_path": "/tmp/clear.sock", "parent_pid": 42}
-    assert terminal_contexts_match_for_replacement(context, {**context, **changes}) is expected
+    context = {"parent_pid": 42, "parent_create_time": 1234.5, "gobby_pane_ref": "clear-pane"}
+    assert terminal_process_contexts_match(context, {**context, **changes}) is expected
 
 
 async def test_native_clear_does_not_take_sibling_panes_dm(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.sessions.handoff_identity import terminal_contexts_match_for_replacement
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
 
     sessions = SessionManager(temp_db)
     shared_context = {
         "tmux_session": "operator-panes",
         "tmux_socket_path": "/tmp/native-clear-test.sock",
-        "parent_pid": 4242,
     }
     sibling = sessions.register(
         external_id="native-clear-sibling",
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        terminal_context={**shared_context, "tmux_pane": "%1", "tty": "/dev/ttys001"},
+        terminal_context={
+            **shared_context,
+            "parent_pid": 4242,
+            "parent_create_time": 1234.5,
+            "gobby_pane_ref": "sibling-pane",
+        },
     )
     successor = sessions.register(
         external_id="native-clear-other-pane",
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        terminal_context={**shared_context, "tmux_pane": "%2", "tty": "/dev/ttys002"},
+        terminal_context={
+            **shared_context,
+            "parent_pid": 4243,
+            "parent_create_time": 1235.5,
+            "gobby_pane_ref": "clear-pane",
+        },
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
@@ -3658,9 +3676,7 @@ async def test_native_clear_does_not_take_sibling_panes_dm(
     manager._channel_by_name[channel.name] = channel
     manager.attach_conversation(channel.name, "dm:42", sibling.id)
 
-    assert not terminal_contexts_match_for_replacement(
-        sibling.terminal_context, successor.terminal_context
-    )
+    assert not terminal_process_contexts_match(sibling.terminal_context, successor.terminal_context)
     assert sessions.bind_native_clear_successor(successor.id) is None
     refreshed_sibling = sessions.get(sibling.id)
     refreshed_successor = sessions.get(successor.id)

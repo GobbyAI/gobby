@@ -74,7 +74,7 @@ class _TerminalMixin:
         Staged clears retain their marker-driven binding and routing contract.
         """
         from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
-        from gobby.sessions.handoff_identity import terminal_contexts_match_for_replacement
+        from gobby.sessions.handoff_identity import terminal_process_contexts_match
 
         from ._contested_expiry import read_session_variables
 
@@ -95,8 +95,7 @@ class _TerminalMixin:
               AND status IN ('active', 'paused', 'expired')
               AND terminal_context IS NOT NULL AND id <> %s
               AND created_at <= %s
-              AND (terminal_context ->> 'tmux_pane' = %s
-                   OR terminal_context ->> 'tty' = %s)
+              AND terminal_context ->> 'parent_pid' = %s
             ORDER BY created_at DESC, id DESC
             LIMIT 250
             """,
@@ -107,17 +106,14 @@ class _TerminalMixin:
                 successor.agent_depth,
                 successor.id,
                 successor.created_at,
-                *(
-                    str(successor.terminal_context[key])
-                    if successor.terminal_context.get(key)
-                    else None
-                    for key in ("tmux_pane", "tty")
-                ),
+                str(successor.terminal_context["parent_pid"])
+                if successor.terminal_context.get("parent_pid")
+                else None,
             ),
         )
         for row in rows:
             predecessor = Session.from_row(row)
-            if not terminal_contexts_match_for_replacement(
+            if not terminal_process_contexts_match(
                 successor.terminal_context, predecessor.terminal_context
             ):
                 continue

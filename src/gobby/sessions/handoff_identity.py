@@ -63,27 +63,6 @@ def terminal_contexts_match(
     return False
 
 
-def terminal_contexts_match_for_replacement(
-    first: Mapping[str, Any] | str | None,
-    second: Mapping[str, Any] | str | None,
-) -> bool:
-    """Match a replacement within one pane or tty and one parent process."""
-    first_context = parse_terminal_context_value(first)
-    second_context = parse_terminal_context_value(second)
-    if not first_context or not second_context:
-        return False
-    if not _positive_equal(first_context, second_context, "parent_pid"):
-        return False
-    if first_context.get("tmux_pane") or second_context.get("tmux_pane"):
-        first_scope = _tmux_scope(first_context)
-        return (
-            _non_empty_equal(first_context, second_context, "tmux_pane")
-            and first_scope is not None
-            and first_scope == _tmux_scope(second_context)
-        )
-    return _non_empty_equal(first_context, second_context, "tty")
-
-
 def terminal_process_contexts_match(
     first: Mapping[str, Any] | str | None,
     second: Mapping[str, Any] | str | None,
