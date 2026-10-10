@@ -1469,6 +1469,7 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
         accepted,
         "accepted keys arrive in typed order and only the newest are dropped"
     );
+    assert_eq!(written(&mock, "terminal-a"), ["k"]);
     assert_eq!(pasted(&mock), [PASTE], "only the paste under 1 MiB is sent");
     let pane_b = workspace
         .pane_for_terminal("terminal-b")
