@@ -16,11 +16,7 @@ from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.context_limits import additional_context_limit_for
 from gobby.hooks.events import ContextPart, HookResponse, SessionSource
 from gobby.hooks.receipt_effects import record_worker_staging
-from gobby.llm.sdk_utils import (
-    INLINE_CONTEXT_HEADROOM,
-    PROTECTED_CONTEXT_LABELS,
-    fit_additional_context,
-)
+from gobby.llm.sdk_utils import PROTECTED_CONTEXT_LABELS, fit_additional_context
 from gobby.storage.tool_results import ToolResultStore
 from gobby.telemetry.instruments import inc_counter
 
@@ -187,13 +183,13 @@ def truncate_context_for_adapter(
     """
     ship_limit = additional_context_limit_for(provider)
     carry_session = session_id if destination_channel == ContextChannel.ADDITIONAL_CONTEXT else None
+    pending = _carried_context(store, carry_session) if carry_session else []
     # Carried parts ship under their own label so their protection never extends
     # to a fresh part that shares the original label.
-    carried = [
-        (f"{CARRIED_LABEL_PREFIX}{label}", text)
-        for label, text in (_carried_context(store, carry_session) if carry_session else [])
-    ]
-    parts = [*carried, *parts]
+    carried = [(f"{CARRIED_LABEL_PREFIX}{label}", text) for label, text in pending]
+    # A fresh copy of a carried part is the same context; keep only the carried one.
+    pending_pairs = set(pending)
+    parts = [*carried, *(part for part in parts if tuple(part) not in pending_pairs)]
     aggregate_len = len("\n\n".join(part for _, part in parts if part))
     if aggregate_len > ship_limit:
         record_adapter_degradation(
@@ -254,18 +250,20 @@ def _stage_carried_context(
     omitted: list[ContextPart],
     limit: int,
 ) -> None:
-    """Stage, on receipt, the dropped parts the next delivery can still ship.
+    """Stage, on receipt, the dropped parts the next delivery can ship.
 
-    The budget leaves room for part joins and the next delivery's breadcrumb.
+    The staged total stays within one delivery, already-carried parts first, so
+    the backlog cannot outgrow what a delivery ships. A part that does not fit
+    is skipped; this turn's breadcrumb named it with the persisted result.
     """
     keep: list[list[str]] = []
     total = 0
-    for label, text in omitted:
-        cost = len(text) + len("\n\n")
-        if total + cost > limit - INLINE_CONTEXT_HEADROOM:
+    carried_first = sorted(omitted, key=lambda part: not part[0].startswith(CARRIED_LABEL_PREFIX))
+    for label, text in carried_first:
+        if total + len(text) > limit:
             continue
         keep.append([label.removeprefix(CARRIED_LABEL_PREFIX), text])
-        total += cost
+        total += len(text)
     if not keep and not carried:
         return
     record_worker_staging(

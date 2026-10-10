@@ -1627,3 +1627,78 @@ def test_a_fresh_part_sharing_a_carried_label_drops_largest_first(
     assert "n" * 5_000 not in shipped
     carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
     assert carried == [["rule:policy", "n" * 5_000]]
+
+
+def _carry_session(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, machine: str
+) -> tuple[ClaudeCodeAdapter, SessionVariableManager, str]:
+    monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
+    LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
+    session_id = (
+        SessionManager(temp_db)
+        .register(external_id=str(uuid4()), machine_id=machine, source="claude", project_id=None)
+        .id
+    )
+    adapter = ClaudeCodeAdapter(hook_manager=cast(Any, SimpleNamespace(db=temp_db)))
+    return adapter, SessionVariableManager(temp_db), session_id
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    [[("rule:near_cap", "c" * 9_700)], [("rule:policy", "o" * 5_000), ("rule:small", "s" * 4_000)]],
+)
+def test_dropped_parts_within_one_delivery_are_carried(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, dropped: list[tuple[str, str]]
+) -> None:
+    adapter, variables, session_id = _carry_session(
+        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000004"
+    )
+
+    response = HookResponse(decision="allow", metadata={"session_id": session_id})
+    response.add_context(*dropped)
+    response.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+    shipped = _deliver(adapter, temp_db, response)
+
+    assert "p" * 6_000 in shipped
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [[label, text] for label, text in dropped]
+
+
+def test_the_carry_keeps_already_carried_parts_within_one_delivery(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, variables, session_id = _carry_session(
+        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000005"
+    )
+    variables.merge_variables(
+        session_id,
+        {CARRIED_CONTEXT_VARIABLE: [["rule:old", "o" * 6_000], ["rule:older", "d" * 5_000]]},
+    )
+
+    response = HookResponse(decision="allow", metadata={"session_id": session_id})
+    response.add_context(("rule:new", "n" * 4_000))
+    shipped = _deliver(adapter, temp_db, response)
+
+    assert shipped.startswith("d" * 5_000 + "\n\n")
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [["rule:old", "o" * 6_000]]
+
+
+def test_a_part_reinjected_every_turn_is_carried_once(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, variables, session_id = _carry_session(
+        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000006"
+    )
+
+    shipped: list[str] = []
+    for turn in range(5):
+        response = HookResponse(decision="allow", metadata={"session_id": session_id})
+        response.add_context(("rule:policy", "o" * 6_000), ("rule:common", "c" * 5_000))
+        if turn == 0:
+            response.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+        shipped.append(_deliver(adapter, temp_db, response))
+        assert len(variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]) == 1
+
+    assert any("o" * 6_000 in text for text in shipped)
+    assert any("c" * 5_000 in text for text in shipped)
