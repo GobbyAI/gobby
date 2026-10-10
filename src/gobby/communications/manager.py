@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from threading import RLock
@@ -25,7 +26,7 @@ from gobby.communications.models import (
     CommsIdentity,
     CommsMessage,
 )
-from gobby.communications.outbound import OutboundCommunications
+from gobby.communications.outbound import OutboundCommunications, transcript_delivery_id
 from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.responder import CommunicationsResponder
@@ -107,6 +108,7 @@ class CommunicationsManager:
         self._vision_extract_service: VisionExtractService | None = None
         self._telegram_actions: TelegramActionController | None = None
         self._conversation_attachments: dict[tuple[str, str], str] = {}
+        self._attachment_mirror_offsets: dict[str, int] = {}
         self._managed_telegram_targets: set[tuple[str, str]] = set()
         self._attachment_lock = RLock()
 
@@ -214,10 +216,82 @@ class CommunicationsManager:
         content: str,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.send_message(channel_name, content, session_id, metadata)
+        return await self._outbound.send_message(
+            channel_name, content, session_id, metadata, idempotency_key=idempotency_key
+        )
+
+    def get_transcript_delivery(self, session_id: str, message_id: str) -> CommsMessage | None:
+        """Read completion evidence without starting another transport attempt."""
+        return self._store.get_message(transcript_delivery_id(session_id, message_id))
+
+    def transcript_mirror_start_offset(self, session_id: str) -> int:
+        """The live transcript position at attachment, excluding earlier replies."""
+        with self._attachment_lock:
+            return self._attachment_mirror_offsets.get(session_id, 0)
+
+    async def retry_transcript_deliveries(self, session_id: str) -> None:
+        """Recover bounded delivery attempts without rolling back transcript ingestion."""
+        messages = await asyncio.to_thread(
+            self._store.list_retryable_transcript_messages, session_id
+        )
+        for message in messages:
+            channel = next(
+                (
+                    channel
+                    for channel in self._channel_by_name.values()
+                    if channel.id == message.channel_id
+                ),
+                None,
+            )
+            if (
+                channel is None
+                or not channel.enabled
+                or self.attached_destination(channel.id, session_id) is None
+            ):
+                continue
+            try:
+                current = await self._outbound.enrich_metadata(
+                    channel, channel.name, session_id, None
+                )
+                if (
+                    current.get("platform_destination")
+                    != message.metadata_json.get("platform_destination")
+                    or current.get("thread_id") != message.platform_thread_id
+                ):
+                    continue
+                await self.send_message(
+                    channel.name,
+                    message.content,
+                    session_id=session_id,
+                    metadata=message.metadata_json,
+                    idempotency_key=message.metadata_json["transcript_message_id"],
+                )
+            except Exception:
+                logger.warning("Transcript delivery retry failed for %s", message.id, exc_info=True)
+
+    async def mirror_session_message(self, session_id: str, message_id: str, content: str) -> None:
+        """Mirror completed transcript text to a session's live Telegram attachment."""
+        for channel in tuple(self._channel_by_name.values()):
+            if channel.channel_type != "telegram" or not channel.enabled:
+                continue
+            destination = self.attached_destination(channel.id, session_id)
+            if destination is None:
+                continue
+            message = await self.send_message(
+                channel.name,
+                content,
+                session_id=session_id,
+                idempotency_key=message_id,
+            )
+            if message.status != "sent":
+                raise RuntimeError(
+                    f"Transcript mirror {message.id} is {message.status}: {message.error}"
+                )
 
     async def _wait_for_channel_startup(self, channel_name: str) -> None:
         """Wait for an enabled channel when a send races adapter initialization."""
@@ -535,6 +609,14 @@ class CommunicationsManager:
                 ):
                     raise ValueError("Session is already attached to another conversation")
             key = (channel.id, conversation_id)
+            if self._conversation_attachments.get(key) != session_id:
+                try:
+                    cursor = (
+                        os.path.getsize(session.transcript_path) if session.transcript_path else 0
+                    )
+                except OSError:
+                    cursor = 0
+                self._attachment_mirror_offsets[session_id] = cursor
             if kind in {"dm", "topic"}:
                 self._store.set_telegram_agent_target(channel.id, conversation_id, session_id)
                 targets = channel.config_json.setdefault("telegram_agent_targets", {})

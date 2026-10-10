@@ -15,6 +15,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.token_events import TokenEventStore
 
 if TYPE_CHECKING:
+    from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
     from gobby.sessions.processor_lifecycle import SessionFlushResult
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -45,6 +46,7 @@ class ProcessorHost(Protocol):
     db: HubDatabase
     poll_interval: float
     websocket_server: WebSocketServer | None
+    communications_manager: CommunicationsManager | None
     session_manager: SessionManager | None
     _hook_manager: HookManager | None
     _run_db: Callable[..., Awaitable[Any]]
@@ -56,6 +58,9 @@ class ProcessorHost(Protocol):
     _byte_offsets: dict[str, int]
     _message_indices: dict[str, int]
     _render_states: dict[str, RenderState]
+    _restored_render_sessions: set[str]
+    _mirror_start_offsets: dict[str, int]
+    _mirror_eligible_ids: dict[str, set[str]]
     _index_appenders: dict[str, TranscriptIndexAppender]
     _observation_store: UnmodeledObservationStore
     _stats: dict[str, MessageStats]
@@ -94,6 +99,10 @@ class ProcessorHost(Protocol):
     ) -> bool: ...
 
     async def flush_session(self, session_id: str) -> SessionFlushResult: ...
+
+    async def complete_turn(
+        self, session_id: str, expected_final_text: str | None = None
+    ) -> SessionFlushResult: ...
 
     async def reconcile_codex_transcript(self, session_id: str) -> SessionFlushResult: ...
 

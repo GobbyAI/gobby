@@ -159,6 +159,14 @@ def render_incremental(
             is_new_turn = True
         elif state.current_message.role != role:
             is_new_turn = True
+        elif (
+            role == "assistant"
+            and msg.message_id
+            and state.current_message.id != f"{session_id or 'no-session'}-{role}-{msg.message_id}"
+        ):
+            # Distinct native assistant responses are complete even when a CLI
+            # automatically continues without inserting a user record.
+            is_new_turn = True
         elif role in ["user", "system"]:
             is_new_turn = True
 
@@ -170,7 +178,9 @@ def render_incremental(
         # 4. Initialize new message if needed
         if not state.current_message:
             state.current_message = RenderedMessage(
-                id=f"{session_id or 'no-session'}-{role}-{msg.timestamp.timestamp()}-{msg.index}",
+                # Native IDs (or the source record index) survive replay even
+                # when the parser must synthesize a missing timestamp.
+                id=f"{session_id or 'no-session'}-{role}-{msg.message_id or msg.index}",
                 role=role,
                 content="",
                 timestamp=msg.timestamp,

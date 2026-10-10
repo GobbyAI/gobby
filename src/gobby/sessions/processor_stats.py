@@ -56,6 +56,33 @@ class ProcessorStatsMixin:
         *,
         complete: bool,
     ) -> None:
+        if complete and rendered.get("role") == "assistant" and self.communications_manager:
+            blocks = rendered.get("content_blocks", [])
+            text = "\n\n".join(
+                block["content"]
+                for block in blocks
+                if isinstance(block, dict)
+                and block.get("type") == "text"
+                and isinstance(block.get("content"), str)
+            )
+            message_id = rendered.get("id")
+            eligible = self._mirror_eligible_ids.get(session_id, set())
+            if (
+                text.strip()
+                and isinstance(message_id, str)
+                and message_id
+                and (session_id not in self._mirror_start_offsets or message_id in eligible)
+            ):
+                try:
+                    await self.communications_manager.mirror_session_message(
+                        session_id, message_id, text
+                    )
+                except Exception:
+                    # The durable delivery ledger retries independently. A
+                    # failed mirror must not suppress stats or websocket events.
+                    logger.warning("Transcript mirror failed for %s", message_id, exc_info=True)
+                finally:
+                    eligible.discard(message_id)
         if self.websocket_server is None:
             return
         await self._feed_attached_session_tts(session_id, rendered, complete=complete)

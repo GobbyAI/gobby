@@ -162,6 +162,34 @@ class ProcessorTranscriptMixin:
         if not await asyncio.to_thread(os.path.exists, transcript_path):
             return True
 
+        if self.communications_manager:
+            try:
+                await self.communications_manager.retry_transcript_deliveries(session_id)
+            except Exception:
+                logger.warning(
+                    "Transcript delivery recovery failed for %s", session_id, exc_info=True
+                )
+        if session_id in self._restored_render_sessions and self.communications_manager:
+            state = self._render_states.get(session_id)
+            message = state.current_message if state else None
+            if message is not None and message.role == "assistant":
+                try:
+                    delivery = await self._run_db(
+                        self.communications_manager.get_transcript_delivery, session_id, message.id
+                    )
+                except Exception:
+                    logger.warning(
+                        "Transcript delivery lookup failed for %s", session_id, exc_info=True
+                    )
+                    delivery = None
+                if delivery is not None:
+                    # Its durable reservation proves completion. Delivery
+                    # recovery is independent of ingesting later text.
+                    assert state is not None
+                    state.current_message = None
+                    state.seen_content.clear()
+            self._restored_render_sessions.discard(session_id)
+
         try:
             transcript_stat = await asyncio.to_thread(os.stat, transcript_path)
         except OSError as exc:
@@ -266,6 +294,28 @@ class ProcessorTranscriptMixin:
             parsed_messages: list[ParsedMessage] = [
                 r for r in parsed_records if isinstance(r, ParsedMessage)
             ]
+
+            floor = self._mirror_start_offsets.get(session_id, 0)
+            if self.communications_manager:
+                attachment_floor = self.communications_manager.transcript_mirror_start_offset(
+                    session_id
+                )
+                if attachment_floor > floor:
+                    floor = attachment_floor
+                    self._mirror_start_offsets[session_id] = floor
+                    self._mirror_eligible_ids.pop(session_id, None)
+            eligible = self._mirror_eligible_ids.setdefault(session_id, set())
+            for parsed_message in parsed_messages:
+                line = parsed_message.source_line
+                offset = (
+                    new_line_offsets[line]
+                    if line is not None and 0 <= line < len(new_line_offsets)
+                    else last_offset
+                )
+                if parsed_message.role == "assistant" and offset >= floor:
+                    eligible.add(
+                        f"{session_id}-assistant-{parsed_message.message_id or parsed_message.index}"
+                    )
 
             latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
             parsed_messages = self._filter_session_title_messages(parsed_messages)
@@ -417,17 +467,16 @@ class ProcessorTranscriptMixin:
                 source=source,
                 observation_tracker=observation_tracker,
             )
-        if self.websocket_server:
-            for rendered_msg in completed:
-                await self._broadcast_rendered_session_message(
-                    session_id,
-                    rendered_msg.to_dict(),
-                    complete=True,
-                )
-            if render_state.current_message:
-                await self._broadcast_rendered_session_message(
-                    session_id,
-                    render_state.current_message.to_dict(),
-                    complete=False,
-                )
+        for rendered_msg in completed:
+            await self._broadcast_rendered_session_message(
+                session_id,
+                rendered_msg.to_dict(),
+                complete=True,
+            )
+        if render_state.current_message:
+            await self._broadcast_rendered_session_message(
+                session_id,
+                render_state.current_message.to_dict(),
+                complete=False,
+            )
         self._render_states[session_id] = render_state

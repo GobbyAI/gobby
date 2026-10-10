@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
 if TYPE_CHECKING:
+    from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
@@ -57,6 +58,7 @@ class SessionMessageProcessor(
         session_manager: "SessionManager | None" = None,
         hook_manager: "HookManager | None" = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        communications_manager: "CommunicationsManager | None" = None,
     ):
         self.db = db
         self.poll_interval = poll_interval
@@ -64,6 +66,7 @@ class SessionMessageProcessor(
         self.session_manager: SessionManager | None = session_manager
         self._hook_manager: Any | None = hook_manager
         self._run_db = run_db or asyncio.to_thread
+        self.communications_manager = communications_manager
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}
@@ -82,6 +85,9 @@ class SessionMessageProcessor(
 
         # Track render state for incremental rendering per session
         self._render_states: dict[str, RenderState] = {}
+        self._restored_render_sessions: set[str] = set()
+        self._mirror_start_offsets: dict[str, int] = {}
+        self._mirror_eligible_ids: dict[str, set[str]] = {}
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
         self._observation_store = UnmodeledObservationStore(db)
 

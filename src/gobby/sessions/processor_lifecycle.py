@@ -17,6 +17,8 @@ from gobby.sessions.transcript_index import (
 )
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
+from gobby.sessions.transcript_render_models import RenderState
+from gobby.sessions.transcript_window import render_window
 from gobby.sessions.transcripts import get_parser
 
 logger = logging.getLogger(__name__)
@@ -91,8 +93,10 @@ class ProcessorLifecycleMixin:
             st = os.stat(transcript_path)
             transcript_exists = True
             self._transcript_file_state[session_id] = (st.st_dev, st.st_ino, st.st_mtime_ns)
+            self._mirror_start_offsets[session_id] = st.st_size
         except OSError:
             transcript_exists = False
+            self._mirror_start_offsets[session_id] = 0
         appender = TranscriptIndexAppender(
             source,
             session_id,
@@ -145,6 +149,71 @@ class ProcessorLifecycleMixin:
             return SessionFlushResult(flushed=False, error=str(exc))
         return SessionFlushResult(flushed=True)
 
+    async def complete_turn(
+        self: ProcessorHost, session_id: str, expected_final_text: str | None = None
+    ) -> SessionFlushResult:
+        """Read through turn-end evidence before publishing the final assistant group."""
+        owner_loop = self._owner_loop
+        if owner_loop is not None and owner_loop is not asyncio.get_running_loop():
+            if not owner_loop.is_running():
+                return SessionFlushResult(flushed=False, error="processor loop is not running")
+            return await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(
+                    self.complete_turn(session_id, expected_final_text), owner_loop
+                )
+            )
+        transcript_path = self._active_sessions.get(session_id)
+        if transcript_path is None:
+            return SessionFlushResult(flushed=False, error="session is not registered")
+        lock = self._processing_locks.setdefault(session_id, asyncio.Lock())
+        deadline = asyncio.get_running_loop().time() + 5.0
+        previous_content: tuple[str, str] | None = None
+        stable_since = asyncio.get_running_loop().time()
+        async with lock:
+            while True:
+                while not await self._process_session_unlocked(
+                    session_id, transcript_path, at_eof=True
+                ):
+                    pass
+                state = self._render_states.get(session_id)
+                message = state.current_message if state else None
+                now = asyncio.get_running_loop().time()
+                current_content = (message.id, message.content) if message is not None else None
+                if current_content != previous_content:
+                    previous_content = current_content
+                    stable_since = now
+                if message is not None and message.role == "assistant":
+                    ready = (
+                        message.content.rstrip().endswith(expected_final_text.rstrip())
+                        if expected_final_text
+                        else now - stable_since >= 0.25
+                    )
+                    if ready:
+                        # This provider hook confirms a new live completion,
+                        # including a response whose prefix was present at registration.
+                        self._mirror_eligible_ids.setdefault(session_id, set()).add(message.id)
+                        await self._broadcast_rendered_session_message(
+                            session_id, message.to_dict(), complete=True
+                        )
+                        # A provider can begin another assistant turn without a
+                        # user record (for example, an automatic continuation).
+                        # Its text must not reuse this completed group's ledger key.
+                        assert state is not None
+                        state.current_message = None
+                        state.seen_content.clear()
+                        return SessionFlushResult(flushed=True)
+                if (
+                    not expected_final_text
+                    and (message is None or message.role != "assistant")
+                    and now - stable_since >= 0.25
+                ):
+                    return SessionFlushResult(flushed=True)
+                if asyncio.get_running_loop().time() >= deadline:
+                    return SessionFlushResult(
+                        flushed=False, error="final transcript text not yet present"
+                    )
+                await asyncio.sleep(0.05)
+
     async def reconcile_codex_transcript(
         self: ProcessorHost, session_id: str
     ) -> SessionFlushResult:
@@ -185,6 +254,9 @@ class ProcessorLifecycleMixin:
         self._message_indices.pop(session_id, None)
         self._index_appenders.pop(session_id, None)
         self._render_states.pop(session_id, None)
+        self._restored_render_sessions.discard(session_id)
+        self._mirror_start_offsets.pop(session_id, None)
+        self._mirror_eligible_ids.pop(session_id, None)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
 
@@ -208,6 +280,14 @@ class ProcessorLifecycleMixin:
         self._message_indices.pop(session_id, None)
         self._render_states.pop(session_id, None)
         self._stats.pop(session_id, None)
+        self._restored_render_sessions.discard(session_id)
+        self._mirror_eligible_ids.pop(session_id, None)
+        try:
+            self._mirror_start_offsets[session_id] = await asyncio.to_thread(
+                os.path.getsize, transcript_path
+            )
+        except OSError:
+            self._mirror_start_offsets[session_id] = 0
         self._stats_hydration_skipped.discard(session_id)
         await asyncio.to_thread(discard_index_sidecar, transcript_path)
 
@@ -281,6 +361,27 @@ class ProcessorLifecycleMixin:
         )
         if index is None:
             return
+
+        # The stats cursor may already be at EOF while its final assistant
+        # response has not reached a turn-end hook. Restore that bounded group
+        # so restart cannot discard it before the next completion evidence.
+        tail = render_window(transcript_path, source, session_id, index, limit=1, offset=0)
+        if tail.degraded:
+            return
+        if tail.groups:
+            message = tail.groups[-1]
+            state = RenderState(current_message=message)
+            state.pre_window_tool_first_open = index.tool_first_open
+            state.pre_window_boundary_index = index.boundaries[-1].parsed_index_start
+            for block in message.content_blocks:
+                for call in block.tool_calls or []:
+                    if call.status == "completed":
+                        state.remember_resolved_tool_call(call.id)
+                    else:
+                        state.pending_tool_calls[call.id] = call
+                        state.tool_call_messages[call.id] = message
+            self._render_states[session_id] = state
+            self._restored_render_sessions.add(session_id)
 
         hydrate_appender_from_index(appender, index)
         self._parsers[session_id].hydrate_state(index.parser_state)

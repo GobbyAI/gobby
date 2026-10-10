@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.models import (
     ChannelConfig,
     ChannelNotFoundError,
@@ -22,6 +23,13 @@ if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
 
 logger = logging.getLogger(__name__)
+
+
+def transcript_delivery_id(session_id: str, message_id: str) -> str:
+    """Stable communications ledger identity for one native transcript reply."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:transcript:{session_id}:{message_id}"))
+
+
 _OUTBOUND_DRAIN_SECONDS = 2.0
 _OUTBOUND_CANCEL_SECONDS = 0.5
 
@@ -47,6 +55,8 @@ class OutboundCommunications:
         operation: Coroutine[Any, Any, T],
         message: CommsMessage,
         attachment: CommsAttachment | None = None,
+        *,
+        on_duplicate: Callable[[CommsMessage], T] | None = None,
     ) -> T:
         """Own reservation and delivery together, with an ID before the first await."""
         if self._stopping:
@@ -54,7 +64,12 @@ class OutboundCommunications:
             raise RuntimeError("Outbound communications are stopping")
 
         async def deliver() -> T:
-            await self._reserve(message, attachment)
+            existing = await self._reserve(message, attachment)
+            if existing is not None:
+                operation.close()
+                if on_duplicate is None:
+                    raise RuntimeError("Duplicate outbound reservation")
+                return on_duplicate(existing)
             return await operation
 
         task = asyncio.create_task(deliver())
@@ -106,15 +121,26 @@ class OutboundCommunications:
 
     async def _reserve(
         self, message: CommsMessage, attachment: CommsAttachment | None = None
-    ) -> None:
-        async def persist() -> None:
-            await asyncio.to_thread(self._manager._store.create_message, message)
+    ) -> CommsMessage | None:
+        async def persist() -> CommsMessage | None:
+            if "transcript_message_id" in message.metadata_json:
+                persisted, inserted = await asyncio.to_thread(
+                    self._manager._store.reserve_transcript_message, message
+                )
+                if not inserted:
+                    if persisted.content != message.content:
+                        raise ValueError("Transcript text changed after its outbound reservation")
+                    return persisted
+                message.metadata_json = persisted.metadata_json
+            else:
+                await asyncio.to_thread(self._manager._store.create_message, message)
             if attachment is not None:
                 await asyncio.to_thread(self._manager._store.create_attachment, attachment)
+            return None
 
         reservation = asyncio.create_task(persist())
         try:
-            await asyncio.shield(reservation)
+            return await asyncio.shield(reservation)
         except asyncio.CancelledError:
             self._cancelled(message, message.channel_id)
             # A worker thread cannot be cancelled. Settle its insert before the
@@ -227,6 +253,8 @@ class OutboundCommunications:
         content: str,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
         self._require_running()
@@ -247,6 +275,14 @@ class OutboundCommunications:
             session_id,
             metadata,
         )
+        message_id = str(uuid.uuid4())
+        if idempotency_key is not None:
+            if session_id is None:
+                raise ValueError("Transcript delivery requires a session")
+            message_id = transcript_delivery_id(session_id, idempotency_key)
+            effective_metadata["transcript_message_id"] = idempotency_key
+            effective_metadata["transcript_delivery_attempt"] = 1
+            effective_metadata["transcript_lease_until"] = datetime.now(UTC).timestamp() + 900
         if "callback_ttl_seconds" in effective_metadata:
             # Caller input: reject before a failed row or daemon error is recorded.
             bounded_callback_ttl(effective_metadata["callback_ttl_seconds"])
@@ -255,7 +291,7 @@ class OutboundCommunications:
             platform_thread_id = explicit_thread_id.strip()
 
         message = CommsMessage(
-            id=str(uuid.uuid4()),
+            id=message_id,
             channel_id=channel.id,
             direction="outbound",
             content=content,
@@ -267,14 +303,26 @@ class OutboundCommunications:
         )
 
         self._require_running()
-        return await self.run(self._deliver_message(channel_name, message), message)
+        return await self.run(
+            self._deliver_message(channel_name, message),
+            message,
+            on_duplicate=(lambda existing: existing) if idempotency_key is not None else None,
+        )
 
     async def _deliver_message(self, channel_name: str, message: CommsMessage) -> CommsMessage:
         manager = self._manager
         adapter = manager._adapters[channel_name]
         try:
             await manager._rate_limiter.wait_if_needed(message.channel_id)
-            platform_message_id = await adapter.send_message(message)
+            if (
+                isinstance(adapter, TelegramAdapter)
+                and "transcript_message_id" in message.metadata_json
+            ):
+                platform_message_id = await adapter.send_message(
+                    message, checkpoint=self._checkpoint_transcript_delivery
+                )
+            else:
+                platform_message_id = await adapter.send_message(message)
             message.platform_message_id = platform_message_id
             message.status = "sent"
         except asyncio.CancelledError:
@@ -300,6 +348,18 @@ class OutboundCommunications:
                 logger.warning("Event callback error on send_message: %s", e, exc_info=True)
 
         return message
+
+    async def _checkpoint_transcript_delivery(self, message: CommsMessage) -> None:
+        """Persist confirmed chunks before sending another; keep the reservation leased."""
+        message.metadata_json["transcript_lease_until"] = datetime.now(UTC).timestamp() + 900
+        await asyncio.to_thread(
+            self._manager._store.update_message_delivery,
+            message.id,
+            message.status,
+            message.error,
+            message.platform_message_id,
+            message.metadata_json,
+        )
 
     async def send_attachment(
         self,

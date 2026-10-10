@@ -308,6 +308,52 @@ class LocalCommunicationsStore:
         persisted, _ = self.create_message_with_attachments(message, [])
         return persisted
 
+    def reserve_transcript_message(self, message: CommsMessage) -> tuple[CommsMessage, bool]:
+        """Reserve delivery, reclaiming failed or expired in-flight attempts atomically."""
+        with self.db.transaction() as conn:
+            persisted, inserted = self._insert_message(conn, message, deduplicate_id=True)
+            if persisted.content != message.content:
+                raise ValueError("Transcript text changed after its outbound reservation")
+            if not inserted and persisted.status == "pending":
+                exhausted = conn.execute(
+                    "UPDATE comms_messages SET status = 'failed', "
+                    "error = 'Transcript delivery attempts exhausted after uncertain request' "
+                    "WHERE id = %s AND status = 'pending' "
+                    "AND (metadata_json->>'transcript_lease_until')::double precision < EXTRACT(EPOCH FROM now()) "
+                    "AND (metadata_json->>'transcript_delivery_attempt')::integer >= 3 RETURNING *",
+                    (persisted.id,),
+                ).fetchone()
+                if exhausted is not None:
+                    return CommsMessage.from_row(exhausted), False
+            if not inserted and persisted.status in {"failed", "pending"}:
+                row = conn.execute(
+                    "UPDATE comms_messages SET status = 'pending', error = NULL, "
+                    "metadata_json = jsonb_set(jsonb_set(metadata_json, '{transcript_delivery_attempt}', "
+                    "to_jsonb(COALESCE((metadata_json->>'transcript_delivery_attempt')::integer, 1) + 1)), "
+                    "'{transcript_lease_until}', to_jsonb(%s::double precision)) "
+                    "WHERE id = %s AND (status = 'failed' OR (status = 'pending' "
+                    "AND (metadata_json->>'transcript_lease_until')::double precision "
+                    "< EXTRACT(EPOCH FROM now()))) "
+                    "AND COALESCE((metadata_json->>'transcript_delivery_attempt')::integer, 1) < 3 "
+                    "RETURNING *",
+                    (message.metadata_json["transcript_lease_until"], persisted.id),
+                ).fetchone()
+                if row is not None:
+                    return CommsMessage.from_row(row), True
+            return persisted, inserted
+
+    def list_retryable_transcript_messages(self, session_id: str) -> list[CommsMessage]:
+        """Find unfinished ledger rows, excluding terminal failures and live leases."""
+        rows = self.db.fetchall(
+            "SELECT * FROM comms_messages WHERE session_id = %s "
+            "AND metadata_json ? 'transcript_message_id' "
+            "AND ((status = 'failed' AND (metadata_json->>'transcript_delivery_attempt')::integer < 3) "
+            "OR (status = 'pending' AND (metadata_json->>'transcript_lease_until')::double precision "
+            "< EXTRACT(EPOCH FROM now()))) ORDER BY created_at, id LIMIT 10",
+            (session_id,),
+        )
+        return [CommsMessage.from_row(row) for row in rows]
+
     def create_message_with_attachments(
         self,
         message: CommsMessage,
@@ -338,21 +384,25 @@ class LocalCommunicationsStore:
         return persisted, saved_attachments
 
     def _insert_message(
-        self, conn: Transaction, message: CommsMessage
+        self, conn: Transaction, message: CommsMessage, *, deduplicate_id: bool = False
     ) -> tuple[CommsMessage, bool]:
         """Insert a message, or return the existing platform duplicate; True when inserted."""
         if not message.id:
             message.id = str(uuid.uuid4())
+        conflict_clause = (
+            "ON CONFLICT DO NOTHING"
+            if deduplicate_id
+            else "ON CONFLICT (channel_id, platform_message_id) "
+            "WHERE platform_message_id IS NOT NULL DO NOTHING"
+        )
         row = conn.execute(
-            """
+            f"""
                 INSERT INTO comms_messages (
                     id, channel_id, identity_id, direction, content, content_type,
                     platform_message_id, platform_thread_id, session_id, status,
                     error, metadata_json
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (channel_id, platform_message_id)
-                WHERE platform_message_id IS NOT NULL
-                DO NOTHING
+                {conflict_clause}
                 RETURNING *
                 """,
             (
@@ -379,6 +429,10 @@ class LocalCommunicationsStore:
                  WHERE channel_id = %s AND platform_message_id = %s
                 """,
                 (message.channel_id, message.platform_message_id),
+            ).fetchone()
+        if row is None and deduplicate_id:
+            row = conn.execute(
+                "SELECT * FROM comms_messages WHERE id = %s", (message.id,)
             ).fetchone()
         if row is None:
             raise RuntimeError("Failed to create communications message")
@@ -464,6 +518,7 @@ class LocalCommunicationsStore:
 WITH messages_to_delete AS MATERIALIZED (
     SELECT id FROM comms_messages
     WHERE created_at < %s
+      AND NOT (metadata_json ? 'transcript_message_id')
       AND NOT EXISTS (
           SELECT 1
           FROM comms_attachments
