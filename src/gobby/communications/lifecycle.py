@@ -166,6 +166,7 @@ class AdapterLifecycleOperations:
         adapter = await self.init_adapter(channel)
         manager._adapters[channel.name] = adapter
         manager._channel_by_name[channel.name] = channel
+        manager._restore_telegram_targets(channel)
         if channel.name == "gobby_chat" and manager._websocket_broadcast is not None:
             self.set_websocket_broadcast(manager._websocket_broadcast)
         manager._channel_init_errors.pop(channel.name, None)

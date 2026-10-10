@@ -155,7 +155,6 @@ class CommunicationsManager:
         self._outbound.start()
         try:
             await self._lifecycle.start()
-            self._restore_telegram_targets()
         finally:
             self._startup_complete.set()
         try:
@@ -163,10 +162,11 @@ class CommunicationsManager:
         except Exception:
             logger.exception("Failed to recover undelivered decision answers")
 
-    def _restore_telegram_targets(self) -> None:
+    def _restore_telegram_targets(self, channel: ChannelConfig | None = None) -> None:
         """Recover private-chat target selections from channel configuration."""
         with self._attachment_lock:
-            for channel in self._channel_by_name.values():
+            channels = [channel] if channel is not None else self._channel_by_name.values()
+            for channel in channels:
                 if channel.channel_type != "telegram":
                     continue
                 targets = channel.config_json.get("telegram_agent_targets")
@@ -534,7 +534,13 @@ class CommunicationsManager:
                     conversation_id,
                 ):
                     raise ValueError("Session is already attached to another conversation")
-            self._conversation_attachments[(channel.id, conversation_id)] = session_id
+            key = (channel.id, conversation_id)
+            if kind in {"dm", "topic"}:
+                self._store.set_telegram_agent_target(channel.id, conversation_id, session_id)
+                targets = channel.config_json.setdefault("telegram_agent_targets", {})
+                targets[conversation_id] = session_id
+                self._managed_telegram_targets.add(key)
+            self._conversation_attachments[key] = session_id
 
     def switch_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
         """Replace a Telegram chat holder without exposing an unattached interval."""
@@ -547,11 +553,6 @@ class CommunicationsManager:
             was_managed = key in self._managed_telegram_targets
             try:
                 self.attach_conversation(channel_name, conversation_id, session_id)
-                if conversation_id.startswith(("dm:", "topic:")):
-                    self._store.set_telegram_agent_target(channel.id, conversation_id, session_id)
-                    targets = channel.config_json.setdefault("telegram_agent_targets", {})
-                    targets[conversation_id] = session_id
-                    self._managed_telegram_targets.add(key)
             except Exception:
                 self._conversation_attachments.pop(key, None)
                 if previous is not None:
@@ -588,7 +589,7 @@ class CommunicationsManager:
             key = (channel.id, conversation_id)
             if self.attached_session(*key) != session_id:
                 raise ValueError("Conversation is not attached to this session")
-            del self._conversation_attachments[key]
+            self.clear_conversation_target(channel_name, conversation_id, session_id)
 
     def attached_destination(self, channel_id: str, session_id: str) -> str | None:
         with self._attachment_lock:
