@@ -1391,6 +1391,31 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
         let release = mock.hold_ws("terminal_input", for_terminal("terminal-b"));
         probe.key(KeyCode::Char('y'), KeyModifiers::NONE).await;
         wait_until("the held write", || written(&mock, "terminal-b").len() == 2).await;
+        // Acknowledge each accepted key by its request, rather than requiring
+        // 255 serialized WebSocket round trips to finish in ten wall-clock seconds.
+        let accepted_keys: Vec<_> = (0..255)
+            .map(|_| {
+                let received = Arc::new(Notify::new());
+                let signal = Arc::clone(&received);
+                let release = mock.hold_ws("terminal_input", move |request| {
+                    let matches = for_terminal("terminal-b")(request);
+                    if matches {
+                        signal.notify_one();
+                    }
+                    matches
+                });
+                (received, release)
+            })
+            .collect();
+        let other_received = Arc::new(Notify::new());
+        let signal = Arc::clone(&other_received);
+        let other_release = mock.hold_ws("terminal_input", move |request| {
+            let matches = for_terminal("terminal-a")(request);
+            if matches {
+                signal.notify_one();
+            }
+            matches
+        });
         // The second paste would take the queue past 1 MiB.
         probe.paste("p".repeat(PASTE)).await;
         probe.paste("q".repeat(PASTE)).await;
@@ -1415,16 +1440,12 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
         );
 
         release.notify_one();
-        wait_within(
-            DRAIN_DEADLINE,
-            "the accepted flood after the held write",
-            || written(&mock, "terminal-b").len() == 2 + 255,
-        )
-        .await;
-        wait_until("terminal-a's key after the release", || {
-            written(&mock, "terminal-a") == ["k"]
-        })
-        .await;
+        for (received, release) in accepted_keys {
+            received.notified().await;
+            release.notify_one();
+        }
+        other_received.notified().await;
+        other_release.notify_one();
         probe.frames_render("terminal-a").await;
         drop(input_tx);
     };
@@ -1448,6 +1469,7 @@ async fn a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking() {
         accepted,
         "accepted keys arrive in typed order and only the newest are dropped"
     );
+    assert_eq!(written(&mock, "terminal-a"), ["k"]);
     assert_eq!(pasted(&mock), [PASTE], "only the paste under 1 MiB is sent");
     let pane_b = workspace
         .pane_for_terminal("terminal-b")
