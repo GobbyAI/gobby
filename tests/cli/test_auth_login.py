@@ -25,6 +25,8 @@ from click.testing import CliRunner, Result
 
 from gobby.cli import auth_login
 from gobby.cli.auth import auth
+from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.bootstrap_io import read_bootstrap_yaml
 from gobby.utils import api_key_format
 from gobby.utils.durable_file import exclusive_file_lock
 from tests.fixtures.tls_certs import pem_fingerprint, write_self_signed_pair
@@ -760,6 +762,8 @@ class KeyAPI:
     on_mint: Callable[[], None] | None = None
     on_status: Callable[[], None] | None = None
     authenticated: object = True
+    status_code: int = 200
+    mint_reply: Callable[[dict[str, object]], dict[str, object]] | None = None
     delete_status: int = 200
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -767,20 +771,21 @@ class KeyAPI:
         if request.method == "POST":
             if self.on_mint:
                 self.on_mint()
+            body: dict[str, object] = {
+                "key": self.key,
+                "key_id": self.key_id,
+                "hint": api_key_format.hint(self.key),
+                "user_id": USER_ID,
+                "machine_id": MACHINE_ID,
+            }
             return httpx.Response(
                 200,
-                json={
-                    "key": self.key,
-                    "key_id": self.key_id,
-                    "hint": api_key_format.hint(self.key),
-                    "user_id": USER_ID,
-                    "machine_id": MACHINE_ID,
-                },
+                json=self.mint_reply(body) if self.mint_reply else body,
             )
         if request.url.path == "/api/auth/status":
             if self.on_status:
                 self.on_status()
-            return httpx.Response(200, json={"authenticated": self.authenticated})
+            return httpx.Response(self.status_code, json={"authenticated": self.authenticated})
         if request.method == "DELETE":
             return httpx.Response(self.delete_status, json={})
         return httpx.Response(
@@ -1096,3 +1101,75 @@ def test_key_missing_machine_fails_before_mint(
     assert "machine identity missing" in result.output
     assert api.requests == []
     assert node.snapshot() == before
+
+
+def test_rotate_status_404_names_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.status_code = 404
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert "GET /api/auth/status" in result.output
+    assert "HTTP 404" in result.output
+    assert "not found among your keys" not in result.output
+    assert node.read()["api_key_id"] == PRIOR_KEY_ID
+    assert [r.url.path for r in api.requests if r.method == "DELETE"] == [
+        f"/api/auth/keys/{api.key_id}",
+    ]
+
+
+@pytest.mark.parametrize("options", [["--rotate"], ["--mint", LABEL]])
+def test_key_malformed_mint_names_api_key_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.mint_reply = lambda body: body | {"hint": "wrong"}
+    before = node.snapshot()
+    result = CliRunner().invoke(auth, ["key", *options])
+    assert result.exit_code != 0
+    assert "API-key response failed verification" in result.output
+    assert "enrollment response" not in result.output
+    assert api.key_id in result.output
+    assert "gobby auth key list" in result.output
+    assert api.key not in result.output
+    assert node.snapshot() == before
+    assert len(api.requests) == 1
+
+
+def test_rotate_unresolved_publication_names_unknown_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    before = node.snapshot()
+    real_read = read_bootstrap_yaml
+    reads = 0
+
+    def read(path: Path) -> dict[str, Any]:
+        nonlocal reads
+        reads += 1
+        if reads >= 3:
+            raise BootstrapConfigError("bootstrap unavailable during settlement")
+        return real_read(path)
+
+    def publish(*args: object) -> None:
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(auth_login, "read_bootstrap_yaml", read)
+    monkeypatch.setattr(auth_login, "publish_bootstrap_yaml_locked", publish)
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert "could not be settled" in result.output
+    assert "bootstrap key state is unknown" in result.output
+    assert "only if bootstrap.yaml does not name it" in result.output
+    assert "verified durable" not in result.output
+    assert str(node.bootstrap) in result.output
+    assert api.key_id in result.output
+    assert "gobby auth key list" in result.output
+    assert api.key not in result.output
+    assert node.snapshot() == before
+    assert len(api.requests) == 1
