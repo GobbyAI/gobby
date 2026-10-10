@@ -211,6 +211,26 @@ def test_git_sequencer_repeated_relative_directory_changes(tmp_path: Path) -> No
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
+@pytest.mark.parametrize("wrapper", ["{}", "bash -c '{}'"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp a b && git apply change.patch",
+        "git apply change.patch && cp a b",
+        'for file in a.py; do touch "$file"; done; git apply change.patch',
+        'git apply change.patch; for file in a.py; do touch "$file"; done',
+        'bash -c "git apply change.patch"; for file in a.py; do touch "$file"; done',
+    ],
+)
+def test_resolved_sibling_paths_cannot_mask_pathless_mutation(
+    tmp_path: Path, wrapper: str, command: str
+) -> None:
+    data = _invocation_metadata(wrapper.format(command), tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data["canonical_file_paths"]
+
+
 @pytest.mark.parametrize(
     "command",
     [

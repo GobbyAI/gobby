@@ -1,5 +1,6 @@
 """Sequencer recovery has a known worktree scope without weakening git guards."""
 
+import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -163,6 +164,41 @@ async def test_dynamic_git_scope_remains_denied(
     engine: RuleEngine, pending_worktree: tuple[Path, Path], command: str
 ) -> None:
     root, _ = pending_worktree
+    event = _event(command, root)
+    response = await engine.evaluate(
+        event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
+    )
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+    assert response.decision == "block"
+    assert "block-unresolved-scope-shell-write" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
+@pytest.mark.parametrize("form", ["cwd", "directory", "nested"])
+@pytest.mark.parametrize("sequencer_first", [True, False])
+@pytest.mark.parametrize(
+    "write",
+    [
+        "python3 -c \"import os; os.remove(os.environ['F'])\"",
+        "git apply change.patch",
+        'git checkout -- "$FILE"',
+    ],
+)
+async def test_sequencer_scope_cannot_mask_unresolved_sibling_write(
+    engine: RuleEngine,
+    pending_worktree: tuple[Path, Path],
+    operation: str,
+    form: str,
+    sequencer_first: bool,
+    write: str,
+) -> None:
+    root, _ = pending_worktree
+    git = f"git -C {shlex.quote(str(root))}" if form == "directory" else "git"
+    recovery = f"{git} {operation} --quit"
+    command = f"{recovery} && {write}" if sequencer_first else f"{write} && {recovery}"
+    if form == "nested":
+        command = f"bash -c {shlex.quote(command)}"
     event = _event(command, root)
     response = await engine.evaluate(
         event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)

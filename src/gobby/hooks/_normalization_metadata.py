@@ -168,6 +168,17 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             if item.repo_mutation
             else []
         )
+        if item.repo_mutation and (
+            not item.paths
+            or (
+                item.extra
+                and item.extra.get("_canonical_repo_mutation_scope_unknown")
+                and not item.extra.get("_canonical_repo_mutation_scope_resolved_by_loop_binding")
+            )
+        ):
+            # A sibling's literal paths cannot resolve this segment's opaque write.
+            mutation_scope_unknown = True
+            mutation_scope_resolved_by_loop_binding = False
         explicit_edit_paths = item.extra.get("canonical_edit_file_paths") if item.extra else None
         if unresolved_mutation_paths:
             mutation_scope_unknown = True
@@ -246,6 +257,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra["_canonical_repo_mutation_scope_unverified"] = True
     if saw_unexpanded_mutation_path and mutation_scope_resolved_by_loop_binding:
         extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
+    elif mutation_scope_unknown:
+        extra.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", None)
     if navigation_scope_unknown and not paths:
         extra["_canonical_code_navigation_scope_unknown"] = True
 
