@@ -26,7 +26,7 @@ from gobby._generated_tool_loop_limits import (
 )
 from gobby.config.feature_base import FeatureCandidateInput
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
-from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, GOBBY_MANAGED_EXECUTION_ID_ENV
+from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
 
 MAX_TURNS_STOP_REASON = "max_turns"
 MAX_TOOL_CALLS_STOP_REASON = "max_tool_calls"
@@ -158,7 +158,6 @@ class ToolChatRequest:
             GOBBY_MANAGED_EXECUTION_ID_ENV: str(self.managed_execution_id),
             "GOBBY_SESSION_ID": str(self.session_id),
             "GOBBY_PROJECT_ID": str(self.project_id),
-            GOBBY_AGENT_API_TOKEN_ENV: self.daemon_api_token,
         }
 
 

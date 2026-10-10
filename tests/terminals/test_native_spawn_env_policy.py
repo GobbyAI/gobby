@@ -185,3 +185,29 @@ async def test_unset_prefix_execs_the_provider_in_place_without_the_keys() -> No
     pid_line, *key_lines = stdout.splitlines()
     assert int(pid_line) == proc.pid, "env must exec the provider so the pane pid is the provider"
     assert key_lines == ["absent", "absent", "absent"]
+
+
+@pytest.mark.asyncio
+async def test_managed_spawn_scrubs_overlay_and_native_host_token() -> None:
+    script = 'printf "%s\\n" "$$" "${GOBBY_AGENT_API_TOKEN-absent}"'
+    argv, env = await _spawn(
+        ["/bin/sh", "-c", script],
+        env={
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/dummy/own/grant.json",
+            "GOBBY_AGENT_API_TOKEN": "dummy-overlay-token",
+        },
+    )
+    assert "GOBBY_AGENT_API_TOKEN" not in env
+    assert "dummy-overlay-token" not in env.values()
+    host_env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "GOBBY_AGENT_API_TOKEN": "dummy-native-host-token",
+        **env,
+    }
+    proc = subprocess.Popen(argv, env=host_env, stdout=subprocess.PIPE, text=True)
+    stdout, _ = proc.communicate(timeout=10)
+
+    assert proc.returncode == 0
+    pid_line, token_line = stdout.splitlines()
+    assert int(pid_line) == proc.pid
+    assert token_line == "absent"

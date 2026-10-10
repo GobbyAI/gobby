@@ -268,6 +268,7 @@ async def run_argv(
             child_env = None
         else:
             child_env = {**os.environ, **env}
+            child_env.pop("GOBBY_AGENT_API_TOKEN", None)
             if MANAGED_EXECUTION_BOOTSTRAP_ENV in env:
                 for name in _OPERATOR_DATABASE_ENV:
                     child_env.pop(name, None)

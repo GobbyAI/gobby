@@ -437,7 +437,10 @@ class TestCodexAppServerClientStart:
                     '"GOBBY_CODEX_ENDPOINT_API_KEY"'
                 ),
             ),
-            env_overrides={"GOBBY_CODEX_ENDPOINT_API_KEY": secret},
+            env_overrides={
+                "GOBBY_CODEX_ENDPOINT_API_KEY": secret,
+                "GOBBY_AGENT_API_TOKEN": "dummy-overlay-agent-token",
+            },
         )
         process = MagicMock()
         process.stdin = MagicMock()
@@ -453,7 +456,7 @@ class TestCodexAppServerClientStart:
                 "gobby.utils.spawn.popen",
                 return_value=process,
             ) as popen,
-            patch.dict(os.environ, {}, clear=False),
+            patch.dict(os.environ, {"GOBBY_AGENT_API_TOKEN": "dummy-parent-agent-token"}),
         ):
             os.environ.pop("GOBBY_CODEX_ENDPOINT_API_KEY", None)
             await client.start()
@@ -461,6 +464,7 @@ class TestCodexAppServerClientStart:
             command = popen.call_args.args[0]
             child_env = popen.call_args.kwargs["env"]
             assert child_env["GOBBY_CODEX_ENDPOINT_API_KEY"] == secret
+            assert "GOBBY_AGENT_API_TOKEN" not in child_env
             assert "GOBBY_CODEX_ENDPOINT_API_KEY" not in os.environ
             assert secret not in repr(command)
 

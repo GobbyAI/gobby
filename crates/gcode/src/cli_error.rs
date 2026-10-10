@@ -162,7 +162,7 @@ fn grant_recovery(error: &GrantError) -> Option<&'static str> {
             "re-run the command after the daemon reissues the grant; if it persists, restart the session",
         ),
         GrantError::ManagedCapabilityMissing => Some(
-            "run gcode from the managed session that launched it; that session provides GOBBY_AGENT_API_TOKEN",
+            "run gcode from the managed session that launched it; that session provides the token in its private GOBBY_MANAGED_EXECUTION_BOOTSTRAP envelope",
         ),
         GrantError::Unauthorized(code) => unauthorized_recovery(code),
         GrantError::SchemaMismatch { .. } => Some(BINARY_SET_RECOVERY),
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(
             rendered.recovery.as_deref(),
             Some(
-                "run gcode from the managed session that launched it; that session provides GOBBY_AGENT_API_TOKEN"
+                "run gcode from the managed session that launched it; that session provides the token in its private GOBBY_MANAGED_EXECUTION_BOOTSTRAP envelope"
             )
         );
     }

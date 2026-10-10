@@ -46,7 +46,11 @@ from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.storage.schema_contract import installed_schema_identity
 from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, read_managed_signing_key
+from gobby.utils.local_token import (
+    GOBBY_AGENT_API_TOKEN_ENV,
+    read_managed_api_token,
+    read_managed_signing_key,
+)
 from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
@@ -274,18 +278,15 @@ async def ensure_isolation_code_index(
     runtime_root: Path | None = None,
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
-    api_token: str | None = None,
     identity_env: Mapping[str, str] | None = None,
     config_snapshot: ConfigSnapshot | None = None,
     phase_timings_ms: MutableMapping[str, float] | None = None,
 ) -> CodeIndexPreflightResult:
     """Prepare and verify `gcode` access inside an isolated workspace.
 
-    ``api_token`` authenticates only the daemon-owned preflight probes, via
-    their subprocess environment. It is never written to the runtime home or
-    the wrapper script and never returned in the agent env additions: the
-    runtime home deliberately carries no operator credentials, and the
-    spawned agent authenticates with its own run-scoped capability instead.
+    Preflight probes and the spawned agent authenticate from the run's private
+    envelope. The subprocess environment carries only its path and identity,
+    never the capability token.
 
     ``identity_env`` carries the spawned run's managed-execution identity
     (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) for the probes:
@@ -336,9 +337,6 @@ async def ensure_isolation_code_index(
     remaining()
     gcode_command = str(resolved_gcode)
     merged_probe_env = {**result.env, **dict(identity_env or {})}
-    probe_token = api_token or result.api_token
-    if probe_token:
-        merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = probe_token
     probe_env = merged_probe_env or None
 
     # `status` proves the path the spawned agent will actually use: grant
@@ -474,7 +472,7 @@ def _prepare_gcode_runtime(
     bootstrap_path = launch.env.get(MANAGED_EXECUTION_BOOTSTRAP_ENV)
     if not bootstrap_path:
         raise RuntimeError("gcode_managed_execution_bootstrap_missing")
-    api_token = launch.env.get(GOBBY_AGENT_API_TOKEN_ENV)
+    api_token = read_managed_api_token(launch.env)
     if not api_token:
         raise RuntimeError("gcode_managed_capability_missing")
 
@@ -727,13 +725,15 @@ async def _run_gcode(
     env: Mapping[str, str] | None = None,
 ) -> None:
     proc: subprocess.Popen[bytes] | None = None
+    child_env = {**os.environ, **(env or {})}
+    child_env.pop(GOBBY_AGENT_API_TOKEN_ENV, None)
     try:
         proc = await asyncio.to_thread(
             spawn.popen,
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**os.environ, **env} if env is not None else None,
+            env=child_env,
         )
         stdout, stderr = await asyncio.to_thread(proc.communicate, timeout=timeout)
     except asyncio.CancelledError:

@@ -849,7 +849,12 @@ def test_emit_cli_shim_execs_wrapped_argv_and_passes_sdk_args(tmp_path: Path) ->
 
 def test_compose_sandbox_subprocess_merges_identity_then_provider_env() -> None:
     launch = _enforced_srt_launch()
-    identity = {"PATH": "/bin", "GOBBY_SESSION_ID": "sess-1", "TMPDIR": "/tmp/identity"}
+    identity = {
+        "PATH": "/bin",
+        "GOBBY_SESSION_ID": "sess-1",
+        "TMPDIR": "/tmp/identity",
+        "GOBBY_AGENT_API_TOKEN": "inherited-token",
+    }
     argv, env = launch.compose_subprocess(["claude", "--print"], identity)
 
     assert argv == launch.wrap(["claude", "--print"])
@@ -857,6 +862,8 @@ def test_compose_sandbox_subprocess_merges_identity_then_provider_env() -> None:
     assert env["PATH"] == "/bin"
     assert env["TMPDIR"] == "/tmp/srt-run"
     assert env["GOBBY_SRT_TMPDIR"] == "/tmp/srt-sock"
+    assert "GOBBY_AGENT_API_TOKEN" not in env
+    assert "inherited-token" not in env.values()
 
 
 @pytest.mark.asyncio

@@ -12,8 +12,7 @@ import tempfile
 from pathlib import Path
 
 from gobby.paths import get_gobby_home
-from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
-from gobby.utils.machine_id import get_machine_id
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 
 # ============================================================================
 # Terminal Mode Environment Variables
@@ -206,8 +205,6 @@ def get_terminal_env_vars(
     max_agent_depth: int = 5,
     prompt: str | None = None,
     prompt_file: str | None = None,
-    signing_key: bytes | None = None,
-    timeout_seconds: float | None = None,
 ) -> dict[str, str]:
     """
     Build environment variables dict for spawning a terminal-mode agent.
@@ -223,8 +220,6 @@ def get_terminal_env_vars(
         max_agent_depth: Maximum allowed depth (default: 5).
         prompt: Optional short prompt (for inline passing).
         prompt_file: Optional path to file containing prompt (for long prompts).
-        signing_key: Managed signing key used to mint the run capability.
-        timeout_seconds: The run's declared timeout, bounding capability expiry.
 
     Returns:
         Dict of environment variable name to value.
@@ -247,16 +242,6 @@ def get_terminal_env_vars(
             project_id,
         ),
     }
-    if signing_key:
-        env[GOBBY_AGENT_API_TOKEN] = issue_agent_api_token(
-            signing_key,
-            agent_run_id=agent_run_id,
-            session_id=session_id,
-            project_id=project_id,
-            machine_id=get_machine_id(),
-            timeout_seconds=timeout_seconds,
-        )
-
     if parent_session_id:
         env[GOBBY_PARENT_SESSION_ID] = parent_session_id
 

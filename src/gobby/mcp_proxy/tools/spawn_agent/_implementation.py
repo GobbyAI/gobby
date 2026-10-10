@@ -40,7 +40,6 @@ from gobby.providers.version_gate import (
 )
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion
-from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -886,7 +885,6 @@ async def spawn_agent_impl(
                 daemon_config=daemon_config,
                 resume_metadata=resume_metadata,
                 code_index_mode=code_index_mode,
-                code_index_api_token=await run_thread_to_completion(read_local_api_token),
                 phase_timings_ms=phase_timings_ms,
                 spawn_started_at=spawn_started_at,
                 prewarm_pre_commit_store=prewarm_pre_commit_store,

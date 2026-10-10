@@ -432,9 +432,10 @@ gcode-runtime root, and `GOBBY_HOME/tools/srt` to the sensitive-root contract.
 Managed sandboxes cannot read or write the break-glass credential or its staging
 directory.
 Sandboxed managed agents never read the operator's `bootstrap.yaml` or
-`.secret_kek`: the launcher injects a per-run `GOBBY_AGENT_API_TOKEN` capability
-plus identity variables, and `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` points at the
-per-run `grant.json` that the sandbox re-admits for runtime and hub config. Parent-directory allow
+`.secret_kek`: the launcher exports identity variables and
+`GOBBY_MANAGED_EXECUTION_BOOTSTRAP`, which points at the private per-run `grant.json`
+that the sandbox re-admits for its scoped token, runtime and hub config. The token
+stays out of the environment and argv. Parent-directory allow
 entries are forbidden when they contain a sensitive descendant. Tests must
 assert effective access with real backend semantics; list membership alone is
 insufficient under SRT precedence.

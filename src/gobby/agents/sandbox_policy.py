@@ -287,7 +287,12 @@ def deny_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
 
 def sensitive_roots() -> list[str]:
     """Return Gobby roots excluded from every managed allow surface."""
-    return deny_paths([str(path) for path in (*credential_roots(), gcode_runtime_root())])
+    return deny_paths(
+        [
+            str(path)
+            for path in (*credential_roots(), gcode_runtime_root(), managed_execution_root())
+        ]
+    )
 
 
 def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:

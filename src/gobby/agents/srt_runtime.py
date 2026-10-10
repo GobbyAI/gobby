@@ -29,6 +29,7 @@ from gobby.agents.sandbox_policy import (
     SRT_VIOLATIONS_RELATIVE_PATH,
     assert_sensitive_path_contract,
     canonical_path,
+    managed_execution_root,
     prepare_sandbox_run_paths,
     previous_run_write_paths,
     sandbox_cache_path,
@@ -152,6 +153,7 @@ class SandboxLaunch:
         """Merge identity env then provider_env and wrap argv exactly once."""
         env = dict(identity_env)
         env.update(self.provider_env)
+        env.pop("GOBBY_AGENT_API_TOKEN", None)
         return self.wrap(list(argv)), env
 
     def emit_cli_shim(self, *, command: Sequence[str], directory: Path) -> Path:
@@ -768,6 +770,12 @@ async def prepare_sandbox_launch(
                 f"Sandbox cache grant {cache_path} resolved outside the sandbox cache"
             )
     paths.read_paths.append(str(run_paths.assets.resolve()))
+    managed_root = managed_execution_root().resolve()
+    own_root = run_paths.root.resolve()
+    for allowed_path in (*paths.read_paths, *paths.write_paths):
+        allowed = Path(allowed_path).resolve(strict=False)
+        if allowed.is_relative_to(managed_root) and not allowed.is_relative_to(own_root):
+            raise SrtRuntimeError("Sandbox grants cannot expose another managed execution")
     if config.backend == "srt" and sys.platform == "linux":
         # bwrap masks denied temp roots before executing SRT's seccomp helper.
         # Re-expose the pinned runtime when isolated GOBBY_HOME lives under one.
@@ -897,11 +905,12 @@ async def _preflight_srt(
     launch: SandboxLaunch, workspace_path: str, env: Mapping[str, str]
 ) -> None:
     command = launch.wrap([])[:-1] + ["--preflight"]
+    _, child_env = launch.compose_subprocess([], env)
     try:
         process = await spawn.create_subprocess_exec(
             *command,
             cwd=workspace_path,
-            env=dict(env),
+            env=child_env,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

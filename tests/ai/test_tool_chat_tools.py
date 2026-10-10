@@ -276,6 +276,7 @@ async def test_run_argv_managed_context_strips_operator_database_env(
         return Process()
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://operator/database-url")
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "dummy-parent-token")
     monkeypatch.setattr(
         "gobby.ai._tool_chat_tools.spawn.create_subprocess_exec",
         create_process,
@@ -286,13 +287,19 @@ async def test_run_argv_managed_context_strips_operator_database_env(
         cwd=str(tmp_path),
         timeout=1,
         byte_cap=1024,
-        env={"GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/managed/bootstrap.json"},
+        env={
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/managed/bootstrap.json",
+            "GOBBY_AGENT_API_TOKEN": "dummy-overlay-token",
+        },
     )
 
     assert result == "ok"
     assert captured_env is not None
     assert captured_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == "/managed/bootstrap.json"
     assert "DATABASE_URL" not in captured_env
+    assert "GOBBY_AGENT_API_TOKEN" not in captured_env
+    assert "dummy-parent-token" not in captured_env.values()
+    assert "dummy-overlay-token" not in captured_env.values()
 
 
 @pytest.mark.asyncio

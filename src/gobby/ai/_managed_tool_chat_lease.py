@@ -99,13 +99,15 @@ def build_managed_tool_chat_lease_factory(
                 signing_key=signing_key,
                 deadline_seconds=max(1.0, remaining_seconds),
             )
+            from gobby.utils.local_token import read_managed_api_token
+
             scoped_request = replace(
                 request,
                 project_path=tool_credential.project_path,
                 project_id=tool_credential.project_id,
                 managed_execution_id=execution_id,
                 credential_bootstrap_path=str(launch.grant_path),
-                daemon_api_token=launch.env["GOBBY_AGENT_API_TOKEN"],
+                daemon_api_token=read_managed_api_token(launch.env),
             )
             yield scoped_request
         finally:

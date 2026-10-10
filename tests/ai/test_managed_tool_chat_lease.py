@@ -112,6 +112,9 @@ async def test_lease_replaces_client_path_and_revokes_after_success(
         subprocess_env = scoped.managed_subprocess_env
         assert subprocess_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(grant_path)
         assert subprocess_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"].endswith("grant.json")
+        assert "GOBBY_AGENT_API_TOKEN" not in subprocess_env
+        assert scoped.daemon_api_token is not None
+        assert scoped.daemon_api_token not in subprocess_env.values()
         assert subprocess_env["GOBBY_MANAGED_EXECUTION_ID"] == str(execution_id)
         assert subprocess_env["GOBBY_SESSION_ID"] == str(session_id)
         assert subprocess_env["GOBBY_PROJECT_ID"] == str(project_id)
@@ -123,7 +126,7 @@ async def test_lease_replaces_client_path_and_revokes_after_success(
         assert grant.principal.machine_id == _MACHINE_ID
         assert grant.signature
         claims = verify_agent_api_token(
-            subprocess_env["GOBBY_AGENT_API_TOKEN"],
+            scoped.daemon_api_token,
             derive_managed_signing_key(_OPERATOR_TOKEN),
         )
         assert claims is not None

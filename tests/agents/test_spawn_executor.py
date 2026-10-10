@@ -14,8 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.utils.local_token import derive_managed_signing_key
-
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
@@ -126,19 +124,17 @@ def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("run_token_env", "expected_probe_token"),
+    "run_token_env",
     [
-        # The run-scoped managed credential must win; isolation gcode
-        # rejects the operator token for managed probes (#19709).
-        ({"GOBBY_AGENT_API_TOKEN": "run-scoped-token"}, "run-scoped-token"),
-        # Tokenless-dev fallback: no minted capability -> operator token.
-        ({}, "probe-token"),
+        # Old snapshot tokens must not be forwarded into gcode probes.
+        {"GOBBY_AGENT_API_TOKEN": "old-run-token"},
+        # The envelope supplies auth even when the snapshot has no token.
+        {},
     ],
 )
 async def test_managed_code_index_preflight_uses_issued_credential(
     monkeypatch: pytest.MonkeyPatch,
     run_token_env: dict[str, str],
-    expected_probe_token: str,
 ) -> None:
     credential = MagicMock()
     context = PreparedSpawn(
@@ -168,7 +164,6 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         project_id="project",
         machine_id="21000000-0000-4000-8000-000000000001",
         code_index_preflight_mode="required",
-        code_index_api_token="probe-token",
         prepared_spawn=prepared_spawn(),
     )
 
@@ -176,14 +171,12 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         cwd: str,
         *,
         credential: object,
-        api_token: str | None,
         identity_env: dict[str, str] | None = None,
         config_snapshot: object | None = None,
         phase_timings_ms: dict[str, float] | None = None,
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
         assert credential is context.managed_credential
-        assert api_token == expected_probe_token
         # The probe grant is signed for this machine; without it the preflight
         # grant carries a placeholder machine id that gcode rejects.
         assert identity_env == {
@@ -204,7 +197,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
 
     assert error is None
     assert context.env_vars["PATH"] == "/scoped/bin"
-    # The preflight's minted probe capability never replaces the run's own token.
+    # The preflight's minted capability stays in its private envelope.
     assert "minted-probe-capability" not in context.env_vars.values()
 
 
@@ -914,8 +907,8 @@ class TestExecuteSpawn:
             assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="gobby-sess-123"' in command
             assert 'mcp_servers.gobby.env.GOBBY_PROJECT_ID="proj"' in command
             assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-abc123def456"' in command
-            # The capability is forwarded by name; its value never enters argv.
-            assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in command
+            # Auth reads the private envelope; no token is forwarded by name or value.
+            assert not any("GOBBY_AGENT_API_TOKEN" in argument for argument in command)
             assert not any("scoped-token" in argument for argument in command)
             # Deliberately withheld: schema leases must resolve to the child
             # session, never the parent (see _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS).
@@ -926,6 +919,8 @@ class TestExecuteSpawn:
             # late-link via GOBBY_SESSION_ID.
             assert spawn_kwargs.get("env") is not None
             assert spawn_kwargs["env"].get("GOBBY_SESSION_ID") == "gobby-sess-123"
+            assert "GOBBY_AGENT_API_TOKEN" not in spawn_kwargs["env"]
+            assert "scoped-token" not in spawn_kwargs["env"].values()
 
             # The prompt never rides in argv: a CLI-argument prompt starts the
             # first turn at launch and cancels Codex's in-flight MCP client
@@ -2348,7 +2343,7 @@ def test_codex_mcp_overrides_omit_absent_spawn_cache_redirects() -> None:
 def test_capability_token_never_in_argv_or_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The capability value stays in process env; argv and metadata carry only its name."""
+    """Capabilities stay in the envelope; argv and metadata carry identity only."""
     import json
 
     from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
@@ -2363,7 +2358,7 @@ def test_capability_token_never_in_argv_or_metadata(
 
     overrides = _codex_mcp_config_overrides("/repo", None, managed_identity_env=identity_env)
 
-    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in overrides
+    assert not any("GOBBY_AGENT_API_TOKEN" in override for override in overrides)
     assert 'mcp_servers.gobby.env.GOBBY_SESSION_ID="child-session-uuid"' in overrides
     assert 'mcp_servers.gobby.env.GOBBY_AGENT_RUN_ID="run-uuid"' in overrides
     assert not any(token_value in override for override in overrides)
@@ -2407,7 +2402,7 @@ def test_capability_token_never_in_argv_or_metadata(
     (metadata,) = persisted
     persisted_overrides = metadata["config_overrides"]
     assert isinstance(persisted_overrides, list)
-    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in persisted_overrides
+    assert not any("GOBBY_AGENT_API_TOKEN" in override for override in persisted_overrides)
     assert token_value not in json.dumps(metadata)
 
 
@@ -2451,7 +2446,6 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         parent_session_id=parent_session_id,
         agent_run_id=run_id,
         project_id="project-uuid",
-        signing_key=derive_managed_signing_key("operator-token"),
     )
     parent_env["GOBBY_HOME"] = str(tmp_path)
     parent_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(tmp_path / "grant.json")
@@ -2461,7 +2455,7 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     grant_path.write_text(
         json.dumps(
             {
-                "managed_api_token": parent_env["GOBBY_AGENT_API_TOKEN"],
+                "managed_api_token": "dummy-envelope-token",
                 "principal": {
                     "execution_id": run_id,
                     "session_id": child_session_id,
@@ -2494,7 +2488,9 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     assert child_env["GOBBY_HOME"] == str(tmp_path)
     assert child_env["GOBBY_DAEMON_URL"] == "http://127.0.0.1:31579"
     assert child_env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(tmp_path / "grant.json")
-    capability = child_env["GOBBY_AGENT_API_TOKEN"]
+    assert "GOBBY_AGENT_API_TOKEN" not in child_env
+    assert all("dummy-envelope-token" not in value for value in overrides)
+    capability = "dummy-envelope-token"
 
     for variable in parent_env:
         if variable.startswith("GOBBY_"):
@@ -3365,6 +3361,9 @@ async def test_lost_cas_converges_when_reconciler_already_promoted(
 
 @pytest.mark.asyncio
 async def test_cancel_windows_pre_and_post_dispatch() -> None:
+    from gobby.terminals.runtime import PreparedSpawn as TerminalPreparedSpawn
+    from gobby.terminals.runtime import TerminalSpawnRequest
+
     cancel = asyncio.Event()
     cancel.set()
     request = SpawnRequest(
@@ -3400,14 +3399,19 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
     )
     runtime = _runtime_of(request2)
     runtime.spawn_hold = hold
-    task = asyncio.create_task(execute_spawn(request2))
-    for _ in range(50):
-        if runtime.create_calls:
-            break
-        await asyncio.sleep(0)
-    task.cancel()
-    hold.set()
-    result2 = await task
+    dispatched = asyncio.Event()
+    prepare_spawn = runtime.prepare_spawn
+
+    async def signal_dispatch(spawn_request: TerminalSpawnRequest) -> TerminalPreparedSpawn:
+        dispatched.set()
+        return await prepare_spawn(spawn_request)
+
+    with patch.object(runtime, "prepare_spawn", side_effect=signal_dispatch):
+        task = asyncio.create_task(execute_spawn(request2))
+        await asyncio.wait_for(dispatched.wait(), timeout=5)
+        task.cancel()
+        hold.set()
+        result2 = await task
     assert result2.success is False
     manager = _manager_of(request2)
     row = next(iter(manager.rows.values()))

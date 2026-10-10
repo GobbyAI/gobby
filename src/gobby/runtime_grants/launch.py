@@ -127,7 +127,6 @@ def materialize_managed_launch(
         "HOME": str(Path.home().resolve()),
         "GOBBY_HOME": str(get_gobby_home().resolve()),
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(grant_path),
-        "GOBBY_AGENT_API_TOKEN": token,
         "GOBBY_PROJECT_ID": grant.principal.project_id,
     }
     owner_key = (
@@ -213,7 +212,6 @@ _CHILD_ENV_OVERLAY_KEYS = (
     "HOME",
     "GOBBY_HOME",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
-    "GOBBY_AGENT_API_TOKEN",
     "GOBBY_PROJECT_ID",
     "GOBBY_AGENT_RUN_ID",
     "GOBBY_MANAGED_EXECUTION_ID",

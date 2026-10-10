@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 from gobby.agents.constants import (
     CLAUDE_MANAGED_AGENT_ENV,
-    GOBBY_AGENT_API_TOKEN,
     GOBBY_AGENT_RUN_ID,
     GOBBY_PROJECT_ID,
     GOBBY_SESSION_ID,
@@ -192,13 +191,9 @@ async def _prepare_managed_code_index(
         }
         if request.machine_id:
             identity_env["GOBBY_MACHINE_ID"] = request.machine_id
-        # Isolation gcode uses the run-scoped managed credential; the operator
-        # token is only a tokenless-dev fallback when no run token was minted.
-        run_api_token = spawn_context.env_vars.get(GOBBY_AGENT_API_TOKEN)
         preflight = await ensure_isolation_code_index(
             request.cwd,
             credential=credential,
-            api_token=run_api_token or request.code_index_api_token,
             identity_env=identity_env,
             config_snapshot=spawn_context.config_snapshot,
             phase_timings_ms=request.phase_timings_ms,

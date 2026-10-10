@@ -8,7 +8,8 @@ Operator clients read `api_key` from `$GOBBY_HOME/bootstrap.yaml` with owner-onl
 permissions. gdaemon validates the key against the hub's `api_keys` table and
 forwards its user, machine, and key IDs with a private per-boot secret. Python
 accepts that complete identity only with the matching secret. Managed runs use
-their scoped `GOBBY_AGENT_API_TOKEN`; browser users receive the `gobby_session`
+their scoped token from the private `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` envelope;
+browser users receive the `gobby_session`
 cookie after account login.
 
 1. Determine which credential path is failing. A missing API key, rejected

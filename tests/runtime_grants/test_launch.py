@@ -17,7 +17,12 @@ from gobby.runtime_grants.launch import (
     merge_child_env,
     write_grant_file,
 )
-from gobby.utils.local_token import AgentApiTokenClaims, daemon_auth_headers, verify_agent_api_token
+from gobby.utils.local_token import (
+    AgentApiTokenClaims,
+    daemon_auth_headers,
+    read_managed_api_token,
+    verify_agent_api_token,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -55,6 +60,13 @@ def test_managed_child_identity_matches_its_grant(tmp_path: Path, kind: str) -> 
     other_key = "GOBBY_MANAGED_EXECUTION_ID" if kind == "agent_run" else "GOBBY_AGENT_RUN_ID"
     assert env[owner_key] == principal.execution_id
     assert other_key not in env
+    assert "GOBBY_AGENT_API_TOKEN" not in launch.env
+    assert "GOBBY_AGENT_API_TOKEN" not in env
+    token = read_managed_api_token(env)
+    assert token is not None
+    claims = verify_agent_api_token(token, b"test-key")
+    assert claims is not None
+    assert claims.exp - claims.iat == (90 if kind == "agent_run" else 30)
 
 
 def test_managed_launch_publishes_capability_in_existing_private_envelope(
@@ -114,7 +126,8 @@ def test_rotation_renews_capability_in_existing_envelope(
     launch = materialize_managed_launch(
         grant, dest_dir=tmp_path, signing_key=b"test-renewal-key", deadline_seconds=86400
     )
-    original = launch.env["GOBBY_AGENT_API_TOKEN"]
+    original = read_managed_api_token(launch.env)
+    assert original is not None
     now += 23 * 3600
     issued = datetime.fromtimestamp(now, UTC)
     rewrite_managed_grant_file(
@@ -170,10 +183,9 @@ def test_python_reader_rereads_envelope_instead_of_launch_environment(
     monkeypatch.delenv("GOBBY_MANAGED_EXECUTION_ID", raising=False)
     monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", str(launch.grant_path))
     monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "launch-time-fixture")
-    assert (
-        daemon_auth_headers().get("Authorization")
-        == "Bearer " + launch.env["GOBBY_AGENT_API_TOKEN"]
-    )
+    capability = read_managed_api_token(launch.env)
+    assert capability is not None
+    assert daemon_auth_headers().get("Authorization") == "Bearer " + capability
     envelope = json.loads(launch.grant_path.read_bytes())
     envelope["managed_api_token"] = "renewed-fixture"
     launch.grant_path.write_text(json.dumps(envelope))
@@ -365,6 +377,7 @@ def test_managed_capability_reader_refuses_invalid_envelope(
 
 def test_merge_child_env_omits_unsanctioned_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SECRET_LEAK", "should-not-copy")
+    monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "parent-token")
     monkeypatch.setenv("PATH", "/bin")
     extra = {
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": "/tmp/grant.json",
@@ -377,7 +390,9 @@ def test_merge_child_env_omits_unsanctioned_os_environ(monkeypatch: pytest.Monke
     assert env is not None
     assert env["PATH"] == "/bin"
     assert env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == "/tmp/grant.json"
-    assert env["GOBBY_AGENT_API_TOKEN"] == "tok"
+    assert "GOBBY_AGENT_API_TOKEN" not in env
+    assert "tok" not in env.values()
+    assert "parent-token" not in env.values()
     assert "SECRET_LEAK" not in env
     assert "OTHER" not in env
 

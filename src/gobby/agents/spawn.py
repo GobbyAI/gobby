@@ -530,7 +530,7 @@ def _issue_prelaunch_credential(
     )
     # gcore consumers parse this file as a full GrantBundle; the minimal
     # credential JSON stays reachable via credential.bootstrap_path only.
-    # Spawn installs GOBBY_AGENT_API_TOKEN itself; take only the grant path.
+    # The capability stays in the private envelope; export only its path.
     prepared.env_vars[MANAGED_EXECUTION_BOOTSTRAP_ENV] = str(launch.grant_path)
     return prepared
 
@@ -646,8 +646,6 @@ def _prepare_run_for_session(
             max_agent_depth=max_agent_depth,
             prompt=prompt_env,
             prompt_file=prompt_file,
-            signing_key=read_managed_signing_key(),
-            timeout_seconds=timeout_seconds,
         )
 
         return PreparedSpawn(

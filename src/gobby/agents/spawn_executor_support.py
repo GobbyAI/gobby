@@ -73,10 +73,7 @@ _CODEX_GOBBY_MCP_IDENTITY_ENV_VARS = (
     GOBBY_PROJECT_ID,
     GOBBY_AGENT_RUN_ID,
 )
-# Secrets are forwarded by name through Codex's mcp_servers.<id>.env_vars
-# whitelist: the value stays in the provider process environment and never
-# appears in argv or persisted config overrides.
-_CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS = (GOBBY_AGENT_API_TOKEN,)
+# The private envelope path above carries auth to the scrubbed MCP child.
 
 
 def _validate_codex_gobby_tool_allowlist() -> None:
@@ -90,6 +87,8 @@ def _validate_codex_gobby_tool_allowlist() -> None:
 
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
+    # Old resume snapshots and caller overlays cannot re-export a capability.
+    env.pop(GOBBY_AGENT_API_TOKEN, None)
     if request.extra_env:
         for key, value in request.extra_env.items():
             if key == PATH_ENV_VAR:
@@ -638,11 +637,4 @@ def _codex_runtime_config_overrides(
                 overrides.append(
                     f"shell_environment_policy.set.{variable_name}={json.dumps(value)}"
                 )
-        forwarded_secrets = [
-            variable_name
-            for variable_name in _CODEX_GOBBY_MCP_FORWARDED_SECRET_ENV_VARS
-            if managed_identity_env.get(variable_name)
-        ]
-        if forwarded_secrets:
-            overrides.append(f"mcp_servers.gobby.env_vars={json.dumps(forwarded_secrets)}")
     return overrides

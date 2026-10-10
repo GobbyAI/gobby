@@ -136,7 +136,7 @@ fn grant_errors_stable_contract() {
         (
             GrantError::ManagedCapabilityMissing,
             "managed_capability_missing",
-            "managed capability missing: GOBBY_AGENT_API_TOKEN is not set",
+            "managed capability missing: token unavailable in GOBBY_MANAGED_EXECUTION_BOOTSTRAP envelope",
             2,
         ),
         (

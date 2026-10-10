@@ -52,6 +52,10 @@ def apply_native_env_policy(
         spawn_env.pop(key, None)
     for key in _BLANKED_KEYS:
         spawn_env[key] = ""
+    if spawn_env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"):
+        # The native host may inherit an old capability; remove it at exec too.
+        denied = (*denied, "GOBBY_AGENT_API_TOKEN")
+        spawn_env.pop("GOBBY_AGENT_API_TOKEN", None)
     if denied:
         unset = [arg for key in denied for arg in ("-u", key)]
         argv = ["/usr/bin/env", *unset, "--", *argv]

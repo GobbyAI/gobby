@@ -464,9 +464,22 @@ Gobby-launched interactive sessions are an operator-trust surface outside SRT.
 Other processes running as the same operating-system user are outside every
 Gobby boundary; Gobby does not isolate the user's account from itself.
 
+Managed launches carry the path to a private, mode-0600 capability envelope in
+`GOBBY_MANAGED_EXECUTION_BOOTSTRAP`. Python and Rust daemon clients read their
+scoped token from that envelope. Launches do not export `GOBBY_AGENT_API_TOKEN`
+or put its value in argv. SRT denies reads of other runs' envelopes while
+granting the current run access to its own envelope.
+
+Same-user sandboxed processes can still read other processes' environments and
+argv. This includes `DATABASE_URL`, provider credentials, and agent tokens held
+by processes launched before this change. Envelope-only token transport is a
+mitigation, not process isolation. Josh approved this scope on 2026-10-10 under
+operator ruling `23923-isolation:A`. Separate OS users, VMs, or containers are
+being planned in #23952 (isolate managed seats from same-user host processes).
+
 SRT uses Seatbelt on macOS and bubblewrap on Linux. It is a pre-1.0 runtime and
 reduces host exposure for managed agents, but it is not the future microVM
 boundary for hostile repositories. Higher-risk unattended execution remains a
 separate microVM follow-up.
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_

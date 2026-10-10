@@ -188,6 +188,7 @@ async def _run_cli_text_generation_command(
     # context/hooks from loading and adding a large variable startup tax.
     env = os.environ.copy()
     env.update(env_overrides)
+    env.pop("GOBBY_AGENT_API_TOKEN", None)
     env["GOBBY_HOOKS_DISABLED"] = "1"
     owner_task = asyncio.current_task()
     if owner_task is not None:
@@ -539,6 +540,7 @@ def _droid_isolated_env(base_env: Mapping[str, str], temp_home: Path) -> dict[st
         path.mkdir(parents=True, exist_ok=True)
 
     env = dict(base_env)
+    env.pop("GOBBY_AGENT_API_TOKEN", None)
     env.update(
         {
             "HOME": str(temp_home),

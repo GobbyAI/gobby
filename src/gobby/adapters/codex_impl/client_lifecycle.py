@@ -35,6 +35,7 @@ async def start(client: CodexAppServerClient) -> None:
     try:
         env = os.environ.copy()
         env.update(client._env_overrides)
+        env.pop("GOBBY_AGENT_API_TOKEN", None)
         # Prevent installed Codex hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
         command = [client._codex_command, *client._global_args, "app-server"]

@@ -47,7 +47,7 @@ use handshake::{
 pub enum GrantError {
     DaemonRequired,
     Expired,
-    /// A managed grant needs the daemon but `GOBBY_AGENT_API_TOKEN` is absent.
+    /// A managed grant needs the daemon but its private envelope token is unavailable.
     ManagedCapabilityMissing,
     SchemaMismatch {
         grant_version: i64,
@@ -78,7 +78,9 @@ impl fmt::Display for GrantError {
             Self::DaemonRequired => f.write_str("daemon required"),
             Self::Expired => f.write_str("grant expired"),
             Self::ManagedCapabilityMissing => {
-                f.write_str("managed capability missing: GOBBY_AGENT_API_TOKEN is not set")
+                f.write_str(
+                    "managed capability missing: token unavailable in GOBBY_MANAGED_EXECUTION_BOOTSTRAP envelope",
+                )
             }
             Self::SchemaMismatch {
                 grant_version,

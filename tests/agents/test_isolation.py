@@ -695,7 +695,7 @@ class TestEnsureIsolationCodeIndex:
         assert not reapable_token.exists()
 
     @pytest.mark.asyncio
-    async def test_api_token_reaches_probe_subprocess_env(
+    async def test_probe_reads_envelope_without_exporting_inherited_token(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         proc = self._proc()
@@ -703,6 +703,7 @@ class TestEnsureIsolationCodeIndex:
         workspace = tmp_path / "workspace"
         source_home = tmp_path / "home"
         monkeypatch.setenv("GOBBY_HOME", str(source_home))
+        monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "parent-dummy-token")
         workspace.mkdir()
         source_home.mkdir()
         self._write_operator_token(source_home)
@@ -721,7 +722,6 @@ class TestEnsureIsolationCodeIndex:
                 credential=self._credential(tmp_path),
                 config_snapshot=self._config_snapshot(),
                 runtime_root=runtime_root,
-                api_token="operator-token-value",
                 identity_env=self._identity_env(),
             )
 
@@ -729,27 +729,23 @@ class TestEnsureIsolationCodeIndex:
         assert len(calls) == 3
         for call in calls:
             env = call.kwargs["env"]
-            assert env["GOBBY_AGENT_API_TOKEN"] == "operator-token-value"
-        # The caller's token wins over the capability the launch minted.
-        assert result.api_token not in {None, "operator-token-value"}
+            assert "GOBBY_AGENT_API_TOKEN" not in env
+            assert "parent-dummy-token" not in env.values()
+            assert Path(env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"]).is_file()
+        assert result.api_token is not None
         # The credential is ephemeral: never in the runtime home, the wrapper,
         # or the env additions handed to the spawned agent.
         assert result.runtime_home is not None
         assert not (Path(result.runtime_home) / "bootstrap.yaml").exists()
         wrapper = workspace / ".gobby" / "bin" / "gcode"
-        assert "operator-token-value" not in wrapper.read_text()
+        assert result.api_token not in wrapper.read_text()
         assert "GOBBY_AGENT_API_TOKEN" not in result.env
 
     @pytest.mark.asyncio
-    async def test_minted_token_reaches_probe_env_when_caller_passes_none(
+    async def test_probe_refresh_uses_private_envelope_without_token_export(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Without a caller token the probes carry the capability the launch minted.
-
-        gcore refreshes a managed grant through the daemon, for example on a schema
-        mismatch, and needs GOBBY_AGENT_API_TOKEN to do so. Without it the refresh
-        was reported to the operator as an expired grant.
-        """
+        """gcore refreshes the grant using the capability in its private envelope."""
         proc = self._proc()
         runtime_root = tmp_path / "runtime"
         workspace = tmp_path / "workspace"
@@ -783,10 +779,12 @@ class TestEnsureIsolationCodeIndex:
         assert claims is not None
         assert claims.agent_run_id == str(credential.managed_execution_id)
         assert (claims.project_id, claims.session_id) == (self._PROJECT_ID, self._SESSION_ID)
-        probe_tokens = [
-            call.kwargs["env"]["GOBBY_AGENT_API_TOKEN"] for call in self._gcode_calls(popen)
-        ]
-        assert probe_tokens == [token, token, token]
+        for call in self._gcode_calls(popen):
+            assert "GOBBY_AGENT_API_TOKEN" not in call.kwargs["env"]
+            assert token not in call.kwargs["env"].values()
+            assert call.kwargs["env"]["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(
+                credential.bootstrap_path.parent / "grant.json"
+            )
         # The daemon-owned private grant envelope is the renewable capability source.
         # It stays out of the agent's env, wrapper, runtime home, and logged repr.
         assert token not in result.env.values()
@@ -801,8 +799,11 @@ class TestEnsureIsolationCodeIndex:
         assert grant_path.stat().st_mode & 0o777 == 0o600
 
     @pytest.mark.asyncio
-    async def test_no_api_token_inherits_daemon_env_untouched(self, tmp_path: Path) -> None:
+    async def test_probe_scrubs_parent_token_without_a_managed_credential(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         proc = self._proc()
+        monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "parent-dummy-token")
 
         with (
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
@@ -814,7 +815,7 @@ class TestEnsureIsolationCodeIndex:
             await ensure_isolation_code_index(str(tmp_path))
 
         for call in self._gcode_calls(popen):
-            assert call.kwargs.get("env") is None
+            assert "GOBBY_AGENT_API_TOKEN" not in call.kwargs["env"]
 
     @pytest.mark.asyncio
     async def test_raises_when_gcode_index_fails(self, tmp_path: Path) -> None:
