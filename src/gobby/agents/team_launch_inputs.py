@@ -20,6 +20,7 @@ from gobby.storage.workspace_layout import (
 )
 from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceTarget
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.git import run_git_command
 
 LANE_MANAGER_AGENT = "lane-manager"
 
@@ -296,8 +297,26 @@ def resolve_team_launch_inputs(
             and Path(tree.worktree_path).resolve() not in live_paths
             and runs.get_active_run_for_worktree(tree.id) is None
         ]
+        excluded: dict[str, str] = {}
+        clean = []
+        for tree in matches:
+            status = run_git_command(
+                ["git", "status", "--porcelain", "--untracked-files=all"], tree.worktree_path
+            )
+            if status == "":
+                clean.append(tree)
+            else:
+                excluded[tree.id] = "dirty" if status is not None else "Git status unavailable"
+        matches = clean
         if len(matches) != 1:
-            raise _refuse("worktree", [f"{tree.branch_name} ({tree.id})" for tree in candidates])
+            raise _refuse(
+                "worktree",
+                [
+                    f"{tree.branch_name} ({tree.id})"
+                    + (f" [{excluded[tree.id]}]" if tree.id in excluded else "")
+                    for tree in candidates
+                ],
+            )
     chosen = matches[0]
     if not Path(chosen.worktree_path).is_dir():
         raise RunbookSeatRefusal(f"worktree path does not exist: {chosen.worktree_path}")
