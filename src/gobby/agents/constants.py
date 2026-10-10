@@ -120,11 +120,14 @@ CLAUDE_MANAGED_AGENT_ENV = {
 
 def get_agent_session_cache_dir(session_id: str, *path_components: str) -> Path:
     """Return a safe per-session cache directory path for spawned agents."""
+    root = Path(tempfile.gettempdir())
+    if not root.is_absolute():
+        raise ValueError("Agent temporary cache root must be absolute")
     safe_prefix = re.sub(r"[^a-zA-Z0-9_-]", "-", session_id).strip("-")[:80]
     if not safe_prefix:
         safe_prefix = "unknown-session"
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
-    return Path(tempfile.gettempdir(), *path_components, f"{safe_prefix}-{digest}")
+    return root.joinpath(*path_components, f"{safe_prefix}-{digest}")
 
 
 def get_agent_uv_cache_dir(session_id: str) -> str:
@@ -139,6 +142,13 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
     return str(cache_dir)
 
 
+def _agent_home_cache_root() -> Path:
+    home = get_gobby_home()
+    if not home.is_absolute():
+        raise ValueError("GOBBY_HOME must be absolute for agent caches")
+    return home / "cache"
+
+
 def shared_agent_cargo_home_dir() -> Path:
     """Return the one Cargo home that every unsandboxed spawned agent shares.
 
@@ -150,7 +160,7 @@ def shared_agent_cargo_home_dir() -> Path:
     build into their own target rather than the operator's. Sandboxed runs never
     write it: they build from ``sandbox_agent_cache_dir`` instead.
     """
-    return get_gobby_home() / "cache" / "cargo-home"
+    return _agent_home_cache_root() / "cargo-home"
 
 
 def sandbox_agent_cache_dir() -> Path:
@@ -161,7 +171,7 @@ def sandbox_agent_cache_dir() -> Path:
     Cargo home and their own checkout's target, so no unsandboxed build may read
     or execute anything below this root.
     """
-    return get_gobby_home() / "cache" / "sandbox"
+    return _agent_home_cache_root() / "sandbox"
 
 
 def get_agent_cargo_home_dir(session_id: str) -> str:

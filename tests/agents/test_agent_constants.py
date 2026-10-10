@@ -25,9 +25,12 @@ from gobby.agents.constants import (
     GOBBY_WORKFLOW_NAME,
     IDENTITY_ENV_VARS,
     UV_CACHE_DIR,
+    ensure_agent_cargo_home_dir,
+    ensure_agent_uv_cache_dir,
     get_agent_cargo_home_dir,
     get_agent_uv_cache_dir,
     get_terminal_env_vars,
+    sandbox_agent_cache_dir,
 )
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 from gobby.utils.local_token import (
@@ -43,6 +46,34 @@ _HASH_SUFFIX_RE = re.compile(r".+-[0-9a-f]{16}$")
 def _expected_cache_leaf(prefix: str, session_id: str) -> str:
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}-{digest}"
+
+
+@pytest.mark.parametrize("root", ["", ".", "relative-temp"])
+def test_relative_temp_cache_root_cannot_create_checkout_skeleton(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, root: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("gobby.agents.constants.tempfile.gettempdir", lambda: root)
+
+    with pytest.raises(ValueError, match="temporary cache root must be absolute"):
+        ensure_agent_uv_cache_dir("session")
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("root", [".", "gobby", "relative-home"])
+def test_relative_gobby_home_cannot_create_checkout_cargo_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, root: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", root)
+
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        ensure_agent_cargo_home_dir("session")
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        sandbox_agent_cache_dir()
+
+    assert list(tmp_path.iterdir()) == []
 
 
 class TestEnvironmentVariableConstants:
