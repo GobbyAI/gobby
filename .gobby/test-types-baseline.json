@@ -1001,16 +1001,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_memory_coverage.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 44,
-      "message": "Module \"gobby.cli.memory\" does not explicitly export attribute \"_get_daemon_client\"",
-      "occurrences": 4,
-      "path": "tests/cli/test_memory_coverage.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_projects.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 33,
