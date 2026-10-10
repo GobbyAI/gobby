@@ -1238,10 +1238,11 @@ class TestUninstallCommand:
     def test_uninstall_bare_removes_everything_without_docker(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        gobby_home = _isolate_gobby_home(tmp_path, monkeypatch)
         monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text("{}")
-        validator = tmp_path / ".gobby" / "hooks" / "validate_settings.py"
+        validator = gobby_home / "hooks" / "validate_settings.py"
         validator.parent.mkdir(parents=True)
         validator.write_text("# validate settings")
         claude = MagicMock(
@@ -1259,7 +1260,7 @@ class TestUninstallCommand:
         assert result.exit_code == 0, result.output
         assert "Gobby Uninstallation" in result.output
         assert "Targets to uninstall: claude, rtk, impeccable" in result.output
-        assert "Removed global hook files from ~/.gobby/hooks/" in result.output
+        assert f"Removed global hook files from {validator.parent}" in result.output
         assert not validator.exists()
         claude.assert_called_once_with(tmp_path)
         tools["disable_rule"].assert_called_once_with(

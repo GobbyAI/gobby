@@ -704,6 +704,7 @@ class TestInstallGitHooks:
         )
         gcode.chmod(gcode.stat().st_mode | stat.S_IXUSR)
         monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
 
         self._git(repo, "init")
         self._git(repo, "checkout", "-b", "main")
@@ -774,6 +775,7 @@ class TestInstallGitHooks:
         curl.write_text(f"#!/usr/bin/env bash\ntouch {shlex.quote(str(curl_file))}\n")
         curl.chmod(curl.stat().st_mode | stat.S_IXUSR)
         monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
         monkeypatch.setenv("PATH", f"{path_bin}{os.pathsep}{os.environ['PATH']}")
 
         self._git(repo, "init")
@@ -1115,7 +1117,7 @@ class TestHookTemplates:
         """Checkout, merge, and rewrite hooks use the same reindex flow as post-commit."""
         post_commit = HOOK_TEMPLATES["post-commit"]
         shared_snippets = (
-            'GCODE="$HOME/.gobby/bin/gcode"',
+            'GCODE="${GOBBY_HOME:-$HOME/.gobby}/bin/gcode"',
             "sed 's/^/--files=/'",
             r"tr '\n' '\0'",
             'xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1',
