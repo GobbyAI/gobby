@@ -427,12 +427,16 @@ def test_linked_checkout_generated_paths_remain_accessible(repo: Path) -> None:
     (gitdir / "commondir").write_text("../..\n")
     (linked / ".git").write_text(f"gitdir: {gitdir}\n")
     assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/dist/assets"), {})
-    assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
+    assert navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
+    assert not navigation_requires_index(
+        event(repo, f"rg VALUE {linked}/src"), {"is_spawned_agent": True}
+    )
 
 
 @pytest.mark.parametrize("tool_workdir", [False, True])
-def test_sibling_checkout_reads_do_not_redirect_to_an_unadmitted_overlay(
-    repo: Path, tool_workdir: bool
+@pytest.mark.parametrize("is_spawned_agent", [False, True])
+def test_sibling_checkout_navigation_respects_spawned_scope(
+    repo: Path, tool_workdir: bool, is_spawned_agent: bool
 ) -> None:
     """A reviewer may read a sibling tree without attempting an unauthorized gcode call."""
     linked = repo.parent / "linked"
@@ -444,6 +448,7 @@ def test_sibling_checkout_reads_do_not_redirect_to_an_unadmitted_overlay(
     (linked / "src/long.py").write_text("value = 1\n" * 60)
 
     sibling: dict[str, Any]
+    search: dict[str, Any]
     if tool_workdir:
         sibling = {
             "tool_name": "exec_command",
@@ -451,17 +456,28 @@ def test_sibling_checkout_reads_do_not_redirect_to_an_unadmitted_overlay(
             "cwd": str(repo),
             "project_path": str(repo),
         }
+        search = {
+            "tool_name": "exec_command",
+            "tool_input": {"cmd": "rg value src", "workdir": str(linked)},
+            "cwd": str(repo),
+            "project_path": str(repo),
+        }
         normalize_tool_fields(sibling)
+        normalize_tool_fields(search)
     else:
         sibling = read_event(repo, str(linked / "src/long.py"))
+        search = event(repo, f"rg value {linked}/src")
+        assert sibling.get("canonical_gcode_project_hint") == str(linked)
     own = read_event(repo, "src/long.py")
     primary = read_event(linked, str(repo / "src/long.py"))
     mixed = event(repo, f"cat src/long.py {linked}/src/long.py")
 
-    assert not navigation_requires_index(sibling, {})
-    assert navigation_requires_index(own, {})
-    assert navigation_requires_index(primary, {})
-    assert navigation_requires_index(mixed, {})
+    variables = {"is_spawned_agent": is_spawned_agent}
+    assert navigation_requires_index(sibling, variables) is (not is_spawned_agent)
+    assert navigation_requires_index(search, variables) is (not is_spawned_agent)
+    assert navigation_requires_index(own, variables)
+    assert navigation_requires_index(primary, variables)
+    assert navigation_requires_index(mixed, variables)
 
 
 def test_one_event_asks_git_once_for_all_its_paths(

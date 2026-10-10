@@ -344,8 +344,8 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
                 segment["canonical_narrow_source_context"] = True
                 segment["canonical_source_line_count"] = line_count
     metadata["canonical_code_navigation_segments"] = segments
-    # gcode refuses another linked checkout's file unless --project names it,
-    # so the read redirect must name the one sibling checkout every read targets.
+    # Interactive callers need --project to retrieve another checkout's file.
+    # Managed seats skip unadmitted overlays in navigation_requires_index below.
     read_roots = {
         checkout_root(path)
         for segment, resolved in zip(segments, segment_paths, strict=True)
@@ -519,7 +519,10 @@ def navigation_requires_index(
         if (
             segment.get("canonical_code_index_navigation")
             or segment.get("canonical_code_navigation_repo_scope") is False
-            or segment.get("canonical_code_navigation_checkout_scope") is False
+            or (
+                segment.get("canonical_code_navigation_checkout_scope") is False
+                and variables.get("is_spawned_agent")
+            )
             or segment.get("canonical_search_revision_scoped")
         ):
             continue
