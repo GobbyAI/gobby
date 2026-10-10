@@ -136,11 +136,23 @@ wrong against the code at `48071323c9`:
    `routes/api_keys.py::_resolve_principal` asks `AuthService` for the
    front-door identity, which applies the same constant-time secret check as
    `authenticate`. It never reads `X-Gobby-User-Id` raw.
-9. **No migration.** This plan adds no schema revision. Rollback is a pure code
-   revert, and the daemon keeps the schema (`runner_plan.rs` refuses a database
-   newer than the runner). The head schema on `0.5.0` is 459
-   (`459_session_usage_bigint.sql`), which satisfies api-keys D1.13's "schema
-   458" floor. The rehearsal (1.6) runs at the head schema.
+9. **No migration, and the one breach stays forward-only.** This plan adds no
+   schema revision, so rollback reverts code and the daemon keeps the schema:
+   `crates/gcore/src/schema/runner_plan.rs` and
+   `src/gobby/storage/schema_divergence.py` both refuse a database newer than
+   the runner.
+   - #23519 (1.3) breached this decision. Its commit `5596ae1394` added
+     `464_preserve_rotated_credential_drain.sql`. The rehearsal records the
+     breach as a finding (1.6).
+   - Unrelated tasks have since added migrations 460 to 463, 465, and 466. The
+     head schema on `0.5.0` was 466 on 2026-10-10. It satisfies api-keys
+     D1.13's "schema 458" floor.
+   - Josh ruled option A on #23522 on 2026-10-10. A rollback is a reviewed,
+     hand-resolved inverse of the cutover commits at head (1.6, step 6).
+     Migrations 460 to 466 stay forward-only, and the files that register them
+     keep the tip's bytes, so the reverted build still starts on the head
+     schema. The reverted Python then runs on tables it never created. The
+     rehearsal (1.6) runs at the tip's head schema, written `<H>`.
 10. **The forged-identity corpus case forges only the project header.** After
     the cutover gdaemon strips a client-sent `X-Gobby-Machine-Id`, and the Rust
     corpus harness (`crates/gdaemon/tests/http_contracts.rs`) asserts that the
@@ -1187,7 +1199,13 @@ source being reverted, so every step binds both.
 1. Make `<scratch>` with `mktemp -d` under the session scratchpad. Clone the
    lane branch tip holding 1.2 to 1.5 into `<scratch>/clone`. A clone, not a
    worktree, so the daemon's worktree guard does not apply. Record the tip
-   SHA and the SHA of every commit linked to the 1.4, 1.3, and 1.2 tasks.
+   SHA and the SHA of every non-merge commit linked to the 1.4, 1.3, and 1.2
+   tasks, including the 1.2 commit `11549daad4`. Record the linked merge
+   commits separately and leave them out of the inverse: `git revert` refuses
+   a merge without `-m`, and `-m 1` on a base merge would undo unrelated
+   `0.5.0` work. Two examples are #23519's `ea9147a41b` and `4f00c80eb7`. The
+   step 6 reviewer checks each merge's own resolution hunks with
+   `git show --remerge-diff` for cutover code left behind.
 2. Run every later command from `<scratch>/clone` in one environment:
    - unset `PYTHONPATH`, `VIRTUAL_ENV`, `UV_PROJECT_ENVIRONMENT`, `GOBBY_HOME`,
      and `GOBBY_CONFIG`;
@@ -1205,7 +1223,8 @@ source being reverted, so every step binds both.
    `uv run python -c` calling
    `promote_workspace_binary_set({...}, bin_dir=Path("<scratch>/bin"))`.
    Record `shasum -a 256` of the three files in `<scratch>/bin` and the
-   identity stamp's contents.
+   identity stamp's contents. The stamp's `latest_version` is `<H>`, the tip's
+   head schema (466 on 2026-10-10).
 4. Write an uncommitted scratch test module next to the clone's
    `tests/e2e/conftest.py` and run it once with `uv run pytest <module> -q`.
    Its one test takes `daemon_instance`, so one isolated home, one schema,
@@ -1216,7 +1235,8 @@ source being reverted, so every step binds both.
    - `gobby.__file__`, under `<scratch>/clone/src`, and the daemon env's
      `PYTHONPATH`, which must begin with `<scratch>/clone/src`;
    - `local_native_bin_path("gdaemon")` and `installed_schema_identity()`,
-     naming `<scratch>/bin/gdaemon` and `latest_version` 459;
+     naming `<scratch>/bin/gdaemon` and `latest_version` `<H>`, the same in
+     both phases;
    - the `exe()` of each gdaemon process among the runner's
      `psutil.Process(pid).children(recursive=True)`, which must be
      `<scratch>/bin/gdaemon`;
@@ -1225,18 +1245,59 @@ source being reverted, so every step binds both.
    `Authorization: Bearer <bootstrap api_key>` answers 200,
    `<home>/break_glass` has mode 0600 and its SHA-256 is recorded, and no
    `<home>/local_cli_token` exists. Then `daemon_instance.stop()`.
-6. Revert, inside the test, as recorded subprocesses: `git revert --no-edit`
-   the recorded 1.4, 1.3, and 1.2 commits, newest first; the 1.5 docs commit
-   stays. A conflict confined to `docs/` keeps the 1.5 text, and any other
-   conflict fails the rehearsal. Record the reverted HEAD SHA. Rebuild and
-   promote as in step 3, and record the new hashes and stamp. The `gdaemon`
-   hash must differ from the tip's. The scratch module is untracked, so the
-   revert leaves it in place.
+6. Revert. The rollback is a reviewed, hand-resolved inverse of the cutover
+   at head (Decision 9). It is built and reviewed before step 4's run, and the
+   test only checks it out, because review cannot happen mid-test and
+   splitting the run would lose step 4's single home, schema, and port pair.
+   - **Before the run.** On a scratch branch in `<scratch>/clone` whose
+     parent is the recorded tip, run `git revert --no-commit` on the recorded
+     non-merge 1.4, 1.3, and 1.2 commits, newest first. The 1.5 docs commit
+     stays. Resolve every conflict by hand under these rules:
+     - A conflict confined to `docs/` keeps the 1.5 text.
+     - A test-path conflict (`tests/**`, `crates/*/tests/**`) takes the tip
+       side. Step 3's `cargo build` compiles no integration tests, and pytest
+       runs only the scratch module, so the proof does not depend on them.
+       This covers the test files of `5596ae1394` and `67fce0692c`:
+       `crates/gcore/tests/schema_contract.rs`,
+       `crates/gdaemon/tests/cli_contract.rs`, `tests/runtime_grants/golden/`,
+       `tests/contracts/http/runtime_handshake.json`, and
+       `tests/storage/test_managed_credentials.py`.
+     - The schema retention set keeps the tip's bytes even where the revert
+       applies cleanly, so the reverted build still knows `<H>`:
+       `crates/gcore/assets/schema/` (the 464 SQL and
+       `catalog.manifest.json`), `crates/gcore/src/schema/assets.rs`,
+       `crates/gcore/src/grant/bundle.rs` (its non-`postgres` arm hardcodes
+       the golden schema identity), and
+       `src/gobby/storage/schema_expected_identity.json`.
+     - Release metadata keeps the tip's bytes: `Cargo.lock`, the version line
+       of `crates/gdaemon/Cargo.toml`, and
+       `src/gobby/install/version_pins.py`.
+     - Any other conflict is resolved by hand to the pre-cutover behavior at
+       head. These resolutions are new code. The revert of the 1.2 commit
+       `11549daad4` is expected to conflict with later commits that touch
+       1.2's runtime files.
+
+     Commit the result as one reviewable commit and record its SHA. List
+     every conflict in the evidence doc by path, with a one-line resolution
+     rule. A non-writer, the Lane 2 reviewer seat, reviews the inverse commit
+     and that list. Check out the recorded tip again, so step 4 starts from
+     it. The run starts only after that review passes.
+   - **Inside the test**, as recorded subprocesses: run
+     `git checkout --detach <reviewed inverse SHA>` and assert that
+     `git rev-parse HEAD^` equals the recorded tip. The scratch module is
+     untracked, so the checkout leaves it in place. Rebuild and promote as in
+     step 3, and record the new hashes and stamp. The `gdaemon` hash must
+     differ from the tip's, and the stamp's `latest_version` must equal
+     `<H>`.
 7. Reverted start, inside the test: `subprocess.Popen` reruns
    `daemon_instance.command` with `daemon_instance.env`, its project directory
    as `cwd`, and `start_new_session=True`. It keeps the same home, ports, and
    schema, so the reverted code starts on the tip's bootstrap, stored config,
-   API-key rows, and break-glass file at schema 459. The test waits with
+   API-key rows, and break-glass file at schema `<H>`, including the
+   migration 460 to 466 objects the reverted Python never created. This
+   step's health and break-glass checks are the only proof that the reverted
+   Python tolerates those objects, and the evidence doc claims no more than
+   that. The test waits with
    `wait_for_daemon_health`, an unauthenticated `/api/auth/status` probe.
    `DaemonInstance.restart()` is not used, because its websocket wait
    authenticates with the bootstrap key, which the reverted Python does not
@@ -1250,7 +1311,12 @@ source being reverted, so every step binds both.
    refusal is proven by 1.1.2 and 1.3.12.
 8. Write the evidence doc under the heading "Break-glass admitted after
    revert". It holds:
-   - the tip, reverted-commit, and reverted HEAD SHAs;
+   - the tip SHA, the reverted non-merge commit SHAs, the excluded merge SHAs,
+     and the reviewed inverse SHA;
+   - every conflict resolution as a path and a one-line rule, with the
+     non-writer's review;
+   - a finding that #23519's migration 464 (`5596ae1394`) breached Decision 9,
+     and that migrations 460 to 466 stayed forward-only;
    - both phases' records, hashes, and stamps;
    - the break-glass SHA-256 match;
    - the commands and the status codes.
@@ -1259,7 +1325,7 @@ source being reverted, so every step binds both.
 
 **Acceptance:**
 
-- 1.6.1 - After the cutover code is reverted on the same isolated home and schema the tip ran on, a daemon whose Python imports resolve under the reverted clone's `src` and whose running gdaemon is the reverted build promoted to the isolated bin dir starts at schema 459. It admits a loopback break-glass `GET /api/admin/status` with the tip's byte-identical break-glass file, and it refuses the same request without the header with 401. The evidence records the source SHAs, promoted hashes, status codes, and cleanup. behavior: "Break-glass admitted after revert" in `docs/evidence/gdaemon-key-cutover-rollback-rehearsal.md`.
+- 1.6.1 - After the cutover code is replaced by its reviewed, hand-resolved inverse at head on the same isolated home and schema the tip ran on, a daemon whose Python imports resolve under the reverted clone's `src` and whose running gdaemon is the reverted build promoted to the isolated bin dir starts at the tip's schema `<H>`, which both phases' stamps report. It admits a loopback break-glass `GET /api/admin/status` with the tip's byte-identical break-glass file, and it refuses the same request without the header with 401. The evidence records the source SHAs, each conflict resolution with its non-writer review, the Decision 9 breach finding for migration 464, promoted hashes, status codes, and cleanup. behavior: "Break-glass admitted after revert" in `docs/evidence/gdaemon-key-cutover-rollback-rehearsal.md`.
 
 ## D1 Live activation of the key cutover (depends: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6)
 `kind: deferred`
@@ -1324,6 +1390,31 @@ deferral:
   - Expansion run `e8857d5e`, which ran before Josh approved the stamped
     plan, was reset on the Orchestrator's 10:09 CT ruling.
   - The stale M1 is withdrawn in this commit for a fresh derivation.
+- 2026-10-10: Amendment for #23522 (Rollback rehearsal keeps the operator a
+  way in) by the Plan Writer gobby#15987. Josh ruled option A, and gobby#15997
+  relayed it at the Orchestrator gobby#15977's direction. The reviewer
+  gobby#16000's analysis at `c4e8d081c3` is the source.
+  - Step 6's literal outcome fired: the inverse of `23328c7392` conflicts
+    outside `docs/`, and #23519 added migration 464 in `5596ae1394`, which
+    breaches Decision 9.
+  - Decision 9 records that breach. Migrations 460 to 466 now stay
+    forward-only, and rollback is a reviewed, hand-resolved inverse at head.
+  - Step 1 reverts only non-merge commits and lists the merges for review.
+    Step 6 builds the inverse on a scratch branch before the run, under
+    stated conflict rules and a schema and release retention set, and a
+    non-writer reviews it. Inside the test, step 6 checks out the reviewed
+    inverse.
+  - Steps 3, 4, and 7 and item 1.6.1 replace schema 459 with the tip's head
+    schema `<H>`. Step 7's checks are the only proof that the reverted Python
+    tolerates the retained schema objects.
+  - Step 8 and 1.6.1 add the conflict resolutions, their review, and the
+    breach finding.
+  - The retention set documents the scratch rehearsal module's
+    `forward_schema()` and `release_metadata()` carve-outs, plus
+    `tests/storage/test_managed_credentials.py`, for the Orchestrator's
+    ratification.
+  - M1 and the coverage manifest still carry the pre-amendment 1.6 text and
+    plan hash; the Orchestrator decides whether to refresh them.
 
 ## V2: Verification
 `kind: verification`
