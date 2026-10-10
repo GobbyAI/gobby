@@ -6,7 +6,10 @@ Tests version tracking, the workspace-only install source, and install provenanc
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,6 +33,11 @@ pytestmark = pytest.mark.unit
 _FIXED_INSTALLED_AT = "2026-04-22T18:30:00Z"
 
 
+@pytest.fixture(autouse=True)
+def _configured_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ".gobby"))
+
+
 def _write_fake_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
     """Create a fake ghook binary in the install bin directory."""
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -48,7 +56,7 @@ def _write_fake_native_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
 
 def _read_ghook_sidecar(bin_dir: Path) -> dict[str, object]:
     """Load the ghook install provenance sidecar."""
-    return json.loads((bin_dir / _GHOOK_INSTALL_SIDECAR).read_text())
+    return cast(dict[str, object], json.loads((bin_dir / _GHOOK_INSTALL_SIDECAR).read_text()))
 
 
 class TestGetLatestGhookVersion:
@@ -170,7 +178,7 @@ class TestProbeGhookVersion:
 
 class TestInstallGhook:
     @pytest.fixture()
-    def _patch_platform(self):
+    def _patch_platform(self) -> Iterator[None]:
         with (
             patch("gobby.cli.install_setup.sys.platform", "darwin"),
             patch("gobby.cli.install_setup.platform.machine", return_value="arm64"),
@@ -178,7 +186,7 @@ class TestInstallGhook:
             yield
 
     @pytest.fixture()
-    def _fixed_installed_at(self):
+    def _fixed_installed_at(self) -> Iterator[None]:
         with patch(
             "gobby.cli.install_setup._ghook_installed_at_utc",
             return_value=_FIXED_INSTALLED_AT,
@@ -315,7 +323,7 @@ class TestInstallGhook:
             *args: object,
             **kwargs: object,
         ) -> None:
-            if Path(path).name == _GHOOK_INSTALL_SIDECAR:
+            if Path(os.fsdecode(path)).name == _GHOOK_INSTALL_SIDECAR:
                 raise PermissionError("sidecar chmod blocked")
             real_os_chmod(path, mode, *args, **kwargs)
 

@@ -23,6 +23,7 @@ from tomlkit.toml_document import TOMLDocument
 
 from gobby.agents.trust import is_stale_generated_path, seed_cli_trust, seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
+from gobby.paths import get_gobby_home
 
 from .hook_commands import (
     config_contains_gobby_hook,
@@ -77,7 +78,7 @@ CODEX_MATCHER_HASH_EVENTS = {
 
 def _get_hooks_dir() -> Path:
     """Get the global hooks directory path."""
-    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
+    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
 
 
 def _load_toml_config(content: str) -> TOMLDocument:

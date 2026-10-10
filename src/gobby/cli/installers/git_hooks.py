@@ -32,7 +32,7 @@ _HOOK_END_PATTERN = GOBBY_HOOK_END.replace("<", "[<]")
 
 _CODE_INDEX_REINDEX_BODY = r"""
 if [ -n "$CHANGED_FILES" ]; then
-    GCODE="$HOME/.gobby/bin/gcode"
+    GCODE="${GOBBY_HOME:-$HOME/.gobby}/bin/gcode"
     if [ -x "$GCODE" ]; then
         (
             echo "$CHANGED_FILES" | sed 's/^/--files=/' | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked >/dev/null 2>&1

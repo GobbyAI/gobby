@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from shutil import copy2
@@ -15,6 +16,7 @@ from tomlkit.toml_document import TOMLDocument
 
 from gobby.cli.utils import get_install_dir
 from gobby.install.bin_freshness_models import is_at_least_version
+from gobby.paths import get_gobby_home
 from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import rewrite_hook_template_commands, set_gobby_hook_timeouts
@@ -74,7 +76,7 @@ def install_grok(
         result["error"] = f"Missing hooks template: {source_hooks_template}"
         return result
 
-    hooks_dir = Path.home() / ".gobby" / "hooks"
+    hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
     grok_home = Path.home() / ".grok"
     grok_hooks_dir = grok_home / "hooks"
     gobby_hook_file = grok_hooks_dir / "gobby.json"

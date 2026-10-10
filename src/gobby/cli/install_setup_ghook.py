@@ -17,6 +17,7 @@ from gobby.install.bin_set_coherence import (
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.paths import get_gobby_home
 
 from . import install_release
 
@@ -199,7 +200,7 @@ def probe_ghook_version(module: Any, ghook_path: Path) -> str | None:
 
 def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
     """Install or upgrade ghook from the workspace build, its only source."""
-    bin_dir = module.Path.home() / ".gobby" / "bin"
+    bin_dir = get_gobby_home() / "bin"
     ghook_path = bin_dir / module._GHOOK_BIN_NAME
 
     os_name = module.sys.platform
@@ -249,7 +250,7 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
     path_result = module._ensure_gobby_bin_on_path(bin_dir)
     if path_result.get("added"):
         module.click.echo(
-            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
+            f"  Added {bin_dir} to PATH in {path_result['rc_file']} (restart shell or source it)"
         )
 
     is_upgrade = installed_version is not None and installed_version != resolved_version

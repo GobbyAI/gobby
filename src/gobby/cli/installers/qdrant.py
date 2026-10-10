@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from gobby.paths import get_gobby_home
+
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
@@ -37,13 +39,13 @@ def install_qdrant(
     Uses the unified services compose file with Docker Compose profiles.
 
     Args:
-        gobby_home: Gobby home directory (default: ~/.gobby)
+        gobby_home: Gobby home directory (default: get_gobby_home())
         port: HTTP port for Qdrant (default: 6333)
 
     Returns:
         Dict with 'success' and details
     """
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home or get_gobby_home()
     try:
         with managed_services_lock(home, operation="qdrant installer refresh"):
             return _install_qdrant_locked(gobby_home=home, port=port)

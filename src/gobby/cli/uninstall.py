@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.paths import get_gobby_home
 from gobby.ui_exposure import UiExposeError, disable_tailscale_ui
 
 from ._install_prompts import _echo_uninstall_summary
@@ -49,9 +50,7 @@ def _detected_clis(home: Path) -> list[str]:
 
 
 def _remove_global_hook_files() -> None:
-    global_hooks_dir = Path(
-        os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks"))
-    )
+    global_hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
     for fname in ("validate_settings.py",):
         fpath = global_hooks_dir / fname
         if fpath.exists():
@@ -59,7 +58,7 @@ def _remove_global_hook_files() -> None:
                 fpath.unlink()
             except OSError as exc:
                 click.echo(f"  Warning: could not remove {fpath}: {exc}", err=True)
-    click.echo("Removed global hook files from ~/.gobby/hooks/")
+    click.echo(f"Removed global hook files from {global_hooks_dir}")
     click.echo("")
 
 

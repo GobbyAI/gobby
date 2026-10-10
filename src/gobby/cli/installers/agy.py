@@ -17,6 +17,7 @@ from typing import Any
 from gobby.adapters.agy_contract import AGY_GOBBY_HOOK_NAME, AGY_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
+from gobby.paths import get_gobby_home
 
 from .hook_commands import (
     config_contains_gobby_hook,
@@ -29,7 +30,7 @@ from .skill_install import install_router_skills_as_cli_skills
 
 
 def _global_hooks_dir() -> Path:
-    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
+    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
 
 
 def _agy_config_dir() -> Path:

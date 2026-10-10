@@ -28,6 +28,7 @@ def _gclient_install_harness(
     successful_fetch: str | None = None,
 ) -> tuple[SimpleNamespace, Path, MagicMock, MagicMock, MagicMock]:
     bin_dir = tmp_path / ".gobby" / "bin"
+    monkeypatch.setenv("GOBBY_HOME", str(bin_dir.parent))
     if present:
         bin_dir.mkdir(parents=True)
         (bin_dir / "gclient").write_bytes(b"existing")

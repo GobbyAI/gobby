@@ -79,24 +79,29 @@ def _verified_gdaemon(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _configured_gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ".gobby"))
+
+
 class TestEnsureDaemonConfig:
-    @patch("gobby.cli.install_setup.Path.expanduser")
+    @patch("gobby.cli.install_setup.get_gobby_home")
     def test_exists(self, mock_expand: MagicMock, tmp_path: Path) -> None:
         target = tmp_path / "bootstrap.yaml"
         target.touch()
-        mock_expand.return_value = target
+        mock_expand.return_value = target.parent
 
         files_home = tmp_path / "files"
         files_home.mkdir()
         res = ensure_daemon_config(files_home=files_home)
         assert not res["created"]
 
-    @patch("gobby.cli.install_setup.Path.expanduser")
+    @patch("gobby.cli.install_setup.get_gobby_home")
     def test_windows_local_bootstrap_refused(
         self, mock_expand: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         target = tmp_path / "bootstrap.yaml"
-        mock_expand.return_value = target
+        mock_expand.return_value = target.parent
         files_home = tmp_path / "files"
         files_home.mkdir()
         monkeypatch.setattr(sys, "platform", "win32")
@@ -105,13 +110,13 @@ class TestEnsureDaemonConfig:
             ensure_daemon_config(files_home=files_home)
         assert not target.exists()
 
-    @patch("gobby.cli.install_setup.Path.expanduser")
+    @patch("gobby.cli.install_setup.get_gobby_home")
     @patch("gobby.cli.install_setup.get_install_dir")
     def test_copy_shared(
         self, mock_get_dir: MagicMock, mock_expand: MagicMock, tmp_path: Path
     ) -> None:
         target = tmp_path / "bootstrap.yaml"
-        mock_expand.return_value = target
+        mock_expand.return_value = target.parent
 
         shared_file = tmp_path / "shared" / "config" / "bootstrap.yaml"
         shared_file.parent.mkdir(parents=True)
@@ -132,14 +137,14 @@ class TestEnsureDaemonConfig:
         _assert_fresh_local_dsn(target.read_text())
         assert (tmp_path / ".bootstrap.yaml.lock").exists()
 
-    @patch("gobby.cli.install_setup.Path.expanduser")
+    @patch("gobby.cli.install_setup.get_gobby_home")
     def test_existing_bootstrap_is_never_rewritten(
         self, mock_expand: MagicMock, tmp_path: Path
     ) -> None:
         target = tmp_path / "bootstrap.yaml"
         original = f"datastore_mode: local\ndatabase_url: {fake_database_url('keep')}\n"
         target.write_text(original)
-        mock_expand.return_value = target
+        mock_expand.return_value = target.parent
 
         files_home = tmp_path / "files"
         files_home.mkdir()
@@ -148,13 +153,13 @@ class TestEnsureDaemonConfig:
         assert not res["created"]
         assert target.read_text() == original
 
-    @patch("gobby.cli.install_setup.Path.expanduser")
+    @patch("gobby.cli.install_setup.get_gobby_home")
     @patch("gobby.cli.install_setup.get_install_dir")
     def test_fallback_generate(
         self, mock_get_dir: MagicMock, mock_expand: MagicMock, tmp_path: Path
     ) -> None:
         target = tmp_path / "bootstrap.yaml"
-        mock_expand.return_value = target
+        mock_expand.return_value = target.parent
 
         mock_get_dir.return_value = tmp_path / "nonexistent"
 

@@ -18,6 +18,7 @@ from typing import Any
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
+from gobby.paths import get_gobby_home
 from gobby.utils.durable_file import durable_replace_text
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
@@ -162,7 +163,7 @@ def install_claude(
 
     Args:
         project_path: Path to the project root
-        mode: "global" installs hooks to ~/.gobby/hooks/ and settings to
+        mode: "global" installs hooks under the configured Gobby home and settings to
             ~/.claude/settings.json. "project" installs per-project (existing behavior).
 
     Returns:
@@ -184,7 +185,7 @@ def install_claude(
         result["error"] = "hook_timeout_seconds must be positive"
         return result
 
-    hooks_dir = Path.home() / ".gobby" / "hooks"
+    hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
     if mode == "global":
         claude_path = Path.home() / ".claude"
     else:

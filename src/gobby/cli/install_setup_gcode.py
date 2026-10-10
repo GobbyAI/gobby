@@ -17,6 +17,7 @@ from gobby.install.bin_set_coherence import (
 )
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.paths import get_gobby_home
 
 from . import install_release
 
@@ -134,7 +135,7 @@ def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
 
 def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
     """Install or upgrade gcode from the workspace build, its only source."""
-    bin_dir = module.Path.home() / ".gobby" / "bin"
+    bin_dir = get_gobby_home() / "bin"
     gcode_path = bin_dir / module._GCODE_BIN_NAME
 
     os_name = module.sys.platform
