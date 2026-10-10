@@ -142,14 +142,19 @@ class TestRecoverTaskFromFailedAgent:
         mock_run_mgr.get.return_value = db_run
 
         # Setup mock task
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task = _task(task_id="task-123", owner="owner-1", seq_num=5)
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = True
 
         await monitor._recover_task_from_failed_agent("run-1")
 
-        mock_task_mgr.get_task.assert_called_once_with("task-123")
-        assert mock_task_mgr.get_task.call_count == 1
+        mock_task_mgr.get_task.assert_called_with("task-123")
+        assert mock_task_mgr.get_task.call_count == 3
         assert mock_task_mgr.get_task.call_args is not None
         # Provider error: dispatch_failure_count unchanged (stays at 0)
         mock_task_mgr.release_task_claim.assert_called_once_with(
@@ -194,6 +199,11 @@ class TestRecoverTaskFromFailedAgent:
             owner="child-123",
             seq_num=None,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.list_tasks.return_value = [mock_fallback_task]
         mock_task_mgr.get_task.return_value = mock_fallback_task
         mock_stall.is_provider_error.return_value = False
@@ -208,8 +218,8 @@ class TestRecoverTaskFromFailedAgent:
         )
         assert mock_task_mgr.list_tasks.call_count == 1
         assert mock_task_mgr.list_tasks.call_args is not None
-        mock_task_mgr.get_task.assert_called_once_with("task-fallback")
-        assert mock_task_mgr.get_task.call_count == 1
+        mock_task_mgr.get_task.assert_called_with("task-fallback")
+        assert mock_task_mgr.get_task.call_count == 3
         assert mock_task_mgr.get_task.call_args is not None
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
         mock_task_mgr.release_task_claim.assert_called_once_with(
@@ -253,6 +263,11 @@ class TestRecoverTaskFromFailedAgent:
             stage_state="needs_review",
             seq_num=22,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
 
@@ -344,6 +359,11 @@ class TestRecoverTaskFromFailedAgent:
             seq_num=10,
             dispatch_failure_count=2,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
 
@@ -393,6 +413,11 @@ class TestRecoverTaskFromFailedAgent:
             seq_num=10,
             dispatch_failure_count=2,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": db_run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = True  # Provider error
 
@@ -1267,6 +1292,11 @@ class TestTerminalizeCancelledRun:
             stage_state="in_progress",
             seq_num=42,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.get_task.return_value = task
 
         # Terminal delivery and claim-variable release both read rows that fail
@@ -1339,6 +1369,11 @@ class TestTerminalizeCancelledRun:
             stage_state="needs_review",
             seq_num=7,
         )
+        mock_task_mgr.db.fetchone.return_value = {"agent_run_id": run.id}
+        cursor = (
+            mock_task_mgr.db.transaction.return_value.__enter__.return_value.execute.return_value
+        )
+        cursor.rowcount = 1
         mock_task_mgr.get_task.return_value = task
 
         monitor = AgentLifecycleMonitor(
