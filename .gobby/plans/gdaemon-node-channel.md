@@ -1510,6 +1510,32 @@ Consumers unchanged:
   and their reasons move into prose: `proxy.rs` and `ws.rs` in 1.2's research
   context, `run_modes.rs` and `tests/front_door.rs` in 1.3's focused
   verification, and `run_modes.rs` in 1.5's focused verification.
+- 2026-10-10: Consensus on `2ee7957aef`. Seats: Plan Writer gobby#15987,
+  Adversary gobby#15989, Orchestrator gobby#15977.
+  - The Adversary's NC-R10 to NC-R14 are resolved, and no blocking or
+    proportionality finding remains. No enhancer ran (Orchestrator ruling).
+  - Disagreements: none open. For NC-R12 the Writer took the Adversary's
+    preferred option: `connected` means only that a live channel exists, with
+    no special case for the hub's own machine.
+  - Routing:
+    - 1.1 to 1.5 are code leaves: `task_type` feature,
+      `implementation_domain` backend, and `tdd` true.
+    - 1.6 is a test leaf: `task_type` chore and `tdd` false, with no
+      `assigned_agent` override.
+    - Dependencies follow the headings: 1.1 has none, 1.2 depends on 1.1,
+      1.3 on 1.2, 1.4 on 1.3, 1.5 on 1.4, and 1.6 on 1.3, 1.4, and 1.5.
+      There are no external edges.
+  - The Lifecycle Ownership Settlement (#23457) stands as written. After
+    expansion the Orchestrator adds `#23457 blocked_by <the 1.2 task>`.
+    Neither plan carries a manifest edge to the other.
+  - Expansion still waits until #23523 (Live activation of the key cutover)
+    closes (Decision 1).
+  - Validation: `gobby-plans:validate_plan` passes on this revision. The
+    project-aware `uv run gobby plans validate` passed on its narrative and
+    otherwise times out intermittently on the daemon's slow label-filtered
+    `list_tasks` (#23932, plan validation times out on slow label lookups).
+  - Decisions 2 and 3 change key-cutover behavior, so Josh approves them
+    explicitly along with the stamped bytes.
 
 ## V2: Verification
 `kind: verification`
