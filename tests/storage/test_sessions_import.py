@@ -32,6 +32,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "backfill_terminal_context": "(self, session_id: 'str', terminal_context: "
     "'dict[str, Any] | None', current: 'Session | None' = None) "
     "-> 'tuple[Session | None, bool]'",
+    "bind_native_clear_successor": "(self, successor_id: 'str') -> 'Session | None'",
     "cache_session_mapping": "(self, external_id: 'str', source: 'str', "
     "session_id: 'str', project_id: 'str | None' = None, "
     "session_type: 'str' = 'terminal') -> 'None'",
