@@ -206,7 +206,7 @@ def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> No
     prompt = _prompt("metrics-monitor")
     assert "reply=true, timeout=600" in prompt
     assert "Never run ps or read process environments" in prompt
-    assert body.description is not None and "RSS growth" in body.description
+    assert body.description is not None and "RSS sustained above 4 GB" in " ".join(body.description.split())
     assert "45 seconds" in prompt
     assert "uptime decrease" in prompt
     assert "Reset the watch baseline after a restart" in prompt
