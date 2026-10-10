@@ -3371,36 +3371,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_record_plan_enhancement.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 21,
-      "message": "Argument \"state\" to \"StageState\" has incompatible type \"str\"; expected \"Literal['ready', 'in_progress', 'needs_review', 'review_approved', 'done']\"",
-      "occurrences": 4,
-      "path": "tests/mcp_proxy/tools/test_record_plan_enhancement.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_record_plan_enhancement.py::::mypy:method-assign",
-      "issue_code": "mypy:method-assign",
-      "line": 72,
-      "message": "Cannot assign to a method",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/test_record_plan_enhancement.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_record_plan_enhancement.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 56,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 5,
-      "path": "tests/mcp_proxy/tools/test_record_plan_enhancement.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_reject_review.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 37,

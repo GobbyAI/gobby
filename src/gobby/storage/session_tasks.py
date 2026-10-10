@@ -40,6 +40,10 @@ SessionTaskAction = Literal[
     "escalated",
     "needs_review",
     "review_approved",
+    "reopened",
+    "de_escalated",
+    "review_rejected",
+    "plan_enhanced",
 ]
 
 
@@ -54,6 +58,10 @@ class SessionTaskManager:
         "escalated",
         "needs_review",
         "review_approved",
+        "reopened",
+        "de_escalated",
+        "review_rejected",
+        "plan_enhanced",
     }
 
     def __init__(self, db: HubDatabase):
@@ -68,7 +76,8 @@ class SessionTaskManager:
         """
         Link a task to a session with a specific action.
         Actions: worked_on, discovered, mentioned, closed, created, claimed,
-                 escalated, needs_review, review_approved
+                 escalated, needs_review, review_approved, reopened, de_escalated,
+                 review_rejected, plan_enhanced
         """
         if action not in self.VALID_ACTIONS:
             raise ValueError(f"Invalid action '{action}'. Must be one of {self.VALID_ACTIONS}")
