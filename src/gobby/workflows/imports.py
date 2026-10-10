@@ -28,6 +28,7 @@ from gobby.workflows.definitions import (
     normalize_workflow_definition_enabled,
     validate_workflow_definition_data,
 )
+from gobby.workflows.sync_rules import sync_rule_file
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
         "enabled": normalize_workflow_definition_enabled(data),
         "priority": data.get("priority", 100),
         "sources": data.get("sources"),
+        "tags": data.get("tags"),
     }
     if existing is not None and existing.project_id == project_id:
         return manager.update(existing.id, **fields)
@@ -197,6 +199,13 @@ def sync_imported_workflow_file(
     """Load one workflow YAML file and upsert it into the runtime database."""
     with path.open(encoding="utf-8") as file:
         data = yaml.safe_load(file)
+    if isinstance(data, dict) and "name" not in data and isinstance(data.get("rules"), dict):
+        # A rule file in the `gobby rules import` format: file-level group and
+        # tags over a `rules` mapping. Import it through that same path.
+        result = sync_rule_file(db, rule_file=path, project_id=project_id)
+        if result["errors"]:
+            raise ValueError("; ".join(result["errors"]))
+        return result
     if not isinstance(data, dict) or "name" not in data:
         raise ValueError("Invalid workflow: missing 'name' field")
     return sync_imported_definition(db, data, project_id)

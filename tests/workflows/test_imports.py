@@ -385,3 +385,75 @@ def test_mcp_toggled_agent_auto_exports_its_state(
     restored = manager.get_by_name("toggled-agent")
     assert restored is not None
     assert restored.enabled is enabled
+
+
+_RULE_EFFECTS: list[dict[str, Any]] = [{"type": "inject_context", "template": "policy"}]
+
+
+def test_multi_rule_project_file_imports_with_file_tags(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "multi-rule").project
+    path = tmp_path / "policy.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "tags": ["default", "seat"],
+                "rules": {
+                    "policy-one": {"event": "turn_start", "effects": _RULE_EFFECTS},
+                    "policy-two": {"event": "session_start", "effects": _RULE_EFFECTS},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sync_imported_workflow_file(temp_db, path, project.id)
+
+    manager = RuleDefinitionManager(temp_db)
+    for name in ("policy-one", "policy-two"):
+        row = manager.get_by_name(name, project_id=project.id)
+        assert row is not None
+        assert row.project_id == project.id
+        assert {"default", "seat"} <= set(row.tags or [])
+
+
+def test_single_definition_rule_keeps_tags(temp_db: HubDatabase) -> None:
+    row = sync_imported_definition(
+        temp_db,
+        {
+            "name": "tagged-rule",
+            "type": "rule",
+            "tags": ["default", "seat"],
+            "event": "turn_start",
+            "effects": _RULE_EFFECTS,
+        },
+        None,
+    )
+
+    assert RuleDefinitionManager(temp_db).get(row.id).tags == ["default", "seat"]
+
+
+def test_shipped_project_operating_policy_imports(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "operating-policy").project
+    policy = (
+        Path(__file__).resolve().parents[2]
+        / ".gobby"
+        / "workflows"
+        / "rules"
+        / "project-operating-policy.yaml"
+    )
+
+    sync_imported_workflow_file(temp_db, policy, project.id)
+
+    manager = RuleDefinitionManager(temp_db)
+    for name in ("project-operating-policy", "reset-project-operating-policy-on-context-loss"):
+        row = manager.get_by_name(name, project_id=project.id)
+        assert row is not None
+        assert row.enabled
+        assert {"default", "seat"} <= set(row.tags or [])
