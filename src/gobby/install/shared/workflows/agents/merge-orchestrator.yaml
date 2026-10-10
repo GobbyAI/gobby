@@ -16,7 +16,7 @@ provider: codex
 model: gpt-5.6-sol
 reasoning_effort: xhigh
 checkout_mode: none
-spawnable_agents: [merge-worker]
+spawnable_agents: [merge-worker, task-close-reviewer]
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
