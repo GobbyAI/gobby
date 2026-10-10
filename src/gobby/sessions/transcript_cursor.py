@@ -28,6 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Self
 
+from gobby.utils.datetime import parse_stored_datetime
+
 __all__ = [
     "CLAUDE_INTERRUPT_PREFIX",
     "CLAUDE_USER_REJECTED",
@@ -296,6 +298,28 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
             record.get("type") == "user" and _claude_interrupt_record(record)
             for record in self.fresh_records()
         )
+
+    def latest_queued_prompt(self) -> tuple[str, datetime] | None:
+        """Return the latest consumed queued prompt, excluding later typed prompts.
+
+        Queue operations and interrupt/tool-result rows can carry its prompt ID.
+        Only the user row with promptSource=queued proves consumption. File order
+        is authoritative because assistant timestamps can precede their writes.
+        """
+        for record in reversed(self.tail_records(max_bytes=256 * 1024)):
+            if record.get("type") != "user" or "promptSource" not in record:
+                continue
+            if record.get("promptSource") != "queued":
+                return None
+            key, timestamp = record.get("promptId"), record.get("timestamp")
+            if not isinstance(key, str) or not key.strip() or not isinstance(timestamp, str):
+                return None
+            try:
+                started_at = parse_stored_datetime(timestamp)
+                return (key, started_at) if started_at is not None else None
+            except ValueError:
+                return None
+        return None
 
     def turn_settled(self) -> bool | None:
         """Return whether the last turn ended; ``None`` without a turn record.

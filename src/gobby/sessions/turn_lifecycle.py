@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, Protocol, cast, get_args
 
+from gobby.sessions.transcript_cursor import ClaudeTranscriptCursor, TranscriptObservationError
 from gobby.storage.attention import (
     AttentionState,
     AttentionStateManager,
@@ -220,6 +221,7 @@ class TurnLifecycleTransitionResult:
     status: str | None
     lifecycle: TurnLifecycleState
     reason: str | None = None
+    queued_prompt_adopted: bool = False
 
 
 LifecycleMutation = Callable[
@@ -377,7 +379,13 @@ class TurnLifecycleReducer:
         def mutate(current: TurnLifecycleState, _status: str) -> tuple[TurnLifecycleState, str]:
             return self._with_evidence(current, evidence, waits=(), turn_state="open"), "active"
 
-        return self._apply(session_id, evidence, mutate, accept_resolving_provider_key=True)
+        return self._apply(
+            session_id,
+            evidence,
+            mutate,
+            accept_resolving_provider_key=True,
+            observe_queued_prompt=True,
+        )
 
     def end_turn(
         self,
@@ -407,6 +415,7 @@ class TurnLifecycleReducer:
             evidence,
             mutate,
             clear_provider_error=disposition == "completed",
+            observe_queued_prompt=disposition != "unknown",
         )
         if result.reason in {"stale_generation", "stale_provider_turn"}:
             # A rejected turn end can strand the row active, so it stays visible (#23102).
@@ -521,6 +530,7 @@ class TurnLifecycleReducer:
         accept_resolving_provider_key: bool = False,
         clear_provider_error: bool = False,
         provider_failure_limit: int | None = None,
+        observe_queued_prompt: bool = False,
     ) -> TurnLifecycleTransitionResult:
         entry_id = session_attention_entry_id(session_id)
         with self._db.transaction() as transaction:
@@ -548,9 +558,50 @@ class TurnLifecycleReducer:
                     current,
                     "session_terminal",
                 )
-            stale_reason = None if allow_new_turn else self._stale_reason(current, evidence)
+            queued_prompt_adopted = False
+            queued = None
+            if observe_queued_prompt and evidence.source == "claude" and current.started_at:
+                try:
+                    queued = ClaudeTranscriptCursor.at_eof(
+                        getattr(session, "transcript_path", None)
+                    ).latest_queued_prompt()
+                except TranscriptObservationError:
+                    pass
+            queued_stale = False
+            if (
+                queued is not None
+                and current.started_at is not None
+                and queued[1] > current.started_at
+                and queued[0] != current.provider_turn_key
+            ):
+                queued_stale = (
+                    evidence.provider_turn_key != queued[0]
+                    or evidence.generation is not None
+                    or queued[1] > to_aware_utc(evidence.event_time)
+                )
+                if not queued_stale:
+                    current = replace(
+                        current,
+                        generation=current.generation + 1,
+                        provider_turn_key=queued[0],
+                        waits=(),
+                        turn_state="open",
+                        disposition=None,
+                        prior_status=session_status,
+                        request_ids=(),
+                        started_at=queued[1],
+                    )
+                    queued_prompt_adopted = True
+            stale_reason = (
+                "stale_provider_turn"
+                if queued_stale
+                else None
+                if allow_new_turn
+                else self._stale_reason(current, evidence)
+            )
             if (
                 stale_reason == "stale_provider_turn"
+                and not queued_stale
                 and accept_resolving_provider_key
                 and current.waits
                 and all(wait.state == "resolving" for wait in current.waits)
@@ -571,7 +622,7 @@ class TurnLifecycleReducer:
                     stale_reason,
                 )
             updated, next_status = mutate(current, session_status)
-            if updated == current and next_status == session_status:
+            if updated == current and next_status == session_status and not queued_prompt_adopted:
                 return TurnLifecycleTransitionResult(
                     False, session_id, current.generation, session_status, current, "duplicate"
                 )
@@ -614,7 +665,12 @@ class TurnLifecycleReducer:
                     activity_confirmed=True,
                 )
             return TurnLifecycleTransitionResult(
-                True, session_id, updated.generation, next_status, updated
+                True,
+                session_id,
+                updated.generation,
+                next_status,
+                updated,
+                queued_prompt_adopted=queued_prompt_adopted,
             )
 
     @staticmethod

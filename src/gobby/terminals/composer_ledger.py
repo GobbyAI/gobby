@@ -24,6 +24,7 @@ import threading
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -32,6 +33,7 @@ from gobby.paths import get_gobby_home
 from gobby.terminals.composer import COMPOSER_CLEAR_KEYS, composer_clear_sequence
 from gobby.terminals.host_events import HostEvent, InputActivityEvent
 from gobby.terminals.runtime import NamedKey
+from gobby.utils.datetime import to_aware_utc, utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -103,6 +105,8 @@ class _Entry:
     wait_clean: bool | None = None
     dialog_seq: int = 0
     dialog_interrupt: bool = False
+    interrupt_prior_human_seq: int | None = None
+    interrupt_at: float | None = None
 
 
 class ComposerLedger:
@@ -238,6 +242,31 @@ class ComposerLedger:
             elif entry.flagged_seq > entry.clean_seq:
                 entry.clean_seq = entry.flagged_seq
 
+    def record_queued_submit(self, terminal_id: str, *, consumed_at: datetime) -> None:
+        """A consumed queued prompt settles its interrupt, preserving human edits.
+
+        The queued prompt was submitted before the interrupt. Consume only a
+        flagged submit before that boundary; later input and unsubmitted edits on
+        either side remain drafts. An unknown or newer interrupt stays blocked.
+        """
+        with self._lock:
+            entry = self._entries.get(terminal_id)
+            if (
+                entry is None
+                or entry.unsafe != "interrupt"
+                or entry.interrupt_prior_human_seq is None
+                or entry.interrupt_at is None
+                or entry.interrupt_at >= to_aware_utc(consumed_at).timestamp()
+            ):
+                return
+            if entry.flagged_seq <= entry.unsafe_seq:
+                entry.clean_seq = max(entry.clean_seq, entry.flagged_seq)
+            if entry.human_seq == entry.unsafe_seq:
+                entry.human_seq = entry.interrupt_prior_human_seq
+            entry.unsafe = None
+            entry.interrupt_prior_human_seq = None
+            self._next()
+
     def open_wait(self, terminal_id: str) -> None:
         with self._lock:
             entry = self._entries.get(terminal_id)
@@ -312,9 +341,12 @@ class ComposerLedger:
             entry.dialog_seq = seq
             entry.dialog_interrupt = entry.dialog_interrupt or interrupt
             return
-        entry.human_seq = seq
-        if interrupt:
+        if interrupt and entry.unsafe in {None, "interrupt"}:
+            if entry.unsafe != "interrupt" or entry.human_seq != entry.unsafe_seq:
+                entry.interrupt_prior_human_seq = entry.human_seq
             entry.unsafe, entry.unsafe_seq = "interrupt", seq
+            entry.interrupt_at = utc_now().timestamp()
+        entry.human_seq = seq
         if submit is None:
             entry.unflagged_seq = seq
         elif submit:

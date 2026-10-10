@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.app_context import get_app_context
@@ -128,7 +129,9 @@ class EventHandlersBase:
         if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
             return
         try:
-            self._turn_lifecycle.resumed_work(session_id, self._turn_evidence(event))
+            result = self._turn_lifecycle.resumed_work(session_id, self._turn_evidence(event))
+            if result.queued_prompt_adopted:
+                self._record_queued_composer_submit(session_id, result.lifecycle.started_at)
         except Exception:
             self.logger.warning("Failed to resume turn lifecycle", exc_info=True)
         self._close_composer_wait(session_id, "resumed")
@@ -138,11 +141,13 @@ class EventHandlersBase:
         if not isinstance(session_id, str) or not session_id or self._turn_lifecycle is None:
             return
         try:
-            self._turn_lifecycle.end_turn(
+            result = self._turn_lifecycle.end_turn(
                 session_id,
                 disposition,
                 self._turn_evidence(event),
             )
+            if result.queued_prompt_adopted and disposition != "user_interrupted":
+                self._record_queued_composer_submit(session_id, result.lifecycle.started_at)
         except Exception:
             self.logger.warning("Failed to end turn lifecycle", exc_info=True)
         outcome = _TURN_END_WAIT_OUTCOMES.get(disposition)
@@ -205,6 +210,18 @@ class EventHandlersBase:
         if composer is not None:
             ledger, terminal = composer
             ledger.record_submit(terminal.id, adopt=terminal.backend == "native")
+
+    def _record_queued_composer_submit(
+        self,
+        session_id: str,
+        consumed_at: datetime | None,
+    ) -> None:
+        """Settle a transcript-proven queued submit without consuming a later draft."""
+        if consumed_at is None:
+            return
+        composer = self._composer_terminal(session_id)
+        if composer is not None:
+            composer[0].record_queued_submit(composer[1].id, consumed_at=consumed_at)
 
     def _block_composer(self, session_id: str, reason: UnsafeReason) -> None:
         """Hold automatic writes to the session's composer until a submit record or release."""
