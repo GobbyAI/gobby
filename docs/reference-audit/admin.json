@@ -573,7 +573,38 @@
       },
       "verification": [
         "source-inventory",
-        "cli-registry"
+        "cli-registry",
+        "focused-auth-key"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby auth key list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth_login.py",
+        "symbol": "key_list"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-key"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby auth key revoke",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/authentication.md",
+      "implementation": {
+        "path": "src/gobby/cli/auth_login.py",
+        "symbol": "key_revoke"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-auth-key"
       ],
       "audience": "operator"
     },
@@ -1204,6 +1235,12 @@
     }
   ],
   "evidence": [
+    {
+      "id": "focused-auth-key",
+      "kind": "test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_auth_login.py tests/cli/test_cli_auth.py tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q",
+      "result": "43 passed in 26.17s; isolated bootstrap and in-test HTTP/TLS hub; rotation, rollback, concurrent writers, list/revoke, mint, pinned TLS, and reference contract verified."
+    },
     {
       "id": "source-inventory",
       "kind": "source",

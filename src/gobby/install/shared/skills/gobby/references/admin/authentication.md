@@ -16,12 +16,26 @@ cookie after account login.
 2. Use current daemon clients to attach credentials automatically. For manual
    HTTP diagnostics, use the configured endpoint and bearer authentication;
    `/api/health` and `/api/admin/startup-progress` are public exceptions.
-3. To repair or rotate a key, create a machine-bound key through API-key
-   management, save the returned key and ID as `api_key` and `api_key_id` in that
-   machine's bootstrap, then revoke the previous key. Clients reread bootstrap
-   before new authenticated operations. Browser sessions remain independent.
-   Rotating the daemon's bootstrap key also invalidates managed capabilities
-   signed with its derived signing key; remint those capabilities.
+3. To enroll a configured remote node, run `gobby auth login`. It prompts for
+   the hub account credentials and pins the hub certificate. Inspect the enrolled
+   key's hint and ID with `gobby auth key --show`; this never prints the key.
+   Rotate it with `gobby auth key --rotate`. Rotation mints and publishes a new
+   machine-bound key, verifies authentication, then revokes the old key. Failed
+   verification restores only the prior key fields, preserving other bootstrap
+   settings. Concurrent key changes are preserved; follow any reported key IDs
+   and cleanup instructions. Clients reread bootstrap before new authenticated
+   operations. Browser sessions remain independent. Rotation invalidates
+   outstanding managed capability tokens; remint those capabilities.
+   Use `gobby auth key --mint LABEL` for an additional key without changing
+   bootstrap. It prints the key once, with its hint and ID; store it securely,
+   because the key is not shown again. The `--show`, `--rotate`, and `--mint`
+   options are mutually exclusive and cannot accompany subcommands.
+   `gobby auth key list` lists your keys with ID, hint, label, machine, creation,
+   last use, and revocation timestamps, marking the bootstrap's current key.
+   `gobby auth key revoke KEY_ID` revokes one of your other keys. It refuses the
+   bootstrap's own key; use `--rotate` for that key. A foreign or missing ID is
+   reported as not found among your keys. These commands use the bootstrap key
+   as bearer authentication and the pinned hub certificate on remote nodes.
 4. `gobby auth credentials` resets the sole installed user's password through
    a hidden confirmation prompt. Password reset revokes that user's browser
    sessions; sign in again. It does not create an alternate user or disable auth.
