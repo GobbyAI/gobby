@@ -1,0 +1,65 @@
+{
+  "task": "#23063 UserPromptSubmit rule_engine latency",
+  "kind": "Retrospective regression comparison; not preimplementation TDD RED",
+  "test": "tests/workflows/engine/test_memory_surface_latency.py::test_prompt_submit_memory_read_ignores_large_unrelated_defaults",
+  "test_git_blob": "37ad6f30fc7432a0d68a3c6072587237dcbf5f24",
+  "production_fix": "adabcd6db74c5ee51720df5d5d5deb4a1e2a7239",
+  "environment": {
+    "python": "3.14.3",
+    "pytest": "9.0.3",
+    "database_url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+    "GOBBY_TEST_PROTECT": "1",
+    "unrelated_default_rows": 300000,
+    "unrelated_stored_bytes": 2000000,
+    "memory_delay_seconds": 0.025,
+    "latency_bound_seconds": 1
+  },
+  "before": {
+    "source_commit": "ba4aa371f8e40c1e5b7cb13eda368d79ee26b873",
+    "state_manager_git_blob": "51f1e91cf0cfbb8faf01d35960a71764d33e3f2e",
+    "cwd": "/Users/josh/.gobby/worktrees/gobby/lane-4-close-out/.gobby/tmp/23063-before",
+    "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 RTK_DISABLED=1 PYTHONPATH=/Users/josh/.gobby/worktrees/gobby/lane-4-close-out/.gobby/tmp/23063-before/src uv run --project /Users/josh/.gobby/worktrees/gobby/lane-4-close-out --no-sync pytest tests/workflows/engine/test_memory_surface_latency.py -q -s --timeout=120 -p no:cacheprovider",
+    "exit_code": 1,
+    "summary": "1 failed in 26.16s",
+    "hook_seconds": 9.46493008302059,
+    "scoped_read_seconds": 4.195121375028975,
+    "assertion": "AssertionError: UserPromptSubmit memory surfacing took 9.465s; bound is 1.000s"
+  },
+  "after": {
+    "source_commit": "97ef8984444424ce6a56de38017ec60093606487",
+    "cwd": "/Users/josh/.gobby/worktrees/gobby/lane-4-close-out",
+    "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 RTK_DISABLED=1 uv run pytest tests/workflows/engine/test_memory_surface_latency.py -q -s --timeout=120 -p no:cacheprovider",
+    "exit_code": 0,
+    "summary": "1 passed in 9.02s",
+    "hook_seconds": 0.07557499996619299,
+    "scoped_read_seconds": 0.003884292033035308
+  },
+  "provenance": [
+    "git archive of the production fix's parent exported into ignored workspace scratch. PYTHONPATH selected its actual source; a separate import printed the exported state_manager.py path. Exported state_manager blob matched git rev-parse parent:path; both test files had the same blob.",
+    "Tar exited 1 after filesystem denials for two unrelated files (.vscode/settings.json and vendored .gitmodules). Required Python source, tests and config were extracted.",
+    "The shipped surface-memories-on-turn-start rule runs through real RuleEngine and _RuleLoopBridge.call for native UserPromptSubmit. Real SessionVariableManager reads an isolated PostgreSQL session/defaults store. Only the memory dispatcher is faked; it performs the real scoped read before a controlled timer completes recall.",
+    "Definition cache warmup, large-state writes and engine construction precede timing. The fix filters defaults before deepcopy; the parent copies all defaults before selecting keys. No bridge delay, replacement state manager, production logging, wake staggering or live capture.",
+    "This is a defect: unrelated default size multiplies work for a two-key read even for one prompt with no wake fanout. Parent exceeds 1s; fixed meets 1s. Scoped-read time overlaps hook time; do not sum them. Remaining parent hook time is not separately attributed.",
+    "Natural samples locate dominant measured work inside memory surfacing. Attribution to state-variable reads rests on retained samples plus this reproduction under amended criterion3; these numbers are not a matched live-fleet improvement estimate."
+  ],
+  "natural_samples": [
+    {
+      "timestamp": "2026-09-29 23:17:48 CDT",
+      "provider": "codex",
+      "rule_engine_seconds": 3.904314417,
+      "memory_effect_seconds": 3.893171458,
+      "bridge_queue_seconds": 0.000580291,
+      "bridge_work_seconds": 3.857590625,
+      "predates_22910_activation": true
+    },
+    {
+      "timestamp": "2026-09-29 23:29:16 CDT",
+      "provider": "claude",
+      "rule_engine_seconds": 3.4548095,
+      "memory_effect_seconds": 3.247925875,
+      "bridge_queue_seconds": 0.023107667,
+      "bridge_work_seconds": 3.221599417,
+      "predates_22910_activation": true
+    }
+  ]
+}
