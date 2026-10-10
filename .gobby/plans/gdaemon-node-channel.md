@@ -177,6 +177,14 @@ because they change behavior that the approved key-cutover plan specified.
      1 s, doubling to 60 s, and reset after an ack. It reads `api_key` from its
      bootstrap on each attempt, so a rotation (key-cutover 1.4) takes effect
      at the next reconnect.
+   - **Every node await is bounded.** An attempt's dial, TLS handshake,
+     upgrade, hello send, and ack receipt share one 20 s attempt timeout from
+     the attempt's start. After the ack, the node treats the hub as gone when
+     it receives no frame within the 90 s idle timeout. The hub answers each
+     ping with a pong, so a live hub resets that timer every ping interval.
+     Each ping send runs under the same idle deadline, so a stalled write
+     cannot hold the loop. Either expiry drops the transport and enters the
+     backoff above.
 10. **Heartbeat bookkeeping on the hub.**
     - The hub writes `machines.last_heartbeat_at` and `node_version` at hello,
       then on a ping only when at least 60 s have passed since its last write.
@@ -249,10 +257,13 @@ because they change behavior that the approved key-cutover plan specified.
         field is added.
 11. **Timings are constructor arguments, not configuration.**
     - `ChannelTiming` carries the ping interval, the backoff start and
-      ceiling, the ack and hello timeouts, the idle timeout, the key-recheck
-      interval and deadline, and the heartbeat write interval.
-      `ChannelTiming::default()` holds the values above. The node's ack
-      timeout is 15 s, longer than the hub's 14 s admission.
+      ceiling, the node's attempt timeout, the hub's hello timeout, the idle
+      timeout, the key-recheck interval and deadline, and the heartbeat write
+      interval. `ChannelTiming::default()` holds the values above. The node's
+      20 s attempt timeout covers the hub's 14 s admission plus 6 s for the
+      dial, TLS handshake, and upgrade. A slower attempt ends without an ack
+      and backs off; the hub's ack send then fails, or its read sees the
+      close, and either path removes the entry (Decision 10).
     - Tests build short timings.
     - No bootstrap key is added.
 12. **`/api/machines` follows the API-key routes' house style.**
@@ -264,7 +275,10 @@ because they change behavior that the approved key-cutover plan specified.
       `tailscale_name`, `first_seen`, `last_seen`, `last_heartbeat_at`,
       `node_version`, and `connected`. Timestamps are RFC 3339 or `null`.
     - `connected` means "this hub's registry holds a live channel for the
-      machine", so the hub's own row is `false`.
+      machine", and nothing else. A machine with no channel reads `false`.
+      The hub's own machine has no special case: admission keys only on the
+      bearer's machine, so its row reads `false` unless a process holding
+      that machine's key opens a channel, and then `true` is accurate.
     - Errors use gdaemon's existing body `{"error": msg, "code": code}`:
       - a request with no resolved key identity is 401 `missing_auth`;
       - an unknown, foreign, or malformed id is 404 `machine_not_found`;
@@ -304,9 +318,6 @@ because they change behavior that the approved key-cutover plan specified.
       Python's "; this process is the owner" suffix. 1.1 changes that literal
       to Python's text, so every Rust parser reports the rule identically. No
       test asserts the old text.
-    - Every vector sets `bind_host` explicitly, because the default bind hosts
-      differ: Python uses `localhost` and Rust uses `127.0.0.1`. That divergence
-      predates this plan and is reported to the Orchestrator as found work.
     - Every local vector carries `files_home`, which only Python's parser
       requires.
 15. **No activation section.** Each leaf validates against isolated daemons
@@ -361,7 +372,11 @@ stands alone so it can be copied into #23457. The Orchestrator approved points
 - (c) No other order is fixed between #23457 and #23274's later leaves. Each
   edits only its own fields and arms, listed below. #23457's standby gate runs
   before the hub's native node routes. Whichever lands second rebases onto the
-  other's arms.
+  other's arms. A change that adds a field to a variant or to
+  `BackendServices` updates every direct constructor of it, including the
+  gdaemon test harness's standalone `AppState` literals
+  (`crates/gdaemon/tests/common/mod.rs`, `heartbeat.rs`, `http_contracts.rs`,
+  and `front_door.rs`).
 - (d) Node mode takes no lease, runs no backend, needs no front-door secret,
   and starts no retention task or terminal host. It takes the same PID claim
   as the other modes. #23457 owns the PID claim and implements it for every
@@ -582,7 +597,7 @@ Targets:
 - `load_enabled_bootstrap`'s default literal sets `datastore_mode: Local`,
   `hub: false`, and `None` for `hub_daemon_url` and `hub_cert`.
 - `tests/fixtures/bootstrap_run_modes.json` holds a `cases` array. Each entry
-  has a `name`, a `bootstrap` mapping with an explicit `bind_host`, and either
+  has a `name`, a `bootstrap` mapping, and either
   `mode` with `hub_daemon_url` or `error`. Cases:
   - standalone, and hub with `true` and with `"yes"`;
   - node, with host lowercasing, a trailing slash, and an IPv6 literal hub;
@@ -744,7 +759,9 @@ Targets:
 - `tests/run_modes.rs` builds its bootstraps with
   `gobby_core::bootstrap::parse_hub_database_bootstrap`. Every node bootstrap
   there uses an `http` `hub_daemon_url` at a refused loopback port, so 1.3's
-  `hub_cert` rule leaves it valid.
+  `hub_cert` rule leaves it valid. Its standalone and hub bootstraps carry no
+  `database_url`. It matches every variant with `{ .. }` and constructs none,
+  so later fields leave it compiling.
 - `tests/front_door.rs` renames
   `postgres_resolver_and_node_mode_fail_closed` to
   `postgres_resolver_and_resolverless_door_fail_closed`, its `node` binding to
@@ -1059,11 +1076,21 @@ Targets:
     - It sends and receives with `futures_util::{SinkExt, StreamExt}`, because
       `WebSocketStream` implements `Sink` and `Stream` rather than inherent
       send and receive methods.
-    - After any close or error it sleeps for the backoff, which starts at
-      `backoff_start`, doubles up to `backoff_max`, and resets after an ack.
+    - The dial, `client_async_with_config`, the hello send, and the ack
+      receipt run inside one `tokio::time::timeout(attempt_timeout, ..)`
+      (Decision 9).
+    - After the ack it selects over the next received frame, the ping tick,
+      and `idle_deadline`, which is the last received frame plus
+      `idle_timeout`. Any received frame, a pong included, moves the
+      deadline. Each ping send runs under
+      `tokio::time::timeout_at(idle_deadline, ..)`.
+    - After any close or error, or at either expiry, it drops the transport
+      and sleeps for the backoff, which starts at `backoff_start`, doubles up
+      to `backoff_max`, and resets after an ack.
   - **`ChannelTiming`.** Its defaults are a 30 s ping, 1 s and 60 s backoff,
-    a 15 s ack timeout, a 10 s hello timeout, a 90 s idle timeout, a 25 s key
-    recheck with a 4 s recheck deadline, and a 60 s heartbeat write interval.
+    a 20 s attempt timeout, a 10 s hello timeout, a 90 s idle timeout, a 25 s
+    key recheck with a 4 s recheck deadline, and a 60 s heartbeat write
+    interval.
 - `nodes/mod.rs` registers `channel` and `registry` and defines:
   - `pub struct HubNodes { pub db: Pool, pub registry: Registry }`.
   - `#[derive(Clone, Default)] pub enum NativeRoutes { #[default] Standalone,
@@ -1110,7 +1137,7 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
   - **Unproven checks.** While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys`, a tick's check times out after D and the channel stays open. After the lock is released, the next tick proves the key again.
   - **Teardown shares the tick's budget.** The test revokes the key, then holds `ACCESS EXCLUSIVE` on `api_keys` and calls the public `key_tick` with a `futures_util::sink` whose send never completes. It releases the lock D/2 after the tick, so the check returns no row late. The registry entry is gone as soon as `key_tick` reads that result, and `key_tick` returns with the transport dropped by the tick plus D on a monotonic clock. That is the remaining budget, not D again.
   - It does not pause tokio time, because paused time auto-advances past the timers while the hub awaits its database query. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
-- 1.4.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
+- 1.4.3 - The node client sends a hello with the gdaemon version and `<os>/<arch>`, pings at its interval, and reconnects after a close. Against a refusing hub its delays double from the start value to the ceiling, and they reset after an ack. It reads the key again on each attempt. With short constructor timings, two stalled test peers end their attempts and the client reconnects with the key read again: a peer that accepts TCP and never answers ends the attempt within the attempt timeout, and a peer that sends the ack and then neither reads nor writes is dropped within the idle timeout of its last frame. test: `crates/gdaemon/tests/nodes.rs::node_channel_reconnects_with_backoff`.
 - 1.4.4 - A channel whose first frame is not a valid hello closes with 1008, and a registered channel silent past the idle timeout closes with 4408 and leaves the registry. test: `crates/gdaemon/tests/nodes.rs::silent_or_malformed_channel_is_closed`.
 - 1.4.5 - On a hub, an upgrade to `/api/nodes/channel` without a key identity is refused with 401 before any upgrade. A standalone front door does not mount the route and proxies the request to its backend. A key revoked after the upgrade but before hello, or while the hello write is blocked by a test row lock that is then released, closes 4401 with no ack, and leaves no registry entry and no `connected` machine. While a test transaction holds `ACCESS EXCLUSIVE` on `api_keys` and blocks a registered channel's pre-ack check, the machine reads `connected: false`. A raw peer that resets its TCP connection while that check is blocked makes the ack send fail after the lock is released, which leaves no registry entry and the machine never reading `connected`. A `mark_live` call under a superseded `connection_id` returns `false` and leaves the successor not live. The bounded ack send is driven through the public `send_ack` with a `futures_util::sink` and a test-built registry. A sink whose send never completes makes `send_ack` return at the admission end, with no registry entry left for that `connection_id` and the machine never reading `connected`. With the close signal already fired, `send_ack` returns that code without sending, and the successor's entry is unchanged. A sink that completes accepts the ack while the machine still reads `connected: false`, and the machine reads `connected` once `send_ack` returns. test: `crates/gdaemon/tests/nodes.rs::channel_requires_a_key_on_a_hub`.
 - 1.4.6 - While a test transaction holds a row lock on the machine's `machines` row, a first connection's hello write blocks. A second connection for the same machine then registers. The first connection closes with 4409 and no ack while its write stays blocked, and the second's ack does not arrive while the lock is held. After the test releases the lock, the first write completes and releases the gate, the second receives its ack, and the row holds the second connection's `node_version` with the registry naming the second connection. A `registry.persist` call under the superseded `connection_id` returns `Skipped` and leaves the row unchanged. In the pre-ack variant, two upgrades authenticate first, and a test transaction then holds `ACCESS EXCLUSIVE` on `api_keys`. The test uses a recheck deadline long enough to keep the first connection's pre-ack check blocked through the replacement. The first connection's hello and write complete and its pre-ack check blocks. The second connection's hello then registers and replaces it. The first closes 4409 with no ack while its check is still blocked, and the machine reads `connected: false`. After the lock is released, the second connection receives its ack and becomes the live entry. test: `crates/gdaemon/tests/nodes.rs::replaced_channel_cannot_overwrite_successor_bookkeeping`.
@@ -1125,6 +1152,10 @@ Targets:
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: in the backend arm `handle` routes `/api/machines` and `/api/machines/{id}` to the machines router after authentication and before the route table, for both `NativeRoutes` variants
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve` passes the standalone machines pool in `NativeRoutes::Standalone`
 - `crates/gdaemon/tests/nodes.rs`
+- `crates/gdaemon/tests/common/mod.rs::*` — scope-reason: its two standalone `AppState` literals from 1.2 gain `db: None`
+- `crates/gdaemon/tests/heartbeat.rs::*` — scope-reason: its standalone `AppState` literal from 1.2 gains `db: None`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: `start_front_door`'s standalone `AppState` literal from 1.2 gains `db: None`
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: `start_authenticated_front_door`'s standalone `AppState` literal from 1.2 gains `db: None`; its `NativeRoutes::default()` arguments from 1.4 stay
 - `docs/guides/configuration.md`
 
 **Research context:**
@@ -1164,9 +1195,9 @@ Targets:
     unparsable id, a missing row, or another user's machine is 404
     `machine_not_found`.
   - **`connected`** is `registry.is_connected(id)`: true only while this
-    hub's registry holds a live channel for the machine. A standalone front
-    door has no registry, so every row reads `false`, and so does the hub's
-    own row.
+    hub's registry holds a live channel for the machine (Decision 12). A
+    standalone front door has no registry, so every row reads `false`. The
+    hub's own machine has no special case.
   - **Errors** use gdaemon's existing body `{"error": msg, "code": code}`.
     Without `x-gobby-user-id` both routes are 401 `missing_auth`, checked
     first. Without a pool, or on a query or pool error, they are 503
@@ -1177,7 +1208,12 @@ Targets:
   and registry.
 - `state.rs`: `ModeServices::Standalone` gains `db: Option<Arc<Pool>>`. The
   standalone arm of `AppState::from_bootstrap` builds it with Decision 17's
-  settings when `database_url` is set.
+  settings when `database_url` is set. A `Pool::build` error fails
+  `from_bootstrap`, as the retention pool's does in `run`.
+- The four in-process `serve` callers that 1.2 gave standalone `AppState`
+  literals add `db: None`: `crates/gdaemon/tests/common/mod.rs` (two),
+  `crates/gdaemon/tests/heartbeat.rs`, `crates/gdaemon/tests/http_contracts.rs`,
+  and `crates/gdaemon/tests/front_door.rs`.
 - `serve` passes `NativeRoutes::Standalone(db.clone())` to standalone doors.
   `FrontDoor::handle` routes the machines paths in the backend arm. A node
   never reaches it, because it relays.
@@ -1191,8 +1227,10 @@ Targets:
   - `/api/machines`.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door`
-(heavy work).
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door --test run_modes --test http_contracts --test heartbeat --test ws_golden_proxy`
+(heavy work). `ws_golden_proxy`, `front_door`, and `http_contracts` include
+`crates/gdaemon/tests/common/mod.rs`; `run_modes` proves its `{ .. }` matches survive the
+new field.
 
 **Acceptance:**
 
@@ -1201,7 +1239,7 @@ Targets:
 - 1.5.3 - The configuration guide documents running a node, its relay and channel, and `/api/machines`. behavior: the "Nodes" section in `docs/guides/configuration.md`.
 
 Consumers unchanged:
-- `crates/gdaemon/tests/front_door.rs` — no-edit-reason: it passes `NativeRoutes::default()`, which stays a standalone door without a pool.
+- `crates/gdaemon/tests/run_modes.rs` — no-edit-reason: it matches every variant with `{ .. }` and constructs none, and its standalone bootstraps carry no `database_url` (1.2).
 
 ### 1.6 Hub-node pair test over self-signed TLS [category: test] (depends: 1.3, 1.4, 1.5)
 `kind: deliverable`
@@ -1446,16 +1484,38 @@ Consumers unchanged:
     line anchors are re-measured, `tests/e2e/test_auth_login.py` is now
     `tests/e2e/test_auth_login_e2e.py`, and Decision 14 aligns
     `parse_files_home_view`'s local-rejection text with Python's.
+- 2026-10-10: The Adversary gobby#15989 reviewed `f814cd6a9f` and raised
+  NC-R10 to NC-R13, all accepted:
+  - NC-R10: 1.5 targets the four in-process callers whose standalone
+    `AppState` literals gain `db: None`, and its focused run compiles them.
+    `tests/run_modes.rs` matches with `{ .. }` and constructs no variant.
+    Settlement point (c) states that a field added to a variant or to
+    `BackendServices` updates every direct constructor.
+  - NC-R11: one 20 s attempt timeout bounds the node's dial, TLS handshake,
+    upgrade, hello, and ack, and replaces the 15 s ack timeout. After the
+    ack, the node drops a hub silent past the idle timeout, and each ping
+    send runs under that deadline (Decisions 9 and 11, 1.4). 1.4.3 adds a
+    peer that stalls before the upgrade and one that goes silent after the
+    ack.
+  - NC-R12: `connected` means only that a live channel exists. The hub's
+    own machine has no special case (Decision 12, 1.5).
+  - NC-R13: Decision 14 drops the stale bind-host divergence. Both parsers
+    default to `127.0.0.1`, and the vectors no longer require `bind_host`.
+  - V2 states that its checks are completion gates that have not run.
 
 ## V2: Verification
 `kind: verification`
 
-After every leaf has passed:
+These are completion gates for the implementation. Except for plan
+validation, none has run yet. Each runs after leaves 1.1 to 1.6 land, and each
+must hold before the expanded epic closes.
 
-1. Run the focused suites of 1.1 to 1.5 together against the test hub, with
-   `DATABASE_URL` set.
-2. Rerun `cargo nextest run -p gobby-daemon --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
-   (heavy work), and confirm the loopback bodies are unchanged.
-3. Run `tests/e2e/test_hub_node_pair.py` and `tests/e2e/test_auth_login_e2e.py`
-   against isolated daemons.
-4. Confirm `cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
+1. The focused suites of 1.1 to 1.5 must pass together against the test hub,
+   with `DATABASE_URL` set.
+2. `cargo nextest run -p gobby-daemon --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
+   (heavy work) must pass, with the loopback bodies unchanged.
+3. `tests/e2e/test_hub_node_pair.py` and `tests/e2e/test_auth_login_e2e.py`
+   must pass against isolated daemons.
+4. `cargo tree -p gobby-daemon -i aws-lc-rs` must print nothing.
+5. `uv run gobby plans validate .gobby/plans/gdaemon-node-channel.md -p <project-root>`
+   is the only planning-time check, and it must keep passing.
