@@ -65,7 +65,9 @@ class EnforcementCompletionMixin:
 
         def _is_native_set_variable_tool(self, tool_name: str) -> bool: ...
 
-        def _step_handler_tool_input(self, tool_input: dict[str, Any]) -> dict[str, Any]: ...
+        def _step_handler_tool_input(
+            self, tool_input: dict[str, Any], *, project_id: str | None = None
+        ) -> dict[str, Any]: ...
 
         def _successful_set_variable_value(
             self, handler_tool_input: dict[str, Any], tool_output: Any
@@ -491,7 +493,7 @@ class EnforcementCompletionMixin:
             )
 
         handlers = step.on_mcp_error if tool_failed else step.on_mcp_success
-        handler_tool_input = self._step_handler_tool_input(tool_input)
+        handler_tool_input = self._step_handler_tool_input(tool_input, project_id=event.project_id)
 
         instance_mgr = self.instance_manager
         vars_changed = False
