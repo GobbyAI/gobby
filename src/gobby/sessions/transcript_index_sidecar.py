@@ -34,7 +34,8 @@ INDEX_CACHE_MAX_ENTRIES = 16
 # Version 3 adds bounded source verification and append journal generations.
 # It also invalidates pre-fix AGY tool-event parser positions (version 1).
 # Version 4 rebuilds assistant groups at native message ID boundaries.
-INDEX_SCHEMA_VERSION = 4
+# Version 5 restores distinct user groups and persists rendered IDs for append resume.
+INDEX_SCHEMA_VERSION = 5
 INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
 _SKIP_ADJUSTMENT_VALUE = object()
 
@@ -382,6 +383,7 @@ def _index_to_payload(
                 "resume_safe": boundary.resume_safe,
                 "role": boundary.role,
                 "timestamp": boundary.timestamp.isoformat(),
+                "rendered_id": boundary.rendered_id,
             }
             for boundary in index.boundaries[delta.boundaries if delta else 0 :]
         ],
@@ -470,6 +472,7 @@ def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
             resume_safe=bool(item["resume_safe"]),
             role=str(item["role"]),
             timestamp=datetime.fromisoformat(str(item["timestamp"])),
+            rendered_id=item.get("rendered_id"),
         )
         for item in payload.get("boundaries", [])
     ]

@@ -37,7 +37,7 @@ def _seed_current_message_stub(state: RenderState, index: TranscriptIndex) -> st
     if not index.boundaries:
         return None
     boundary = index.boundaries[-1]
-    message_id = (
+    message_id = boundary.rendered_id or (
         f"resume-{boundary.role}-{boundary.timestamp.timestamp()}-{boundary.parsed_index_start}"
     )
     state.current_message = RenderedMessage(
