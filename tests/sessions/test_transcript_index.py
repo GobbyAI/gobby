@@ -213,9 +213,17 @@ def _line_offsets(lines: list[str]) -> list[int]:
     return offsets
 
 
-def _group_start_index(group_id: str) -> int:
+def _group_start_index(group_id: str, messages: list[ParsedMessage]) -> int:
     """Global parsed index of the message that opened a rendered group."""
-    return int(group_id.rsplit("-", 1)[-1])
+    return next(
+        message.index
+        for message in messages
+        if group_id
+        == (
+            f"{SESSION}-{message.role}-"
+            f"{message.message_id if message.role == 'assistant' and message.message_id else message.index}"
+        )
+    )
 
 
 def _full_groups(
@@ -243,7 +251,7 @@ def test_index_boundaries_match_full_render(tmp_path: Path, name: str) -> None:
 
     for ordinal, (boundary, group) in enumerate(zip(index.boundaries, full_groups, strict=True)):
         assert boundary.group_index == ordinal
-        assert boundary.parsed_index_start == _group_start_index(group.id)
+        assert boundary.parsed_index_start == _group_start_index(group.id, msgs)
 
 
 def test_byte_offsets_seek_to_group_start(tmp_path: Path) -> None:

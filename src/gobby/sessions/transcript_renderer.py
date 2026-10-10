@@ -180,7 +180,10 @@ def render_incremental(
             state.current_message = RenderedMessage(
                 # Native IDs (or the source record index) survive replay even
                 # when the parser must synthesize a missing timestamp.
-                id=f"{session_id or 'no-session'}-{role}-{msg.message_id or msg.index}",
+                id=(
+                    f"{session_id or 'no-session'}-{role}-"
+                    f"{msg.message_id if role == 'assistant' and msg.message_id else msg.index}"
+                ),
                 role=role,
                 content="",
                 timestamp=msg.timestamp,

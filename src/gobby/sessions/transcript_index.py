@@ -129,6 +129,7 @@ class GroupBoundary:
     resume_safe: bool
     role: str
     timestamp: datetime
+    rendered_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -508,6 +509,7 @@ class TranscriptIndexAppender:
                             resume_safe=event.parser_safe and offset_in_event == 0,
                             role=current.role,
                             timestamp=current.timestamp,
+                            rendered_id=current.id,
                         )
                     )
 

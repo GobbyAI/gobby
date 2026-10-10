@@ -67,7 +67,7 @@ def test_usage_has_tokens_rejects_bool_counts(processor: SessionMessageProcessor
     assert processor._usage_has_tokens(message) is False
 
 
-def _codex_response_message(role: str, text: str) -> str:
+def _codex_response_message(role: str, text: str, message_id: str | None = None) -> str:
     block_type = "output_text" if role == "assistant" else "input_text"
     return (
         json.dumps(
@@ -76,6 +76,7 @@ def _codex_response_message(role: str, text: str) -> str:
                 "type": "response_item",
                 "payload": {
                     "type": "message",
+                    "id": message_id,
                     "role": role,
                     "content": [{"type": block_type, "text": text}],
                 },
@@ -456,15 +457,16 @@ class TestSessionRegistration:
         session_manager.touch.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("same_response", [True, False])
     async def test_append_after_sidecar_hydration_continues_assistant_group(
-        self, mock_db: MagicMock, tmp_path: Path
+        self, mock_db: MagicMock, tmp_path: Path, same_response: bool
     ) -> None:
         session_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
         transcript = tmp_path / "continuation.jsonl"
         transcript.write_text(
             _codex_response_message("user", "hello")
-            + _codex_response_message("assistant", "first"),
+            + _codex_response_message("assistant", "first", "reply"),
             encoding="utf-8",
         )
         initial_stat = transcript.stat()
@@ -483,14 +485,17 @@ class TestSessionRegistration:
         initial_count = index.session_stats["message_count"]
 
         with transcript.open("a", encoding="utf-8") as handle:
-            handle.write(_codex_response_message("assistant", "second"))
+            handle.write(
+                _codex_response_message("assistant", "second", "reply" if same_response else "next")
+            )
 
         await processor._process_session("sid", str(transcript))
 
         stats = processor._stats["sid"]
         assert stats["message_count"] == initial_count + 1
         assert stats["last_assistant_content"] == "second"
-        assert processor._index_appenders["sid"].index.total_groups == initial_groups
+        expected_groups = initial_groups + int(not same_response)
+        assert processor._index_appenders["sid"].index.total_groups == expected_groups
         latest = load_index_sidecar(
             str(transcript),
             "codex",
@@ -500,7 +505,7 @@ class TestSessionRegistration:
             size=transcript.stat().st_size,
         )
         assert latest is not None
-        assert latest.total_groups == initial_groups
+        assert latest.total_groups == expected_groups
         assert latest.session_stats == stats
 
     async def test_register_session_resumes_sidecar_after_append(
