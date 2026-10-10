@@ -617,16 +617,16 @@ Targets:
 `cargo nextest run -p gobby-core bootstrap` (heavy work), then
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap_run_modes.py tests/config/test_bootstrap.py -q`.
 
-**Acceptance:**
-
-- 1.1.1 - The Rust parser derives the mode, normalized `hub_daemon_url`, and `hub_cert` that every shared vector expects. It rejects `(remote, true)`, a remote bootstrap without `hub_daemon_url`, a local one with it, and this process's own origin, each with Python's message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
-- 1.1.2 - Python's `bootstrap_from_mapping` and `BootstrapConfig.run_mode` produce the same outcome on every case of the same vector file. test: `tests/config/test_bootstrap_run_modes.py::test_shared_vectors_match_rust`.
-
 Consumers unchanged:
 - `crates/gcore/src/local_token.rs` — no-edit-reason: `read_api_key_at` reads through `parse_hub_database_bootstrap`, which now also validates the mode fields; every bootstrap that `gobby auth login` or the installer writes already satisfies Python's identical rules.
 - `crates/gcore/src/ai/effective_config.rs` — no-edit-reason: reads `database_url` through `postgres_database_url_from_bootstrap_file`, whose field it reads is unchanged.
 - `crates/gdaemon/src/main.rs` — no-edit-reason: same `database_url` read as `effective_config.rs`.
 - `crates/gdaemon/src/front_door/challenge.rs` — no-edit-reason: reads `api_key` through the same parser; the field is unchanged.
+
+**Acceptance:**
+
+- 1.1.1 - The Rust parser derives the mode, normalized `hub_daemon_url`, and `hub_cert` that every shared vector expects. It rejects `(remote, true)`, a remote bootstrap without `hub_daemon_url`, a local one with it, and this process's own origin, each with Python's message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
+- 1.1.2 - Python's `bootstrap_from_mapping` and `BootstrapConfig.run_mode` produce the same outcome on every case of the same vector file. test: `tests/config/test_bootstrap_run_modes.py::test_shared_vectors_match_rust`.
 
 ### 1.2 Mode container: gdaemon starts by run mode, and a node needs no secret [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -691,7 +691,9 @@ Targets:
   `target.to_string()`, and `bad_gateway` (line 49) writes
   `{"status":"bad_gateway","backend":{"target"}}` the same way. Both take
   `target: SocketAddr`. Their production callers are `proxy::forward`,
-  `ws::splice`, and `routes.rs::compare`.
+  `ws::splice`, and `routes.rs::compare`. `proxy::forward` and `ws::splice`
+  pass a `SocketAddr`, which the `Display` bound accepts unchanged, so this
+  leaf does not edit them; 1.3 edits both for the relay.
 - `tests/front_door.rs::postgres_resolver_and_node_mode_fail_closed` (line
   235) calls a resolver-less `AuthState` door "node" and asserts it answers
   a `gobby_` bearer with 503 `key_resolver_unavailable`. Under Decision 2
@@ -772,18 +774,16 @@ Targets:
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test run_modes --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
 and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work).
 
+Consumers unchanged:
+- `crates/gdaemon/src/front_door/routes.rs` — no-edit-reason: `compare` passes `state.target`, a `SocketAddr`, to `health::bad_gateway`, which accepts it through `impl std::fmt::Display` with byte-identical output (Decision 7); its tests build `FrontDoorState` directly, whose signature is unchanged.
+- `crates/gdaemon/src/front_door/challenge.rs` — no-edit-reason: `answer` already takes the bootstrap path, which the node arm supplies.
+- `crates/gdaemon/src/front_door/auth.rs` — no-edit-reason: `AuthState` is built as today, only for standalone and hub.
+
 **Acceptance:**
 
 - 1.2.1 - `AppState::from_bootstrap` yields `Standalone`, `Hub`, and `Node` for bootstraps that parse to those run modes. Standalone and hub without a secret fail with the `GOBBY_FRONT_DOOR_SECRET` message, a node without `api_key` fails with a message naming `gobby auth login`, and an enrolled node without a secret succeeds. test: `crates/gdaemon/tests/run_modes.rs::app_state_follows_the_run_mode`.
 - 1.2.2 - A spawned `gdaemon serve` whose node bootstrap carries an `http` `hub_daemon_url`, `api_key`, `database_url: "not a PostgreSQL DSN"`, and `front_door.routes.terminal_ws: native`, with no `GOBBY_FRONT_DOOR_SECRET`, starts and answers an `interactive` challenge on its loopback front door with the hex `HMAC-SHA256(HMAC-SHA256(api_key, "gobby-interactive-proof-v1"), nonce)`. Either the retention pool or the terminal pool would refuse that `database_url` at startup, so the node built neither. test: `crates/gdaemon/tests/run_modes.rs::node_serve_starts_without_secret_or_backend_services`.
 - 1.2.3 - A resolver-less standalone door still answers a `gobby_` bearer with 503 `key_resolver_unavailable`, as a door with a failing PostgreSQL resolver does. test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.
-
-Consumers unchanged:
-- `crates/gdaemon/src/front_door/routes.rs` — no-edit-reason: `compare` passes `state.target`, a `SocketAddr`, to `health::bad_gateway`, which accepts it through `impl std::fmt::Display` with byte-identical output (Decision 7); its tests build `FrontDoorState` directly, whose signature is unchanged.
-- `crates/gdaemon/src/front_door/proxy.rs` — no-edit-reason: `forward` passes a `SocketAddr` to `health::unavailable`, accepted unchanged.
-- `crates/gdaemon/src/front_door/ws.rs` — no-edit-reason: `splice` passes a `SocketAddr` to `health::unavailable`, accepted unchanged.
-- `crates/gdaemon/src/front_door/challenge.rs` — no-edit-reason: `answer` already takes the bootstrap path, which the node arm supplies.
-- `crates/gdaemon/src/front_door/auth.rs` — no-edit-reason: `AuthState` is built as today, only for standalone and hub.
 
 ### 1.3 Node relay: a node's front door forwards to its hub over the pinned connection [category: code] (depends: 1.2)
 `kind: deliverable`
@@ -897,7 +897,14 @@ Targets:
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test run_modes --test front_door --test ws_golden_proxy --test http_contracts`
 and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), then
-`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
+`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing. This leaf leaves
+`crates/gdaemon/tests/run_modes.rs` unedited: 1.2.2's interactive challenge
+stays native, and its `http` hub needs no `hub_cert`. It also leaves
+`crates/gdaemon/tests/front_door.rs` unedited, because every door that file
+builds is a backend door, whose behavior and constructor are unchanged here.
+
+Consumers unchanged:
+- `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: the loopback splice keeps its behavior; 1.3.3 replays the same corpus through a node.
 
 **Acceptance:**
 
@@ -907,11 +914,6 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 - 1.3.4 - A node relays a `managed` handshake challenge to the hub stub, and still answers an `interactive` one with its own key while the stub accepts no connection. test: `crates/gdaemon/tests/nodes.rs::node_relays_managed_challenge_and_answers_interactive_natively`.
 - 1.3.5 - `AppState::from_bootstrap` refuses a node bootstrap with an `https` hub and no `hub_cert`, with a message naming `gobby auth login`, and accepts an `http` hub without one. A spawned `gdaemon serve` with an enrolled node bootstrap and no `GOBBY_FRONT_DOOR_SECRET` relays a request to the TLS hub stub. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
 - 1.3.6 - A node on the same host as a loopback TLS hub stub relays a request and a WebSocket upgrade that both carry `X-Gobby-Break-Glass`, and the stub receives neither with that header. test: `crates/gdaemon/tests/nodes.rs::node_strips_break_glass_before_the_hub`.
-
-Consumers unchanged:
-- `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: the loopback splice keeps its behavior; 1.3.3 replays the same corpus through a node.
-- `crates/gdaemon/tests/run_modes.rs` — no-edit-reason: 1.2.2's interactive challenge stays native, and its `http` hub needs no `hub_cert`.
-- `crates/gdaemon/tests/front_door.rs` — no-edit-reason: every door it builds is a backend door, whose behavior and constructor are unchanged.
 
 ### 1.4 Node channel: the hub registers, heartbeats, replaces, and revokes node channels [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -1229,17 +1231,16 @@ Targets:
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door --test run_modes --test http_contracts --test heartbeat --test ws_golden_proxy`
 (heavy work). `ws_golden_proxy`, `front_door`, and `http_contracts` include
-`crates/gdaemon/tests/common/mod.rs`; `run_modes` proves its `{ .. }` matches survive the
-new field.
+`crates/gdaemon/tests/common/mod.rs`. This leaf leaves
+`crates/gdaemon/tests/run_modes.rs` unedited: it matches every variant with
+`{ .. }`, constructs none, and its standalone bootstraps carry no
+`database_url` (1.2), so the `run_modes` run proves it survives the new field.
 
 **Acceptance:**
 
 - 1.5.1 - `GET /api/machines` returns `{"machines": [...]}` with only the caller's machines, ordered by `first_seen, id`, each with exactly the eleven fields listed in this section's Implementation and RFC 3339 or `null` timestamps. `connected` is true exactly for machines with an acknowledged live channel, and false for every row on a standalone front door. `GET /api/machines/{id}` returns one such unwrapped object and answers 404 `machine_not_found` for another user's machine, an unknown id, and a malformed id. test: `crates/gdaemon/tests/nodes.rs::machines_api_lists_rows_with_connection_state`.
 - 1.5.2 - Without a key identity both routes answer 401 `missing_auth`, and a query error, or a standalone door without a pool, answers 503 `machines_unavailable`. test: `crates/gdaemon/tests/nodes.rs::machines_api_requires_a_key`.
 - 1.5.3 - The configuration guide documents running a node, its relay and channel, and `/api/machines`. behavior: the "Nodes" section in `docs/guides/configuration.md`.
-
-Consumers unchanged:
-- `crates/gdaemon/tests/run_modes.rs` — no-edit-reason: it matches every variant with `{ .. }` and constructs none, and its standalone bootstraps carry no `database_url` (1.2).
 
 ### 1.6 Hub-node pair test over self-signed TLS [category: test] (depends: 1.3, 1.4, 1.5)
 `kind: deliverable`
@@ -1346,16 +1347,16 @@ Targets:
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -q`
 after `cargo build -p gobby-daemon` (heavy work).
 
-**Acceptance:**
-
-- 1.6.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node, observed ready and registered within bounded waits, shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key closes the channel within one default heartbeat interval (30 s), proved only by an observation received before that deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
-
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing belongs to the pair test.
-- `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: same.
+- `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing belongs to the pair test.
 - `tests/e2e/conftest.py` — no-edit-reason: the pair test writes the hub flag and the node bootstrap itself.
 - `tests/e2e/test_auth_login_e2e.py` — no-edit-reason: the pair test imports its helpers and fixture unchanged.
 - `src/gobby/cli/auth_login.py` — no-edit-reason: the node bootstrap it writes is the one 1.2 and 1.3 consume.
+
+**Acceptance:**
+
+- 1.6.1 - Over self-signed TLS, an enrolled bare `gdaemon serve` node, observed ready and registered within bounded waits, shows its machine as `connected` and relays one request (which reports the hub's mode) and one WebSocket upgrade (which receives the hub's pong). The native interactive challenge and the relayed authenticated handshake also complete together and return a grant bound to the enrolled node. Revoking its key closes the channel within one default heartbeat interval (30 s), proved only by an observation received before that deadline, and makes the next relayed request fail with 401. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1502,6 +1503,13 @@ Consumers unchanged:
   - NC-R13: Decision 14 drops the stale bind-host divergence. Both parsers
     default to `127.0.0.1`, and the vectors no longer require `bind_host`.
   - V2 states that its checks are completion gates that have not run.
+- 2026-10-10: The Adversary's recheck of `4acd5ecd7b` confirmed NC-R10 to
+  NC-R13 and raised NC-R14: every Consumers unchanged inventory sat after its
+  Acceptance block, where the validator ignores it. Each inventory now
+  precedes Acceptance. Entries that another leaf edits leave the inventories,
+  and their reasons move into prose: `proxy.rs` and `ws.rs` in 1.2's research
+  context, `run_modes.rs` and `tests/front_door.rs` in 1.3's focused
+  verification, and `run_modes.rs` in 1.5's focused verification.
 
 ## V2: Verification
 `kind: verification`
