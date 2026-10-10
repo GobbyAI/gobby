@@ -327,6 +327,7 @@ def create_spawn_agent_registry(
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
         lane: str | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -376,6 +377,8 @@ def create_spawn_agent_registry(
                 Refusals carry ``placement_error``.
             lane: Optional lane label recorded on the agent run and returned as
                 ``lane`` by list_running_agents and list_agent_runs.
+            title: Automatic session and pane title when no task is claimed. Returns
+                after task close or clear; existing manual titles take precedence.
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -493,6 +496,10 @@ def create_spawn_agent_registry(
                 initial_variables["_agent_rules"] = agent_body.workflows.rules
             if agent_body.workflows.variables:
                 initial_variables.update(agent_body.workflows.variables)
+        if title is not None and title.strip():
+            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
+
+            initial_variables[DEFINITION_TITLE_VARIABLE] = title.strip()
 
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:
