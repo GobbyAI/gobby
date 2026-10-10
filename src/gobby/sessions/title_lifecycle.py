@@ -14,6 +14,10 @@ from gobby.storage.sessions._title_defaults import (
     project_name_for_session_title,
 )
 
+# Session variable holding the default title apply_agent_definition/apply_persona
+# gave the session; the automatic title falls back to it when no claim is open.
+DEFINITION_TITLE_VARIABLE = "_definition_title"
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimedTaskTitle:
@@ -95,8 +99,20 @@ def update_title_for_claim(session_manager: Any, session_id: str, task: Any) -> 
     )
 
 
+def _definition_title(db: Any, session_id: str) -> str | None:
+    """The default title an applied agent definition gave the session, if any."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    value = (
+        SessionVariableManager(db)
+        .get_variable_subset(session_id, (DEFINITION_TITLE_VARIABLE,))
+        .get(DEFINITION_TITLE_VARIABLE)
+    )
+    return value if isinstance(value, str) and value.strip() else None
+
+
 def recompute_automatic_title(session_manager: Any, session_id: str) -> Any:
-    """Recompute a nonmanual title from the latest open claim or provisional rule."""
+    """Recompute a nonmanual title: open claim, then applied definition, then provisional."""
     session = session_manager.get(session_id)
     if session is None or getattr(session, "title_source", None) == MANUAL_TITLE_SOURCE:
         return session
@@ -112,6 +128,8 @@ def recompute_automatic_title(session_manager: Any, session_id: str) -> Any:
             task.title,
         )
         source = TASK_TITLE_SOURCE
+    elif definition_title := _definition_title(session_manager.db, session_id):
+        title, source = definition_title, TASK_TITLE_SOURCE
     else:
         title = format_provisional_session_title(
             context.project_name,

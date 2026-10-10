@@ -23,6 +23,7 @@ from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
     build_handoff_continue_prompt,
 )
+from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
 from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
 from .agents import _seed_parent_turn_seq
@@ -62,6 +63,7 @@ _CLEAR_SUCCESSOR_VARIABLE_KEYS = (
     MCP_PROXY_READY_VARIABLE,
     "_agent_type",
     "_agent_definition_hash",
+    DEFINITION_TITLE_VARIABLE,
 )
 
 
@@ -186,6 +188,8 @@ def _crossing_seat(
     seat = {"_agent_type": agent_type}
     if predecessor_vars.get("_agent_definition_hash"):
         seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
+    if predecessor_vars.get(DEFINITION_TITLE_VARIABLE):
+        seat[DEFINITION_TITLE_VARIABLE] = predecessor_vars[DEFINITION_TITLE_VARIABLE]
     return seat
 
 

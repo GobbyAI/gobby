@@ -8,6 +8,7 @@ import pytest
 
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.title_lifecycle import (
+    DEFINITION_TITLE_VARIABLE,
     recompute_automatic_title,
     update_title_for_claim,
 )
@@ -49,6 +50,33 @@ def test_recompute_automatic_title_falls_back_to_provisional_after_close(
 
     assert recomputed.title == f"test-project#{session.seq_num}: Codex"
     assert recomputed.title_source == "provisional"
+
+
+def test_recompute_automatic_title_returns_to_the_applied_definition_title(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    session = _session(session_manager, sample_project["id"], "definition-after-close")
+    SessionVariableManager(session_manager.db).merge_variables(
+        session.id, {DEFINITION_TITLE_VARIABLE: "Lane Manager"}
+    )
+    task_manager = LocalTaskManager(session_manager.db)
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Short-lived work",
+        claimed_by_session_id=session.id,
+        validation_criteria="The task title shows only while the claim is open.",
+    )
+    claimed = update_title_for_claim(session_manager, session.id, task)
+    assert claimed is not None and claimed.title_source == "task"
+
+    task_manager.close_task(task.id, force=True, closed_in_session_id=session.id)
+    recomputed = recompute_automatic_title(session_manager, session.id)
+
+    assert recomputed.title == "Lane Manager"
+    assert recomputed.title_source == "task"
 
 
 def test_reasoning_effort_prefers_effective_then_requested() -> None:

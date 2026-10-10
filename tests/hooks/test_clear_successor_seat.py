@@ -208,6 +208,27 @@ async def test_clear_successor_inherits_agent_type_and_pin(
 
 
 @pytest.mark.asyncio
+async def test_clear_successor_keeps_the_applied_definition_title(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
+    from gobby.storage.sessions import SessionManager
+
+    pane = _pane(temp_db, tmp_path, monkeypatch, "title")
+    _define(temp_db, ["claim"])
+    assert (await apply_agent_definition_impl(_SEAT, temp_db, pane.predecessor_id))["success"]
+    variables = SessionVariableManager(temp_db)
+    variables.merge_variables(pane.predecessor_id, {DEFINITION_TITLE_VARIABLE: "Seat Title"})
+    _stage(temp_db, pane)
+
+    successor_id = _start(pane, "succ-title")
+
+    assert variables.get_variables(successor_id)[DEFINITION_TITLE_VARIABLE] == "Seat Title"
+    successor = SessionManager(temp_db).get(successor_id)
+    assert successor is not None and successor.title == "Seat Title"
+
+
+@pytest.mark.asyncio
 async def test_clear_successor_gets_fresh_step_instance(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

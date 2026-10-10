@@ -962,6 +962,13 @@ def test_default_title_yields_to_a_later_apply_and_a_task_claim(
     assert relabeled["title"] == "Code Reviewer"
     SessionManager(db).update_title(session_id, "#7 Fix it", title_source=TASK_TITLE_SOURCE)
     assert session_title(db, session_id) == "#7 Fix it"
+    from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    stored = SessionVariableManager(db).get_variable_subset(
+        session_id, (DEFINITION_TITLE_VARIABLE,)
+    )
+    assert stored == {DEFINITION_TITLE_VARIABLE: "Code Reviewer"}
 
 
 @pytest.mark.asyncio
