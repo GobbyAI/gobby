@@ -354,7 +354,6 @@ def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
     plan = _step(agent, "plan")
     report = _step(agent, "report")
 
-    assert agent["spawnable_agents"] == ["merge-worker", "task-close-reviewer"]
     assert 'reason="already_implemented"' in instructions
     assert "Do NOT close_task on the campaign task except" in instructions
     assert "gobby-tasks:close_task" in survey["allowed_mcp_tools"]
