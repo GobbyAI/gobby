@@ -44,6 +44,7 @@ def test_first_install_creates_user_and_owned_machine(
     machine = LocalMachineManager(empty_identity).get(MACHINE_ID)
     assert machine is not None
     assert machine.owner_user_id == user.id
+    assert machine.ref == 0
 
 
 def test_machine_failure_rolls_back_new_user(
@@ -92,3 +93,30 @@ def test_rerun_uses_sole_user_without_prompts(
     assert second.id == TEST_USER_ID
     machines = LocalMachineManager(temp_db).list_for_user(TEST_USER_ID)
     assert [machine.id for machine in machines].count(MACHINE_ID) == 1
+
+
+def test_install_ref_allocation_joins_outer_transaction(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_db.execute("DELETE FROM machines WHERE owner_user_id = %s", (TEST_USER_ID,))
+    machines = LocalMachineManager(temp_db)
+    first_id = f"{TEST_MACHINE_ID_PREFIX}000000000100"
+    second_id = f"{TEST_MACHINE_ID_PREFIX}000000000101"
+    first = machines.upsert_seen(first_id, TEST_USER_ID)
+    second = machines.upsert_seen(second_id, TEST_USER_ID)
+    assert (first.ref, second.ref) == (0, 1)
+    temp_db.execute("DELETE FROM machines WHERE id = %s", (first_id,))
+    monkeypatch.setattr("gobby.cli.install_identity.require_machine_id", lambda: MACHINE_ID)
+
+    with pytest.raises(RuntimeError, match="rollback identity"):
+        with temp_db.transaction():
+            ensure_install_identity(temp_db, no_interactive=True)
+            machine = machines.get(MACHINE_ID)
+            assert machine is not None
+            assert machine.ref == 0
+            raise RuntimeError("rollback identity")
+
+    assert machines.get(MACHINE_ID) is None
+    remaining = machines.get(second_id)
+    assert remaining is not None
+    assert remaining.ref == 1
