@@ -40,6 +40,13 @@ SEND_MESSAGE_TARGETS = {
     "release-manager": {"parent", "session", "project"},
     "inbox-manager": {"parent", "session"},
 }
+SPAWNABLE_AGENTS = {
+    "assistant": [],
+    "orchestrator": [],
+    "lane-manager": [],
+    "release-manager": ["task-close-reviewer"],
+    "inbox-manager": [],
+}
 # The write tools a read-only seat may not call.
 READ_ONLY_BLOCKED_TOOLS = frozenset(
     {
@@ -132,6 +139,7 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     assert body.step_workflow is None
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]
+    assert body.spawnable_agents == SPAWNABLE_AGENTS[name]
     for section in _baseline_sections():
         assert section in prompt
     assert "gobby-agents:send_message" in prompt
