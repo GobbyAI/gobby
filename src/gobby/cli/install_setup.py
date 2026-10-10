@@ -23,6 +23,7 @@ from gobby.install.distribution import (
     is_homebrew_distribution,
     verify_homebrew_managed_bins,
 )
+from gobby.paths import get_gobby_home
 
 from . import install_setup_gclient as _gclient_impl
 from . import install_setup_gcode as _gcode_impl
@@ -49,7 +50,7 @@ def _module() -> Any:
 
 
 def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, Any]:
-    """Ensure bootstrap config exists at ~/.gobby/bootstrap.yaml.
+    """Ensure bootstrap config exists under the configured Gobby home.
 
     Creating a local bootstrap requires an existing absolute ``files_home``.
     Publication uses exclusive-lock durable replace, not copy2.
@@ -60,7 +61,7 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
     from gobby.config.bootstrap import BootstrapConfigError, validate_existing_files_home
     from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 
-    bootstrap_path = Path("~/.gobby/bootstrap.yaml").expanduser()
+    bootstrap_path = get_gobby_home() / "bootstrap.yaml"
 
     if bootstrap_path.exists():
         return {"created": False, "path": str(bootstrap_path)}
@@ -121,8 +122,8 @@ def _echo_available_mcp_templates(db: object) -> None:
 
 
 def _warn_retired_mcp_servers_file() -> None:
-    """Log the retirement warning when ~/.gobby/mcp-servers.json still exists."""
-    if (Path.home() / ".gobby" / "mcp-servers.json").exists():
+    """Log the retirement warning when the configured home has mcp-servers.json."""
+    if (get_gobby_home() / "mcp-servers.json").exists():
         click.echo(_MCP_SERVERS_JSON_RETIRED)
 
 

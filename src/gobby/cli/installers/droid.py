@@ -17,6 +17,7 @@ from typing import Any, Final
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
+from gobby.paths import get_gobby_home
 from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import (
@@ -48,7 +49,7 @@ _EMPTY_PROJECT_HOOKS_WARNING = (
 
 def _global_hooks_dir() -> Path:
     """Return the shared Gobby hook helper directory."""
-    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
+    return Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
 
 
 def _factory_dir(project_path: Path, mode: str) -> Path:

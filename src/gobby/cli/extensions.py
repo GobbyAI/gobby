@@ -15,6 +15,7 @@ import click
 
 from gobby.cli.mcp_proxy import call_mcp_api, check_daemon_running, get_daemon_client
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
+from gobby.paths import get_gobby_home
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -306,7 +307,7 @@ def hooks_status(json_format: bool) -> None:
     hooks_config = get_hooks_config()
 
     # Check global install status
-    global_hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", Path.home() / ".gobby" / "hooks"))
+    global_hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", get_gobby_home() / "hooks"))
     global_installed = (global_hooks_dir / "validate_settings.py").exists()
 
     # Check per-project disable status

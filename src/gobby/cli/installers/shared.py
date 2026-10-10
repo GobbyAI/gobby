@@ -23,6 +23,7 @@ from gobby.cli.installers.hook_commands import (
     remove_gobby_hook_handlers,
 )
 from gobby.cli.utils import get_install_dir
+from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -52,7 +53,7 @@ def _install_file(source: Path, target: Path, executable: bool = False) -> None:
 
 
 def install_global_hooks() -> list[str]:
-    """Install shared hook helper files to ~/.gobby/hooks/ for global hook dispatch.
+    """Install shared hook helpers under the configured Gobby home or GOBBY_HOOKS_DIR.
 
     Always copies files (never symlinks) since global hooks must work
     regardless of whether the source repo is available.
@@ -61,9 +62,7 @@ def install_global_hooks() -> list[str]:
         List of installed filenames
     """
     shared_hooks_dir = get_install_dir() / "shared" / "hooks"
-    global_hooks_dir = Path(
-        os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks"))
-    )
+    global_hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(get_gobby_home() / "hooks")))
     global_hooks_dir.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
 

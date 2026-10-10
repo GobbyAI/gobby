@@ -591,7 +591,7 @@ class TestInstallClaude:
             settings = json.load(f)
 
         command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        hook_path = (mock_home_dir / ".gobby" / "hooks" / "hook.py").resolve()
+        hook_path = (Path(os.environ["GOBBY_HOOKS_DIR"]) / "hook.py").resolve()
         assert command == f'python "{hook_path}"'
         assert "$HOOKS_DIR" not in command
 

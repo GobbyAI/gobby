@@ -43,6 +43,7 @@ def _run_hook_body(
         "CHANGED_FILES": changed_files,
         "GCODE_CAPTURE": str(capture),
         "HOME": str(home),
+        "GOBBY_HOME": str(home / ".gobby"),
         "PATH": "/usr/bin:/bin",
     }
     prelude = "set -u\n" if strict_unset else ""

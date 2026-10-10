@@ -22,6 +22,7 @@ from gobby.install.bin_freshness_promotion import (
 from gobby.install.bin_set_coherence import _codesign_workspace_binary
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.paths import get_gobby_home
 
 from . import install_release
 from .install_setup_gterm import ManagedBinaryReleaseMissing
@@ -260,7 +261,7 @@ def install_gclient_from_cargo_install(
 
 def install_gclient(module: Any, force: bool = False) -> dict[str, Any]:
     """Install or upgrade gclient with the gcode fallback chain (Zig-free)."""
-    bin_dir = module.Path.home() / ".gobby" / "bin"
+    bin_dir = get_gobby_home() / "bin"
     gclient_path = bin_dir / module._GCLIENT_BIN_NAME
 
     os_name = module.sys.platform
