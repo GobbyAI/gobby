@@ -284,6 +284,8 @@ def detect_task_claim(
         try:
             session_task_manager.link_task(session_id, task_id, "worked_on")
             logger.debug("Auto-linked task %s to session %s", task_id, session_id)
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning("Failed to auto-link task %s: %s", task_id, e)
 
@@ -431,6 +433,8 @@ def _preserve_lineage_claim(
     if session_task_manager:
         try:
             session_task_manager.link_task(session_id, task_uuid, "claimed")
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(
                 "Session %s: failed to link preserved claim %s(%s): %s",

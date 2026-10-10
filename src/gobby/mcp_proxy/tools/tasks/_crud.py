@@ -280,6 +280,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # Link task to session (best-effort) - tracks which session created the task
         try:
             ctx.session_task_manager.link_task(resolved_session_id, task.id, "created")
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(
                 "Failed to link task %s to session %s: %s", task.id, resolved_session_id, e
@@ -288,6 +290,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if claim:
             try:
                 ctx.session_task_manager.link_task(resolved_session_id, task.id, "claimed")
+            except ValueError:
+                raise
             except Exception as e:
                 logger.warning("Failed to link claimed task %s: %s", task.id, e)
 

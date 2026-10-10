@@ -102,11 +102,15 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
             # Attribute the reopen to the calling session (best-effort)
             try:
                 resolved_session_id = ctx.resolve_session_id(session_id)
-                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "reopened")
-            except ValueError:
-                raise
             except Exception as e:
-                logger.debug("Best-effort reopen attribution failed: %s", e)
+                logger.debug("Best-effort reopen session resolution failed: %s", e)
+            else:
+                try:
+                    ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "reopened")
+                except ValueError:
+                    raise
+                except Exception as e:
+                    logger.debug("Best-effort reopen attribution failed: %s", e)
 
             return {}
         except ValueError as e:

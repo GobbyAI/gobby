@@ -340,6 +340,8 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # Link task to session (best-effort, don't fail the claim if this fails)
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "claimed")
+        except ValueError:
+            raise
         except Exception as e:
             logger.debug("Best-effort session claim linking failed: %s", e)
 

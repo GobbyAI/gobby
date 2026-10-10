@@ -101,5 +101,7 @@ def link_escalating_session(ctx: RegistryContext, task_id: str, session_id: str 
     try:
         # SessionTaskManager.link_task is an ON CONFLICT upsert.
         ctx.session_task_manager.link_task(resolved_session_id, task_id, "escalated")
+    except ValueError:
+        raise
     except Exception:
         logger.debug("Best-effort escalation linking failed", exc_info=True)

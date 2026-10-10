@@ -2,18 +2,31 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks import _lifecycle_status, _stage_review
+from gobby.mcp_proxy.tools.tasks import (
+    _crud,
+    _escalation_coordinator,
+    _lifecycle_claim,
+    _lifecycle_close_finalization,
+    _lifecycle_status,
+    _session,
+    _stage_review,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows import observers
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -57,7 +70,14 @@ def caller(
         validation_criteria="Lifecycle action links are returned by get_task_sessions.",
     )
     # Exercise the MCP attribution boundary; lifecycle transitions have separate tests.
-    for name in ("reopen_task", "de_escalate_task", "reject_review", "record_plan_enhancement"):
+    for name in (
+        "reopen_task",
+        "de_escalate_task",
+        "submit_for_review",
+        "approve_review",
+        "reject_review",
+        "record_plan_enhancement",
+    ):
         monkeypatch.setattr(manager, name, MagicMock(return_value=task))
     monkeypatch.setattr(_lifecycle_status, "require_claim_authority", lambda *_args: None)
     monkeypatch.setattr(_lifecycle_status, "projected_task_state", lambda *_args: "escalated")
@@ -73,6 +93,12 @@ def caller(
         monkeypatch.setattr(_stage_review, name, MagicMock())
     monkeypatch.setattr(_stage_review, "_dispatch_run_kwargs", MagicMock(return_value={}))
     monkeypatch.setattr(_stage_review, "_operation_response", MagicMock(return_value={}))
+    monkeypatch.setattr(
+        _stage_review,
+        "evaluate_task_scope",
+        MagicMock(return_value=SimpleNamespace(accepted=True, scope_justification=None)),
+    )
+    monkeypatch.setattr(ctx, "get_project_repo_path", MagicMock(return_value=None))
     registry = InternalToolRegistry(name="lifecycle-links")
     _lifecycle_status.register_reopen_task(registry, ctx)
     _lifecycle_status.register_de_escalate_task(registry, ctx)
@@ -84,6 +110,12 @@ def caller(
 CASES = [
     pytest.param("reopen_task", {}, "reopened", id="reopen"),
     pytest.param("de_escalate_task", {"reason": "Resolved"}, "de_escalated", id="de-escalate"),
+    pytest.param(
+        "submit_for_review", {"stage_name": "implementation"}, "needs_review", id="submit"
+    ),
+    pytest.param(
+        "approve_review", {"stage_name": "implementation"}, "review_approved", id="approve"
+    ),
     pytest.param("reject_review", {"stage_name": "implementation"}, "review_rejected", id="reject"),
     pytest.param(
         "record_plan_enhancement",
@@ -98,6 +130,29 @@ CASES = [
         id="enhance-converged",
     ),
 ]
+
+
+@pytest.mark.parametrize("action", ["worked_on", "unknown"])
+async def test_explicit_link_validates_user_action(
+    caller: LinkCaller, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    monkeypatch.setattr(_session, "require_claim_authority", lambda *_args: None)
+    registry = create_session_registry(caller.ctx)
+    before = caller.ctx.session_task_manager.get_task_sessions(caller.task.id)
+
+    result = await registry.call(
+        "link_task_to_session", {"task_id": caller.task.id, "action": action}
+    )
+
+    after = caller.ctx.session_task_manager.get_task_sessions(caller.task.id)
+    if action == "unknown":
+        assert "Invalid action 'unknown'" in result["error"]
+        assert after == before
+    else:
+        assert result == {}
+        assert any(
+            row["session_id"] == caller.caller_id and row["action"] == action for row in after
+        )
 
 
 @pytest.mark.parametrize("tool,arguments,action", CASES)
@@ -175,3 +230,141 @@ async def test_database_link_failure_remains_best_effort(caller: LinkCaller) -> 
     ):
         result = await caller.registry.call("reopen_task", {"task_id": caller.task.id})
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_reopen_session_resolution_failure_remains_best_effort(
+    caller: LinkCaller,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(caller.ctx, "resolve_session_id", MagicMock(side_effect=ValueError("gone")))
+    result = await caller.registry.call("reopen_task", {"task_id": caller.task.id})
+    assert result == {}
+    rows = caller.ctx.session_task_manager.get_task_sessions(caller.task.id)
+    assert {row["session_id"] for row in rows if row["action"] == "reopened"} == {caller.owner_id}
+
+
+async def _invoke_other_link_caller(
+    caller: LinkCaller,
+    site: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = caller.ctx
+    if site.startswith("create-"):
+        monkeypatch.setattr(_crud, "targets_not_found_for_request", MagicMock(return_value=None))
+        monkeypatch.setattr(
+            _crud, "confirm_claiming_session_activity", MagicMock(return_value=True)
+        )
+        result = await _crud.create_crud_registry(ctx).call(
+            "create_task",
+            {
+                "title": "Created link attribution",
+                "category": "manual",
+                "claim": True,
+                "validation_criteria": "Session history records created and claimed links.",
+            },
+        )
+        assert "error" not in result
+    elif site == "claim":
+        monkeypatch.setattr(
+            _lifecycle_claim,
+            "confirm_claiming_session_activity",
+            MagicMock(return_value=True),
+        )
+        monkeypatch.setattr(_lifecycle_claim, "_claim_scope_conflicts", MagicMock(return_value=[]))
+        _lifecycle_claim.register_claim_task(caller.registry, ctx)
+        result = await caller.registry.call(
+            "claim_task", {"task_id": caller.task.id, "force": True}
+        )
+        assert "error" not in result
+    elif site == "escalate":
+        _escalation_coordinator.link_escalating_session(ctx, caller.task.id, caller.caller_id)
+    elif site == "close":
+        evaluation = CloseEvaluation(
+            requested_task_id=caller.task.id,
+            task_id=caller.task.id,
+            resolved_session_id=caller.caller_id,
+        )
+        _lifecycle_close_finalization._cleanup_closed_claim(ctx, evaluation, [])
+    elif site == "observe-claim":
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            source=SessionSource.CLAUDE,
+            session_id=caller.owner_id,
+            timestamp=datetime.now(UTC),
+            data={
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "claim_task",
+                "tool_input": {"arguments": {"task_id": caller.task.id}},
+                "tool_output": {"success": True},
+            },
+        )
+        observers.detect_task_claim(
+            event,
+            {},
+            caller.owner_id,
+            ctx.session_task_manager,
+            ctx.task_manager,
+            caller.task.project_id,
+        )
+    elif site == "preserve-claim":
+        monkeypatch.setattr(observers, "_sessions_share_lineage", MagicMock(return_value=True))
+        assert observers._preserve_lineage_claim(
+            caller.task,
+            caller.task.id,
+            "#1",
+            caller.owner_id,
+            ctx.task_manager,
+            ctx.session_manager,
+            ctx.session_task_manager,
+        )
+    else:
+        raise AssertionError(f"Unknown caller site {site}")
+
+
+@pytest.mark.parametrize("invalid", [False, True], ids=["valid", "unknown-action"])
+@pytest.mark.parametrize(
+    "site,action",
+    [
+        ("create-created", "created"),
+        ("create-claimed", "claimed"),
+        ("claim", "claimed"),
+        ("escalate", "escalated"),
+        ("close", "closed"),
+        ("observe-claim", "worked_on"),
+        ("preserve-claim", "claimed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_other_callers_persist_valid_actions_and_expose_unknown_actions(
+    caller: LinkCaller,
+    site: str,
+    action: str,
+    invalid: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    link_task = caller.ctx.session_task_manager.link_task
+    attempted: list[tuple[str, str, str]] = []
+
+    def link_with_action_fault(session_id: str, task_id: str, passed_action: str) -> None:
+        attempted.append((session_id, task_id, passed_action))
+        link_task(
+            session_id, task_id, "unknown" if invalid and passed_action == action else passed_action
+        )
+
+    with patch.object(
+        caller.ctx.session_task_manager, "link_task", side_effect=link_with_action_fault
+    ):
+        if invalid:
+            with pytest.raises(ValueError, match="Invalid action 'unknown'"):
+                await _invoke_other_link_caller(caller, site, monkeypatch)
+        else:
+            await _invoke_other_link_caller(caller, site, monkeypatch)
+    matching_calls = [
+        (sid, tid) for sid, tid, passed_action in attempted if passed_action == action
+    ]
+    assert matching_calls
+    if not invalid:
+        for sid, tid in matching_calls:
+            rows = caller.ctx.session_task_manager.get_task_sessions(tid)
+            assert any(row["session_id"] == sid and row["action"] == action for row in rows)
