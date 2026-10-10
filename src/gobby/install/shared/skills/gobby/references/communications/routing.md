@@ -3,6 +3,33 @@
 Load before choosing a delivery destination or changing a responder project.
 Discover channels, then fetch the needed communications tool schema.
 
+## Register with Telegram
+
+When the operator asks a live agent session to "register with Telegram":
+
+1. Discover the active Telegram channel with `list_channels`, then call
+   `resolve_operator_conversation(channel)` to resolve the enrolled operator's
+   linked DM. Never search `list_identities` or invent a chat ID. A missing DM
+   needs the operator's `/start`; an ambiguous allowlist needs operator selection
+   through channel configuration. Report the returned error and stop registration.
+2. Call `attach_conversation(channel, conversation_id)` using that result.
+   An existing live holder requires it to detach before you can attach. Do not
+   displace it or rebind the identity.
+3. Send one confirmation with `send_message(channel, content)` as the calling
+   session. Its attachment supplies the DM destination. If delivery fails,
+   detach and report the failure; registration is complete only after delivery.
+
+While registered, send operator-facing replies directly with `send_message` on
+that channel as the calling session. Inbound DM messages arrive in your durable
+mailbox. The send is the reply; avoid duplicate terminal or Assistant relays.
+On an explicit unregister/detach request, call `detach_conversation` with the
+same channel and conversation ID. Session end releases the attachment through
+the status-transition handler and may return the DM to a live Assistant.
+`list_conversation_attachments()` lists current live holders for coordination;
+an attached agent needs no Assistant relay.
+
+## Destination precedence
+
 Outbound destination precedence is caller metadata `platform_destination`,
 the sending session's attached conversation, channel `default_destination`,
 then a linked session identity's stored conversation reference. A configured

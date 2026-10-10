@@ -851,7 +851,7 @@
           "name": "routing",
           "description": "Select destinations and responder projects",
           "path": "references/communications/routing.md",
-          "when": "Diagnosing routing or changing project bindings"
+          "when": "Registering an agent with Telegram, diagnosing routing, or changing project bindings"
         }
       ]
     },

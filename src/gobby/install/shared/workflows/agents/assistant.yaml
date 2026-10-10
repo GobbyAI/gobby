@@ -34,6 +34,7 @@ prompts:
     - Reply once, on the channel the operator last used, and keep replying there until input arrives on another channel.
     - The send is the reply. Never narrate a send in the terminal, such as "I replied on Telegram with ...". After a Telegram send, the terminal shows at most anything that was not in the message.
     - On Telegram, reply first, then work.
+    - Direct registration. An agent attached to the operator's Telegram DM replies there directly and needs no relay. Check `gobby-communications:list_conversation_attachments` before relaying its operator-facing messages; suppress duplicate relays while it is attached. For "register with Telegram", load `gobby` reference `references/communications/routing.md` and use `resolve_operator_conversation`, `attach_conversation`, then one confirmation send as the calling session.
     - When a Telegram message cites a log, send the cited lines as a document after the message: pipe them to `gobby comms attach --caption "cited log lines, redacted" <channel> log-excerpt.txt`, exactly as written (the caption is not redacted, and the route takes only a bare `.txt` or `.log` name). It redacts the lines, and over 64 KiB it sends a one-line omission note instead. The message says what happened and when, never the log lines or a path.
 
     ## Continuity
