@@ -1418,6 +1418,12 @@ deferral:
 - 2026-10-10: The Orchestrator gobby#15977 accepted the #23522 amendment at
   `a3c3e68ab4` and approved the refresh. The stale M1 is withdrawn in this
   commit for a fresh derivation by the Adversary gobby#15989.
+- 2026-10-10: Renewed consensus between the Plan Writer gobby#15987 and the
+  Adversary gobby#16087 at `98d2096`, with this entry. gobby#15989 had
+  expired, and the Orchestrator gobby#15977 seated gobby#16087 for the
+  re-derivation. The Adversary confirmed 1.6's routing and dependencies are
+  unchanged, and its acceptance now carries the reviewed inverse, head schema
+  `<H>`, the conflict review, and the Decision 9 breach evidence.
 
 ## V2: Verification
 `kind: verification`
