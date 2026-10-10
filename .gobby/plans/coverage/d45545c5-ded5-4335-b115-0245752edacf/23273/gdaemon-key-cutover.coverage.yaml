@@ -1,11 +1,11 @@
 header:
   plan_id: gdaemon-key-cutover
-  plan_hash: 96980debbe57ed082b6b9e31d2de7b76b451e74a6bb2d2710776c14e4483a1f6
+  plan_hash: 9c208ed5e9837d23bb1de792bab33bb3547b05e6bba09cc2ae8c9606382fec24
   root_task_ref: '23273'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-05T16:07:11Z'
+  generated_at: '2026-10-10T22:19:02Z'
   task_tree_source: db
-  task_tree_source_hash: 051bdbe388e8195cc2802e34d8e22acac0dcaa5887ef51d2b8eb84e8aea178bc
+  task_tree_source_hash: a94658efc958a57b0af7f88283db97279c52d4b1eb886910eb1a95754ee8b87b
   evidence_summary: []
   evidence: []
 rows:
@@ -324,7 +324,7 @@ rows:
 - section_id: '1.3'
   item_id: 1.3.14
   plan_node_hash: 418299a41238397934c7eb2fc62161cce3d572eda37f4a03aaeeee4235e0ba29
-  status: covered
+  status: invalid
   leaves:
   - leaf_task_ref: '#23519'
     validation_criteria_snippet: '1.3.1: gdaemon resolves a valid key to user, machine,
@@ -363,9 +363,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23520'
-    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+    validation_criteria_snippet: '1.4.1: --rotate mints with the old key, publishes,
       verifies the new key, and only then revokes the old one. When verification fails,
-      only the key fields are ...'
+      only the key fields are re...'
     matched_artifact_ref: tests/cli/test_auth_login.py::test_rotate_verifies_before_revoke
   deferral_target: null
   detail: ''
@@ -375,9 +375,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23520'
-    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+    validation_criteria_snippet: '1.4.1: --rotate mints with the old key, publishes,
       verifies the new key, and only then revokes the old one. When verification fails,
-      only the key fields are ...'
+      only the key fields are re...'
     matched_artifact_ref: tests/cli/test_auth_login.py::test_key_list_and_revoke_send_the_bootstrap_key
   deferral_target: null
   detail: ''
@@ -387,9 +387,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23520'
-    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+    validation_criteria_snippet: '1.4.1: --rotate mints with the old key, publishes,
       verifies the new key, and only then revokes the old one. When verification fails,
-      only the key fields are ...'
+      only the key fields are re...'
     matched_artifact_ref: tests/cli/test_auth_login.py::test_key_mint_prints_once_and_writes_nothing
   deferral_target: null
   detail: ''
@@ -399,9 +399,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23520'
-    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+    validation_criteria_snippet: '1.4.1: --rotate mints with the old key, publishes,
       verifies the new key, and only then revokes the old one. When verification fails,
-      only the key fields are ...'
+      only the key fields are re...'
     matched_artifact_ref: tests/cli/test_auth_login.py::test_key_show_prints_hint_only
   deferral_target: null
   detail: ''
@@ -411,9 +411,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23520'
-    validation_criteria_snippet: '1.4.1: `--rotate` mints with the old key, publishes,
+    validation_criteria_snippet: '1.4.1: --rotate mints with the old key, publishes,
       verifies the new key, and only then revokes the old one. When verification fails,
-      only the key fields are ...'
+      only the key fields are re...'
     matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
   deferral_target: null
   detail: ''
@@ -463,13 +463,13 @@ rows:
   detail: ''
 - section_id: '1.6'
   item_id: 1.6.1
-  plan_node_hash: 4e879b20c950c80eada3b4343d1912bbc8533761c17b8d22e025d3553100504f
+  plan_node_hash: cdfa989df141d3b2fa549a8669b782a784dac5984ed72eb8de23769072c4200f
   status: covered
   leaves:
   - leaf_task_ref: '#23522'
-    validation_criteria_snippet: '1.6.1: After the cutover code is reverted on the
-      same isolated home and schema the tip ran on, a daemon whose Python imports
-      resolve under the reverted clone''s...'
+    validation_criteria_snippet: '1.6.1: The cutover code is reverted by one reviewed,
+      hand-resolved inverse commit whose parent is the tip, on the same isolated home
+      and schema the tip ran on....'
     matched_artifact_ref: Break-glass admitted after revert
   deferral_target: null
   detail: ''
