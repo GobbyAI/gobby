@@ -155,7 +155,6 @@ class CommunicationsManager:
         self._outbound.start()
         try:
             await self._lifecycle.start()
-            self._restore_telegram_targets()
         finally:
             self._startup_complete.set()
         try:
@@ -163,10 +162,11 @@ class CommunicationsManager:
         except Exception:
             logger.exception("Failed to recover undelivered decision answers")
 
-    def _restore_telegram_targets(self) -> None:
+    def _restore_telegram_targets(self, channel: ChannelConfig | None = None) -> None:
         """Recover private-chat target selections from channel configuration."""
         with self._attachment_lock:
-            for channel in self._channel_by_name.values():
+            channels = [channel] if channel is not None else self._channel_by_name.values()
+            for channel in channels:
                 if channel.channel_type != "telegram":
                     continue
                 targets = channel.config_json.get("telegram_agent_targets")

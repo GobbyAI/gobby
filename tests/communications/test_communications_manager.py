@@ -312,9 +312,20 @@ async def test_registered_dm_survives_resume_and_daemon_restart(
         assert restored is not None
         assert restored.config_json["telegram_agent_targets"] == {"dm:42": holder.id}
         manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
-        manager._channel_by_name[channel.name] = restored
-        manager._adapters[channel.name] = adapter
-        manager._restore_telegram_targets()
+
+        def check_target_before_polling(*args: object) -> None:
+            assert manager._conversation_attachments[(channel.id, "dm:42")] == holder.id
+
+        with (
+            patch.object(manager._lifecycle, "init_adapter", AsyncMock(return_value=adapter)),
+            patch.object(
+                manager._lifecycle,
+                "_start_polling_if_needed",
+                side_effect=check_target_before_polling,
+            ) as start_polling,
+        ):
+            await manager._lifecycle.activate_channel(restored)
+        start_polling.assert_called_once()
 
     if event != "restart":
         resumed = sessions.revive_expired_terminal_session(holder.id)
@@ -3470,10 +3481,17 @@ async def test_telegram_target_survives_manager_restart(
     assert stored is not None
     assert stored.config_json["telegram_agent_targets"] == {"dm:99": target.id}
     restarted = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
-    restarted._channel_by_name[channel.name] = stored
-    with patch.object(restarted._lifecycle, "start", new_callable=AsyncMock):
+    with (
+        patch.object(restarted._lifecycle, "ensure_gobby_chat_channel", AsyncMock()),
+        patch.object(
+            restarted._lifecycle,
+            "init_adapter",
+            AsyncMock(return_value=make_adapter(channel_type="telegram")),
+        ),
+    ):
         await restarted.start()
     assert restarted.attached_session(channel.id, "dm:99") == target.id
+    await restarted.stop()
 
 
 async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
