@@ -355,6 +355,70 @@ async def test_submit_proxy_handoff_checks_resolved_project_task(
     assert not tasks.get_task(other_task.id).is_escalated
 
 
+@pytest.mark.parametrize(
+    ("agent", "step", "tool", "flag", "output", "next_step"),
+    [
+        ("epic-reviewer", "claim", "claim_task", "task_claimed", {}, "load_skill"),
+        (
+            "epic-reviewer",
+            "claim",
+            "get_task",
+            "closed_epic",
+            {"state": {"is_closed": True}},
+            "load_skill",
+        ),
+        (
+            "tech-writer",
+            "implement",
+            "close_task",
+            "implementation_complete",
+            {"closed": True},
+            "terminate",
+        ),
+    ],
+)
+@pytest.mark.parametrize("assigned", [False, True])
+async def test_dispatched_seat_handlers_match_resolved_assigned_task(
+    seats: _Seats,
+    agent: str,
+    step: str,
+    tool: str,
+    flag: str,
+    output: dict[str, Any],
+    next_step: str,
+    assigned: bool,
+) -> None:
+    body = AgentDefinitionBody.model_validate(
+        yaml.safe_load(_DEVELOPER.with_name(f"{agent}.yaml").read_text("utf-8"))
+    )
+    assert body.step_workflow is not None
+    variables = {
+        **body.step_workflow.variables,
+        "assigned_task_id": seats.ref,
+        "assigned_task_uuid": seats.task_id,
+    }
+    instance = build_step_instance(
+        body,
+        session_id=seats.former,
+        step_workflow_id=None,
+        variables=variables,
+        current_step=step,
+    )
+    AgentStepInstanceManager(seats.db).save(instance)
+    foreign = LocalTaskManager(seats.db).create_task(
+        LocalTaskManager(seats.db).get_task(seats.task_id).project_id,
+        "Unassigned handler target",
+        validation_criteria="It cannot advance the dispatched seat.",
+    )
+    task_ref = seats.ref if assigned else f"#{foreign.seq_num}"
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(seats.former, tool, {"task_id": task_ref}, output), seats.former, {}
+    )
+    current_step, state = _instance_state(seats.db, seats.former)
+    assert state[flag] is assigned
+    assert current_step == (next_step if assigned else step)
+
+
 async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> None:
     manager = LocalTaskManager(seats.db)
     registry = create_task_registry(manager)
