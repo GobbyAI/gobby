@@ -168,7 +168,7 @@ class TestEnsureDaemonConfig:
         bootstrap_path.write_text(f"daemon_port: 60887\nfiles_home: {files_home}\n")
         bootstrap_path.chmod(0o600)
 
-        with patch.object(Path, "expanduser", return_value=bootstrap_path):
+        with patch("gobby.cli.install_setup.get_gobby_home", return_value=bootstrap_path.parent):
             result = _ensure_daemon_config(files_home=files_home)
 
         assert result["created"] is False
@@ -186,7 +186,7 @@ class TestEnsureDaemonConfig:
         files_home.mkdir()
 
         with (
-            patch.object(Path, "expanduser", return_value=bootstrap_path),
+            patch("gobby.cli.install_setup.get_gobby_home", return_value=bootstrap_path.parent),
             patch(
                 "gobby.cli.install_setup.get_install_dir",
                 return_value=temp_dir / "install",
@@ -215,7 +215,7 @@ class TestEnsureDaemonConfig:
         files_home.mkdir()
 
         with (
-            patch.object(Path, "expanduser", return_value=bootstrap_path),
+            patch("gobby.cli.install_setup.get_gobby_home", return_value=bootstrap_path.parent),
             patch(
                 "gobby.cli.install_setup.get_install_dir",
                 return_value=install_dir,
@@ -294,6 +294,23 @@ class TestCLIDetectionFunctions:
 
 class TestInstallCommand:
     """Tests for the install CLI command."""
+
+    def test_install_banner_uses_configured_home(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = temp_dir / "custom gobby"
+        monkeypatch.setenv("GOBBY_HOME", str(home))
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        runner = CliRunner()
+        with (
+            _full_local_install(files_home),
+            patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
+            result = runner.invoke(cli, ["install", "--no-interactive"])
+        assert result.exit_code == 0, result.output
+        assert f"Scope: Global ({home}/)" in result.output
 
     @pytest.fixture
     def runner(self) -> CliRunner:

@@ -21,6 +21,7 @@ from gobby.cli.install_files_home import (
 )
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path
+from gobby.paths import get_gobby_home
 from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.projects import ensure_personal_project_identity
@@ -445,7 +446,7 @@ def install(
     click.echo("=" * 60)
     click.echo("  Gobby Installation")
     click.echo("=" * 60)
-    click.echo("\nScope: Global (~/.gobby/)")
+    click.echo(f"\nScope: Global ({get_gobby_home()}/)")
     if is_dev_mode:
         click.echo("Mode: Development (using source directory)")
 
