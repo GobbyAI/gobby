@@ -18,9 +18,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -78,10 +79,20 @@ def _response_detail(response: Any) -> str:
     return str(getattr(response, "text", ""))
 
 
+def _cwd_project_id() -> str | None:
+    """The working directory's project; name lookups prefer its rule over a global one."""
+    context = get_project_context(Path.cwd())
+    project_id = context.get("id") if context else None
+    return project_id if isinstance(project_id, str) and project_id else None
+
+
 def _toggle_rule_via_daemon(ctx: click.Context, name: str, *, enabled: bool) -> None:
     """Toggle a rule through the daemon so live rule state is updated in-process."""
     client = _get_daemon_client(ctx)
     endpoint = f"/api/rules/{quote(name, safe='')}/toggle"
+    project_id = _cwd_project_id()
+    if project_id:
+        endpoint = f"{endpoint}?{urlencode({'project_id': project_id})}"
     try:
         response = client.call_http_api(endpoint, method="PUT", json_data={"enabled": enabled})
     except Exception as e:
@@ -197,7 +208,7 @@ def list_rules(
 def show_rule(name: str, json_output: bool) -> None:
     """Show details of a specific rule."""
     with _manager_context() as manager:
-        row = manager.get_by_name(name)
+        row = manager.get_by_name(name, project_id=_cwd_project_id())
 
     if row is None:
         click.echo(f"Rule not found: {name}", err=True)

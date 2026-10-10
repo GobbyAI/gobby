@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_SCOPE_HELP = "Caller's project; its rule wins over a global rule of the same name"
+
 
 # =============================================================================
 # Request models
@@ -275,10 +277,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     # -----------------------------------------------------------------
 
     @router.get("/{name}")
-    async def get_rule_endpoint(name: str) -> dict[str, Any]:
+    async def get_rule_endpoint(
+        name: str,
+        project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
+    ) -> dict[str, Any]:
         """Get a rule by name."""
         manager = _get_manager()
-        result = await server.run_db(get_rule, manager, name=name)
+        result = await server.run_db(get_rule, manager, name=name, project_id=project_id)
 
         if not result["success"]:
             raise HTTPException(status_code=404, detail=result["error"])
@@ -290,11 +295,15 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     # -----------------------------------------------------------------
 
     @router.put("/{name}")
-    async def update_rule_endpoint(name: str, request: RuleUpdateRequest) -> dict[str, Any]:
+    async def update_rule_endpoint(
+        name: str,
+        request: RuleUpdateRequest,
+        project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
+    ) -> dict[str, Any]:
         """Update rule fields."""
         manager = _get_manager()
 
-        row = await server.run_db(manager.get_by_name, name)
+        row = await server.run_db(manager.get_by_name, name, project_id=project_id)
         if row is None:
             raise HTTPException(status_code=404, detail=f"Rule '{name}' not found")
 
@@ -388,10 +397,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     async def delete_rule_endpoint(
         name: str,
         force: bool = Query(False, description="Override bundled protection"),
+        project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
     ) -> dict[str, Any]:
         """Soft-delete a rule. Bundled rules are protected unless force=True."""
         manager = _get_manager()
-        result = await server.run_db(delete_rule, manager, name=name, force=force)
+        result = await server.run_db(
+            delete_rule, manager, name=name, force=force, project_id=project_id
+        )
 
         if not result["success"]:
             error = result["error"]
@@ -408,10 +420,16 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
     # -----------------------------------------------------------------
 
     @router.put("/{name}/toggle")
-    async def toggle_rule_endpoint(name: str, request: RuleToggleRequest) -> dict[str, Any]:
+    async def toggle_rule_endpoint(
+        name: str,
+        request: RuleToggleRequest,
+        project_id: str | None = Query(None, description=_PROJECT_SCOPE_HELP),
+    ) -> dict[str, Any]:
         """Toggle a rule's enabled state."""
         manager = _get_manager()
-        result = await server.run_db(toggle_rule, manager, name=name, enabled=request.enabled)
+        result = await server.run_db(
+            toggle_rule, manager, name=name, enabled=request.enabled, project_id=project_id
+        )
 
         if not result["success"]:
             raise HTTPException(status_code=404, detail=result["error"])

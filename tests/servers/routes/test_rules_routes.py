@@ -612,6 +612,45 @@ class TestToggleRule:
         assert resp.status_code == 404
 
 
+class TestProjectScopedNameLookup:
+    """Name-addressed endpoints reach a project's rule when given its project_id."""
+
+    def test_project_rule_reachable_and_preferred(
+        self, client: TestClient, def_manager: RuleDefinitionManager
+    ) -> None:
+        from uuid import uuid4
+
+        from gobby.storage.projects import LocalProjectManager
+
+        project_id = LocalProjectManager(def_manager.db).create(f"rules-{uuid4()}").id
+        global_id = _seed_rule(def_manager, name="shared", source="custom")
+        body = {"event": "turn_start", "effect": {"type": "observe", "message": "x"}}
+        project_row = def_manager.create(
+            name="shared", definition_json=body, source="custom", project_id=project_id
+        )
+        scope = {"project_id": project_id}
+
+        assert client.get("/api/rules/shared").json()["rule"]["id"] == global_id
+        assert client.get("/api/rules/shared", params=scope).json()["rule"]["id"] == (
+            project_row.id
+        )
+
+        toggled = client.put("/api/rules/shared/toggle", params=scope, json={"enabled": False})
+        assert toggled.status_code == 200
+        assert def_manager.get(project_row.id).enabled is False
+        assert def_manager.get(global_id).enabled is True
+
+        updated = client.put("/api/rules/shared", params=scope, json={"priority": 7})
+        assert updated.status_code == 200
+        assert def_manager.get(project_row.id).priority == 7
+
+        deleted = client.delete("/api/rules/shared", params=scope)
+        assert deleted.json()["deleted"]["id"] == project_row.id
+        remaining = def_manager.get_by_name("shared", project_id=project_id)
+        assert remaining is not None
+        assert remaining.id == global_id
+
+
 class TestBulkToggleRules:
     """PUT /api/rules/bulk-toggle updates matching rules best-effort."""
 

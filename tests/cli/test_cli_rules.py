@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from click.testing import CliRunner
@@ -21,6 +22,18 @@ def cli_runner():
 def mock_manager():
     """Mock RuleDefinitionManager."""
     return MagicMock()
+
+
+@pytest.fixture(autouse=True)
+def _outside_any_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run each command from a directory that belongs to no project."""
+    monkeypatch.chdir(tmp_path)
+
+
+def _enter_project(path: Path, project_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    (path / ".gobby").mkdir(parents=True)
+    (path / ".gobby" / "project.json").write_text(json.dumps({"id": project_id}))
+    monkeypatch.chdir(path)
 
 
 def _make_rule_row(
@@ -205,6 +218,45 @@ class TestShowRule:
             assert data["name"] == "json-rule"
             assert "effects" in data
 
+    def test_show_resolves_the_working_directory_project(
+        self,
+        cli_runner: CliRunner,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.cli.rules import rules
+        from gobby.storage.definitions.rules import RuleDefinitionManager
+        from gobby.storage.projects import LocalProjectManager
+
+        manager = RuleDefinitionManager(temp_db)
+        project_id = LocalProjectManager(temp_db).create(f"rules-{uuid4()}").id
+        body = {"event": "turn_start", "effects": [{"type": "observe", "message": "x"}]}
+        manager.create(name="shared", definition_json=body, priority=10)
+        manager.create(name="shared", definition_json=body, priority=20, project_id=project_id)
+        manager.create(
+            name="project-only", definition_json=body, tags=["seat"], project_id=project_id
+        )
+
+        def show(name: str) -> tuple[int, dict[str, object] | None]:
+            with patch("gobby.cli.rules._get_manager", return_value=manager):
+                result = cli_runner.invoke(rules, ["show", name, "--json"])
+            return result.exit_code, json.loads(result.output) if result.exit_code == 0 else None
+
+        assert show("project-only") == (1, None)
+        global_shared = show("shared")[1]
+        assert global_shared is not None
+        assert global_shared["priority"] == 10
+
+        _enter_project(tmp_path / "project", project_id, monkeypatch)
+        exit_code, project_only = show("project-only")
+        assert exit_code == 0
+        assert project_only is not None
+        assert project_only["tags"] == ["seat"]
+        shared = show("shared")[1]
+        assert shared is not None
+        assert shared["priority"] == 20
+
 
 # ==============================================================================
 # Tests for enable command
@@ -242,6 +294,25 @@ class TestEnableRule:
                 method="PUT",
                 json_data={"enabled": True},
             )
+
+    def test_enable_scopes_to_the_working_directory_project(
+        self, cli_runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.cli.rules import rules
+
+        _enter_project(tmp_path / "project", "project-1", monkeypatch)
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _make_http_response()
+
+        with patch("gobby.cli.rules._get_daemon_client", return_value=mock_client):
+            result = cli_runner.invoke(rules, ["enable", "my-rule"])
+
+        assert result.exit_code == 0, result.output
+        mock_client.call_http_api.assert_called_once_with(
+            "/api/rules/my-rule/toggle?project_id=project-1",
+            method="PUT",
+            json_data={"enabled": True},
+        )
 
     def test_enable_not_found(self, cli_runner) -> None:
         from gobby.cli.rules import rules

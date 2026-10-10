@@ -166,6 +166,8 @@ def list_rules(
 def get_rule(
     def_manager: RuleDefinitionManager,
     name: str,
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Get a rule by name.
@@ -173,11 +175,12 @@ def get_rule(
     Args:
         def_manager: Definition storage manager
         name: Rule name
+        project_id: Caller's project; its rule wins over a global rule of the same name
 
     Returns:
         Dict with success and full rule detail, or error if not found
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
@@ -188,6 +191,8 @@ def toggle_rule(
     def_manager: RuleDefinitionManager,
     name: str,
     enabled: bool,
+    *,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Toggle a rule's enabled state.
@@ -196,11 +201,12 @@ def toggle_rule(
         def_manager: Definition storage manager
         name: Rule name
         enabled: New enabled state
+        project_id: Caller's project; its rule wins over a global rule of the same name
 
     Returns:
         Dict with success and updated rule, or error if not found
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
@@ -221,6 +227,7 @@ def update_rule(
     tags: list[str] | None = None,
     project_path: Path | None = None,
     make_global_template: bool = False,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Update fields on an existing standalone rule.
@@ -241,11 +248,12 @@ def update_rule(
         tags: New tags
         project_path: Project root for auto-export
         make_global_template: If True, export to ~/.gobby/workflows/ instead
+        project_id: Caller's project; its rule wins over a global rule of the same name
 
     Returns:
         Dict with success and updated rule, or error if not found / invalid
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 
@@ -371,6 +379,7 @@ def delete_rule(
     force: bool = False,
     *,
     project_path: Path | None = None,
+    project_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Delete a rule by name (soft-delete).
@@ -383,11 +392,12 @@ def delete_rule(
         name: Rule name
         force: Override bundled protection
         project_path: Project root for YAML cleanup
+        project_id: Caller's project; its rule wins over a global rule of the same name
 
     Returns:
         Dict with success, or error if not found/protected
     """
-    row = def_manager.get_by_name(name)
+    row = def_manager.get_by_name(name, project_id=project_id)
     if row is None:
         return {"success": False, "error": f"Rule '{name}' not found"}
 

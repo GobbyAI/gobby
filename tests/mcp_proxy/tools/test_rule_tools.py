@@ -10,7 +10,7 @@ Verifies that rule tools wrap RuleDefinitionManager:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -544,3 +544,45 @@ class TestDeleteRule:
     def test_not_found(self, rule_tools: dict[str, Any]) -> None:
         result = rule_tools["delete_rule"](name="nonexistent")
         assert result["success"] is False
+
+
+class TestCallerProjectScope:
+    """Registered name-addressed rule tools resolve the calling session's project."""
+
+    @pytest.mark.asyncio
+    async def test_project_rule_reachable_and_preferred(
+        self, db: HubDatabase, def_manager: RuleDefinitionManager
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+        from gobby.utils.project_context import reset_project_context, set_project_context
+
+        project_id = LocalProjectManager(db).create(f"rules-{uuid4()}").id
+        global_id = _create_test_rule(def_manager, name="shared", source="custom")
+        body = {"event": "turn_start", "effects": [{"type": "observe", "message": "x"}]}
+        project_row = def_manager.create(
+            name="shared", definition_json=body, source="custom", project_id=project_id
+        )
+        registry = create_workflows_registry(db=db)
+
+        async def call(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+            token = set_project_context({"id": project_id})
+            try:
+                return cast(dict[str, Any], await registry.call(tool, args))
+            finally:
+                reset_project_context(token)
+
+        outside = cast(dict[str, Any], await registry.call("get_rule", {"name": "shared"}))
+        assert outside["rule"]["id"] == global_id
+        assert (await call("get_rule", {"name": "shared"}))["rule"]["id"] == project_row.id
+
+        await call("toggle_rule", {"name": "shared", "enabled": False})
+        await call("update_rule", {"name": "shared", "priority": 7})
+        assert def_manager.get(project_row.id).enabled is False
+        assert def_manager.get(project_row.id).priority == 7
+        assert def_manager.get(global_id).enabled is True
+
+        deleted = await call("delete_rule", {"name": "shared"})
+        assert deleted["deleted"]["id"] == project_row.id
+        remaining = def_manager.get_by_name("shared", project_id=project_id)
+        assert remaining is not None
+        assert remaining.id == global_id

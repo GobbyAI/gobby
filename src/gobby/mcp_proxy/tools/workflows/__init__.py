@@ -283,7 +283,7 @@ def create_workflows_registry(
     def _get_rule(name: str) -> dict[str, Any]:
         if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return get_rule(_rule_manager, name)
+        return get_rule(_rule_manager, name, project_id=_caller_project_id())
 
     @registry.tool(
         name="toggle_rule",
@@ -292,7 +292,7 @@ def create_workflows_registry(
     def _toggle_rule(name: str, enabled: bool) -> dict[str, Any]:
         if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return toggle_rule(_rule_manager, name, enabled)
+        return toggle_rule(_rule_manager, name, enabled, project_id=_caller_project_id())
 
     @registry.tool(
         name="create_rule",
@@ -321,7 +321,7 @@ def create_workflows_registry(
     ) -> dict[str, Any]:
         if _rule_manager is None:
             return {"error": "Rule tools require database connection"}
-        return delete_rule(_rule_manager, name, force)
+        return delete_rule(_rule_manager, name, force, project_id=_caller_project_id())
 
     @registry.tool(
         name="update_rule",
@@ -355,6 +355,7 @@ def create_workflows_registry(
             tags=tags,
             project_path=pp,
             make_global_template=make_template,
+            project_id=_caller_project_id(),
         )
 
     # ── Variable definition CRUD tools ──
