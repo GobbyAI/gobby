@@ -427,11 +427,14 @@ def test_linked_checkout_generated_paths_remain_accessible(repo: Path) -> None:
     (gitdir / "commondir").write_text("../..\n")
     (linked / ".git").write_text(f"gitdir: {gitdir}\n")
     assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/dist/assets"), {})
-    assert navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
+    assert not navigation_requires_index(event(repo, f"rg VALUE {linked}/src"), {})
 
 
-def test_sibling_checkout_read_names_its_gcode_project(repo: Path) -> None:
-    """gcode refuses another checkout's file without --project, so the redirect names it."""
+@pytest.mark.parametrize("tool_workdir", [False, True])
+def test_sibling_checkout_reads_do_not_redirect_to_an_unadmitted_overlay(
+    repo: Path, tool_workdir: bool
+) -> None:
+    """A reviewer may read a sibling tree without attempting an unauthorized gcode call."""
     linked = repo.parent / "linked"
     (linked / "src").mkdir(parents=True)
     gitdir = repo / ".git/worktrees/linked"
@@ -440,14 +443,25 @@ def test_sibling_checkout_read_names_its_gcode_project(repo: Path) -> None:
     (linked / ".git").write_text(f"gitdir: {gitdir}\n")
     (linked / "src/long.py").write_text("value = 1\n" * 60)
 
-    sibling = read_event(repo, str(linked / "src/long.py"))
+    sibling: dict[str, Any]
+    if tool_workdir:
+        sibling = {
+            "tool_name": "exec_command",
+            "tool_input": {"cmd": "cat src/long.py", "workdir": str(linked)},
+            "cwd": str(repo),
+            "project_path": str(repo),
+        }
+        normalize_tool_fields(sibling)
+    else:
+        sibling = read_event(repo, str(linked / "src/long.py"))
     own = read_event(repo, "src/long.py")
+    primary = read_event(linked, str(repo / "src/long.py"))
     mixed = event(repo, f"cat src/long.py {linked}/src/long.py")
 
-    assert navigation_requires_index(sibling, {})
-    assert sibling.get("canonical_gcode_project_hint") == str(linked)
-    assert "canonical_gcode_project_hint" not in own
-    assert "canonical_gcode_project_hint" not in mixed
+    assert not navigation_requires_index(sibling, {})
+    assert navigation_requires_index(own, {})
+    assert navigation_requires_index(primary, {})
+    assert navigation_requires_index(mixed, {})
 
 
 def test_one_event_asks_git_once_for_all_its_paths(

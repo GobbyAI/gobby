@@ -4614,7 +4614,7 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_linked_worktree_conflict_search_redirects_to_gcode_grep(
+    async def test_linked_worktree_conflict_search_allows_unadmitted_checkout(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
         _sync_bundled(db)
@@ -4632,38 +4632,31 @@ class TestCodeIndexNavigationRules:
         )
 
         assert event.data["canonical_code_navigation_repo_scope"] is True
-        assert response.decision == "block"
-        assert 'gcode grep -F "literal"' in (response.reason or "")
+        assert response.decision == "allow"
 
+    @pytest.mark.parametrize("loaded", [False, True])
     @pytest.mark.asyncio
-    async def test_sibling_checkout_read_redirect_names_gcode_project(
-        self, db: HubDatabase, tmp_path: Path
+    async def test_sibling_checkout_read_does_not_redirect_to_gcode(
+        self, db: HubDatabase, tmp_path: Path, loaded: bool
     ) -> None:
         _sync_bundled(db)
-        # A space and an apostrophe in the root prove the rendered command quotes it.
+        # A space and an apostrophe exercise shell target resolution too.
         primary, linked = self._linked_checkouts(tmp_path / "team's checkouts")
         for checkout in (primary, linked):
             (checkout / "src/long.py").write_text("value = 1\n" * 60, encoding="utf-8")
         engine = RuleEngine(db)
 
-        async def reason(target: Path) -> str:
+        async def decision(target: Path) -> str | None:
             event = self._normalized_bash_event(
                 f"cat {shlex.quote(str(target))}", cwd=str(primary), project_path=str(primary)
             )
             response = await engine.evaluate(
-                event, session_id=SESSION_ID, variables=self._variables(loaded=True)
+                event, session_id=SESSION_ID, variables=self._variables(loaded=loaded)
             )
-            assert response.decision == "block"
-            return response.reason or ""
+            return response.decision
 
-        sibling = await reason(linked / "src/long.py")
-        own = await reason(primary / "src/long.py")
-
-        outline, symbol_at = sibling.split("`")[1:4:2]
-        assert shlex.split(outline) == ["gcode", "--project", str(linked), "outline", "<file>"]
-        assert shlex.split(symbol_at)[:3] == ["gcode", "--project", str(linked)]
-        assert "gcode outline <file>" in own
-        assert "--project" not in own
+        assert await decision(linked / "src/long.py") == "allow"
+        assert await decision(primary / "src/long.py") == "block"
 
     @pytest.mark.asyncio
     async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
