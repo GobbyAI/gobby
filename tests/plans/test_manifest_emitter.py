@@ -144,6 +144,38 @@ def test_canonical_derivation_rejects_non_routing_input(
         ({"tdd": "yes"}, "invalid tdd"),
         ({"implementation_domain": 3}, "implementation_domain"),
         ({"category": "docs", "assigned_agent": 3}, "assigned_agent"),
+        (
+            {"assigned_agent": "developer", "implementation_domain": "backend"},
+            "assigned_agent is forbidden for category code; use implementation_domain",
+        ),
+        (
+            {"assigned_agent": None, "implementation_domain": "backend"},
+            "assigned_agent is forbidden for category code; use implementation_domain",
+        ),
+        (
+            {"category": "test", "assigned_agent": "developer", "implementation_domain": None},
+            "implementation_domain is forbidden for category test; use assigned_agent",
+        ),
+        (
+            {"category": "test", "assigned_agent": "developer", "implementation_domain": "backend"},
+            "implementation_domain is forbidden for category test; use assigned_agent",
+        ),
+        (
+            {
+                "category": "docs",
+                "assigned_agent": "documentation-writer",
+                "implementation_domain": None,
+            },
+            "implementation_domain is forbidden for category docs; use assigned_agent",
+        ),
+        (
+            {
+                "category": "docs",
+                "assigned_agent": "documentation-writer",
+                "implementation_domain": "backend",
+            },
+            "implementation_domain is forbidden for category docs; use assigned_agent",
+        ),
     ],
 )
 def test_canonical_derivation_rejects_invalid_routing_overrides(
