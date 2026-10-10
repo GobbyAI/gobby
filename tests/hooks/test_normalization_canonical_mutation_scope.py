@@ -120,12 +120,18 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
 
 
 def _invocation_metadata(
-    command: str, *, event_cwd: Path | None = None, tool_cwd: Path | None = None
+    command: str,
+    *,
+    event_cwd: Path | None = None,
+    tool_cwd: Path | None = None,
+    project_path: Path | None = None,
 ) -> dict[str, Any]:
     tool_input: dict[str, Any] = {"command": command}
     if tool_cwd is not None:
         tool_input["cwd"] = str(tool_cwd)
     data: dict[str, Any] = {"tool_name": "Bash", "tool_input": tool_input}
+    if project_path is not None:
+        data["project_path"] = str(project_path)
     if event_cwd is not None:
         data["cwd"] = str(event_cwd)
     _set_canonical_tool_metadata(data)
@@ -160,8 +166,39 @@ def test_relative_command_paths_resolve_against_the_tool_cwd(
         event_cwd=tmp_path if cwd_source == "event" else None,
         tool_cwd=tmp_path if cwd_source == "tool_input" else None,
     )
-
     assert bool(data.get("canonical_script_execution")) is gated
+
+
+@pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
+@pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue"])
+@pytest.mark.parametrize("directory_option", ["", "-C {root}", "-C{root}"])
+def test_git_sequencer_state_writes_have_worktree_scope(
+    tmp_path: Path, operation: str, flag: str, directory_option: str
+) -> None:
+    root = tmp_path / "worktree"
+    option = directory_option.format(root=root)
+    data = _invocation_metadata(
+        f"git {option} {operation} {flag}", tool_cwd=root, project_path=root
+    )
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == [str(root)]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
+def test_git_sequencer_dynamic_directory_is_unknown(tmp_path: Path, operation: str) -> None:
+    data = _invocation_metadata(f'git -C "$WT" {operation} --quit', tool_cwd=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_git_sequencer_repeated_relative_directory_changes(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "git -C first -C ../second -c core.editor=true revert --continue", tool_cwd=tmp_path
+    )
+    assert data["canonical_file_paths"] == [str(tmp_path / "second")]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
 @pytest.mark.parametrize(
