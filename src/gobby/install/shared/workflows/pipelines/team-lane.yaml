@@ -117,6 +117,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: developer
+        title: "${{ 'Lane ' + inputs.lane + ' developer' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.developer_provider }}"
         model: "${{ inputs.developer_model }}"
@@ -138,6 +139,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: code-reviewer
+        title: "${{ 'Lane ' + inputs.lane + ' code reviewer' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.reviewer_provider }}"
         model: "${{ inputs.reviewer_model }}"
@@ -159,6 +161,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: researcher
+        title: "${{ 'Lane ' + inputs.lane + ' researcher' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.researcher_provider }}"
         model: "${{ inputs.researcher_model }}"
@@ -180,6 +183,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: lane-manager
+        title: "${{ 'Lane ' + inputs.lane + ' manager' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.manager_provider }}"
         model: "${{ inputs.manager_model }}"

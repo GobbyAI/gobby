@@ -89,6 +89,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-writer
+        title: "${{ 'Lane ' + inputs.lane + ' plan writer' }}"
         provider: "${{ inputs.plan_writer_provider }}"
         model: "${{ inputs.plan_writer_model }}"
         reasoning_effort: "${{ inputs.plan_writer_reasoning_effort }}"
@@ -110,6 +111,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-adversary
+        title: "${{ 'Lane ' + inputs.lane + ' plan adversary' }}"
         provider: "${{ inputs.plan_adversary_provider }}"
         model: "${{ inputs.plan_adversary_model }}"
         reasoning_effort: "${{ inputs.plan_adversary_reasoning_effort }}"
