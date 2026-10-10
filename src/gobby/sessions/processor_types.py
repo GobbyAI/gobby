@@ -59,6 +59,8 @@ class ProcessorHost(Protocol):
     _message_indices: dict[str, int]
     _render_states: dict[str, RenderState]
     _restored_render_sessions: set[str]
+    _mirror_start_offsets: dict[str, int]
+    _mirror_eligible_ids: dict[str, set[str]]
     _index_appenders: dict[str, TranscriptIndexAppender]
     _observation_store: UnmodeledObservationStore
     _stats: dict[str, MessageStats]

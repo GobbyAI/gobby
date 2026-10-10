@@ -14,6 +14,7 @@ from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.sessions.transcript_window import WindowResult
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -66,6 +67,209 @@ def attached(temp_db: HubDatabase) -> tuple[CommunicationsManager, str, AsyncMoc
 
 def processor(temp_db: HubDatabase, manager: CommunicationsManager) -> SessionMessageProcessor:
     return SessionMessageProcessor(temp_db, communications_manager=manager)
+
+
+def native_line(role: str, message_id: str, text: str) -> str:
+    return (
+        json.dumps(
+            {
+                "type": role,
+                "message": {"id": message_id, "content": [{"type": "text", "text": text}]},
+            }
+        )
+        + "\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "destination,chat,thread",
+    [("dm:42", "42", None), ("topic:-100:7", "-100", 7), ("group:-100", "-100", None)],
+)
+async def test_mirror_uses_explicit_send_destination_resolution_at_http_boundary(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    destination: str,
+    chat: str,
+    thread: int | None,
+) -> None:
+    manager, session_id, _ = attached
+    manager.detach_conversation("mirror-test", "dm:42", session_id)
+    manager.attach_conversation("mirror-test", destination, session_id)
+    payloads: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(payloads)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        adapter = TelegramAdapter()
+        adapter._client = client
+        adapter._api_base = "https://telegram.test"
+        manager._adapters["mirror-test"] = adapter
+        await manager.send_message("mirror-test", "explicit", session_id=session_id)
+        await manager.mirror_session_message(session_id, "reply", "mirrored")
+    assert [(payload["chat_id"], payload.get("message_thread_id")) for payload in payloads] == [
+        (chat, thread),
+        (chat, thread),
+    ]
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(rows) == 2
+    assert all(row.status == "sent" for row in rows)
+
+
+@pytest.mark.parametrize("failure", ["exhausted", "pending", "mismatch"])
+async def test_delivery_failure_keeps_cursor_stats_and_websocket_progressing(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "ingest.jsonl"
+    transcript.touch()
+    websocket = MagicMock()
+    websocket.broadcast = AsyncMock()
+    target = SessionMessageProcessor(
+        temp_db,
+        communications_manager=manager,
+        session_manager=SessionManager(temp_db),
+        websocket_server=websocket,
+    )
+    target.register_session(session_id, str(transcript))
+    send.side_effect = RuntimeError("transport down")
+    content = native_line("assistant", "a1", "one") + native_line("user", "u1", "next")
+    transcript.write_text(content)
+    await target._process_all_sessions()
+    if failure == "pending":
+        row = manager.store.list_messages(session_id=session_id)[0]
+        row.metadata_json["transcript_lease_until"] = datetime.now(UTC).timestamp() + 900
+        manager.store.update_message_delivery(row.id, "pending", None, None, row.metadata_json)
+    for _ in range(4):
+        await target._process_all_sessions()
+    assert target._byte_offsets[session_id] == len(content.encode())
+    assert target._stats[session_id]["message_count"] == 2
+    first_attempts = 1 if failure == "pending" else 3
+    assert send.await_count == first_attempts
+    second_id = "a1" if failure == "mismatch" else "a2"
+    transcript.write_text(
+        content + native_line("assistant", second_id, "two") + native_line("user", "u2", "third")
+    )
+    for _ in range(5):
+        await target._process_all_sessions()
+    assert target._byte_offsets[session_id] == transcript.stat().st_size
+    assert target._stats[session_id]["message_count"] == 4
+    session = SessionManager(temp_db).get(session_id)
+    assert session is not None and session.message_count == 4
+    events = [call.args[0] for call in websocket.broadcast.call_args_list]
+    assert any(event["message"]["content"] == "two" and event["complete"] for event in events)
+    rows = manager.store.list_messages(session_id=session_id)
+    if failure == "mismatch":
+        assert len(rows) == 1 and send.await_count == 3
+    else:
+        assert len(rows) == 2 and send.await_count == first_attempts + 3
+    assert all(
+        row.status == "pending" or row.metadata_json["transcript_delivery_attempt"] == 3
+        for row in rows
+    )
+    assert manager.store.list_retryable_transcript_messages(session_id) == []
+
+
+@pytest.mark.parametrize("mode", ["cold", "degraded-sidecar", "truncated"])
+async def test_catchup_skips_history_and_mirrors_only_new_live_reply(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "history.jsonl"
+    history = "".join(
+        native_line("user", f"u{i}", "old prompt")
+        + native_line("assistant", f"a{i}", f"old reply {i}")
+        for i in range(3)
+    ) + native_line("user", "tail", "old tail")
+    transcript.write_text(history)
+    original = processor(temp_db, manager)
+    original.register_session(session_id, str(transcript))
+    if mode != "cold":
+        assert (await original.flush_session(session_id)).flushed
+    if mode == "degraded-sidecar":
+        with patch(
+            "gobby.sessions.processor_lifecycle.render_window",
+            return_value=WindowResult(
+                groups=[], returned_count=0, total_groups=7, parsed_message_count=7, degraded=True
+            ),
+        ):
+            target = processor(temp_db, manager)
+            target.register_session(session_id, str(transcript))
+    else:
+        target = original
+    if mode == "truncated":
+        history = (
+            native_line("user", "old-u", "old")
+            + native_line("assistant", "old-a", "old reply")
+            + native_line("user", "tail", "old tail")
+        )
+        transcript.write_text(history)
+    assert (await target.flush_session(session_id)).flushed
+    send.assert_not_awaited()
+    transcript.write_text(
+        history
+        + native_line("assistant", "live", "new live reply")
+        + native_line("user", "live-u", "new prompt")
+    )
+    assert (await target.flush_session(session_id)).flushed
+    send.assert_awaited_once()
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(rows) == 1 and rows[0].content == "new live reply"
+
+
+async def test_expired_last_attempt_is_terminal_without_resending(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = RuntimeError("down")
+    with pytest.raises(RuntimeError, match="down"):
+        await manager.mirror_session_message(session_id, "reply", "whole reply")
+    row = manager.store.list_messages(session_id=session_id)[0]
+    row.metadata_json.update(transcript_delivery_attempt=3, transcript_lease_until=0)
+    manager.store.update_message_delivery(row.id, "pending", None, None, row.metadata_json)
+    await manager.retry_transcript_deliveries(session_id)
+    send.assert_awaited_once()
+    terminal = manager.store.get_message(row.id)
+    assert terminal is not None and terminal.status == "failed"
+    assert terminal.error == "Transcript delivery attempts exhausted after uncertain request"
+    assert manager.store.list_retryable_transcript_messages(session_id) == []
+
+
+async def test_attachment_after_polling_does_not_admit_an_earlier_pending_reply(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+) -> None:
+    manager, session_id, send = attached
+    manager.detach_conversation("mirror-test", "dm:42", session_id)
+    transcript = tmp_path / "attach-later.jsonl"
+    transcript.touch()
+    manager._session_store.update(session_id, transcript_path=str(transcript))
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    old = native_line("assistant", "old", "before attachment")
+    transcript.write_text(old)
+    assert (await target.flush_session(session_id)).flushed
+    manager.attach_conversation("mirror-test", "dm:42", session_id)
+    transcript.write_text(old + native_line("user", "next", "after attachment"))
+    assert (await target.flush_session(session_id)).flushed
+    send.assert_not_awaited()
+    live = (
+        transcript.read_text()
+        + native_line("assistant", "live", "after attachment")
+        + native_line("user", "done", "done")
+    )
+    transcript.write_text(live)
+    assert (await target.flush_session(session_id)).flushed
+    send.assert_awaited_once()
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(rows) == 1 and rows[0].content == "after attachment"
 
 
 async def test_native_claude_multiline_eof_and_cold_replay_keep_one_delivery(
@@ -209,8 +413,7 @@ async def test_failed_final_reply_retries_on_poll_without_new_transcript_lines(
     target = processor(temp_db, manager)
     target.register_session(session_id, str(transcript))
     send.side_effect = [RuntimeError("temporary failure"), "delivered"]
-    with pytest.raises(RuntimeError, match="temporary failure"):
-        await target.complete_turn(session_id, "whole reply")
+    assert (await target.complete_turn(session_id, "whole reply")).flushed
     assert (await target.flush_session(session_id)).flushed
     assert send.await_count == 2
     rows = manager.store.list_messages(session_id=session_id)
@@ -242,7 +445,7 @@ async def test_completed_text_sends_once_after_rollback_and_restart_replay(
     sent = send.call_args.args[0]
     assert sent.content == "reply"
     assert sent.session_id == session_id
-    assert sent.metadata_json["platform_destination"] == "dm:42"
+    assert sent.metadata_json["platform_destination"] == "42"
     assert manager.store.get_message(sent.id) is not None
     removed, paths = manager.store.delete_messages_before(TS + timedelta(days=365))
     assert removed == 0

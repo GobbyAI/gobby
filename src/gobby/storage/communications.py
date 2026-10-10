@@ -314,6 +314,17 @@ class LocalCommunicationsStore:
             persisted, inserted = self._insert_message(conn, message, deduplicate_id=True)
             if persisted.content != message.content:
                 raise ValueError("Transcript text changed after its outbound reservation")
+            if not inserted and persisted.status == "pending":
+                exhausted = conn.execute(
+                    "UPDATE comms_messages SET status = 'failed', "
+                    "error = 'Transcript delivery attempts exhausted after uncertain request' "
+                    "WHERE id = %s AND status = 'pending' "
+                    "AND (metadata_json->>'transcript_lease_until')::double precision < EXTRACT(EPOCH FROM now()) "
+                    "AND (metadata_json->>'transcript_delivery_attempt')::integer >= 3 RETURNING *",
+                    (persisted.id,),
+                ).fetchone()
+                if exhausted is not None:
+                    return CommsMessage.from_row(exhausted), False
             if not inserted and persisted.status in {"failed", "pending"}:
                 row = conn.execute(
                     "UPDATE comms_messages SET status = 'pending', error = NULL, "
@@ -330,6 +341,18 @@ class LocalCommunicationsStore:
                 if row is not None:
                     return CommsMessage.from_row(row), True
             return persisted, inserted
+
+    def list_retryable_transcript_messages(self, session_id: str) -> list[CommsMessage]:
+        """Find unfinished ledger rows, excluding terminal failures and live leases."""
+        rows = self.db.fetchall(
+            "SELECT * FROM comms_messages WHERE session_id = %s "
+            "AND metadata_json ? 'transcript_message_id' "
+            "AND ((status = 'failed' AND (metadata_json->>'transcript_delivery_attempt')::integer < 3) "
+            "OR (status = 'pending' AND (metadata_json->>'transcript_lease_until')::double precision "
+            "< EXTRACT(EPOCH FROM now()))) ORDER BY created_at, id LIMIT 10",
+            (session_id,),
+        )
+        return [CommsMessage.from_row(row) for row in rows]
 
     def create_message_with_attachments(
         self,

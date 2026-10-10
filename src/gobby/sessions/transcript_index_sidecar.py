@@ -33,7 +33,8 @@ logger = logging.getLogger("gobby.sessions.transcript_index")
 INDEX_CACHE_MAX_ENTRIES = 16
 # Version 3 adds bounded source verification and append journal generations.
 # It also invalidates pre-fix AGY tool-event parser positions (version 1).
-INDEX_SCHEMA_VERSION = 3
+# Version 4 rebuilds assistant groups at native message ID boundaries.
+INDEX_SCHEMA_VERSION = 4
 INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
 _SKIP_ADJUSTMENT_VALUE = object()
 

@@ -93,8 +93,10 @@ class ProcessorLifecycleMixin:
             st = os.stat(transcript_path)
             transcript_exists = True
             self._transcript_file_state[session_id] = (st.st_dev, st.st_ino, st.st_mtime_ns)
+            self._mirror_start_offsets[session_id] = st.st_size
         except OSError:
             transcript_exists = False
+            self._mirror_start_offsets[session_id] = 0
         appender = TranscriptIndexAppender(
             source,
             session_id,
@@ -187,6 +189,9 @@ class ProcessorLifecycleMixin:
                         else now - stable_since >= 0.25
                     )
                     if ready:
+                        # This provider hook confirms a new live completion,
+                        # including a response whose prefix was present at registration.
+                        self._mirror_eligible_ids.setdefault(session_id, set()).add(message.id)
                         await self._broadcast_rendered_session_message(
                             session_id, message.to_dict(), complete=True
                         )
@@ -250,6 +255,8 @@ class ProcessorLifecycleMixin:
         self._index_appenders.pop(session_id, None)
         self._render_states.pop(session_id, None)
         self._restored_render_sessions.discard(session_id)
+        self._mirror_start_offsets.pop(session_id, None)
+        self._mirror_eligible_ids.pop(session_id, None)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
 
@@ -274,6 +281,13 @@ class ProcessorLifecycleMixin:
         self._render_states.pop(session_id, None)
         self._stats.pop(session_id, None)
         self._restored_render_sessions.discard(session_id)
+        self._mirror_eligible_ids.pop(session_id, None)
+        try:
+            self._mirror_start_offsets[session_id] = await asyncio.to_thread(
+                os.path.getsize, transcript_path
+            )
+        except OSError:
+            self._mirror_start_offsets[session_id] = 0
         self._stats_hydration_skipped.discard(session_id)
         await asyncio.to_thread(discard_index_sidecar, transcript_path)
 

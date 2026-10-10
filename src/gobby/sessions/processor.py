@@ -86,6 +86,8 @@ class SessionMessageProcessor(
         # Track render state for incremental rendering per session
         self._render_states: dict[str, RenderState] = {}
         self._restored_render_sessions: set[str] = set()
+        self._mirror_start_offsets: dict[str, int] = {}
+        self._mirror_eligible_ids: dict[str, set[str]] = {}
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
         self._observation_store = UnmodeledObservationStore(db)
 
