@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -14,6 +14,11 @@ import yaml
 from gobby.agents.runbook_seats import RunbookSeatRefusal
 from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
+    _background_tasks_by_execution,
+    run_pipeline,
+)
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -28,8 +33,10 @@ from gobby.utils.git import run_git_command
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.pipeline_executor import PipelineExecutor
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_state import ExecutionStatus
-from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
+from gobby.workflows.sync_pipelines import get_bundled_pipelines_path, sync_bundled_pipelines
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
@@ -550,3 +557,103 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     )
     assert "researcher seat for lane 3" in launch["prompt"]
     assert result["report_to"] in launch["prompt"]
+
+
+class TeamEntrypointProxy:
+    """Run the registered seat guard and replace only external seat spawning."""
+
+    def __init__(self, registry: InternalToolRegistry) -> None:
+        self.registry = registry
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def get_tool_schema(self, server: str, tool: str, **kwargs: Any) -> dict[str, Any]:
+        assert server == "gobby-agents"
+        if tool == "check_runbook_seats":
+            schema = self.registry.get_schema(tool)
+            assert schema is not None
+            return schema
+        assert tool == "spawn_agent"
+        return {"success": True, "tool": {"inputSchema": {}}}
+
+    async def call_tool(
+        self, server: str, tool: str, arguments: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        assert server == "gobby-agents"
+        self.calls.append((tool, arguments))
+        if tool == "check_runbook_seats":
+            return cast(dict[str, Any], await self.registry.call(tool, arguments))
+        assert tool == "spawn_agent"
+        return {"success": True, "run_id": str(uuid4()), "pane_ref": str(uuid4())}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pipeline,catalogue",
+    [
+        (
+            "team-coordination",
+            ("archivist", "log-monitor", "release-manager", "inbox-manager", "recovery-steward"),
+        ),
+        ("team-planning", ("plan-writer", "plan-adversary")),
+        ("team-lane", ("developer", "code-reviewer", "researcher", "lane-manager")),
+    ],
+)
+@pytest.mark.parametrize("subset", [False, True], ids=["all-seats", "last-seat-only"])
+async def test_team_entrypoint_executes_guard_and_selected_seats(
+    lane_env: LaneEnv, pipeline: str, catalogue: tuple[str, ...], subset: bool
+) -> None:
+    """Exercise bundled definitions through admission, rendering and real step execution."""
+    sync_bundled_pipelines(lane_env.db)
+    for agent in catalogue:
+        AgentDefinitionManager(lane_env.db).create(
+            name=agent,
+            definition_json={"name": agent, "version": "1.0"},
+            project_id=lane_env.project,
+        )
+    sessions = SessionManager(lane_env.db)
+    registry = create_agents_registry(MagicMock(), session_manager=sessions, db=lane_env.db)
+    proxy = TeamEntrypointProxy(registry)
+    loader = PipelineLoader(lane_env.db)
+    executor = PipelineExecutor(
+        db=lane_env.db,
+        execution_manager=LocalPipelineExecutionManager(lane_env.db, lane_env.project),
+        llm_service=MagicMock(),
+        loader=loader,
+        tool_proxy_getter=lambda: proxy,
+        template_engine=TemplateEngine(),
+        session_manager=sessions,
+    )
+    selected = catalogue[-1:] if subset else catalogue
+    started = await run_pipeline(
+        loader,
+        executor,
+        pipeline,
+        {
+            "lane": "3",
+            "workspace": lane_env.workspace,
+            "lane_pane": lane_env.pane,
+            "worktree": lane_env.worktree,
+            "project_path": str(lane_env.root),
+            "report_to": lane_env.manager,
+            "lane_columns": 205,
+            "lane_rows": 59,
+            "seats": ",".join(reversed(selected)),
+        },
+        lane_env.project,
+        session_id=lane_env.caller,
+    )
+    assert started["success"] is True, started
+    await _background_tasks_by_execution[started["execution_id"]]
+    execution = executor.execution_manager.get_execution(started["execution_id"])
+    assert execution is not None and execution.status == ExecutionStatus.COMPLETED
+    assert proxy.calls[0][0] == "check_runbook_seats"
+    guard = proxy.calls[0][1]
+    assert tuple(seat["name"] for seat in guard["catalogue"]) == catalogue
+    assert guard["requested"] == ",".join(reversed(selected))
+    spawns = [arguments for tool, arguments in proxy.calls[1:] if tool == "spawn_agent"]
+    assert tuple(spawn["agent"] for spawn in spawns) == selected
+    assert len(proxy.calls) == len(selected) + 1
+    if pipeline == "team-lane":
+        assert all(spawn["lane"] == "3" for spawn in spawns)
+    print(json.dumps({"pipeline": pipeline, "catalogue": catalogue, "selected": selected}))
