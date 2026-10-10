@@ -470,6 +470,15 @@ def _call(tool: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], result)
 
 
+@pytest.mark.parametrize("authority_field", ["created_in_session_id", "delegated_by_session_id"])
+def test_coordinator_can_de_escalate_foreign_claim(authority_field: str) -> None:
+    spec = next(spec for spec in TOOL_SPECS if spec.name == "de_escalate_task")
+    spec = replace(spec, task_kwargs={"is_escalated": True, authority_field: CALLER_SESSION})
+    result, mutation = _invoke(spec, claimed_by=OWNER_SESSION, context_session=CALLER_SESSION)
+    assert result == {}
+    mutation.assert_called_once()
+
+
 class TestGuardedToolMatrix:
     @pytest.mark.parametrize("spec", TOOL_SPECS, ids=_SPEC_IDS)
     def test_foreign_session_refused(self, spec: ToolSpec) -> None:

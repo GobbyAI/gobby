@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -20,7 +23,7 @@ def _local_machine_identity() -> Iterator[None]:
         yield
 
 
-def test_escalate_round_trip(temp_db, sample_project) -> None:
+def test_escalate_round_trip(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],
@@ -33,6 +36,7 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
         "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = %s",
         (task.id,),
     )
+    assert row is not None
     assert row["is_escalated"] is True
     assert row["escalated_at"] is not None
     assert row["escalation_reason"] == "blocked by operator"
@@ -43,13 +47,18 @@ def test_escalate_round_trip(temp_db, sample_project) -> None:
         "SELECT is_escalated, escalated_at, escalation_reason FROM tasks WHERE id = %s",
         (task.id,),
     )
+    assert row is not None
     assert row["is_escalated"] is False
     assert row["escalated_at"] is None
     assert row["escalation_reason"] is None
     assert de_escalated.is_escalated is False
 
 
-def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manager) -> None:
+def test_de_escalate_preserves_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
     manager = LocalTaskManager(temp_db)
     session = session_manager.register(
         external_id="de-escalate-owner-ext",
@@ -64,20 +73,14 @@ def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manag
     )
 
     manager.escalate_task(task.id, reason="blocked by operator")
-    temp_db.execute(
-        """
-        UPDATE tasks
-           SET claimed_by_session_id = %s
-         WHERE id = %s
-        """,
-        (session.id, task.id),
-    )
+    manager.claim_task(task.id, session.id)
 
     de_escalated = manager.de_escalate_task(task.id, reason="operator cleared")
     row = temp_db.fetchone(
         "SELECT claimed_by_session_id FROM tasks WHERE id = %s",
         (task.id,),
     )
-
-    assert row["claimed_by_session_id"] is None
-    assert de_escalated.claimed_by_session_id is None
+    assert row is not None
+    assert row["claimed_by_session_id"] == session.id
+    assert de_escalated.claimed_by_session_id == session.id
+    assert de_escalated.is_escalated is False
