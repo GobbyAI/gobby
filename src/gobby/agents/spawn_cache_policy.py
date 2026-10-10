@@ -21,6 +21,12 @@ from gobby.utils.native_bin import native_bin_dir
 
 PATH_ENV_VAR = "PATH"
 
+# macOS SRT matches this glob when creating a digest, including after midnight.
+# Linux SRT expands globs against existing files; absent digests need provisioning there.
+_ARCHIVIST_DIGEST_WRITE_PATH = (
+    "~/Desktop/gobby-digest-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
+)
+
 
 @dataclass(frozen=True)
 class SpawnCachePolicyEntry:
@@ -119,6 +125,7 @@ def sandbox_config_for_spawn(
     sandbox_config: SandboxConfig | None,
     env_vars: dict[str, str],
     *,
+    agent_name: str | None = None,
     project_path: str | None = None,
     resume_metadata_json: dict[str, object] | None = None,
 ) -> SandboxConfig | None:
@@ -139,6 +146,8 @@ def sandbox_config_for_spawn(
     apply_spawn_cache_policy(env_vars)
     _apply_sandbox_cache_policy(env_vars)
     extra_write_paths = list(sandbox_config.extra_write_paths)
+    if agent_name == "archivist" and _ARCHIVIST_DIGEST_WRITE_PATH not in extra_write_paths:
+        extra_write_paths.append(_ARCHIVIST_DIGEST_WRITE_PATH)
     for path in [*project_write_paths, *sandbox_write_paths(env_vars)]:
         if path and path not in extra_write_paths:
             extra_write_paths.append(path)

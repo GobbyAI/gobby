@@ -118,6 +118,7 @@ async def _prepare_provider_sandbox(
         config = _sandbox_config_for_spawn(
             request.sandbox_config,
             env,
+            agent_name=request.agent_name,
             project_path=request.project_path,
             resume_metadata_json=request.resume_metadata_json,
         )
