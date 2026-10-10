@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.agents.sandbox_network import definition_sandbox_config
+from gobby.agents.sandbox_policy import allowed_domains
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -28,7 +30,7 @@ from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
 
-SEATS = ("code-reviewer", "archivist", "log-monitor", "researcher")
+SEATS = ("code-reviewer", "archivist", "log-monitor", "metrics-monitor", "researcher")
 # Decision 8: the write tools a read-only seat may not call.
 READ_ONLY_BLOCKED_TOOLS = frozenset(
     {
@@ -44,7 +46,7 @@ READ_ONLY_BLOCKED_TOOLS = frozenset(
         "write_file",
     }
 )
-READ_ONLY_SEATS = ("code-reviewer", "log-monitor", "researcher")
+READ_ONLY_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor", "researcher")
 # Sync metadata keys `validate_workflow_definition_data` strips before the body.
 SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
 OBSERVATION_SELECTORS = frozenset(
@@ -61,12 +63,13 @@ RULE_SELECTORS = {
     "code-reviewer": frozenset({"tag:default", "name:no-send-keys"}),
     "archivist": OBSERVATION_SELECTORS,
     "log-monitor": OBSERVATION_SELECTORS,
+    "metrics-monitor": OBSERVATION_SELECTORS,
     "researcher": OBSERVATION_SELECTORS | {"tag:task-skill-gates"},
 }
 # Decision 10: continuity is prose.
-COMPACT_SEATS = ("archivist", "log-monitor")
+COMPACT_SEATS = ("archivist", "log-monitor", "metrics-monitor")
 DELIVERABLE_SEATS = ("code-reviewer", "researcher", "developer")
-STEP_SEATS = ("code-reviewer", "log-monitor", "researcher")
+STEP_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor", "researcher")
 LOAD_SKILLS_WHEN = "all(skill_loaded(skill) for skill in vars.required_skills)"
 
 
@@ -169,6 +172,82 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
         assert section in prompt
     assert "gobby-agents:send_message" in prompt
     assert "lesson" not in prompt.lower()
+
+
+def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> None:
+    body = _load("metrics-monitor")
+    steps = _steps("metrics-monitor")
+    allowed_mcp = {
+        "gobby-skills:get_skill",
+        "gobby-skills:get_skill_file",
+        "gobby-agents:send_message",
+        "gobby-agents:wait_for_coordination",
+    }
+    assert body.network == "none"
+    sandbox = definition_sandbox_config(None, body)
+    assert sandbox.enabled is True
+    assert sandbox.allow_network is False
+    assert {"localhost", "127.0.0.1"} <= set(allowed_domains(sandbox, "claude", None))
+    assert body.prewarm_pre_commit_store is False
+    assert body.spawnable_agents == []
+    assert list(steps) == ["load_skills", "tick", "report"]
+    for step in steps.values():
+        assert _allowed_mcp_tools(step) <= allowed_mcp
+        assert _allowed_tools(step) <= {
+            "Bash",
+            "mcp__gobby__call_tool",
+            "mcp__gobby__list_mcp_servers",
+            "mcp__gobby__list_tools",
+            "mcp__gobby__get_tool_schema",
+            "mcp__gobby__set_variable",
+        }
+    assert "Bash" in _allowed_tools(steps["tick"])
+    assert "Bash" not in _allowed_tools(steps["report"])
+    prompt = _prompt("metrics-monitor")
+    assert "reply=true, timeout=600" in prompt
+    assert "Never run ps or read process environments" in prompt
+    assert body.description is not None and "RSS growth" in body.description
+    assert "45 seconds" in prompt
+    assert "uptime decrease" in prompt
+    assert "Reset the watch baseline after a restart" in prompt
+
+
+@pytest.mark.parametrize(
+    ("target", "content", "expected"),
+    [
+        ("gobby#10", "Systems nominal | RSS 200", {"orchestrator_reported"}),
+        ("gobby#11", "EVENT=ALARM | uptime decreased", {"log_monitor_reported"}),
+        ("gobby#12", "Systems nominal", set()),
+        ("gobby#10", "checking", set()),
+        ("gobby#10", "Please report Systems nominal | with evidence", set()),
+        ("gobby#11", "Please explain EVENT=ALARM", set()),
+    ],
+)
+def test_metrics_monitor_report_requires_both_live_recipients(
+    target: str, content: str, expected: set[str]
+) -> None:
+    report = _steps("metrics-monitor")["report"]
+    variables = {
+        "orchestrator_session": "gobby#10",
+        "log_monitor_session": "gobby#11",
+        "orchestrator_reported": False,
+        "log_monitor_reported": False,
+    }
+    context: dict[str, Any] = {
+        "vars": variables,
+        "tool_input": {"target": "session", "target_id": target, "content": content},
+    }
+    evaluator = SafeExpressionEvaluator(context, build_agent_workflow_allowed_funcs(context))
+    matched = {
+        handler["variable"]
+        for handler in report.on_mcp_success
+        if handler.get("when") and evaluator.evaluate(handler["when"])
+    }
+    assert matched == expected
+    transition = report.transitions[0]
+    for orchestrator, log_monitor in [(False, False), (True, False), (False, True), (True, True)]:
+        variables.update(orchestrator_reported=orchestrator, log_monitor_reported=log_monitor)
+        assert bool(evaluator.evaluate(transition.when)) is (orchestrator and log_monitor)
 
 
 @pytest.mark.parametrize("name", READ_ONLY_SEATS)

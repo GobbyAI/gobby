@@ -39,6 +39,51 @@ ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "checkout_mode": "none"}
 DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
 ASSISTANT: dict[str, Any] = {"_agent_type": "assistant"}
 ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
+METRICS_MONITOR: dict[str, Any] = {"_agent_type": "metrics-monitor"}
+
+
+def _metrics_queries() -> list[str]:
+    definition = yaml.safe_load(
+        (ROLES_DIR.parent.parent / "agents/metrics-monitor.yaml").read_text()
+    )
+    return [
+        line.strip()
+        for line in definition["prompts"]["agent"].splitlines()
+        if line.strip().startswith("/usr/bin/curl ")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, key", [("Bash", "command"), ("exec_command", "cmd")])
+async def test_metrics_monitor_allows_only_exact_get_queries(
+    engine: RuleEngine, tool: str, key: str
+) -> None:
+    queries = _metrics_queries()
+    assert len(queries) == 2
+    for query in queries:
+        event: dict[str, Any] = {"tool_name": tool, "tool_input": {key: query}}
+        assert (await _decide(engine, event, METRICS_MONITOR)).decision == "allow"
+        for command in (
+            query + " > /tmp/metrics.json",
+            query + "; ps e",
+            query.replace("--get", "--request POST"),
+            query.replace("127.0.0.1:9090", "example.com"),
+            query.replace("--disable ", ""),
+            "ps e",
+            "env",
+            "uv run gobby restart",
+        ):
+            blocked = await _decide(
+                engine, {"tool_name": tool, "tool_input": {key: command}}, METRICS_MONITOR
+            )
+            assert blocked.decision == "block", command
+            assert "Metrics Monitor permits only" in (blocked.reason or "")
+        event["tool_input"]["shell"] = "/tmp/other-shell"
+        assert (await _decide(engine, event, METRICS_MONITOR)).decision == "block"
+    # Other seats retain their own shell policy.
+    assert (await _decide(engine, _shell("env"), DEVELOPER)).decision == "allow"
+
+
 PLAN_WRITER: dict[str, Any] = {"_agent_type": "plan-writer"}
 PLAN_ENHANCER: dict[str, Any] = {"_agent_type": "plan-enhancer"}
 ORCHESTRATOR: dict[str, Any] = {"_agent_type": "orchestrator"}

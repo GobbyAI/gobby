@@ -13,7 +13,7 @@ rules:
     # already recover stalled sessions, so they may resume an existing session.
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward']
@@ -44,7 +44,7 @@ rules:
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward']
@@ -69,7 +69,7 @@ rules:
     priority: 10
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward']
@@ -91,7 +91,7 @@ rules:
     priority: 10
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward']

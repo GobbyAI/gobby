@@ -35,6 +35,7 @@ SEAT_CATALOGUE = {
     "researcher",
     "archivist",
     "log-monitor",
+    "metrics-monitor",
     "inbox-manager",
     "release-manager",
     "reporter",
@@ -68,6 +69,7 @@ READ_ONLY_SEATS = {
     "lane-manager",
     "code-reviewer",
     "log-monitor",
+    "metrics-monitor",
     "researcher",
     "inbox-manager",
     "reporter",
@@ -77,7 +79,7 @@ READ_ONLY_SEATS = {
     "recovery-steward",
 }
 WRITE_SCOPE_RULES = {"assistant": "assistant-write-scope", "archivist": "archivist-write-scope"}
-STEP_SEATS = {"developer", "code-reviewer", "log-monitor", "researcher"}
+STEP_SEATS = {"developer", "code-reviewer", "log-monitor", "metrics-monitor", "researcher"}
 
 SYNC_METADATA_KEYS = {"tags", "priority", "type"}
 UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
@@ -91,6 +93,7 @@ SEND_MESSAGE_TARGETS = {
     "researcher": ["parent", "session"],
     "archivist": ["parent", "session"],
     "log-monitor": ["parent", "session"],
+    "metrics-monitor": ["parent", "session"],
     "inbox-manager": ["parent", "session"],
     "release-manager": ["parent", "session", "project"],
     "reporter": ["session"],
@@ -110,6 +113,7 @@ WAITING_STEPS = {
     "developer": {"load_skills", "claim", "submit"},
     "code-reviewer": {"load_skills", "await", "verdict"},
     "log-monitor": {"tick", "report"},
+    "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
 }
 # #23750: the steps a relaunched seat bootstraps its role file from.
