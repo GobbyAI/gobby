@@ -34,6 +34,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
+from gobby.mcp_proxy.tools.tasks._lifecycle_status import register_de_escalate_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
@@ -1508,10 +1509,12 @@ async def test_concurrent_ordinary_closes_share_review_without_closing_or_releas
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.parametrize("de_escalated", [False, True])
 async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_claim(
     temp_db: HubDatabase,
     sample_git_project: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
+    de_escalated: bool,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     session = SessionManager(temp_db).register(
@@ -1520,15 +1523,37 @@ async def test_ordinary_close_detaches_real_validation_and_preserves_persisted_c
         source="codex",
         project_id=sample_git_project["id"],
     )
+    coordinator = SessionManager(temp_db).register(
+        external_id="de-escalation-coordinator",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_git_project["id"],
+    )
     task = manager.create_task(
         project_id=sample_git_project["id"],
         title="Ordinary detached close",
+        created_in_session_id=coordinator.id,
         category="code",
         task_type="task",
         implementation_domain="backend",
         validation_criteria="Focused tests pass.",
     )
+    if de_escalated:
+        manager.escalate_task(task.id, reason="Waiting for landing")
     claimed = manager.claim_task(task.id, session.id)
+    if de_escalated:
+        de_escalate_registry = InternalToolRegistry("gobby-tasks")
+        register_de_escalate_task(de_escalate_registry, RegistryContext(task_manager=manager))
+        with session_context_for_test(coordinator.id):
+            assert (
+                await de_escalate_registry.call(
+                    "de_escalate_task", {"task_id": task.id, "reason": "Landed and activated"}
+                )
+                == {}
+            )
+        claimed = manager.get_task(task.id)
+        assert claimed.claimed_by_session_id == session.id
+        assert claimed.is_escalated is False
     validator = TaskValidator(TaskValidationConfig())
 
     commit_sha = "abc123"

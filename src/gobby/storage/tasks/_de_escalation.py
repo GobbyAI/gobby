@@ -6,7 +6,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import UNSET, Task
 from gobby.storage.tasks._read import get_task
-from gobby.storage.tasks._transitions import _current_stage_row, release_task_claim
+from gobby.storage.tasks._transitions import _current_stage_row
+from gobby.storage.tasks._updates import update_task
 from gobby.utils.datetime import utc_now
 
 _WORK_ATTEMPT_ESCALATION_SUFFIXES = ("_work_failed:max", "_max_work_attempts")
@@ -21,7 +22,7 @@ def de_escalate_task(
     reset_stage_attempts: bool = False,
     restore_stage_from_history: bool = False,
 ) -> Task:
-    """Clear escalation state and keep the current stage unchanged."""
+    """Clear escalation state while preserving the current stage and claim."""
     task = get_task(db, task_id)
     if not task.is_escalated:
         raise ValueError(f"Task {task_id} is not escalated")
@@ -41,7 +42,7 @@ def de_escalate_task(
                 escalation_reason=task.escalation_reason,
             )
 
-        release_task_claim(
+        update_task(
             db,
             task_id,
             description=description,

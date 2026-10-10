@@ -2,10 +2,12 @@
 
 from collections.abc import Generator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.validation import TaskValidator
@@ -32,7 +34,7 @@ def _task_like(
     escalated_at: str | None = None,
     escalation_reason: str | None = None,
     validation_fail_count: int = 0,
-):
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=task_id,
         title=title,
@@ -45,6 +47,8 @@ def _task_like(
         closed_reason=None,
         closed_in_session_id=None,
         closed_commit_sha=None,
+        created_in_session_id=None,
+        delegated_by_session_id=None,
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
         is_escalated=is_escalated,
@@ -57,7 +61,7 @@ def _task_like(
 class Task(SimpleNamespace):
     """Small stage-native stand-in for historical Task(status=...) test data."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         status = kwargs.pop("status", None)
         if "is_escalated" not in kwargs:
             kwargs["is_escalated"] = status == "escalated"
@@ -67,6 +71,8 @@ class Task(SimpleNamespace):
         kwargs.setdefault("closed_reason", None)
         kwargs.setdefault("closed_in_session_id", None)
         kwargs.setdefault("closed_commit_sha", None)
+        kwargs.setdefault("created_in_session_id", None)
+        kwargs.setdefault("delegated_by_session_id", None)
         kwargs.setdefault("escalated_at", None)
         kwargs.setdefault("escalation_reason", None)
         kwargs.setdefault("validation_fail_count", 0)
@@ -86,7 +92,7 @@ class Task(SimpleNamespace):
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
@@ -94,14 +100,16 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def mock_task_validator():
+def mock_task_validator() -> MagicMock:
     """Create a mock task validator."""
     validator = AsyncMock(spec=TaskValidator)
     return validator
 
 
 @pytest.fixture
-def task_registry_with_patches(mock_task_manager, mock_task_validator):
+def task_registry_with_patches(
+    mock_task_manager: MagicMock, mock_task_validator: MagicMock
+) -> Generator[InternalToolRegistry]:
     """Create a full task registry for testing de_escalate_task (now in lifecycle)."""
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -124,8 +132,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_returns_to_open_status(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task returns task to open status."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -157,7 +165,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_requires_reason(
-        self, mock_task_manager, task_registry_with_patches
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
     ) -> None:
         """Test that de_escalate_task requires a reason."""
         escalated_task = _task_like(
@@ -174,8 +182,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_not_escalated_error(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test de_escalate_task fails if task is not escalated."""
         non_escalated_task = _task_like(
             title="Normal task",
@@ -192,7 +200,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_task_not_found(
-        self, mock_task_manager, task_registry_with_patches
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
     ) -> None:
         """Test de_escalate_task with non-existent task."""
         mock_task_manager.get_task.return_value = None
@@ -207,8 +215,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_clears_escalation_fields(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task clears escalation-related fields."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -235,8 +243,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_succeeds_with_reason_param(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task succeeds when given a reason."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -268,8 +276,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_resets_validation_state(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task optionally resets validation state."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -298,8 +306,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_resets_stage_attempts(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task optionally resets current stage attempts."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -326,8 +334,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_restores_stage_from_history(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task can request stage restoration from history."""
         escalated_task = _task_like(
             title="Escalated task",
@@ -358,8 +366,8 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_schema_has_no_explicit_stage_target(
-        self, mock_task_manager, task_registry_with_patches
-    ):
+        self, mock_task_manager: MagicMock, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task no longer accepts explicit state routing."""
         schema = task_registry_with_patches.get_schema("de_escalate_task")
         assert schema is not None
@@ -378,14 +386,18 @@ class TestValidationToolsRegistration:
     """Tests verifying validation tools are properly registered."""
 
     @pytest.mark.integration
-    def test_de_escalate_task_tool_registered(self, task_registry_with_patches) -> None:
+    def test_de_escalate_task_tool_registered(
+        self, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task is registered on gobby-tasks (lifecycle)."""
         tools = task_registry_with_patches.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "de_escalate_task" in tool_names
 
     @pytest.mark.integration
-    def test_de_escalate_task_tool_schema(self, task_registry_with_patches) -> None:
+    def test_de_escalate_task_tool_schema(
+        self, task_registry_with_patches: InternalToolRegistry
+    ) -> None:
         """Test that de_escalate_task has correct input schema."""
         schema = task_registry_with_patches.get_schema("de_escalate_task")
 

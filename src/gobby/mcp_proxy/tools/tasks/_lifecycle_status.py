@@ -249,6 +249,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         """De-escalate a task while preserving its current stage.
 
         Clears escalation metadata after human intervention resolves the issue.
+        The claimant, task creator, or delegator can resolve escalation without
+        releasing the task's claim.
         Optionally resets the validation failure count and current stage work attempts.
         Can restore a stopped approved stage from lifecycle history.
 
@@ -286,9 +288,13 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
 
-        denied = require_claim_authority(ctx.task_manager, task, "de_escalate_task")
-        if denied:
-            return denied
+        if session_id not in (
+            task.created_in_session_id,
+            task.delegated_by_session_id,
+        ):
+            denied = require_claim_authority(ctx.task_manager, task, "de_escalate_task")
+            if denied:
+                return denied
 
         projected_state = projected_task_state(task)
         if projected_state != "escalated":
