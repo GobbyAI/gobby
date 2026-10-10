@@ -164,7 +164,7 @@ Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 
 Authentication is mandatory. Protected HTTP, MCP, memory, hook, and WebSocket
-surfaces accept the install-scoped local token or a user-owned browser session;
+surfaces accept a hub-issued API key or a user-owned browser session;
 there is no bootstrap or runtime switch that disables authentication.
 
 Interactive first installation creates the canonical user, then assigns the
@@ -829,4 +829,4 @@ or global scope, `enabled: true`, and that secret parameters resolve
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_

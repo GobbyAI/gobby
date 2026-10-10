@@ -145,8 +145,9 @@ cutover. The Orchestrator coordinates this procedure:
 3. Write an owner-only restore manifest under `~/.gobby/`. Record each native
    terminal's terminal id, cwd, launch command, bound session ref, and seat.
 4. Request the host's `host_shutdown` through its authenticated control socket.
-5. Promote gterm alongside the coherent binary set using
-   `promote_workspace_binary_set`, then restart the daemon from the main checkout.
+5. Promote the coherent `gcode`, `gdaemon`, and `ghook` set using
+   `promote_workspace_binary_set`. Promote gterm separately using
+   `stage_and_promote_binary_file`, then restart the daemon from the main checkout.
 6. Have each owner restore its terminal from the manifest and prove its restored
    session binding to the Orchestrator.
 7. Send a global DAEMON BACK notice after daemon health and restored bindings
@@ -159,7 +160,8 @@ using its separate daemon-only control credential.
 
 Source: `crates/gterminal/src/host/control.rs` (`host_shutdown`) and
 `crates/gterminal/src/host/frames.rs` (key read during `Hello`), with binary
-promotion in `src/gobby/install/bin_set_coherence.py`.
+set promotion in `src/gobby/install/bin_set_coherence.py` and gterm promotion in
+`src/gobby/install/bin_freshness_promotion.py`.
 
 ### Manual Verification Matrix
 

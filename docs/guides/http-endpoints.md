@@ -390,10 +390,10 @@ on an agent token. The wrapper header continues to opt stdio bridge requests
 into the same enforcement path. Agent calls receive `503` if the enforcement
 service is unavailable; the direct registry fallback remains an operator path.
 
-The install-scoped local token and browser cookie identify an operator. Their
+A hub-issued API key and browser cookie identify an operator. Their
 programmatic CLI and REST calls retain operator behavior, including calls with
 an explicit `X-Gobby-Session-Id` for attribution; internal and pipeline calls
-retain their programmatic behavior. Access to the operator token is the trust
+retain their programmatic behavior. Access to the operator API key is the trust
 boundary: a process holding it acts as the operator, even when that process was
 launched from an agent shell. Managed agents use their run-scoped API token for
 daemon calls.
@@ -940,7 +940,7 @@ Hook execution is the exception: adapter-compatible hook failures are usually
 acknowledged with a response that lets the caller continue, because CLI hooks
 must not crash the calling agent runtime.
 
-_Last verified: 2026-08-14_
+_Last verified: 2026-10-10_
 
 ## Contributor tooling boundary
 
