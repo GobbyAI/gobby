@@ -56,6 +56,26 @@ class ProcessorStatsMixin:
         *,
         complete: bool,
     ) -> None:
+        if complete and rendered.get("role") == "assistant" and self.communications_manager:
+            blocks = rendered.get("content_blocks", [])
+            text = "\n\n".join(
+                block["content"]
+                for block in blocks
+                if isinstance(block, dict)
+                and block.get("type") == "text"
+                and isinstance(block.get("content"), str)
+            )
+            message_id = rendered.get("id")
+            if text.strip() and isinstance(message_id, str) and message_id:
+                try:
+                    await self.communications_manager.mirror_session_message(
+                        session_id, message_id, text
+                    )
+                except Exception:
+                    # Retry a completed final reply on the processor's next
+                    # poll, even if no further transcript line arrives.
+                    self._restored_render_sessions.add(session_id)
+                    raise
         if self.websocket_server is None:
             return
         await self._feed_attached_session_tts(session_id, rendered, complete=complete)

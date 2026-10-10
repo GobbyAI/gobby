@@ -25,7 +25,7 @@ from gobby.communications.models import (
     CommsIdentity,
     CommsMessage,
 )
-from gobby.communications.outbound import OutboundCommunications
+from gobby.communications.outbound import OutboundCommunications, transcript_delivery_id
 from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.responder import CommunicationsResponder
@@ -214,10 +214,38 @@ class CommunicationsManager:
         content: str,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
     ) -> CommsMessage:
         """Send a message to a named channel."""
         await self._wait_for_channel_startup(channel_name)
-        return await self._outbound.send_message(channel_name, content, session_id, metadata)
+        return await self._outbound.send_message(
+            channel_name, content, session_id, metadata, idempotency_key=idempotency_key
+        )
+
+    def get_transcript_delivery(self, session_id: str, message_id: str) -> CommsMessage | None:
+        """Read completion evidence without starting another transport attempt."""
+        return self._store.get_message(transcript_delivery_id(session_id, message_id))
+
+    async def mirror_session_message(self, session_id: str, message_id: str, content: str) -> None:
+        """Mirror completed transcript text to a session's live Telegram attachment."""
+        for channel in tuple(self._channel_by_name.values()):
+            if channel.channel_type != "telegram" or not channel.enabled:
+                continue
+            destination = self.attached_destination(channel.id, session_id)
+            if destination is None:
+                continue
+            message = await self.send_message(
+                channel.name,
+                content,
+                session_id=session_id,
+                metadata={"platform_destination": destination},
+                idempotency_key=message_id,
+            )
+            if message.status != "sent":
+                raise RuntimeError(
+                    f"Transcript mirror {message.id} is {message.status}: {message.error}"
+                )
 
     async def _wait_for_channel_startup(self, channel_name: str) -> None:
         """Wait for an enabled channel when a send races adapter initialization."""

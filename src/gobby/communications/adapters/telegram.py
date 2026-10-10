@@ -317,7 +317,12 @@ class TelegramAdapter(BaseChannelAdapter):
             self._raise_for_status_with_redacted_token(response)
             logger.info("Cleared Telegram webhook for polling mode")
 
-    async def send_message(self, message: CommsMessage) -> str | None:
+    async def send_message(
+        self,
+        message: CommsMessage,
+        *,
+        checkpoint: Callable[[CommsMessage], Awaitable[None]] | None = None,
+    ) -> str | None:
         """Send message and return platform message ID."""
         if not self._client or not self._api_base:
             raise RuntimeError("Adapter not initialized")
@@ -347,9 +352,14 @@ class TelegramAdapter(BaseChannelAdapter):
             message.metadata_json,
         )
 
-        message_ids: list[str] = []
+        confirmed_ids = message.metadata_json.get("platform_message_ids", []) if checkpoint else []
+        message_ids: list[str] = [str(value) for value in confirmed_ids]
         try:
             for index, chunk in enumerate(chunks):
+                if index < len(message_ids):
+                    continue
+                if checkpoint is not None:
+                    await checkpoint(message)
                 payload: dict[str, Any] = {
                     "chat_id": chat_id,
                     "text": chunk,
@@ -371,6 +381,8 @@ class TelegramAdapter(BaseChannelAdapter):
                     raise RuntimeError(f"Telegram sendMessage failed: {description}")
                 message_ids.append(str(data["result"]["message_id"]))
                 message.metadata_json["platform_message_ids"] = message_ids.copy()
+                if checkpoint is not None:
+                    await checkpoint(message)
         except BaseException:
             if reply_markup is not None:
                 self._callback_registry.discard_keyboard(reply_markup)

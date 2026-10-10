@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Mapping
@@ -545,6 +546,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def handle_after_agent(self, event: HookEvent) -> HookResponse:
         """Handle AFTER_AGENT event."""
         self._apply_attention_metadata_report(event)
+        self._mirror_completed_turn(event)
         session_id = event.metadata.get("_platform_session_id")
         cli_source = event.source.value
 
@@ -571,6 +573,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if event.metadata.get("_native_subagent_binding"):
             self.logger.debug("Ignoring process-bound native subagent STOP for %s", session_id)
             return HookResponse(decision="allow")
+
+        self._mirror_completed_turn(event)
 
         if session_id:
             self.logger.debug("STOP: session %s", session_id)
@@ -613,6 +617,33 @@ class AgentEventHandlerMixin(EventHandlersBase):
         response = HookResponse(decision="allow")
         self._apply_debug_echo(response)
         return response
+
+    def _mirror_completed_turn(self, event: HookEvent) -> None:
+        """Schedule EOF processing only for confirmed provider turn completion."""
+        if event.turn_disposition != "completed" or event.metadata.get("_native_subagent_binding"):
+            return
+        session_id = event.metadata.get("_platform_session_id")
+        processor = self._resolve_message_processor()
+        loop = self._event_loop
+        if not isinstance(session_id, str) or not processor or not loop or not loop.is_running():
+            return
+        expected = event.data.get("last_assistant_message")
+        future = asyncio.run_coroutine_threadsafe(
+            processor.complete_turn(session_id, expected if isinstance(expected, str) else None),
+            loop,
+        )
+
+        def finished(result: Any) -> None:
+            try:
+                outcome = result.result()
+                if not outcome.flushed:
+                    self.logger.warning(
+                        "Final transcript mirror not flushed for %s: %s", session_id, outcome.error
+                    )
+            except Exception:
+                self.logger.exception("Final transcript mirror failed for %s", session_id)
+
+        future.add_done_callback(finished)
 
     def handle_interrupt(self, event: HookEvent) -> HookResponse:
         """Handle explicit whole-turn user interruption evidence."""

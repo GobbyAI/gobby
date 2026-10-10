@@ -15,13 +15,18 @@ When the operator asks a live agent session to "register with Telegram":
 2. Call `attach_conversation(channel, conversation_id)` using that result.
    An existing live holder requires it to detach before you can attach. Do not
    displace it or rebind the identity.
-3. Send one confirmation with `send_message(channel, content)` as the calling
-   session. Its attachment supplies the DM destination. If delivery fails,
-   detach and report the failure; registration is complete only after delivery.
+3. Type the confirmation normally. The daemon mirrors completed assistant text
+   to the attached DM automatically; no explicit `send_message` is needed.
 
-While registered, send operator-facing replies directly with `send_message` on
-that channel as the calling session. Inbound DM messages arrive in your durable
-mailbox. The send is the reply; avoid duplicate terminal or Assistant relays.
+While registered, type operator-facing replies normally. Completed assistant text
+is mirrored to the live Telegram attachment, including the final reply at the
+provider's turn-end hook. Tool calls, thinking and partial renders are excluded.
+Do not send the same reply explicitly or relay it through the Assistant. Inbound
+DM messages arrive in your durable mailbox. When unattached, reply on the channel
+the operator last used; an explicit Telegram send is then the reply.
+Everything typed is mirrored; decisions alone still go out explicitly as button
+messages. Send each completed reply whole. Telegram splits replies only when its
+length limit requires multiple messages; it never truncates them.
 On an explicit unregister/detach request, call `detach_conversation` with the
 same channel and conversation ID. DM/topic selections survive daemon restarts.
 An operator-owned terminal session retains its selection while expired and
@@ -66,3 +71,5 @@ discovery or service health, not inventing a path.
 
 See [destination resolution](../../../../../../../../docs/guides/comm-integrations.md#outbound-destination-resolution)
 and [responder projects](../../../../../../../../docs/guides/telegram.md#responder-projects-and-models).
+
+_Last verified: 2026-10-10_

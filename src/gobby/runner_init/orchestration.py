@@ -805,3 +805,5 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         except Exception:
             mark_service_degraded(runner, "communications_manager")
             logger.exception("Failed to initialize CommunicationsManager")
+    if runner.message_processor is not None:
+        runner.message_processor.communications_manager = runner.communications_manager

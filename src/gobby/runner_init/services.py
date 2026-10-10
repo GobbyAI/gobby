@@ -528,6 +528,7 @@ def _build_message_processor(
         # attached later by server init and the app lifespan instead).
         processor.session_manager = runner.session_manager
         processor.websocket_server = getattr(runner, "websocket_server", None)
+        processor.communications_manager = getattr(runner, "communications_manager", None)
         http_server = getattr(runner, "http_server", None)
         hook_manager = getattr(http_server, "_hook_manager", None)
         if hook_manager is not None:

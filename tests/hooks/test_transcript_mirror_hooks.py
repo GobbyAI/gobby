@@ -1,0 +1,71 @@
+"""Only confirmed whole-turn completion schedules the final transcript mirror."""
+
+import asyncio
+
+import pytest
+
+from gobby.hooks.event_handlers import EventHandlers
+from gobby.hooks.events import HookEventType
+from gobby.sessions.processor_lifecycle import SessionFlushResult
+
+from ._event_handler_helpers import make_event
+
+pytestmark = pytest.mark.unit
+
+
+class CompletedTurns:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+        self.done = asyncio.Event()
+
+    async def complete_turn(self, session_id: str, text: str | None) -> SessionFlushResult:
+        self.calls.append((session_id, text))
+        self.done.set()
+        return SessionFlushResult(flushed=True)
+
+
+@pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+async def test_completed_provider_turn_schedules_eof_mirror(
+    event_handlers: EventHandlers,
+    event_type: HookEventType,
+) -> None:
+    turns = CompletedTurns()
+    event_handlers._event_loop = asyncio.get_running_loop()
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(
+        event_type,
+        data={"last_assistant_message": "whole final reply"},
+        metadata={"_platform_session_id": "session"},
+    )
+    event.turn_disposition = "completed"
+    response = (
+        event_handlers.handle_stop(event)
+        if event_type == HookEventType.STOP
+        else event_handlers.handle_after_agent(event)
+    )
+    assert response.decision == "allow"
+    await asyncio.wait_for(turns.done.wait(), timeout=2.0)
+    assert turns.calls == [("session", "whole final reply")]
+
+
+@pytest.mark.parametrize("kind", ["interrupt", "unknown", "subagent", "compact"])
+async def test_incomplete_or_foreign_turn_does_not_schedule_mirror(
+    event_handlers: EventHandlers,
+    kind: str,
+) -> None:
+    turns = CompletedTurns()
+    event_handlers._event_loop = asyncio.get_running_loop()
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(HookEventType.STOP, metadata={"_platform_session_id": "session"})
+    event.turn_disposition = "completed" if kind == "subagent" else "unknown"
+    if kind == "subagent":
+        event.metadata["_native_subagent_binding"] = True
+    if kind == "interrupt":
+        response = event_handlers.handle_interrupt(event)
+    elif kind == "compact":
+        response = event_handlers.handle_pre_compact(event)
+    else:
+        response = event_handlers.handle_stop(event)
+    assert response.decision == "allow"
+    await asyncio.sleep(0)
+    assert turns.calls == []
