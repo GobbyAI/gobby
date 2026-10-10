@@ -2041,6 +2041,12 @@ built and installed binaries:
   4.3, 4.4, 5.1, 5.2, and 5.3. Acceptance text is unchanged apart from the 4.2 path and
   test name. M1 is withdrawn (memory `f5577ae0`), and the Adversary derives a fresh M1
   in full. Its bytes stay in Git history.
+- 2026-10-10: Renewed consensus. Writer gobby#15987 and Adversary gobby#16087 agree
+  on `d14ee84442`. The Adversary verified the canonical bytes and hash, confirmed that
+  `LoginRateLimiter` resolves in `src/gobby/servers/routes/auth.py`, and confirmed that
+  the replacement route test keeps the owner-scope and redaction coverage. All 13 prior
+  M1 routing decisions are preserved. No blocking finding remains. The Adversary derives
+  and applies fresh M1 to the committed narrative.
 
 **Round 1** `kind: enhancement`
 
