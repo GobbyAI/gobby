@@ -76,7 +76,14 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
     recomputed = recompute_automatic_title(session_manager, session.id)
 
     assert recomputed.title == "Lane Manager"
-    assert recomputed.title_source == "task"
+    assert recomputed.title_source == "definition"
+
+    SessionVariableManager(session_manager.db).merge_variables(
+        session.id, {DEFINITION_TITLE_VARIABLE: None}
+    )
+    unnamed = recompute_automatic_title(session_manager, session.id)
+    assert unnamed.title == f"{sample_project['name']}#{session.seq_num}: Codex"
+    assert unnamed.title_source == "provisional"
 
 
 def test_reasoning_effort_prefers_effective_then_requested() -> None:

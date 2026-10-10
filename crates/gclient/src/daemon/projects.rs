@@ -60,7 +60,7 @@ pub struct SessionRow {
     #[serde(rename = "ref")]
     pub reference: Option<String>,
     pub title: Option<String>,
-    /// `manual` when a person named the session; the automatic titles
+    /// `manual` or `definition` for a seat identity; the automatic titles
     /// (`task`, `provisional`) only restate the ref, task, and provider.
     pub title_source: Option<String>,
     pub source: Option<String>,
@@ -87,11 +87,11 @@ impl SessionRow {
             .filter(|effort| !effort.is_empty())
     }
 
-    /// The name a person gave the session, verbatim but for a leading
+    /// The name a person or applied definition gave the session, except a leading
     /// `<ref>:` or `<project>#<seq>:` naming this very session, which the
-    /// ref already shows; `None` for an automatic, blank, or ref-only title.
-    pub fn manual_title(&self, project_name: &str) -> Option<&str> {
-        if self.title_source.as_deref() != Some("manual") {
+    /// ref already shows; `None` for a task, provisional, blank, or ref-only title.
+    pub fn identity_title(&self, project_name: &str) -> Option<&str> {
+        if !matches!(self.title_source.as_deref(), Some("manual" | "definition")) {
             return None;
         }
         let title = self.title.as_deref()?.trim();

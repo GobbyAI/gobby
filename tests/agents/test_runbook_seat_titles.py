@@ -140,7 +140,7 @@ async def test_runbook_title_survives_task_claim_and_close(
 
     title = f"Lane 3 {role}"
     child = session_manager.get(prepared.session_id)
-    assert child is not None and child.title == title and child.title_source == "task"
+    assert child is not None and child.title == title and child.title_source == "definition"
     title_listener.assert_called_with(child.id, title)
     tasks = LocalTaskManager(session_manager.db)
     task = tasks.create_task(
@@ -192,5 +192,5 @@ async def test_runbook_title_survives_task_claim_and_close(
     tasks.close_task(task.id, force=True, closed_in_session_id=child.id)
     restored = recompute_automatic_title(session_manager, child.id)
 
-    assert restored.title == title and restored.title_source == "task"
+    assert restored.title == title and restored.title_source == "definition"
     title_listener.assert_called_with(child.id, title)

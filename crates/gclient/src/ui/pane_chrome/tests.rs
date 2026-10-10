@@ -154,6 +154,14 @@ fn a_seat_without_a_definition_names_its_provider() {
 /// A seat whose session carries `title` with `title_source`, joined to an
 /// open pane on `term-seat`.
 fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
+    titled_definition_seat(title, title_source, None)
+}
+
+fn titled_definition_seat(
+    title: &str,
+    title_source: &str,
+    definition: Option<&str>,
+) -> (Workspace, PaneId) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_sidebar_rows(SidebarRows {
         projects: vec![ProjectRow {
@@ -174,6 +182,19 @@ fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
         )]
         .into_iter()
         .collect(),
+        runs: [(
+            "proj-alpha".to_owned(),
+            definition
+                .map(|name| RunRow {
+                    run_id: "run-seat".to_owned(),
+                    agent_name: Some(name.to_owned()),
+                    ..RunRow::default()
+                })
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect(),
         ..SidebarRows::default()
     });
     ws.daemon_mut().set_roster(json!({
@@ -181,6 +202,7 @@ fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
         "entries": [{
             "entry_id": "session:sess-seat",
             "session_id": "sess-seat",
+            "run_id": definition.map(|_| "run-seat"),
             "provider": "claude",
             "terminal": {"terminal_id": "term-seat", "backend": "native"}
         }]
@@ -206,6 +228,39 @@ fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
         "○ #14069: Claude · Focused",
         "an automatic title keeps the provider"
     );
+}
+
+#[test]
+fn seat_identity_title_precedes_the_run_definition_in_the_pane_header() {
+    for (title, source, expected) in [
+        ("Lane 1 Developer", "definition", "Lane 1 Developer"),
+        ("gobby#14069: Release Lead", "manual", "Release Lead"),
+        (
+            "gobby#14069: Task #23928 - pane titles",
+            "task",
+            "lane-developer",
+        ),
+        ("gobby#14069: Claude", "provisional", "lane-developer"),
+        ("", "definition", "lane-developer"),
+    ] {
+        let (ws, pane) = titled_definition_seat(title, source, Some("lane-developer"));
+        assert_eq!(ws.sidebar().agents[0].definition_label(), expected);
+        for chrome in [
+            Chrome::dark(),
+            Chrome::new(crate::theme::Theme::new(crate::theme::ThemeKind::Light)),
+        ] {
+            assert_eq!(
+                pane_corners(&ws, &chrome, ws.pane(pane), true).title,
+                format!("○ #14069: {expected} · Focused"),
+                "title={title:?}, source={source:?}"
+            );
+            assert_eq!(
+                pane_corners(&ws, &chrome, ws.pane(pane), false).title,
+                format!("○ #14069: {expected}"),
+                "title={title:?}, source={source:?}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.storage.sessions._title_defaults import (
+    DEFINITION_TITLE_SOURCE,
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     TASK_TITLE_SOURCE,
@@ -129,7 +130,7 @@ def recompute_automatic_title(session_manager: Any, session_id: str) -> Any:
         )
         source = TASK_TITLE_SOURCE
     elif definition_title := _definition_title(session_manager.db, session_id):
-        title, source = definition_title, TASK_TITLE_SOURCE
+        title, source = definition_title, DEFINITION_TITLE_SOURCE
     else:
         title = format_provisional_session_title(
             context.project_name,

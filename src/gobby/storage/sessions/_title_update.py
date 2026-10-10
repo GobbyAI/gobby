@@ -8,6 +8,7 @@ from datetime import datetime
 from gobby.storage.hub.protocol import Transaction
 
 from ._title_defaults import (
+    DEFINITION_TITLE_SOURCE,
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     TASK_TITLE_SOURCE,
@@ -17,7 +18,7 @@ TITLE_UPDATE_ALLOWED_SQL = f"""
 (
     incoming.title_source = '{MANUAL_TITLE_SOURCE}'
     OR (
-        incoming.title_source = '{TASK_TITLE_SOURCE}'
+        incoming.title_source IN ('{TASK_TITLE_SOURCE}', '{DEFINITION_TITLE_SOURCE}')
         AND current_session.title_source IS DISTINCT FROM '{MANUAL_TITLE_SOURCE}'
     )
     OR (
@@ -28,7 +29,7 @@ TITLE_UPDATE_ALLOWED_SQL = f"""
             OR current_session.title_source IS NULL
             OR current_session.title_source = '{PROVISIONAL_TITLE_SOURCE}'
             OR (
-                current_session.title_source = '{TASK_TITLE_SOURCE}'
+                current_session.title_source IN ('{TASK_TITLE_SOURCE}', '{DEFINITION_TITLE_SOURCE}')
                 AND incoming.allow_task_fallback
                 AND NOT EXISTS (
                     SELECT 1
