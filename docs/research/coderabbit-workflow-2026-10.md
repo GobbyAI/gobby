@@ -30,7 +30,7 @@ Run **post-push batch passes through the existing local CLI or extension**, with
 **Unverified:** that a local run works on a pushed range after Josh's ruling. Whatever "won't work until after we push" refers to, nobody has run a post-push CLI pass on this repository. This research did not run one, because a review sends code. Batch 1 is the test. If it fails, the fallback channel is review-only stacked pull requests (option F). Choosing between them is Josh's call, set out as decision D3.
 
 This adds no code, pipeline, gate, branch or pull request. It needs:
-- a sizing bullet in `.gobby/roles/merge-manager.md`;
+- a sizing bullet in the Release Manager definition (`release-manager.yaml`, which absorbed the Merge Manager);
 - a routing bullet for the PD;
 - Josh's answers to section 6.
 
@@ -234,7 +234,7 @@ A post-push variant could drive the CLI or the GitHub app from a pipeline. It st
 
 ## 5. Proposed role text and procedure (the Orchestrator applies it after Josh decides; not edited here)
 
-Proposed bullet for `.gobby/roles/merge-manager.md`:
+Proposed bullet for the Release Manager definition:
 
 > - CodeRabbit batch sizing (Josh 2026-10-01): keep every package landing under 150 reviewable changed files. Count them with `git diff --name-only <first parent> <package merge>`, minus `.coderabbit.yaml` `path_filters`. Record "CodeRabbit batch: <first parent>..<package merge>, N reviewable files" in the package receipt. If staging reaches 150, split the package into two landings. Never run CodeRabbit before a push.
 
@@ -323,7 +323,7 @@ Every batch's raw count, before filters, is also under 150, so the result does n
   - `.coderabbit.yaml`
   - `pre-push-test.sh:544-564`
   - `src/gobby/install/shared/skills/coderabbit/SKILL.md`
-  - `.gobby/roles/{_common,code-reviewer,merge-manager,lane-manager,roster}.md`
+  - `src/gobby/install/shared/workflows/agents/` (seat definitions; they replaced the per-project role files)
   - `git log b1dc981f1f --first-parent --merges --since=2026-09-24`
   - Section 7:
     - `git rev-list --first-parent origin/0.5.0..0.5.0` for the cut candidates.

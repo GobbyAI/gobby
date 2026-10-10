@@ -117,7 +117,7 @@ This would need all of:
 - detecting Codex's native goal-paused state and mapping it to a Gobby status,
   so that wakes and status waits work;
 - resuming the goal after compaction or restart. Today that means send_keys into
-  a lane, which `_common.md` forbids ("never send keys into another session");
+  a lane, which the shared seat guidance forbids ("never send keys into another session");
 - repeating both for each provider's `/goal` (Claude's evaluator has the same
   transcript scope).
 
@@ -161,7 +161,7 @@ a rule that demands the tree be closed.
 1. Scope: only a session that claims its lane epic is affected. Other sessions
    claim leaves, where the rule is a no-op. That makes it lane-only without a new
    scoping mechanism, provided no non-lane role is told to claim a parent. Add
-   that to `_common.md`.
+   that to the shared seat guidance.
 2. Found work on the lane's surface is filed as a child of the lane epic, so the
    rule keeps the lane until it is fixed; that matches "you found it, you fix it".
    Found work outside the lane goes to the PD and is not parented under the lane
@@ -187,8 +187,8 @@ Lane Manager status waits. `require-epic-tree-close` stays disabled.
 Implementation: #22927, owned by Lane 3 #14531 (see Decision above). The PD
 reviews and lands it. Scope:
 - Remove any `/goal` start or resume from the developer lane kickoff instructions
-  and from shared role guidance, at their actual active source. No file under
-  `.gobby/roles/` references `/goal` today (VERIFIED by grep), so it comes from
+  and from shared role guidance, at their actual active source. No seat role
+  file references `/goal` today (VERIFIED by grep), so it comes from
   the kickoff instructions or a manual start.
 - Clear any active goals on current lanes with `/goal clear` (see below).
 
@@ -206,7 +206,7 @@ reviews and lands it. Scope:
   on task.
 - Procedure: type it in the lane's Codex composer while the lane is idle at the
   prompt. INFERRED: typed mid-turn, it may be queued as input. This is a
-  keystroke into another session, so under `_common.md` it is done by Josh or by
+  keystroke into another session, so under the shared seat guidance it is done by Josh or by
   the Assistant on Josh's instruction. Confirm the pane shows `Goal cleared` and
   that `get_session` still lists the claimed task. Do not set a new `/goal`.
-- Add one line to `_common.md` or the lane role template: lanes do not use `/goal`.
+- Add one line to the shared seat guidance or the lane role template: lanes do not use `/goal`.

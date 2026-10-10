@@ -284,7 +284,7 @@ concurrent reviewers in this project.
   `_lifecycle_close_orchestration.py:482-485`.
 - Added `TaskCloseReviewBusyError`, which rejects admission for a second task under a
   `FOR UPDATE` lock on the project row.
-- Added a role rule in `.gobby/roles/_common.md`: lanes wait for an explicit Lane
+- Added a rule to the shared seat guidance (now the `inject-seat-common` rule): lanes wait for an explicit Lane
   Manager release before `close_task(preview=false)`.
 
 Close reviews in project gobby, in two equal 16 h windows either side of the change:
