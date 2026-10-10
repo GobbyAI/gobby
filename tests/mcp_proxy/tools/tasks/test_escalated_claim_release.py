@@ -1,8 +1,7 @@
 """An escalated task the caller still holds is released by escalate_task (#23204).
 
 Escalated plus claimed is a legitimate state: an operator claims an escalated task
-to close it deliberately with override_justification. The single-claim rule still
-counts that row as the session's open claim, so escalate_task must release it.
+to close it deliberately with override_justification, and escalate_task releases it.
 """
 
 from __future__ import annotations
@@ -106,11 +105,12 @@ async def test_released_session_can_claim_another_task(
 
 
 @pytest.mark.asyncio
-async def test_claim_conflict_on_a_held_escalated_task_names_the_working_exits(
+async def test_a_held_escalated_task_does_not_block_claiming_another(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
 ) -> None:
+    """Claims accumulate (#23751): a held escalated claim stays owned alongside a new one."""
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
     held = await _hold_escalated(
@@ -118,34 +118,11 @@ async def test_claim_conflict_on_a_held_escalated_task_names_the_working_exits(
     )
     other = _task(manager, sample_project, "Next")
 
-    refused = await _call(registry, canonical_task_session, "claim_task", task_id=other.id)
+    claimed = await _call(registry, canonical_task_session, "claim_task", task_id=other.id)
 
-    assert refused["error_code"] == TaskToolErrorCode.TASK_CLAIM_CONFLICT.value
-    held_ref = f"#{held.seq_num}"
-    assert f'escalate_task(task_id="{held_ref}"' in refused["error"]
-    assert "already escalated" in refused["error"]
-    assert "override_justification" in refused["error"]
-    assert manager.get_task(other.id).claimed_by_session_id is None
-
-
-@pytest.mark.asyncio
-async def test_claim_conflict_on_an_open_claim_keeps_its_guidance(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    canonical_task_session: Session,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    registry = create_task_registry(manager)
-    held = _task(manager, sample_project, "Held")
-    other = _task(manager, sample_project, "Next")
-    await _call(registry, canonical_task_session, "claim_task", task_id=held.id)
-
-    refused = await _call(registry, canonical_task_session, "claim_task", task_id=other.id)
-
-    assert refused["error_code"] == TaskToolErrorCode.TASK_CLAIM_CONFLICT.value
-    assert f"Session already owns open claimed task #{held.seq_num}." in refused["error"]
-    assert "already escalated" not in refused["error"]
-    assert "override_justification" not in refused["error"]
+    assert claimed.get("success") is True, claimed
+    assert manager.get_task(other.id).claimed_by_session_id == canonical_task_session.id
+    assert manager.get_task(held.id).claimed_by_session_id == canonical_task_session.id
 
 
 @pytest.mark.asyncio

@@ -441,7 +441,14 @@ class TestClaimTaskTool:
             registry = create_task_registry(mock_task_manager)
 
             mock_task_manager.get_task.return_value = parent_owned_task
-            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated", "variables": {}}
+            # One stub row serves both the delegated-run lookup and the
+            # session-variables row read (stored/variables/project_id).
+            mock_task_manager.db.fetchone.return_value = {
+                "id": "run-delegated",
+                "stored": True,
+                "variables": {},
+                "project_id": None,
+            }
             updated_task = MagicMock()
             updated_task.id = parent_owned_task.id
             updated_task.claimed_by_session_id = "my-session-id"
@@ -494,7 +501,14 @@ class TestClaimTaskTool:
             )
             MockSessionManager.return_value = mock_session_manager
             mock_task_manager.get_task.return_value = parent_owned_task
-            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated", "variables": {}}
+            # One stub row serves both the delegated-run lookup and the
+            # session-variables row read (stored/variables/project_id).
+            mock_task_manager.db.fetchone.return_value = {
+                "id": "run-delegated",
+                "stored": True,
+                "variables": {},
+                "project_id": None,
+            }
             mock_task_manager.claim_task_for_agent.return_value = parent_owned_task
             registry = create_task_registry(mock_task_manager)
 

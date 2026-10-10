@@ -1393,10 +1393,10 @@ class TestSessionVariableMirroring:
             yield
 
     @pytest.mark.asyncio
-    async def test_claim_task_mirrors_to_session_variables(
+    async def test_claim_task_leaves_claim_mirroring_to_storage(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """claim_task must mirror task_claimed=True to session_variables."""
+        """Storage selects the claim in its transaction (#23751); the tool merges only skills."""
         task_uuid = "550e8400-e29b-41d4-a716-446655440099"
 
         with (
@@ -1429,11 +1429,7 @@ class TestSessionVariableMirroring:
             mock_task.claimed_by_session_id = None
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.update_task.return_value = mock_task
-            # The mirror re-reads the claim owner under FOR UPDATE and writes only for it.
-            conn = mock_task_manager.db.transaction.return_value.__enter__.return_value
-            conn.execute.return_value.fetchone.return_value = {
-                "claimed_by_session_id": "test-session"
-            }
+            mock_task_manager.claim_task_for_agent.return_value = mock_task
 
             result = await registry.call(
                 "claim_task",
@@ -1441,14 +1437,15 @@ class TestSessionVariableMirroring:
             )
 
             assert "error" not in result
-            # session_variables must be written with task in claimed_tasks dict
+            mock_task_manager.claim_task_for_agent.assert_called_once_with(
+                task_uuid, session_id="test-session", force=False
+            )
             mock_sv_manager.merge_variables.assert_called_once()
-            call_args = mock_sv_manager.merge_variables.call_args
-            merged = call_args[0][1]
-            assert merged["task_claimed"] is True
-            assert task_uuid in merged["claimed_tasks"]
-            assert merged["claimed_tasks"][task_uuid] == "#200"
-            assert merged["active_task_id"] == task_uuid
+            session_id, merged = mock_sv_manager.merge_variables.call_args[0]
+            assert session_id == "test-session"
+            assert "task_claimed" not in merged
+            assert "claimed_tasks" not in merged
+            assert "active_task_id" not in merged
 
     @pytest.mark.asyncio
     async def test_close_task_mirrors_clear_to_session_variables(
@@ -1528,10 +1525,10 @@ class TestSessionVariableMirroring:
             assert mock_sv_manager.merge_variables.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_create_task_with_claim_mirrors_to_session_variables(
+    async def test_create_task_with_claim_leaves_claim_mirroring_to_storage(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """create_task(claim=True) must mirror task_claimed=True to session_variables."""
+        """create_task(claim=True) claims in storage (#23751); the tool merges only skills."""
         task_uuid = "550e8400-e29b-41d4-a716-446655440099"
 
         with (
@@ -1579,11 +1576,12 @@ class TestSessionVariableMirroring:
                 )
 
                 assert result["id"] == task_uuid
-                # session_variables must be written with task in claimed_tasks dict
+                mock_task_manager.create_task_for_agent.assert_called_once()
+                create_kwargs = mock_task_manager.create_task_for_agent.call_args.kwargs
+                assert create_kwargs["session_id"] == "test-session"
                 mock_sv_manager.merge_variables.assert_called_once()
-                call_args = mock_sv_manager.merge_variables.call_args
-                merged = call_args[0][1]
-                assert merged["task_claimed"] is True
-                assert task_uuid in merged["claimed_tasks"]
-                assert merged["claimed_tasks"][task_uuid] == "#300"
-                assert merged["active_task_id"] == task_uuid
+                session_id, merged = mock_sv_manager.merge_variables.call_args[0]
+                assert session_id == "test-session"
+                assert "task_claimed" not in merged
+                assert "claimed_tasks" not in merged
+                assert "active_task_id" not in merged

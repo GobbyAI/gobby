@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -234,12 +235,18 @@ class TestExpansionRuns:
     async def test_validate_plan_file_returns_semantic_lint_errors(
         self,
         expansion_registry,
+        test_project,
         tmp_path,
     ) -> None:
-        result = await expansion_registry.call(
-            "validate_plan_file",
-            {"plan_file": _write_plan_missing_target(tmp_path)},
-        )
+        # Semantic lint runs only after project-scoped completion lookup (#23620).
+        token = set_project_context({"id": test_project})
+        try:
+            result = await expansion_registry.call(
+                "validate_plan_file",
+                {"plan_file": _write_plan_missing_target(tmp_path)},
+            )
+        finally:
+            reset_project_context(token)
 
         assert result["valid"] is False
         assert any("target-coverage" in error for error in result["errors"])
