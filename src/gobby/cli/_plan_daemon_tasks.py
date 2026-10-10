@@ -2,7 +2,7 @@
 
 Managed-execution grants carry no privileges on ``tasks``, so an agent's
 ``gobby plans validate`` resolves completed-section owners through the daemon's
-gobby-tasks tools instead of the hub (Josh, 2026-10-07, #23620). This stands
+gobby-tasks tools instead of the hub (the operator, #23620). This stands
 until gobby-tasks is rebuilt in Rust.
 """
 

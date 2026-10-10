@@ -930,6 +930,60 @@ class TestSpawnAgentParamOverrides:
             return mock_execute.call_args[0][0]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("lane", "recorded"),
+        [("3", "3"), ("  3  ", "3"), ("   ", None), (None, None)],
+    )
+    async def test_lane_is_recorded_in_resume_metadata(
+        self, mock_runner: MagicMock, lane: str | None, recorded: str | None
+    ) -> None:
+        body = make_agent_definition(
+            name="default", provider="claude", prompts={"agent": "Run the assigned task."}
+        )
+        params: dict[str, object] = {} if lane is None else {"lane": lane}
+        request = await self._spawn_request_for(mock_runner, body, params)
+        assert request.resume_metadata_json.get("lane") == recorded
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("surfaces", "allowed"),
+        [(["persona"], False), (["spawn"], True), (["spawn", "persona"], True)],
+    )
+    async def test_spawn_requires_spawn_surface(
+        self, mock_runner: MagicMock, surfaces: list[str], allowed: bool
+    ) -> None:
+        body = make_agent_definition(
+            name="seat",
+            provider="claude",
+            surfaces=surfaces,
+            prompts={"agent": "Work.", "persona": "Be the seat."},
+        )
+        if allowed:
+            request = await self._spawn_request_for(mock_runner, body, {"agent": "seat"})
+            assert request.initial_variables["_agent_type"] == "seat"
+            return
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            result = await registry.call(
+                "spawn_agent",
+                {"prompt": "Test prompt", "agent": "seat", "parent_session_id": "parent-789"},
+            )
+        assert result["success"] is False
+        assert "'seat'" in result["error"]
+        assert "apply_agent_definition" in result["error"]
+        mock_execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_tool_params_override_agent_definition(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

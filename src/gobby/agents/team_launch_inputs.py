@@ -1,4 +1,4 @@
-"""Read-only resolution of the project crew-lane runbook's launch inputs."""
+"""Read-only resolution of the team-lane runbook's launch inputs."""
 
 import re
 from collections.abc import Callable, Collection
@@ -21,12 +21,14 @@ from gobby.storage.workspace_layout import (
 from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceTarget
 from gobby.storage.worktrees import LocalWorktreeManager
 
+LANE_MANAGER_AGENT = "lane-manager"
+
 # The distinct (rows, cols) live gclient windows show a terminal at.
 type Viewports = Callable[[str], Collection[tuple[int, int]]]
 
 
 @dataclass(frozen=True)
-class CrewLaneInputs:
+class TeamLaunchInputs:
     workspace: str
     lane_pane: str
     worktree: str
@@ -43,36 +45,37 @@ def _refuse(kind: str, candidates: list[str]) -> RunbookSeatRefusal:
     )
 
 
+def _lane_manager_ref(db: HubDatabase, sessions: SessionManager, caller: Session, lane: str) -> str:
+    """Return the one live lane-manager session whose run recorded ``lane``."""
+    runs = LocalAgentRunManager(db).list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
+    if len(runs) > READ_BOUND:
+        raise RunbookSeatRefusal("running agent candidates exceed the read bound")
+    candidates: set[str] = set()
+    for run in runs:
+        if (
+            run.agent_name != LANE_MANAGER_AGENT
+            or run.status != "running"
+            or not run.child_session_id
+            or (run.resume_metadata_json or {}).get("lane") != lane
+        ):
+            continue
+        session = sessions.get(run.child_session_id)
+        if session is not None and session.project_id == caller.project_id:
+            candidates.add(session.id)
+    if len(candidates) != 1:
+        raise _refuse(f"Lane {lane} manager", sorted(candidates))
+    return next(iter(candidates))
+
+
 def _manager(
-    sessions: SessionManager, caller: Session, root: Path, lane: int, report_to: str | None
+    db: HubDatabase,
+    sessions: SessionManager,
+    caller: Session,
+    lane: str,
+    report_to: str | None,
 ) -> Session:
     if report_to is None:
-        try:
-            roster = (root / ".gobby/roles/roster.md").read_text(encoding="utf-8")
-        except OSError as exc:
-            raise _refuse("manager", []) from exc
-        refs = re.findall(r"^\|\s*lane-manager\.md\s*\|\s*([^|]+)\|", roster, re.M)
-        refs = [ref.strip() for ref in refs]
-        # Manager rows are in lane order; additional lanes name their manager in prose.
-        if len(refs) != 7 or len(set(refs)) != 7:
-            raise _refuse("manager", refs)
-        assignments = {
-            int(match.group(2))
-            for match in re.finditer(
-                r"\b(?:Lane\s+)?([1-9])\b(?:(?!\b[1-9]\b)[^\n])*?"
-                r"\bmanaged by the Lane ([1-9]) manager",
-                roster,
-            )
-            if int(match.group(1)) == lane
-        }
-        if len(assignments) > 1:
-            raise _refuse(f"Lane {lane} manager", [f"Lane {n}" for n in assignments])
-        manager_lane = next(iter(assignments), lane)
-        if manager_lane > len(refs):
-            raise RunbookSeatRefusal(
-                f"Lane {lane} has no manager row or parsable managed-by assignment in the roster"
-            )
-        report_to = refs[manager_lane - 1]
+        report_to = _lane_manager_ref(db, sessions, caller, lane)
     try:
         manager_id = sessions.resolve_session_reference(report_to, project_id=caller.project_id)
         manager = sessions.get(manager_id)
@@ -144,7 +147,7 @@ def _lane_viewport(
     return layout_extent(shown_tab.layout, sizes)
 
 
-def resolve_crew_lane_inputs(
+def resolve_team_launch_inputs(
     db: HubDatabase,
     *,
     caller_session_id: str,
@@ -156,17 +159,17 @@ def resolve_crew_lane_inputs(
     lane_columns: int | None = None,
     lane_rows: int | None = None,
     viewports: Viewports | None = None,
-) -> CrewLaneInputs:
+) -> TeamLaunchInputs:
     """Resolve overrides or unique existing lane state, without creating or claiming anything."""
     lane = str(lane)
     if not re.fullmatch(r"[1-9]", lane):
         raise RunbookSeatRefusal("lane must be a number from 1 to 9")
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
-        raise RunbookSeatRefusal("crew-lane needs a caller session")
+        raise RunbookSeatRefusal("team-lane needs a caller session")
     root = Path(require_root(db, caller.project_id, caller.machine_id))
     sessions = SessionManager(db)
-    manager = _manager(sessions, caller, root, int(lane), report_to)
+    manager = _manager(db, sessions, caller, lane, report_to)
     workspaces = WorkspaceManager(db)
     manager_pane = _manager_pane(workspaces, manager)
     tabs = [
@@ -298,7 +301,7 @@ def resolve_crew_lane_inputs(
     chosen = matches[0]
     if not Path(chosen.worktree_path).is_dir():
         raise RunbookSeatRefusal(f"worktree path does not exist: {chosen.worktree_path}")
-    return CrewLaneInputs(
+    return TeamLaunchInputs(
         target.workspace.id,
         pane_id,
         chosen.id,

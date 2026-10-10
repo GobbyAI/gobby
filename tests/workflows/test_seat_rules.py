@@ -111,9 +111,9 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     second = await _turn_context(engine, variables)
 
     assert GUIDANCE_HEADING in first
-    assert "only when Josh asks" in first
-    assert "Game Goblins jobs are never rerun" in first
-    assert "Give no load numbers unless load is breaching" in first
+    assert "only when the operator asks" in first
+    assert "Only the operator authorizes a push, one exact SHA at a time." in first
+    assert 'Say "Systems nominal" when healthy' in first
     assert "may recover a stalled session with `gobby-sessions:send_keys`" in first
     assert GUIDANCE_HEADING not in second
 
@@ -267,7 +267,7 @@ def _seat_definitions() -> list[str]:
 async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
     ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
     seats = _seat_definitions()
-    assert {"assistant", "orchestrator", "inbox-manager", "merge-manager"} <= set(seats)
+    assert {"assistant", "orchestrator", "inbox-manager", "release-manager"} <= set(seats)
 
     for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
         blocked = await _decide(engine, ask, {"_agent_type": agent_type})
@@ -308,7 +308,7 @@ PROJECT_CREATES = (
     _shell("uv --directory /tmp/scratch run gobby init --help"),
     _shell("uv run --project /tmp/scratch gobby init"),
     _shell("GOBBY_HOME=/tmp/home gobby init --name scratch"),
-    _shell("/Users/josh/.local/bin/gobby init"),
+    _shell("/Users/operator/.local/bin/gobby init"),
     _shell("gobby --config /tmp/gobby.yaml init"),
     _shell("python -m gobby.cli init"),
     _shell("uv run python -m gobby.cli init"),
@@ -358,7 +358,9 @@ async def test_agents_cannot_create_projects(engine: RuleEngine, variables: dict
     for call in PROJECT_CREATES:
         blocked = await _decide(engine, call, variables)
         assert blocked.decision == "block", call
-        assert "project creation needs Josh's go through the Orchestrator" in (blocked.reason or "")
+        assert "project creation needs the operator's go through the Orchestrator" in (
+            blocked.reason or ""
+        )
     for call in NOT_PROJECT_CREATES:
         assert (await _decide(engine, call, variables)).decision == "allow", call
 
@@ -396,7 +398,6 @@ async def test_seat_write_scope_is_path_aware(
         return (await _decide(engine, data, seat)).decision
 
     assert await decision(ASSISTANT, _write(project, "docs/guide.md")) == "allow"
-    assert await decision(ASSISTANT, _write(project, ".gobby/roles/_common.md")) == "allow"
     for path in ("src/app.py", "docs-other/guide.md", "docs/../src/app.py"):
         blocked = await _decide(engine, _write(project, path), ASSISTANT)
         assert blocked.decision == "block", path

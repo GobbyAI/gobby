@@ -253,7 +253,7 @@ class TestRunPipeline:
 
         response = client.post(
             "/api/pipelines/run",
-            json={"name": "crew-coordination", "project_id": "proj-1"},
+            json={"name": "team-coordination", "project_id": "proj-1"},
         )
 
         assert response.status_code == 422

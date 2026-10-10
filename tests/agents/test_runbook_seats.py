@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -34,6 +32,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
@@ -166,17 +165,9 @@ def test_live_run_seat_admits(env: _Env, monkeypatch: pytest.MonkeyPatch, status
     assert [sql for sql in queries if "agent_runs" in sql] == []
 
 
-def test_seat_agent_definitions_resolved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_seat_agent_definitions_resolved(env: _Env) -> None:
     caller = _pipeline_child(env)
     _install_agent(env.db, "off-agent", env.project_id, enabled=False)
-    opened: list[str] = []
-    real_open = builtins.open
-
-    def recording_open(file: Any, *args: Any, **kwargs: Any) -> Any:
-        opened.append(str(file))
-        return real_open(file, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", recording_open)
     missing = [CATALOGUE[0], {"name": "dev", "title": "Dev", "agent": "ghost-agent"}]
     disabled = [CATALOGUE[0], {"name": "dev", "title": "Dev", "agent": "off-agent"}]
 
@@ -187,7 +178,6 @@ def test_seat_agent_definitions_resolved(env: _Env, monkeypatch: pytest.MonkeyPa
     seats = _check(env, caller)
 
     assert [seat.agent for seat in seats] == ["lead-agent", "dev-agent"]
-    assert [path for path in opened if ".gobby/roles" in path] == []
 
 
 @pytest.mark.parametrize(
@@ -484,14 +474,15 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
 
 
 @pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
-def test_crew_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
+def test_team_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
     """Outside lane inference, report targets still require explicit valid input."""
-    path = Path(__file__).parents[2] / ".gobby/workflows/pipelines/crew-lane.yaml"
+    path = get_bundled_pipelines_path() / "team-lane.yaml"
     definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
+        lane="3",
         workspace=env.workspace_id,
         seats="developer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,

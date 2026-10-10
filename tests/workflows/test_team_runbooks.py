@@ -1,4 +1,4 @@
-"""Render the approved crew-lane seats without launching live agents."""
+"""Render the approved team-lane seats without launching live agents."""
 
 from itertools import combinations
 from pathlib import Path
@@ -12,15 +12,35 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 ROOT = Path(__file__).resolve().parents[2]
-PIPELINES = ROOT / ".gobby/workflows/pipelines"
+PIPELINES = ROOT / "src/gobby/install/shared/workflows/pipelines"
+ROLE_NAMES = {
+    "developer": "developer",
+    "code-reviewer": "code reviewer",
+    "researcher": "researcher",
+    "lane-manager": "lane manager",
+}
 
 
-def test_crew_lane_contains_only_approved_seats() -> None:
-    paths = sorted(PIPELINES.glob("crew-*.yaml"))
-    assert [path.stem for path in paths] == ["crew-coordination", "crew-lane", "crew-planning"]
-    definition = PipelineDefinition.model_validate(
-        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+def _render_context(definition: PipelineDefinition, inputs: dict[str, Any]) -> dict[str, Any]:
+    """Build the render context the executor builds: declared string inputs keep their text."""
+    string_inputs = frozenset(
+        name for name, spec in definition.inputs.items() if spec.get("type") == "string"
     )
+    return {
+        "inputs": inputs,
+        "steps": {},
+        "invocation_id": "pilot-run",
+        "_string_inputs": string_inputs,
+    }
+
+
+def test_team_lane_contains_only_approved_seats() -> None:
+    paths = sorted(PIPELINES.glob("team-*.yaml"))
+    assert [path.stem for path in paths] == ["team-coordination", "team-lane", "team-planning"]
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
+    )
+    assert definition.name == "team-lane"
     assert definition.tags == ["runbook"]
     assert definition.resume_on_restart
     assert [step.id for step in definition.steps] == [
@@ -55,111 +75,78 @@ def test_crew_lane_contains_only_approved_seats() -> None:
             "agent": "lane-manager",
         },
     ]
+    assert definition.inputs["lane"]["required"] is True
     assert definition.inputs["seats"]["default"] == "developer"
     for name in ("workspace", "lane_pane", "worktree", "report_to", "lane_columns", "lane_rows"):
         assert definition.inputs[name]["default"] is None
         assert not definition.inputs[name].get("required", False)
-    assert "worktree_id" not in definition.inputs
+    assert set(definition.inputs) == {
+        "lane_columns",
+        "lane_rows",
+        "lane",
+        "workspace",
+        "lane_pane",
+        "worktree",
+        "seats",
+        "report_to",
+        "developer_provider",
+        "developer_model",
+        "developer_reasoning_effort",
+        "reviewer_provider",
+        "reviewer_model",
+        "reviewer_reasoning_effort",
+        "researcher_provider",
+        "researcher_model",
+        "researcher_reasoning_effort",
+        "manager_provider",
+        "manager_model",
+        "manager_reasoning_effort",
+    }
     assert [
         definition.inputs[f"reviewer_{name}"]["default"]
-        for name in ("provider", "model", "reasoning_effort", "role_file")
-    ] == ["claude", "claude-opus-5-5", "xhigh", "code-reviewer.md"]
+        for name in ("provider", "model", "reasoning_effort")
+    ] == ["claude", "claude-opus-5-5", "xhigh"]
     assert [
         definition.inputs[f"researcher_{name}"]["default"]
-        for name in ("provider", "model", "reasoning_effort", "role_file")
-    ] == ["codex", "gpt-6.1-sol", "medium", "researcher.md"]
+        for name in ("provider", "model", "reasoning_effort")
+    ] == ["codex", "gpt-6.1-sol", "medium"]
     assert [
         definition.inputs[f"manager_{name}"]["default"]
-        for name in ("provider", "model", "reasoning_effort", "role_file")
-    ] == ["claude", "claude-sonnet-5-5", "medium", "lane-manager.md"]
+        for name in ("provider", "model", "reasoning_effort")
+    ] == ["claude", "claude-sonnet-5-5", "medium"]
+
+
+def test_team_lane_passes_lane_to_every_seat() -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
+    )
+    seat_steps = definition.steps[1:]
+    assert [step.id for step in seat_steps] == [
+        "developer",
+        "code-reviewer",
+        "researcher",
+        "lane-manager",
+    ]
+    for step in seat_steps:
+        assert step.mcp is not None and step.mcp.arguments is not None
+        assert (step.mcp.server, step.mcp.tool) == ("gobby-agents", "spawn_agent")
+        assert step.mcp.arguments["lane"] == "${{ inputs.lane }}"
 
 
 @pytest.mark.parametrize(
-    ("seat", "prefix", "title", "lane", "provider", "model", "effort", "role_file"),
+    ("seat", "prefix", "title", "lane", "provider", "model", "effort"),
     [
-        (
-            "developer",
-            "developer",
-            "developer",
-            "3",
-            "codex",
-            "gpt-6.1-sol",
-            "medium",
-            "lane-4-runbooks.md",
-        ),
-        (
-            "developer",
-            "developer",
-            "developer",
-            "6",
-            "claude",
-            "claude-opus-5-5",
-            "xhigh",
-            "lane-6-everything-else.md",
-        ),
-        (
-            "code-reviewer",
-            "reviewer",
-            "code reviewer",
-            "3",
-            "claude",
-            "claude-opus-5-5",
-            "xhigh",
-            "code-reviewer.md",
-        ),
-        (
-            "code-reviewer",
-            "reviewer",
-            "code reviewer",
-            "6",
-            "codex",
-            "gpt-6.1-sol",
-            "high",
-            "pilot-reviewer.md",
-        ),
-        (
-            "researcher",
-            "researcher",
-            "researcher",
-            "3",
-            "codex",
-            "gpt-6.1-sol",
-            "medium",
-            "researcher.md",
-        ),
-        (
-            "researcher",
-            "researcher",
-            "researcher",
-            "6",
-            "claude",
-            "claude-opus-5-5",
-            "high",
-            "pilot-researcher.md",
-        ),
-        (
-            "lane-manager",
-            "manager",
-            "manager",
-            "3",
-            "claude",
-            "claude-sonnet-5-5",
-            "medium",
-            "lane-manager.md",
-        ),
-        (
-            "lane-manager",
-            "manager",
-            "manager",
-            "6",
-            "claude",
-            "claude-opus-5-5",
-            "high",
-            "pilot-manager.md",
-        ),
+        ("developer", "developer", "developer", "3", "codex", "gpt-6.1-sol", "medium"),
+        ("developer", "developer", "developer", "6", "claude", "claude-opus-5-5", "xhigh"),
+        ("code-reviewer", "reviewer", "code reviewer", "3", "claude", "claude-opus-5-5", "xhigh"),
+        ("code-reviewer", "reviewer", "code reviewer", "6", "codex", "gpt-6.1-sol", "high"),
+        ("researcher", "researcher", "researcher", "3", "codex", "gpt-6.1-sol", "medium"),
+        ("researcher", "researcher", "researcher", "6", "claude", "claude-opus-5-5", "high"),
+        ("lane-manager", "manager", "manager", "3", "claude", "claude-sonnet-5-5", "medium"),
+        ("lane-manager", "manager", "manager", "6", "claude", "claude-opus-5-5", "high"),
     ],
 )
-def test_crew_lane_renders_operator_inputs(
+def test_team_lane_renders_operator_inputs(
     seat: str,
     prefix: str,
     title: str,
@@ -167,10 +154,9 @@ def test_crew_lane_renders_operator_inputs(
     provider: str,
     model: str,
     effort: str,
-    role_file: str,
 ) -> None:
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
@@ -187,14 +173,14 @@ def test_crew_lane_renders_operator_inputs(
             f"{prefix}_provider": provider,
             f"{prefix}_model": model,
             f"{prefix}_reasoning_effort": effort,
-            f"{prefix}_role_file": role_file,
         }
     )
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    context = _render_context(definition, inputs)
     renderer = StepRenderer(TemplateEngine())
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     guarded = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
+    assert guarded["lane"] == lane
     assert guarded["workspace"] == "pilot-workspace"
     assert guarded["requested"] == seat
     catalogued = next(entry for entry in guarded["catalogue"] if entry["name"] == seat)
@@ -218,6 +204,7 @@ def test_crew_lane_renders_operator_inputs(
     assert step.mcp is not None and step.mcp.arguments is not None
     args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert args["agent"] == seat
+    assert args["lane"] == lane
     assert (args["provider"], args["model"], args["reasoning_effort"]) == (provider, model, effort)
     assert args["execution_mode"] == "interactive"
     assert args["checkout_mode"] == "none"
@@ -232,12 +219,12 @@ def test_crew_lane_renders_operator_inputs(
             "title": f"Lane {lane} {title}",
         }
     }
-    assert f".gobby/roles/{role_file}" in args["prompt"]
-    assert ".gobby/roles/_common.md first" in args["prompt"]
-    assert f"Explicit lane assignment: Lane {lane}" in args["prompt"]
+    assert args["prompt"].startswith(f"You are the {ROLE_NAMES[seat]} seat for lane {lane}.")
+    assert "SRT denial" in args["prompt"]
+    assert ".gobby/" not in args["prompt"]
+    assert "installed agent definition" in args["prompt"]
     assert 'target="session", target_id="gobby#14972"' in args["prompt"]
     assert 'owner_session="gobby#14972"' in args["prompt"]
-    assert "/pilot/project/.gobby/roles/" in args["prompt"]
     inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
 
@@ -256,9 +243,9 @@ def test_crew_lane_renders_operator_inputs(
         ),
     ],
 )
-def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[str]) -> None:
+def test_team_lane_selects_only_requested_seats(requested: str, expected: list[str]) -> None:
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
     )
     context = {"inputs": {"seats": requested}}
     renderer = StepRenderer(TemplateEngine())
@@ -279,11 +266,11 @@ def test_crew_lane_selects_only_requested_seats(requested: str, expected: list[s
         )
     ],
 )
-def test_crew_lane_keeps_selected_seats_in_one_tab(
+def test_team_lane_keeps_selected_seats_in_one_tab(
     seats: tuple[str, ...], lane_pane: str | None
 ) -> None:
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((PIPELINES / "crew-lane.yaml").read_text())
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
@@ -294,7 +281,7 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
         worktree="pilot-worktree",
         report_to="gobby#14972",
     )
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    context = _render_context(definition, inputs)
     renderer = StepRenderer(TemplateEngine())
     anchor_pane = lane_pane or "pilot:inferred-pane"
     context["steps"]["guard"] = {
@@ -320,6 +307,7 @@ def test_crew_lane_keeps_selected_seats_in_one_tab(
             continue
         assert step.mcp is not None and step.mcp.arguments is not None
         args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+        assert args["lane"] == "6"
         placement = args["placement"]
         placements.append(placement)
         assert placement == {

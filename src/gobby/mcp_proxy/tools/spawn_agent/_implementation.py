@@ -132,6 +132,7 @@ async def spawn_agent_impl(
     write_paths_reason: str | None = None,
     reserved_run_id: str | None = None,
     placement: dict[str, Any] | None = None,
+    lane: str | None = None,
     agent_pane_reserver: AgentPaneReserver | None = None,
     project_context_authoritative: bool = False,
 ) -> dict[str, Any]:
@@ -666,6 +667,8 @@ async def spawn_agent_impl(
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
         resume_metadata["allow_closed_task"] = True
+    if lane and lane.strip():
+        resume_metadata["lane"] = lane.strip()
     if resume_target is not None:
         resume_metadata.update(
             {

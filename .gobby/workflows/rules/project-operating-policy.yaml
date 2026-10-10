@@ -1,0 +1,59 @@
+tags: [default, seat, project-policy]
+
+# This project's operating structure for seats: lanes, worktrees, queue caps,
+# load and quiet hours. Bundled definitions carry roles only; this rule carries
+# how this repository runs them. Lane focus and queues live in the open epics
+# labeled `lane`.
+rules:
+  project-operating-policy:
+    description: "Inject this project's operating policy for seats once per context epoch"
+    event: turn_start
+    enabled: true
+    priority: 21
+    when: >
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward']
+      and not variables.get('_project_policy_injected')
+    effects:
+      - type: inject_context
+        delivery: on_receipt
+        template: |
+          ## Project Operating Policy
+
+          - Brevity. Load `gobby-skills:get_skill(name="brevity", level="max")` at session start and after every compaction or clear, and apply it to every message and report.
+          - Integration branch: `0.5.0`. Authorized pushes run `git push origin <sha>:refs/heads/0.5.0`.
+          - Lanes, in priority order. Each lane's open epic carries the `lane` label; `gobby-tasks:list_tasks(label="lane")` is the current list.
+            1. Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed.
+            2. Rust front door, Stage 1 (#21543). Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
+            3. Telegram direct registration: a registered agent's operator chat routes to Telegram without the Assistant relaying. Sub-lanes allowed.
+            4. Close-out: close tasks whose commits sit in lane worktrees, then retire those worktrees. One seat.
+          - No new task outside a lane. Found work goes to the Orchestrator, which files it in the lane that owns it. Existing tasks and epics outside the lanes stay where they are.
+          - One task per lane or sub-lane seat. A candidate waiting on landing, activation or a live check is still that seat's task; read-only prep is fine. A developer whose task is reviewer-LANDed and only waits on landing, activation or close may hand it off with `escalate_task` (reason "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. Developer closes after landing.") and claim the next task when the Orchestrator directs. After landing and the Lane Manager's release, de-escalate it and the developer closes.
+          - Don't rebalance lanes. Add a developer and reviewer when a lane can take parallel work; never move tasks between lanes for load balancing. Seat moves are allowed.
+          - Worktrees. Only the Orchestrator creates worktrees. Each lane has one primary worktree, `lane-N-<lane-name>`; a sub-lane seat gets `lane-N-<lane-name>-K`, and it stays with that seat. Never create a worktree per task: a seat's next task goes on a new branch cut from the `0.5.0` tip inside its own worktree (`git switch -c <branch> 0.5.0`, once the previous branch is committed and the worktree is clean). Planners write in the main checkout on `0.5.0`; reviewers review in the developer's worktree.
+          - Close backlog cap: 10. The backlog is every task, across all lanes, whose candidate was sent and which is not yet closed. While it exceeds the cap, no new task is assigned; assignment resumes once it is at or under the cap. Planning tasks, tasks parked on an operator decision, and work that drives a backlog task to close don't count. Park any close that needs the operator's review and keep the lanes moving.
+          - Close admission. A passing `close_task(preview=true)` checks the deterministic gates only. Wait for the Lane Manager's explicit release before `close_task(preview=false)`. On `close_review_busy`, wait for the active reviewer and the release, then retry.
+          - Load. The heavy-work hold starts only after two consecutive five-minute load readings above 30; one reading, or 30 exactly, triggers nothing. It lifts after two consecutive readings below 24. No seat invents, lowers or changes a threshold, admission limit or escalation level: send any proposal to the operator through the Assistant and wait for approval. Give no load numbers unless load is breaching.
+          - Heavy-run cap: 4 concurrent heavy commands (cargo build, clippy, full-crate test runs, e2e suites, benchmarks), granted by the Release Manager.
+          - Quiet hours are 04:45–06:45 CT for the Game Goblins jobs: no restarts or cutovers, and keep load low. Game Goblins jobs are never rerun.
+          - Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode release keeps `MIN_GCODE_PRUNE_BUDGET_VERSION` in `src/gobby/code_index/gcode_gateway.py` equal to the crate version; a gdaemon release updates `MANAGED_BIN_VERSION_PINS`.
+          - The Assistant and the Orchestrator run in operator-opened panes. Launch the rest of a team with the bundled `team-coordination`, `team-lane` and `team-planning` runbooks.
+      - type: set_variable
+        delivery: on_receipt
+        variable: _project_policy_injected
+        value: true
+
+  reset-project-operating-policy-on-context-loss:
+    description: "Re-arm the project operating policy after context loss"
+    event: session_start
+    enabled: true
+    # Same condition and priority as reset-seat-common-on-context-loss.
+    priority: 8
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: _project_policy_injected
+        value: false

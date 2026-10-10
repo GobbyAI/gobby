@@ -29,7 +29,7 @@ and [project HTTP contract](../../../../../../../../docs/guides/http-endpoints.m
   Existing markers and validated identity govern registration. Agent sessions
   other than the Assistant and Orchestrator are blocked from both, and from
   `gobby install --no-interactive`, by `seat-no-project-create`: project
-  creation needs Josh's go through the Orchestrator.
+  creation needs the operator's go through the Orchestrator.
 - Preview drift from the checkout root with `gobby projects repair`; `--fix`
   registers a missing checkout only when the marker/root is valid. A moved
   checkout uses `gobby projects rebind PROJECT /absolute/root`, with a matching

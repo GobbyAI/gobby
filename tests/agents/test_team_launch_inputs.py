@@ -1,4 +1,4 @@
-"""Resolve crew-lane against isolated roster, session, workspace and worktree state."""
+"""Resolve team-lane against isolated run, session, workspace and worktree state."""
 
 import asyncio
 import json
@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal
+from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -27,6 +28,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus
+from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 from gobby.workflows.templates import TemplateEngine
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
@@ -61,39 +63,61 @@ def bind_terminal(db: HubDatabase, project: str, pane: str) -> str:
     return terminal
 
 
+def launch_manager(
+    db: HubDatabase,
+    *,
+    parent: str,
+    session: str,
+    lane: str | None,
+    agent_name: str = "lane-manager",
+    start: bool = True,
+) -> str:
+    """Record an agent run for ``session`` that declared ``lane`` at spawn."""
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent,
+        "codex",
+        "manage the lane",
+        agent_name=agent_name,
+        child_session_id=session,
+        resume_metadata_json=None if lane is None else {"lane": lane},
+    )
+    if start:
+        runs.start(run.id)
+    return run.id
+
+
+def register_manager(db: HubDatabase, project: str, name: str) -> str:
+    return (
+        SessionManager(db)
+        .register(
+            external_id=name,
+            machine_id=AGENT_TEST_MACHINE_ID,
+            source="codex",
+            project_id=project,
+        )
+        .id
+    )
+
+
 @pytest.fixture
 def lane_env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> LaneEnv:
     project = str(sample_project["id"])
     root = tmp_path / "checkout"
-    roles = root / ".gobby/roles"
-    roles.mkdir(parents=True)
+    root.mkdir()
     LocalProjectCheckoutManager(temp_db).rebind(AGENT_TEST_MACHINE_ID, project, str(root))
     sessions = SessionManager(temp_db)
-    managers = [
-        sessions.register(
-            external_id=f"manager-{lane}",
-            machine_id=AGENT_TEST_MACHINE_ID,
-            source="codex",
-            project_id=project,
-        ).id
-        for lane in range(1, 8)
-    ]
-    refs = [sessions.get(manager) for manager in managers]
-    assert all(refs)
-    (roles / "roster.md").write_text(
-        "| Role file | Session |\n| --- | --- |\n"
-        + "".join(f"| lane-manager.md | {ref.ref} |\n" for ref in refs if ref)
-        + "Lane 8 (developer gobby#15708, managed by the Lane 5 manager); "
-        + "Lane 9 (developer gobby#15786, managed by the Lane 4 manager).\n"
-    )
     caller = sessions.register(
         external_id="lane-input-caller",
         machine_id=AGENT_TEST_MACHINE_ID,
         source="pipeline",
         project_id=project,
     )
+    managers = [register_manager(temp_db, project, f"manager-{lane}") for lane in range(1, 8)]
+    for lane, manager in enumerate(managers, start=1):
+        launch_manager(temp_db, parent=caller.id, session=manager, lane=str(lane))
     workspaces = WorkspaceManager(temp_db)
-    workspace = workspaces.create(AGENT_TEST_MACHINE_ID, "crew")[0]
+    workspace = workspaces.create(AGENT_TEST_MACHINE_ID, "team")[0]
     pane = str(uuid4())
     workspaces.create_tab(workspace.id, pane_id=pane, project_id=project, title="Lane 3")
     terminal = bind_terminal(temp_db, project, pane)
@@ -123,12 +147,9 @@ def lane_env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Pat
 
 
 def resolve(env: LaneEnv, **overrides: Any) -> dict[str, Any]:
-    # Import in the test body so the initial RED proves the missing resolver behavior.
-    from gobby.agents.crew_lane_inputs import resolve_crew_lane_inputs
-
     overrides.setdefault("viewports", lambda terminal: env.shown.get(terminal, set()))
     return asdict(
-        resolve_crew_lane_inputs(
+        resolve_team_launch_inputs(
             env.db, caller_session_id=env.caller, lane=overrides.pop("lane", "3"), **overrides
         )
     )
@@ -213,8 +234,8 @@ def test_explicit_overrides_replace_all_inference(lane_env: LaneEnv, by_name: bo
     path.mkdir()
     tree = LocalWorktreeManager(lane_env.db).create(lane_env.project, "custom-branch", str(path))
     manager = lane_env.managers[0]
-    # Explicit inputs do not depend on the roster or an idle worktree.
-    (lane_env.root / ".gobby/roles/roster.md").unlink()
+    # Explicit inputs do not depend on a running lane-manager or an idle worktree.
+    lane_env.db.execute("UPDATE agent_runs SET status = 'completed'")
     values = resolve(
         lane_env,
         workspace="override" if by_name else workspace.id,
@@ -237,12 +258,8 @@ def test_explicit_overrides_replace_all_inference(lane_env: LaneEnv, by_name: bo
     assert values["report_to"] == report_target.ref
 
 
-@pytest.mark.parametrize("lane,manager_index", [("8", 4), ("9", 3)])
-def test_additional_lanes_use_roster_manager_exceptions(
-    lane_env: LaneEnv,
-    lane: str,
-    manager_index: int,
-) -> None:
+@pytest.mark.parametrize("lane", ["1", "4", "7"])
+def test_recorded_lane_selects_that_lane_manager(lane_env: LaneEnv, lane: str) -> None:
     values = resolve(
         lane_env,
         lane=lane,
@@ -250,14 +267,18 @@ def test_additional_lanes_use_roster_manager_exceptions(
         lane_pane=lane_env.pane,
         worktree=lane_env.worktree,
     )
-    manager = SessionManager(lane_env.db).get(lane_env.managers[manager_index])
+    manager = SessionManager(lane_env.db).get(lane_env.managers[int(lane) - 1])
     assert manager is not None
     assert values["report_to"] == manager.ref
 
 
-def test_roster_reassignment_changes_inferred_manager(lane_env: LaneEnv) -> None:
-    roster = lane_env.root / ".gobby/roles/roster.md"
-    roster.write_text(roster.read_text().replace("Lane 4 manager", "Lane 6 manager"))
+def test_reassigned_lane_changes_inferred_manager(lane_env: LaneEnv) -> None:
+    """The manager is whichever running lane-manager recorded the lane, not a fixed table."""
+    lane_env.db.execute(
+        'UPDATE agent_runs SET resume_metadata_json = \'{"lane": "9"}\'::jsonb '
+        "WHERE child_session_id = %s",
+        (lane_env.managers[5],),
+    )
     values = resolve(
         lane_env,
         lane="9",
@@ -270,13 +291,27 @@ def test_roster_reassignment_changes_inferred_manager(lane_env: LaneEnv) -> None
     assert values["report_to"] == manager.ref
 
 
-def test_missing_roster_assignment_refuses(lane_env: LaneEnv) -> None:
-    roster = lane_env.root / ".gobby/roles/roster.md"
-    roster.write_text(
-        roster.read_text().replace("managed by the Lane 4 manager", "manager unknown")
+@pytest.mark.parametrize("case", ["unrecorded", "other-agent", "not-running", "other-lane"])
+def test_lane_without_a_running_lane_manager_refuses(lane_env: LaneEnv, case: str) -> None:
+    session = register_manager(lane_env.db, lane_env.project, f"stray-{case}")
+    launch_manager(
+        lane_env.db,
+        parent=lane_env.caller,
+        session=session,
+        lane=None if case == "unrecorded" else "9" if case != "other-lane" else "8",
+        agent_name="developer" if case == "other-agent" else "lane-manager",
+        start=case != "not-running",
     )
-    with pytest.raises(RunbookSeatRefusal, match="Lane 9 has no manager row or parsable"):
+    with pytest.raises(RunbookSeatRefusal, match="Lane 9 manager.*candidates: none"):
         resolve(lane_env, lane="9")
+
+
+def test_two_running_lane_managers_for_a_lane_refuse_with_candidates(lane_env: LaneEnv) -> None:
+    second = register_manager(lane_env.db, lane_env.project, "manager-3-second")
+    launch_manager(lane_env.db, parent=lane_env.caller, session=second, lane="3")
+    with pytest.raises(RunbookSeatRefusal, match="Lane 3 manager.*candidates") as failure:
+        resolve(lane_env)
+    assert lane_env.manager in str(failure.value) and second in str(failure.value)
 
 
 def test_manager_pane_supplies_workspace_without_named_tab(lane_env: LaneEnv) -> None:
@@ -361,11 +396,11 @@ def test_ambiguous_lane_topology_refuses(
     sessions = SessionManager(lane_env.db)
     workspaces = WorkspaceManager(lane_env.db)
     if kind == "manager":
-        roster = lane_env.root / ".gobby/roles/roster.md"
         if count == 0:
             sessions.update(lane_env.manager, status="expired")
         else:
-            roster.write_text(roster.read_text() + "| lane-manager.md | duplicate |\n")
+            second = register_manager(lane_env.db, lane_env.project, "manager-3-duplicate")
+            launch_manager(lane_env.db, parent=lane_env.caller, session=second, lane="3")
     elif kind == "workspace":
         if count == 0:
             workspaces.rename_tab(workspaces.list_tabs(lane_env.workspace)[0].id, "Other")
@@ -399,15 +434,13 @@ def test_foreign_pane_does_not_override_workspace(lane_env: LaneEnv) -> None:
 def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguous: bool) -> None:
     """The real guard must resolve before a spawn step can render launch arguments."""
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load(
-            (Path(__file__).parents[2] / ".gobby/workflows/pipelines/crew-lane.yaml").read_text()
-        )
+        yaml.safe_load((get_bundled_pipelines_path() / "team-lane.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(seats="researcher", lane="3")
     executions = LocalPipelineExecutionManager(lane_env.db, lane_env.project)
     execution = executions.create_execution(
-        "crew-lane", inputs_json=json.dumps(inputs), project_id=lane_env.project
+        "team-lane", inputs_json=json.dumps(inputs), project_id=lane_env.project
     )
     sessions = SessionManager(lane_env.db)
     child = sessions.register(
@@ -462,4 +495,5 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
         205,
         59,
     )
-    assert str(lane_env.root) in launch["prompt"]
+    assert "researcher seat for lane 3" in launch["prompt"]
+    assert result["report_to"] in launch["prompt"]

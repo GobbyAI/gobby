@@ -29,7 +29,7 @@ _RESTART_FILES = frozenset({"pyproject.toml", "uv.lock"})
 _UI_BUILD_PREFIXES = ("web/",)
 
 # Paths the protected-branch guard lets a direct commit change.
-DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", ".gobby/roles/", "docs/")
+DIRECT_COMMIT_MARKDOWN_DIRS = (".gobby/plans/", "docs/")
 DIRECT_COMMIT_ANY_FILE_DIRS = (".gobby/plans/coverage/",)
 
 FREEZE_FILE_NAME = "landing-freeze.json"

@@ -53,7 +53,7 @@ from gobby.storage.workspaces import (
     layout_pane_ids,
 )
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.terminals.actor_scope import ActorScope
+from gobby.terminals.actor_scope import ActorScope, ActorScopeError, resolve_actor_scope
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.pane_io import TEXT_NOT_SUBMITTED_ERROR_CODE, _verified_submits
 from gobby.terminals.runtime import (
@@ -68,6 +68,7 @@ from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.condition_helpers_sessions import send_keys_target_in_scope
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
@@ -546,18 +547,43 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     still_live = h.terminals.get(agent.id)
     assert still_live is not None and still_live.state == "live"
 
-    # send_keys refuses autonomous callers itself; target scope is the
-    # block-cross-project-send-keys rule's decision, so the outsider resolves here.
-    for caller, error_code in (
-        (member, None),
-        (lead_child, None),
-        (outsider, None),
-        (autonomous, "send_keys_autonomous_agent_forbidden"),
-    ):
+    # send_keys admits autonomous callers (the opt-in no-send-keys rule withholds
+    # it from agents); target scope is the block-cross-project-send-keys rule's
+    # decision, so the outsider resolves here too.
+    for caller in (member, lead_child, outsider, autonomous):
         with session_context_for_test(caller.id):
             target_id, error = _authorize_send_keys_target(lead.id, h.sessions)
-        assert target_id == (lead.id if error_code is None else None)
-        assert (error or {}).get("error_code") == error_code
+        assert target_id == lead.id
+        assert error is None
+
+
+async def test_resolve_actor_scope_allow_autonomous_admits_only_when_opted_in(
+    harness: _Harness,
+) -> None:
+    h = harness
+    other_project = LocalProjectManager(h.db).create(name="allow-autonomous-outsider")
+    member = _session(h, "member", h.project_id)
+    outsider = _session(h, "outsider", other_project.id)
+    autonomous = _autonomous_session(h, member)
+    actor = f"session:{autonomous.id}"
+
+    with pytest.raises(ActorScopeError) as refused:
+        resolve_actor_scope(h.sessions, actor)
+    assert refused.value.reason == "autonomous_agent"
+
+    scope = resolve_actor_scope(h.sessions, actor, allow_autonomous=True)
+    assert scope.caller is not None and scope.caller.id == autonomous.id
+    assert scope.admits(project_id=h.project_id)
+    assert not scope.admits(project_id=other_project.id)
+
+    # Only the autonomous refusal is lifted: unresolved callers still fail.
+    with pytest.raises(ActorScopeError) as invalid:
+        resolve_actor_scope(h.sessions, "nobody", allow_autonomous=True)
+    assert invalid.value.reason == "invalid_actor"
+
+    # The send_keys scope condition scopes an autonomous caller like any other.
+    assert send_keys_target_in_scope(h.sessions, autonomous.id, member.id)
+    assert not send_keys_target_in_scope(h.sessions, autonomous.id, outsider.id)
 
 
 async def test_ops_publish_events_and_raise_typed_errors(harness: _Harness) -> None:

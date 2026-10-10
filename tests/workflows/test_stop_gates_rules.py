@@ -33,6 +33,7 @@ from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -585,6 +586,39 @@ class TestRequireTaskClose:
             source=SessionSource.AGY,
         )
         response = await engine.evaluate(event, SESSION_ID, variables)
+
+        assert response.decision == "block"
+        assert "require-task-close" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+    async def test_staged_handoff_credits_the_stop(
+        self, db: HubDatabase, event_type: HookEventType
+    ) -> None:
+        """A claimed task cannot deadlock self-compaction: a staged handoff ends the turn."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            **_claimed_task_variables(),
+            "_memory_initial_stop_checked": True,
+            HANDOFF_TURN_END_PENDING_VARIABLE: True,
+        }
+
+        response = await engine.evaluate(_make_event(event_type), SESSION_ID, variables)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_consumed_handoff_rearms_the_stop_gate(self, db: HubDatabase) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = {
+            **_claimed_task_variables(),
+            "_memory_initial_stop_checked": True,
+            HANDOFF_TURN_END_PENDING_VARIABLE: False,
+        }
+
+        response = await engine.evaluate(_make_event(HookEventType.STOP), SESSION_ID, variables)
 
         assert response.decision == "block"
         assert "require-task-close" in (response.reason or "")

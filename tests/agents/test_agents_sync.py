@@ -1273,12 +1273,17 @@ _STEPLESS_BUNDLED_AGENTS = frozenset(
         "archivist",
         "assistant",
         "comms-agent",
+        "debugger",
         "default",
+        "design-reviewer",
         "inbox-manager",
         "lane-manager",
-        "merge-manager",
         "memory-curator",
         "orchestrator",
+        "recovery-steward",
+        "release-manager",
+        "reporter",
+        "security-reviewer",
         "triage-agent",
     }
 )

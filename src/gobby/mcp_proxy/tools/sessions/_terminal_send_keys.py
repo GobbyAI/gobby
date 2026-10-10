@@ -59,15 +59,12 @@ def _authorize_send_keys_target(
         }
 
     try:
-        scope = resolve_actor_scope(session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}")
+        # Whether a spawned agent may use send_keys at all is the opt-in
+        # ``no-send-keys`` rule's decision, made before dispatch.
+        scope = resolve_actor_scope(
+            session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True
+        )
     except ActorScopeError as exc:
-        if exc.reason == "autonomous_agent":
-            return None, {
-                "success": False,
-                "error": "Autonomous agent sessions cannot use send_keys",
-                "error_code": "send_keys_autonomous_agent_forbidden",
-                "caller_session_id": exc.caller_session_id,
-            }
         error = (
             f"Send_keys caller session {exc.caller_session_id} not found"
             if exc.reason == "caller_not_found"

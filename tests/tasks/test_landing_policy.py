@@ -21,8 +21,8 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("paths", "expected"),
     [
-        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/example.py"], True),
-        ([".gobby/workflows/pipelines/crew-lane.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/example.py"], True),
+        ([".gobby/workflows/pipelines/example-lane.yml", "web/src/example.ts"], True),
         ([".gobby/workflows/pipelines/nested/example.yaml"], False),
         ([".gobby/workflows/pipelines/README.md"], False),
         (["src/gobby/install/shared/workflows/agents/example.yaml"], False),
@@ -51,16 +51,16 @@ def test_project_sync_is_independent_of_strongest_class(paths: list[str], expect
             "restart",
         ),
         (["web/src/App.tsx"], "ui_build"),
-        ([".gobby/workflows/pipelines/crew-lane.yaml"], "sync"),
-        ([".gobby/workflows/pipelines/crew-lane.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/pipelines/example-lane.yaml"], "sync"),
+        ([".gobby/workflows/pipelines/example-lane.yml", "docs/x.md"], "sync"),
         ([".gobby/workflows/pipelines/README.md"], "none"),
         ([".gobby/workflows/pipelines/nested/seat.yaml"], "none"),
-        ([".gobby/workflows/pipelines/crew-lane.yaml", "src/gobby/cli/main.py"], "restart"),
-        ([".gobby/workflows/pipelines/crew-lane.yaml", "crates/gcore/src/lib.rs"], "cutover"),
-        ([".gobby/workflows/pipelines/crew-lane.yaml", "web/src/App.tsx"], "ui_build"),
+        ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/cli/main.py"], "restart"),
+        ([".gobby/workflows/pipelines/example-lane.yaml", "crates/gcore/src/lib.rs"], "cutover"),
+        ([".gobby/workflows/pipelines/example-lane.yaml", "web/src/App.tsx"], "ui_build"),
         (
             [
-                ".gobby/workflows/pipelines/crew-lane.yaml",
+                ".gobby/workflows/pipelines/example-lane.yaml",
                 "src/gobby/install/shared/workflows/agents/researcher.yaml",
             ],
             "reload",
@@ -82,7 +82,6 @@ def test_classify_paths_strongest_class_wins(paths: list[str], expected: str) ->
     [
         ("README.md", True),
         (".gobby/plans/reviewer-landing.md", True),
-        (".gobby/roles/lane-6.md", True),
         ("docs/guides/sessions.md", True),
         (".gobby/plans/coverage/d45545c5/23273/x.coverage.yaml", True),
         (".gobby/plans/coverage/.regenerate.log", True),

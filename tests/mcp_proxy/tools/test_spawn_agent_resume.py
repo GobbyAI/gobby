@@ -1,4 +1,4 @@
-"""Explicit crew relaunch refuses invalid targets before allocating a seat."""
+"""Explicit team relaunch refuses invalid targets before allocating a seat."""
 
 import asyncio
 import subprocess

@@ -97,7 +97,7 @@ def test_payload_fields_unchanged(
 
     payload = _list_run_payload(run)
 
-    assert {key: value for key, value in payload.items() if key != "seat"} == {
+    assert {key: value for key, value in payload.items() if key not in ("seat", "lane")} == {
         **run.liveness_payload(),
         "run_id": "run-1",
         "task_ref": task_ref,
@@ -108,3 +108,17 @@ def test_payload_fields_unchanged(
         "tool_calls_count": 4,
         "turns_used": 2,
     }
+
+
+@pytest.mark.parametrize(
+    ("resume_metadata", "lane"),
+    [
+        pytest.param({"lane": "3", "task_ref": "#1"}, "3", id="recorded"),
+        pytest.param({"task_ref": "#1"}, None, id="absent"),
+        pytest.param(None, None, id="no-metadata"),
+    ],
+)
+def test_lane_projected_from_resume_metadata(
+    resume_metadata: dict[str, Any] | None, lane: str | None
+) -> None:
+    assert _list_run_payload(_run(resume_metadata))["lane"] == lane

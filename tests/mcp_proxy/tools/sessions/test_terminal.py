@@ -481,8 +481,8 @@ class TestRegisterTerminalTools:
         terminal_manager.resolve_live_for_session.assert_called_once_with(session)
         write_coordinator.write.assert_not_called()
 
-    def test_send_keys_rejects_autonomous_agent_caller(self) -> None:
-        """Autonomous agent sessions cannot inject keystrokes into any terminal."""
+    def test_send_keys_does_not_refuse_autonomous_agent_caller(self) -> None:
+        """Whether a spawned agent may send keys is the no-send-keys rule's decision."""
         registry = _TestRegistry(name="test", description="test")
         caller = MagicMock(
             id="caller-session",
@@ -507,15 +507,9 @@ class TestRegisterTerminalTools:
         ):
             result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
 
-        assert result == {
-            "success": False,
-            "error": "Autonomous agent sessions cannot use send_keys",
-            "error_code": "send_keys_autonomous_agent_forbidden",
-            "caller_session_id": "caller-session",
-            "idempotency_key": result["idempotency_key"],
-        }
-        session_manager.resolve_session_reference.assert_called_once_with("caller-session")
-        session_manager.get.assert_called_once_with("caller-session")
+        # The autonomous caller passes scope and reaches the terminal lookup.
+        assert result["error_code"] == "terminal_target_unavailable"
+        session_manager.get.assert_any_call("caller-session")
 
     @pytest.mark.parametrize("relationship", ["same_project", "caller_ancestor", "target_ancestor"])
     def test_send_keys_allows_in_scope_target(self, relationship: str) -> None:

@@ -10,7 +10,7 @@ from the provided content data, classifying each by type.
 
 ## Entity Types
 
-- **person** — A named individual (e.g., "Josh", "Alice Chen")
+- **person** — A named individual (e.g., "Alice Chen", "Sam Rivera")
 - **organization** — A company, team, or group (e.g., "Anthropic", "Google")
 - **tool** — A software tool, library, or framework (e.g., "Python", "Docker", "React")
 - **project** — A named project or repository (e.g., "Gobby", "FastAPI")
@@ -47,7 +47,7 @@ Return only a JSON object containing an array of extracted entities:
 {
   "entities": [
     {"entity": "Python", "entity_type": "tool"},
-    {"entity": "Josh", "entity_type": "person"},
+    {"entity": "Alice Chen", "entity_type": "person"},
     {"entity": "Gobby", "entity_type": "project"}
   ]
 }

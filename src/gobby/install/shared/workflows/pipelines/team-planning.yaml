@@ -1,20 +1,24 @@
-name: crew-planning
+name: team-planning
 type: pipeline
 version: "1.0"
 description: |
-  Relaunch selected seats in the shared checkout, in one lane tab.
+  Planning runbook: launches the plan writer and plan adversary seats into one lane tab
+  in the shared checkout. Each seat runs its own agent definition.
   Approved seats: plan-writer, plan-adversary.
-  The operator or the Orchestrator launches missing seats only, the Assistant only while the
-  Orchestrator is down; agent definitions own seat behavior.
-  Supply lane_pane to add seats to an existing tab across runs.
+
+  Placement: the plan writer opens the lane tab, or splits the lane_pane when one is
+  supplied; the plan adversary splits right of the plan writer. A seat requested without the
+  plan writer splits from lane_pane when one is supplied and otherwise opens its own tab.
+  Relaunch missing seats with a fresh run that names them in `seats`; a failed runbook
+  execution is never resumed. Supply lane_pane to add seats to an existing tab across runs.
 tags: [runbook]
 resume_on_restart: true
 
 inputs:
   lane:
     type: string
-    default: "7"
-    description: "Lane number used for the tab and seat titles"
+    required: true
+    description: "Lane for the tab and seat titles"
   workspace:
     type: string
     required: true
@@ -22,7 +26,7 @@ inputs:
   lane_pane:
     type: string
     default: null
-    description: "Existing lane pane to split; omit to open one Lane N tab"
+    description: "Existing lane pane to split; omit to open one lane tab"
   project_path:
     type: string
     required: true
@@ -38,35 +42,27 @@ inputs:
   plan_writer_provider:
     type: string
     default: claude
-    description: "Seat provider; override to change the roster default"
+    description: "Seat provider; override to change the default"
   plan_writer_model:
     type: string
     default: claude-opus-5-5
-    description: "Seat model; override to change the roster default"
+    description: "Seat model; override to change the default"
   plan_writer_reasoning_effort:
     type: string
     default: xhigh
-    description: "Seat reasoning effort; override to change the roster default"
-  plan_writer_role_file:
-    type: string
-    default: plan-writer.md
-    description: "Role filename under the shared checkout .gobby/roles/"
+    description: "Seat reasoning effort; override to change the default"
   plan_adversary_provider:
     type: string
     default: codex
-    description: "Seat provider; override to change the roster default"
+    description: "Seat provider; override to change the default"
   plan_adversary_model:
     type: string
     default: gpt-6.1-sol
-    description: "Seat model; override to change the roster default"
+    description: "Seat model; override to change the default"
   plan_adversary_reasoning_effort:
     type: string
     default: medium
-    description: "Seat reasoning effort; override to change the roster default"
-  plan_adversary_role_file:
-    type: string
-    default: plan-adversary.md
-    description: "Role filename under the shared checkout .gobby/roles/"
+    description: "Seat reasoning effort; override to change the default"
 
 steps:
   - id: guard
@@ -100,7 +96,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan writer seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.plan_writer_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        prompt: "You are the plan writer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.lane_pane,
           'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan writer'}}
@@ -121,7 +117,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan adversary seat. Your current session ref is fresh; read ${{ inputs.project_path }}/.gobby/roles/_common.md first, then ${{ inputs.project_path }}/.gobby/roles/${{ inputs.plan_adversary_role_file }} and follow that role. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Follow the installed agent definition and role for your standing duties and authority."
+        prompt: "You are the plan adversary seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.lane_pane or (steps['plan-writer'].output.pane_ref),
           'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan adversary'}}

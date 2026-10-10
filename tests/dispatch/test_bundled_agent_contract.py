@@ -270,7 +270,11 @@ def test_every_bundled_agent_declares_rule_selectors() -> None:
         workflows = AgentWorkflows.model_validate(data.get("workflows"))
         assert workflows.rule_selectors is not None, path.name
         if path.stem in {"expansion-qa", "triage-agent"}:
-            assert workflows.rule_selectors.include == ["tag:default", "tag:worker-safety"]
+            assert workflows.rule_selectors.include == [
+                "tag:default",
+                "tag:worker-safety",
+                "name:no-send-keys",
+            ]
             assert workflows.rule_selectors.exclude == ["tag:task-skill-gates"]
         elif path.stem == "comms-agent":
-            assert workflows.rule_selectors.include == ["tag:default"]
+            assert workflows.rule_selectors.include == ["tag:default", "name:no-send-keys"]

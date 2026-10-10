@@ -17,7 +17,9 @@ def test_recover_stale_claims_uses_projected_stage_state() -> None:
     source = _recovery_source()
 
     assert "projected_task_state" in source
-    assert ".status" not in source
+    # The recovery fence compares the agent run's status; task state must come from the
+    # projected stage state, never a task `.status` read.
+    assert ".status" not in source.replace("db_run.status", "")
 
 
 def test_recover_in_progress_failure_releases_claim_without_status_open() -> None:

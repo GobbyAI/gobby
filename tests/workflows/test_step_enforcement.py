@@ -103,7 +103,7 @@ async def test_runbook_unassigned_seat_can_bootstrap_and_report(
     seat: str,
     step: str,
 ) -> None:
-    """Role reads and live-owner reports work before assignment; writes stay gated."""
+    """Native reads and live-owner reports work before assignment; writes stay gated."""
     shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
     definition = yaml.safe_load((shared / f"{seat}.yaml").read_text())
     workflow = definition.pop("step_workflow")
@@ -113,8 +113,8 @@ async def test_runbook_unassigned_seat_can_bootstrap_and_report(
     body = AgentDefinitionBody.model_validate({**definition, "step_workflow": workflow})
     assert "session" in body.send_message_targets
     for native, arguments in [
-        ("Bash", {"command": "cat /Users/josh/Projects/gobby/.gobby/roles/_common.md"}),
-        ("Read", {"file_path": "/Users/josh/Projects/gobby/.gobby/roles/lane-4-runbooks.md"}),
+        ("Bash", {"command": "cat AGENTS.md"}),
+        ("Read", {"file_path": "AGENTS.md"}),
     ]:
         response = await engine.evaluate(
             _make_event(data={"tool_name": native, "tool_input": arguments}),
@@ -2417,25 +2417,22 @@ def _setup_operator_tool_session(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("step", [None, "terminate", "implement"])
-@pytest.mark.parametrize("flag", ["is_spawned_agent", "is_subagent"])
 @pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
-async def test_operator_tools_blocked_for_spawned_agents_and_subagents(
+async def test_operator_tools_blocked_for_native_subagents(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
     tool: str,
-    flag: str,
     step: str | None,
 ) -> None:
-    """Spawned agents and subagents cannot reach terminals from any step shape."""
+    """Provider-native subagents cannot reach terminals from any step shape."""
     _setup_operator_tool_session(db, manager, instance_mgr, step)
 
-    payload_agent_id = "agent-uuid" if flag == "is_subagent" else None
     response = await engine.evaluate(
-        _operator_tool_event(tool, agent_id=payload_agent_id),
+        _operator_tool_event(tool, agent_id="agent-uuid"),
         session_id=SESSION_ID,
-        variables={flag: True},
+        variables={"is_subagent": True},
     )
 
     assert response.decision == "block"
@@ -2519,7 +2516,7 @@ async def test_claude_subagent_payload_blocks_operator_tools(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_id", [None, "agent-uuid"])
 @pytest.mark.parametrize("tool", ["send_keys", "capture_output"])
-async def test_spawned_agent_operator_tools_blocked_with_or_without_payload_identity(
+async def test_spawned_agent_operator_tools_follow_the_payload_identity(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
@@ -2527,7 +2524,11 @@ async def test_spawned_agent_operator_tools_blocked_with_or_without_payload_iden
     tool: str,
     agent_id: str | None,
 ) -> None:
-    """Spawned agents stay blocked whether or not the payload names a subagent."""
+    """A spawned agent is not a subagent; only a payload-named native subagent is blocked.
+
+    Withholding terminal tools from a spawned agent is the opt-in no-send-keys
+    rule's decision, not operator-tool enforcement's.
+    """
     _setup_operator_tool_session(db, manager, instance_mgr, None)
 
     response = await engine.evaluate(
@@ -2536,9 +2537,12 @@ async def test_spawned_agent_operator_tools_blocked_with_or_without_payload_iden
         variables={"is_spawned_agent": True, "is_subagent": False},
     )
 
-    assert response.decision == "block"
-    assert response.reason is not None
-    assert "[operator-tool-enforcement]" in response.reason
+    if agent_id is None:
+        assert response.decision == "allow", response.reason
+    else:
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "[operator-tool-enforcement]" in response.reason
 
 
 @pytest.mark.asyncio
@@ -3611,6 +3615,7 @@ async def test_capability_neutral_tools_pass_step_allowlist(
 @pytest.mark.parametrize(
     ("mcp_key", "decision"),
     [
+        ("gobby-sessions:set_title", "allow"),
         ("gobby-memory:update_memory", "allow"),
         ("gobby-memory:create_memory", "allow"),
         ("gobby-memory:delete_memory", "allow"),
@@ -3618,7 +3623,7 @@ async def test_capability_neutral_tools_pass_step_allowlist(
         ("gobby-tasks:create_task", "block"),
     ],
 )
-async def test_bundled_developer_claim_allows_post_close_memory_maintenance(
+async def test_bundled_developer_claim_gates_its_mcp_tools(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
@@ -3626,7 +3631,7 @@ async def test_bundled_developer_claim_allows_post_close_memory_maintenance(
     mcp_key: str,
     decision: str,
 ) -> None:
-    """After submit returns to claim, prescribed memory writes remain reachable."""
+    """Claim keeps set_title and memory writes reachable; spawn and task creation stay blocked."""
     path = (
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/developer.yaml"

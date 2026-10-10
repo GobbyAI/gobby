@@ -222,8 +222,8 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         assert labelled["pane"]["label"] == "main"
         titled = await _ok(registry, "rename_workspace_item", ref=tab_ref, name="work")
         assert titled["tab"]["title"] == "work"
-        renamed = await _ok(registry, "rename_workspace_item", ref=home, name="crew")
-        assert renamed["workspace"]["name"] == "crew"
+        renamed = await _ok(registry, "rename_workspace_item", ref=home, name="team")
+        assert renamed["workspace"]["name"] == "team"
         assert await _code(registry, "rename_workspace_item", ref=home) == "invalid_op"
 
         other = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)

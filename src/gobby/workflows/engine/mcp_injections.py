@@ -35,7 +35,7 @@ _CACHED_INJECTION_TOOLS = frozenset(
         ("gobby-skills", "list_hubs"),
     }
 )
-# Memory recall waits up to this long rather than dropping its result (Josh,
+# Memory recall waits up to this long rather than dropping its result (the operator,
 # #22807); it must stay well inside workflow.timeout (24 s) with the other
 # turn-start inline calls. #22708 owns the underlying recall slowness.
 _INLINE_WAIT_CAP_SECONDS = 10.0

@@ -35,10 +35,20 @@ SEAT_CATALOGUE = {
     "researcher",
     "archivist",
     "log-monitor",
-    # #23752: the standing Inbox and Merge Manager seats.
     "inbox-manager",
-    "merge-manager",
+    "release-manager",
+    "reporter",
+    "security-reviewer",
+    "debugger",
+    "design-reviewer",
+    "recovery-steward",
 }
+# Root panes: the operator opens them, so they never take the spawn surface.
+PERSONA_ONLY_SEATS = {"assistant", "orchestrator"}
+# A short-lived spawned run: no persona surface, a bounded one-shot run.
+SPAWN_ONLY_SEATS = {"reporter"}
+# Seats whose definitions leave `name:no-send-keys` out of the rule selection.
+SEND_KEYS_SEATS = {"default", "assistant", "orchestrator", "lane-manager", "recovery-steward"}
 RUNBOOK_AGENTS = ("plan-writer", "plan-enhancer", "plan-adversary")
 
 # Decision 8: the runbooks list every read-only seat blocks.
@@ -54,7 +64,18 @@ READ_ONLY_BLOCKED_TOOLS = {
     "replace",
     "write_file",
 }
-READ_ONLY_SEATS = {"lane-manager", "code-reviewer", "log-monitor", "researcher", "inbox-manager"}
+READ_ONLY_SEATS = {
+    "lane-manager",
+    "code-reviewer",
+    "log-monitor",
+    "researcher",
+    "inbox-manager",
+    "reporter",
+    "security-reviewer",
+    "debugger",
+    "design-reviewer",
+    "recovery-steward",
+}
 WRITE_SCOPE_RULES = {"assistant": "assistant-write-scope", "archivist": "archivist-write-scope"}
 STEP_SEATS = {"developer", "code-reviewer", "log-monitor", "researcher"}
 
@@ -62,8 +83,8 @@ SYNC_METADATA_KEYS = {"tags", "priority", "type"}
 UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
 
 SEND_MESSAGE_TARGETS = {
-    "assistant": ["parent", "session", "project"],
-    "orchestrator": ["parent", "session", "project", "global"],
+    "assistant": ["parent", "session", "agent", "project", "global", "build"],
+    "orchestrator": ["parent", "session", "agent", "project", "global", "build"],
     "lane-manager": ["parent", "session", "project"],
     "developer": ["parent", "session"],
     "code-reviewer": ["parent", "session"],
@@ -71,19 +92,16 @@ SEND_MESSAGE_TARGETS = {
     "archivist": ["parent", "session"],
     "log-monitor": ["parent", "session"],
     "inbox-manager": ["parent", "session"],
-    "merge-manager": ["parent", "session", "project"],
+    "release-manager": ["parent", "session", "project"],
+    "reporter": ["session"],
+    "security-reviewer": ["parent", "session"],
+    "debugger": ["parent", "session"],
+    "design-reviewer": ["parent", "session"],
+    "recovery-steward": ["parent", "session"],
 }
-ORCHESTRATOR_INCLUDES = {
-    "tag:worker-safety",
-    "name:no-force-push-interactive",
-    "name:no-destructive-git-interactive",
-}
-ORCHESTRATOR_EXCLUDES = [
-    "name:no-daemon-management",
-    "name:no-daemon-management-http",
-    "name:block-git-worktree-mutations",
-    "name:block-update-task",
-]
+# The Assistant and Orchestrator are root panes under the interactive rules.
+ROOT_PANE_INCLUDES = ["tag:default"]
+ROOT_PANE_EXCLUDES = ["name:block-update-task"]
 
 # Steps that wait on another session report and wait from the step itself.
 # #23750 adds the developer and code-reviewer load_skills and the developer
@@ -198,7 +216,7 @@ def _assert_step_workflow(name: str, seat: dict[str, Any]) -> None:
 def test_seat_run_lifetime(name: str) -> None:
     seat = _bundled()[name]
     body = AgentDefinitionBody.model_validate(seat)
-    assert body.execution_mode == "interactive"
+    assert body.execution_mode == ("one_shot" if name in SPAWN_ONLY_SEATS else "interactive")
     if name == "researcher":
         assert body.idle_ttl_seconds == 900
     else:
@@ -211,12 +229,20 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     seat = _bundled()[name]
     prompt = _prompt(seat)
 
-    assert seat["surfaces"] == ["spawn", "persona"]
-    assert seat["prompts"]["persona"] == prompt
+    if name in PERSONA_ONLY_SEATS:
+        assert seat["surfaces"] == ["persona"]
+    elif name in SPAWN_ONLY_SEATS:
+        assert seat["surfaces"] == ["spawn"]
+    else:
+        assert seat["surfaces"] == ["spawn", "persona"]
+    if "persona" in seat["surfaces"]:
+        assert seat["prompts"]["persona"] == prompt
+    else:
+        assert "persona" not in seat["prompts"]
     assert seat["provider"] == "inherit"
     assert "model" not in seat
     assert seat["checkout_mode"] == "inherit"
-    assert seat["timeout"] == 0
+    assert seat["timeout"] == (900 if name in SPAWN_ONLY_SEATS else 0)
     assert set(seat) <= set(AgentDefinitionBody.model_fields) | SYNC_METADATA_KEYS
     assert not set(seat) & UNSUPPORTED_KEYS
     assert validate_workflow_definition_data(seat, expected_type="agent") == "agent"
@@ -224,13 +250,14 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
 
     selectors = _selectors(seat)
     include = selectors.get("include") or []
-    assert "tag:roles" in include
+    assert "tag:roles" not in include
+    assert ("name:no-send-keys" in include) is (name not in SEND_KEYS_SEATS)
     assert not any("review-learning" in entry for value in selectors.values() for entry in value)
-    if name in {"assistant", "lane-manager"}:
+    if name == "lane-manager":
         assert "tag:worker-safety" in include
-    if name == "orchestrator":
-        assert ORCHESTRATOR_INCLUDES <= set(include)
-        assert selectors["exclude"] == ORCHESTRATOR_EXCLUDES
+    if name in PERSONA_ONLY_SEATS:
+        assert include == ROOT_PANE_INCLUDES
+        assert selectors["exclude"] == ROOT_PANE_EXCLUDES
 
     assert "## Platform Context" in prompt
     assert "## Skills" in prompt

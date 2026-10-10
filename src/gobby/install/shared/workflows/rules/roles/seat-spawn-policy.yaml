@@ -5,7 +5,7 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats, the Plan Writer included, do not spawn agents; recovery seats may resume one"
+    description: "Seats, the Plan Writer included, do not spawn agents; the Assistant, Orchestrator and Lane Managers may resume one"
     event: before_tool
     enabled: true
     priority: 10
@@ -15,7 +15,8 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
-        'merge-manager']
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward']
       and not (
         variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager']
         and tool_input.get('server_name') == 'gobby-agents'
@@ -31,10 +32,9 @@ rules:
           resume an existing session with spawn_agent resume_session_id; send other
           work to the Orchestrator.
 
-  # Josh (2026-10-09): "Orchestrator and Assistant can run pipelines, though
-  # Orchestrator should be primary on that, and Assistant should only do it if
-  # Orchestrator is down." The primary and backup split is a norm in the seat
-  # guidance and definitions; these rules let both seats launch.
+  # The Orchestrator is the primary pipeline launcher and the Assistant is the
+  # backup, launching only while the Orchestrator is down. The split is a norm in
+  # the seat guidance and definitions; these rules let both seats launch.
   seat-no-pipeline-launch:
     description: "Seats other than the Orchestrator and Assistant do not launch pipelines through MCP"
     event: before_tool
@@ -46,7 +46,8 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
-        'merge-manager']
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
       and tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
@@ -56,7 +57,7 @@ rules:
         reason: >-
           Only the Orchestrator launches pipelines, and the Assistant only while the
           Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
-          launch from Josh's surfaces or the Orchestrator; send the request to the
+          launch from the operator's surfaces or the Orchestrator; send the request to the
           Orchestrator.
 
   # One block effect per rule, so the shell's pipeline and spawn launches are
@@ -70,7 +71,8 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
-        'merge-manager']
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
     effects:
       - type: block
@@ -79,7 +81,7 @@ rules:
         reason: >-
           Only the Orchestrator launches pipelines, and the Assistant only while the
           Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
-          launch from Josh's surfaces or the Orchestrator; send the request to the
+          launch from the operator's surfaces or the Orchestrator; send the request to the
           Orchestrator.
 
   seat-no-launch-cli:
@@ -91,7 +93,8 @@ rules:
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
-        'merge-manager']
+        'release-manager', 'reporter', 'security-reviewer', 'debugger',
+        'design-reviewer', 'recovery-steward']
     effects:
       - type: block
         tools: [Bash]
@@ -100,15 +103,15 @@ rules:
           Seats do not spawn agents from the shell. The automated task-close
           reviewer is the only spawn path; send the request to the Orchestrator.
 
-  # Josh (2026-10-09): "All agents except assistant and orchestrator need a rule
-  # preventing new project creation". Root sessions fall back to `_agent_type`
-  # 'default' and stay open. A spawned session is blocked whatever its type, the
-  # task-close reviewer and definition-less spawns included; the Assistant and
-  # Orchestrator pass even when a runbook spawned them. Surfaces: the proxy's
-  # init_project tool, `gobby init`, `gobby install --no-interactive` (it
-  # initializes a git root with no project), and any shell request naming the
-  # /api/projects/init route, which stays open for Josh's gclient and web flows.
-  # A grep, rg or gcode search that only names the route passes.
+  # Every agent except the Assistant and Orchestrator needs this rule against new
+  # project creation. Root sessions fall back to `_agent_type` 'default' and stay
+  # open. A spawned session is blocked whatever its type, the task-close reviewer
+  # and definition-less spawns included. The Assistant and Orchestrator are root
+  # persona panes and never spawned. Surfaces: the proxy's init_project tool,
+  # `gobby init`, `gobby install --no-interactive` (it initializes a git root with
+  # no project), and any shell request naming the /api/projects/init route, which
+  # stays open for the operator's gclient and web flows. A grep, rg or gcode search
+  # that only names the route passes.
   seat-no-project-create:
     description: "Only the Assistant, the Orchestrator and people's own sessions create projects"
     event: before_tool
@@ -124,5 +127,5 @@ rules:
         mcp_tools: ["gobby:init_project"]
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?(?:init\\b|install\\b[^;&|\\n]*--no-interactive\\b)|^(?!\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:[^\\s;&|]*/)?(?:grep|rg|gcode)\\b).*/api/projects/init\\b"
         reason: >-
-          Agents do not create or register Gobby projects: project creation needs
-          Josh's go through the Orchestrator. Send the request to the Orchestrator.
+          Agents do not create or register Gobby projects: project creation needs the
+          operator's go through the Orchestrator. Send the request to the Orchestrator.

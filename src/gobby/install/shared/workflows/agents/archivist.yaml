@@ -43,8 +43,8 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-      - "tag:roles"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
+      - "name:no-send-keys"
   variables: {}

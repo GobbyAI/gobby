@@ -1,8 +1,7 @@
 """Contract tests for the planning runbook's live seat definitions.
 
 The planning runbook spawns plan-writer, plan-enhancer and plan-adversary as
-live seats. Each definition carries its own seat role; none points the seat at
-a `.gobby/roles` file or `_common.md`.
+live seats. Each definition carries its own seat role.
 """
 
 from __future__ import annotations
@@ -99,6 +98,20 @@ def test_planning_seats_require_coverage_skill(name: str) -> None:
     ]
 
 
+def test_writer_load_step_takes_messages_before_skills_load() -> None:
+    workflow = _load("plan-writer").step_workflow
+    assert workflow is not None
+    load = next(step for step in workflow.steps if step.name == "load_skill")
+    assert "gobby-agents:send_message" in (load.allowed_mcp_tools or [])
+
+
+@pytest.mark.parametrize("name", SEATS)
+def test_planning_seats_select_the_no_send_keys_rule(name: str) -> None:
+    selectors = _load(name).workflows.rule_selectors
+    assert selectors is not None
+    assert "name:no-send-keys" in selectors.include
+
+
 def _load(name: str) -> AgentDefinitionBody:
     path = get_bundled_agents_path() / f"{name}.yaml"
     return AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
@@ -146,9 +159,6 @@ def test_seat_instructions_carry_seat_role() -> None:
         assert "plan-writer" in text
     assert "consensus" in adversary
     assert "## M1 Task Manifest" in adversary
-    for name, text in zip(SEATS, (writer, enhancer, adversary), strict=True):
-        assert ".gobby/roles" not in text, name
-        assert "_common.md" not in text, name
 
 
 def test_writer_spawns_no_enhancer_enhancer_stays_live() -> None:

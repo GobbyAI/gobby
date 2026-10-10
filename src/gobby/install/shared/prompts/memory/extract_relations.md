@@ -33,7 +33,7 @@ Respond with a JSON object containing an array of extracted relationships:
 ```json
 {
   "relations": [
-    {"source": "Josh", "relationship": "works_on", "destination": "Gobby"},
+    {"source": "Alice Chen", "relationship": "works_on", "destination": "Gobby"},
     {"source": "Gobby", "relationship": "uses", "destination": "Python"}
   ]
 }

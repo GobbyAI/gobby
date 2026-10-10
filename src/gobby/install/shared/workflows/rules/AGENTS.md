@@ -7,14 +7,14 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
 | `worker-safety` | `worker-safety/` | 58 | Block git push (global + worker-scoped), force push, the operator-only landing override, destructive git/shell, unmanaged worktree/clone commands, direct provider launches, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, validation runs wrapped in pipes or command sequences, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
-| `tool-hygiene` | `tool-hygiene/` | 11 | Require `uv`, route memory operations through Gobby, keep `send_keys` and `capture_output` off web-chat callers and inside the caller's project and agent tree, limit spawned agents' `send_message` targets to `send_message_targets`, limit spawned agents to the agents their definition lists in `spawnable_agents`, and let only root sessions and spawned `default` or `orchestrator` agents choose a spawn's `network` profile |
+| `tool-hygiene` | `tool-hygiene/` | 12 | Require `uv`, route memory operations through Gobby, keep `send_keys` and `capture_output` off web-chat callers and inside the caller's project and agent tree; the opt-in `no-send-keys` rule, selected by name (`name:no-send-keys`) rather than by tag, blocks both calls for every definition that selects it; limit spawned agents' `send_message` targets to `send_message_targets`, limit spawned agents to the agents their definition lists in `spawnable_agents`, and let only root sessions and spawned `default` or `orchestrator` agents choose a spawn's `network` profile |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
 | `task-enforcement` | `task-enforcement/` | 21 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, refuse MCP task creation outside an open `lane` epic, block `update_task` unless the agent definition excludes `block-update-task`, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, fail closed on unresolved-scope shell writes, and enforce valid task transitions |
-| `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
-| `plan-mode` | `plan-mode/` | 7 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
+| `stop-gates` | `stop-gates/` | 7 | Require workflow completion and enforce the Found Work ladder before turn end |
+| `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 14 | Initial-load recovery gated on MCP proxy readiness, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
-| `context-handoff` | `context-handoff/` | 14 | Compact/resume handoffs, task context, user profile, and pressure nudges |
+| `context-handoff` | `context-handoff/` | 15 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `build-coordinator` | `build-coordinator/` | 1 | Require the build/coordination reference for Gobby build work |
 | `code-index` | `code-index/` | 8 | Require the code-index/overview reference, redirect broad source reads to `gcode`, and fail open when gcode cannot serve the checkout |
@@ -28,7 +28,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
 | `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
-| `roles` | `roles/` | 10 | Inject the shared seat guidance once per context epoch for catalogue seats (persona or spawned), and re-arm it after context loss; block every seat's agent spawns through MCP or the gobby CLI, except that the Assistant, Orchestrator and Lane Managers may resume an existing session with `spawn_agent` `resume_session_id`; block pipeline launches through MCP or the gobby CLI for every seat except the Orchestrator (primary) and the Assistant (only while the Orchestrator is down); block project creation (`init_project`, `gobby init`, `gobby install --no-interactive`, shell requests to `/api/projects/init`) for every agent except the Assistant and Orchestrator, spawned sessions included, leaving people's root sessions open; redirect every seat's `AskUserQuestion` to `send_message`; scope Assistant and Archivist writes by resolved path |
+| `roles` | `roles/` | 10 | Inject the shared seat guidance once per context epoch for catalogue seats (persona or spawned), and re-arm it after context loss; the Assistant and Orchestrator are root persona panes and are never spawned; block every seat's agent spawns through MCP or the gobby CLI, except that the Assistant, Orchestrator and Lane Managers may resume an existing session with `spawn_agent` `resume_session_id`; block pipeline launches through MCP or the gobby CLI for every seat except the Orchestrator (primary) and the Assistant (only while the Orchestrator is down); block project creation (`init_project`, `gobby init`, `gobby install --no-interactive`, shell requests to `/api/projects/init`) for every agent except the Assistant and Orchestrator, spawned sessions included, leaving people's root sessions open; redirect every seat's `AskUserQuestion` to `send_message`; scope Assistant writes to `docs/` and Archivist writes to the dated desktop digest by resolved path |
 
 Experiments that belong to one project are not bundled. They live in that
 repository's `.gobby/workflows/rules/`, which `gobby install`/`gobby sync` syncs
@@ -95,7 +95,7 @@ Tags serve two purposes:
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load interactive-session rules. Worker agents select the group tags needed for their role.
 
-`pipeline-enforcement` omits `default` and is selected explicitly. `worker-safety` combines default-tagged interactive protections with worker protections selected by group tag.
+`pipeline-enforcement` and `no-send-keys` omit `default` and are selected explicitly, `no-send-keys` by name. `worker-safety` combines default-tagged interactive protections with worker protections selected by group tag.
 
 ### Group Tags
 

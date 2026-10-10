@@ -63,6 +63,7 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "name:no-send-keys"
     exclude:
       - "tag:task-skill-gates"
 

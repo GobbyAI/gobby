@@ -107,6 +107,7 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "name:no-send-keys"
 step_workflow:
   variables:
     task_claimed: false

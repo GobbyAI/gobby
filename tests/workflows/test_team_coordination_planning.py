@@ -1,5 +1,6 @@
-"""Exercise the project runbooks through the pipeline schema and renderer."""
+"""Exercise the team coordination and planning runbooks through the schema and renderer."""
 
+import re
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -11,24 +12,23 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
-PIPELINES = Path(__file__).resolve().parents[2] / ".gobby/workflows/pipelines"
+PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
 SEATS = {
-    "crew-coordination": (
-        "assistant",
-        "orchestrator",
+    "team-coordination": (
         "archivist",
         "log-monitor",
-        "merge-manager",
+        "release-manager",
         "inbox-manager",
+        "recovery-steward",
     ),
-    "crew-planning": ("plan-writer", "plan-adversary"),
+    "team-planning": ("plan-writer", "plan-adversary"),
 }
-ROLE_FILES = {seat: f"{seat}.md" for seats in SEATS.values() for seat in seats}
-ROLE_FILES["log-monitor"] = "monitor.md"
+SHARED_INPUTS = {"lane", "workspace", "lane_pane", "project_path", "seats", "report_to"}
+STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
 
 
 @pytest.mark.parametrize("pipeline", SEATS)
-def test_crew_runbook_guards_only_approved_seats(pipeline: str) -> None:
+def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / f"{pipeline}.yaml").read_text())
     )
@@ -37,11 +37,17 @@ def test_crew_runbook_guards_only_approved_seats(pipeline: str) -> None:
     assert definition.resume_on_restart
     assert [step.id for step in definition.steps] == ["guard", *SEATS[pipeline]]
     assert definition.inputs["seats"]["default"] == SEATS[pipeline][0]
+    assert definition.inputs["lane"]["required"] is True
     assert definition.inputs["workspace"]["required"]
     assert definition.inputs["project_path"]["required"]
     assert definition.inputs["report_to"]["required"]
     assert definition.inputs["lane_pane"]["default"] is None
-    assert "worktree_id" not in definition.inputs
+    seat_inputs = {
+        f"{seat.replace('-', '_')}_{name}"
+        for seat in SEATS[pipeline]
+        for name in ("provider", "model", "reasoning_effort")
+    }
+    assert set(definition.inputs) == SHARED_INPUTS | seat_inputs
     guard = definition.steps[0].mcp
     assert guard is not None
     assert (guard.server, guard.tool) == ("gobby-agents", "check_runbook_seats")
@@ -50,6 +56,21 @@ def test_crew_runbook_guards_only_approved_seats(pipeline: str) -> None:
     assert [(entry["name"], entry["agent"]) for entry in guard.arguments["catalogue"]] == [
         (seat, seat) for seat in SEATS[pipeline]
     ]
+
+
+@pytest.mark.parametrize("pipeline", SEATS)
+def test_team_placements_reference_only_defined_steps(pipeline: str) -> None:
+    text = (PIPELINES / f"{pipeline}.yaml").read_text()
+    definition = PipelineDefinition.model_validate(yaml.safe_load(text))
+    step_ids = {step.id for step in definition.steps}
+    assert set(STEP_REFERENCE.findall(text)) <= step_ids
+
+
+@pytest.mark.parametrize("pipeline", ["team-lane", "team-coordination", "team-planning"])
+def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
+    text = (PIPELINES / f"{pipeline}.yaml").read_text().lower()
+    for retired in ("assistant", "orchestrator", "merge-manager", "merge_manager"):
+        assert retired not in text, retired
 
 
 @pytest.mark.parametrize("lane_pane", [None, "pilot:existing-pane"])
@@ -62,7 +83,7 @@ def test_crew_runbook_guards_only_approved_seats(pipeline: str) -> None:
         for subset in combinations(catalogue, size)
     ],
 )
-def test_crew_runbook_renders_each_subset_in_one_tab(
+def test_team_runbook_renders_each_subset_in_one_tab(
     pipeline: str, seats: tuple[str, ...], lane_pane: str | None
 ) -> None:
     definition = PipelineDefinition.model_validate(
@@ -103,13 +124,14 @@ def test_crew_runbook_renders_each_subset_in_one_tab(
         assert args["project_path"] == "/pilot/shared-checkout"
         assert "worktree_id" not in args
         assert args["reserved_run_id"] == "pilot-run"
-        assert f".gobby/roles/{ROLE_FILES[step.id]}" in args["prompt"]
-        assert ".gobby/roles/_common.md first" in args["prompt"]
+        assert ".gobby/" not in args["prompt"]
+        assert "installed agent definition" in args["prompt"]
+        assert args["prompt"].startswith(f"You are the {step.id.replace('-', ' ')} seat.")
         assert 'target="session", target_id="gobby#14972"' in args["prompt"]
         assert 'owner_session="gobby#14972"' in args["prompt"]
         assert "every SRT denial" in args["prompt"]
-        assert "max_active_agents" in args["prompt"]
         assert "current session ref" in args["prompt"]
+        assert "wait_for_coordination" in args["prompt"]
         if anchor is None:
             assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
             anchor = f"pilot:{step.id}"
@@ -125,13 +147,14 @@ def test_crew_runbook_renders_each_subset_in_one_tab(
 @pytest.mark.parametrize(
     ("pipeline", "seat"), [(pipeline, seat) for pipeline, seats in SEATS.items() for seat in seats]
 )
-def test_crew_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str) -> None:
+def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str) -> None:
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / f"{pipeline}.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     prefix = seat.replace("-", "_")
     inputs.update(
+        lane="7",
         seats=seat,
         workspace="pilot-workspace",
         project_path="/pilot/shared-checkout",
@@ -142,7 +165,6 @@ def test_crew_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
             f"{prefix}_provider": "codex",
             f"{prefix}_model": "gpt-6.1-sol",
             f"{prefix}_reasoning_effort": "high",
-            f"{prefix}_role_file": "pilot-role.md",
         }
     )
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
@@ -156,6 +178,5 @@ def test_crew_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
         "gpt-6.1-sol",
         "high",
     )
-    assert ".gobby/roles/pilot-role.md" in args["prompt"]
     inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)

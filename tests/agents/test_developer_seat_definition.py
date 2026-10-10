@@ -93,7 +93,7 @@ def test_developer_carries_the_seat_shape() -> None:
     assert body.prompts is not None
     assert body.prompts.persona == body.prompts.agent
     assert body.workflows.rule_selectors is not None
-    assert {"tag:default", "tag:roles", "tag:worker-safety"} <= set(
+    assert {"tag:default", "tag:worker-safety", "name:no-send-keys"} <= set(
         body.workflows.rule_selectors.include
     )
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]

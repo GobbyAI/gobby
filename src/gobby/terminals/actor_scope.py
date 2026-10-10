@@ -1,11 +1,12 @@
 """Caller and target scope for effects on terminals (plan gclient-workspaces 2.1).
 
 An actor is ``operator`` or ``session:<id>``. The operator is in scope
-everywhere. A session actor must be an interactive session (an autonomous
-agent-run session is refused) and reaches a target in its own project, the
-session itself, or a session in its agent tree. ``send_keys``,
-``capture_output``, and every workspace op that kills, spawns into, adopts, or
-writes a terminal share it.
+everywhere. A session actor reaches a target in its own project, the session
+itself, or a session in its agent tree. An autonomous agent-run session is
+refused unless the caller opts in with ``allow_autonomous``: ``send_keys`` and
+``capture_output`` opt in, because the ``no-send-keys`` rule is what withholds
+them from agents, while every workspace op that kills, spawns into, adopts, or
+writes a terminal still refuses it.
 """
 
 from __future__ import annotations
@@ -62,8 +63,13 @@ class ActorScope:
         )
 
 
-def resolve_actor_scope(session_manager: SessionManager, actor: str) -> ActorScope:
-    """Resolve ``operator`` or ``session:<ref>``; raise ActorScopeError when refused."""
+def resolve_actor_scope(
+    session_manager: SessionManager, actor: str, *, allow_autonomous: bool = False
+) -> ActorScope:
+    """Resolve ``operator`` or ``session:<ref>``; raise ActorScopeError when refused.
+
+    An autonomous agent-run caller is refused unless ``allow_autonomous`` is set.
+    """
     if actor == OPERATOR_ACTOR:
         return ActorScope(session_manager)
     reference = actor.removeprefix(SESSION_ACTOR_PREFIX)
@@ -82,7 +88,7 @@ def resolve_actor_scope(session_manager: SessionManager, actor: str) -> ActorSco
             f"Caller session {caller_id} not found",
             caller_session_id=caller_id,
         )
-    if caller.agent_run_id:
+    if caller.agent_run_id and not allow_autonomous:
         raise ActorScopeError(
             "autonomous_agent",
             "Autonomous agent sessions cannot act on terminals",

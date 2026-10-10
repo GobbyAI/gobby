@@ -434,9 +434,11 @@ class EnforcementCheckMixin:
                     reason=reason,
                 )
 
-        # Operator terminal channels bypass allow-lists for the interactive parent.
-        # The payload's agent id decides a native subagent; the session flag is
-        # only the fallback for a CLI that sends no per-event identity.
+        # Operator terminal channels bypass allow-lists, but a provider-native
+        # subagent never drives them. A spawned Gobby agent is gated by the opt-in
+        # no-send-keys rule instead. The payload's agent id decides a native
+        # subagent; the session flag is only the fallback for a CLI that sends no
+        # per-event identity.
         if (
             operator_event_is_subagent(event.data, event.source, variables)
             and is_gobby_call_tool(tool_name)
@@ -446,8 +448,8 @@ class EnforcementCheckMixin:
             mcp_key = f"{tool_input.get('server_name', '')}:{tool_input.get('tool_name')}"
             reason = (
                 "Rule enforced by Gobby: [operator-tool-enforcement]\n"
-                f"MCP tool '{mcp_key}' is blocked for spawned agents and subagents: "
-                "terminal control belongs to interactive sessions.\n"
+                f"MCP tool '{mcp_key}' is blocked for subagents: "
+                "terminal control belongs to the session that spawned them.\n"
                 "Use gobby-agents:send_message for cross-session coordination. Do not "
                 "retry this call; repeating an identical denial three times ends an "
                 "autonomous run in a terminal blocked state."

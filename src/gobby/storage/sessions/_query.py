@@ -87,9 +87,18 @@ def _build_session_filters(
     task_ref_roles: Sequence[str] | None = None,
     created_after: str | None = None,
     created_before: str | None = None,
+    agent_type: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
+
+    if agent_type:
+        # The seat definition a session was typed with, stored as its _agent_type variable.
+        conditions.append(
+            "id IN (SELECT session_id FROM session_variables "
+            "WHERE variables ->> '_agent_type' = %s)"
+        )
+        params.append(agent_type)
 
     if status == "deleted":
         conditions.append("status = 'deleted'")
@@ -265,14 +274,16 @@ class _QueryMixin:
         source: str | None = None,
         limit: int = 100,
         machine_id: str | None = None,
+        agent_type: str | None = None,
     ) -> _Sessions:
         """Read list metadata and liveness without stored conversation bodies.
 
         These Session projections are for to_brief(), not full-session serialization.
         Task refs remain unloaded until the caller invokes load_task_refs().
+        ``agent_type`` keeps sessions whose ``_agent_type`` variable equals it.
         """
         conditions, params = _build_session_filters(
-            project_id, status, source, machine_id=machine_id
+            project_id, status, source, machine_id=machine_id, agent_type=agent_type
         )
         return _read_session_page(self.db, conditions, params, limit, _BRIEF_SESSION_COLUMNS)
 
@@ -315,6 +326,7 @@ class _QueryMixin:
         status: str | None = None,
         source: str | None = None,
         machine_id: str | None = None,
+        agent_type: str | None = None,
     ) -> int:
         """
         Count sessions with optional filters.
@@ -324,6 +336,7 @@ class _QueryMixin:
             status: Filter by status
             source: Filter by CLI source
             machine_id: Filter by client machine id
+            agent_type: Filter by the session's ``_agent_type`` variable
 
         Returns:
             Count of matching sessions
@@ -333,6 +346,7 @@ class _QueryMixin:
             status,
             source,
             machine_id=machine_id,
+            agent_type=agent_type,
         )
         where_clause = " AND ".join(conditions)
 

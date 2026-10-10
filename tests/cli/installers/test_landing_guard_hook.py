@@ -37,7 +37,6 @@ ALLOWED_PATHS = {
     "docs/sub/deep.md",
     "NOTES.md",
     ".gobby/plans/q.md",
-    ".gobby/roles/r.md",
     ".gobby/plans/coverage/q/2/q.coverage.yaml",
     ".gobby/plans/coverage/.regenerate.log",
 }
@@ -47,7 +46,6 @@ REFUSED_PATHS = {
     "src/gobby/install/shared/skills/s/SKILL.md",
     "docs/reference-audit/a.json",
     ".gobby/plans/x.svg",
-    ".gobby/roles/r.yaml",
     "README.txt",
 }
 

@@ -50,15 +50,15 @@ SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
 OBSERVATION_SELECTORS = frozenset(
     {
         "tag:default",
-        "tag:roles",
+        "name:no-send-keys",
         "tag:context-handoff",
         "tag:memory-lifecycle",
         "tag:worker-safety",
     }
 )
 RULE_SELECTORS = {
-    # Josh's hold (memory 62552350): never tag:review-learning.
-    "code-reviewer": frozenset({"tag:default", "tag:roles"}),
+    # The operator's hold: never tag:review-learning.
+    "code-reviewer": frozenset({"tag:default", "name:no-send-keys"}),
     "archivist": OBSERVATION_SELECTORS,
     "log-monitor": OBSERVATION_SELECTORS,
     "researcher": OBSERVATION_SELECTORS | {"tag:task-skill-gates"},

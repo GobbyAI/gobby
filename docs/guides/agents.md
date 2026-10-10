@@ -198,31 +198,43 @@ catalogue is pinned by
 
 | Definition | Responsibility |
 | --- | --- |
-| `assistant` | Communicates with the user and coordinates decisions |
-| `orchestrator` | Assigns and coordinates repository work |
+| `assistant` | Runs in an operator-opened pane. Communicates with the operator and coordinates decisions; never spawned |
+| `orchestrator` | Runs in an operator-opened pane. Assigns and coordinates repository work; never spawned |
 | `lane-manager` | Routes lane work, relays landings, and releases closes |
 | `developer` | Implements one claimed task at a time in its assigned lane |
 | `code-reviewer` | Reviews candidates, lands approved commits, and reports retests |
+| `security-reviewer` | Reviews candidates for security and gives LAND or BOUNCE beside the code reviewer |
+| `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
+| `debugger` | Tests one bug hypothesis and reports CONFIRMED, REFUTED or INCONCLUSIVE with its evidence |
+| `release-manager` | Keeps the landing and activation ledger, orders closes, activates landed work, and holds heavy-run slots |
+| `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts on quiet lanes |
 | `researcher` | Answers bounded research requests |
+| `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
 | `archivist` | Maintains the operational digest |
 | `log-monitor` | Monitors health and admits heavy work and close reviews |
 | `inbox-manager` | Consolidates lane reports for the Orchestrator |
-| `merge-manager` | Tracks landed sources and pending activation evidence |
 
 These templates are global installed definitions tagged `gobby` in storage;
-their YAML `seat` tag marks the file-based catalogue. They declare both
-`spawn` and `persona` surfaces, share one anchored prompt between the two,
-inherit provider and checkout mode, omit a model override, and use
-`execution_mode: interactive` with `timeout: 0`. Definitions never select a
-terminal backend. The researcher additionally declares `idle_ttl_seconds: 900`.
+their YAML `seat` tag marks the file-based catalogue. The Assistant and
+Orchestrator declare only the `persona` surface, because they run in
+operator-opened panes and are never spawned. The other standing seats declare
+both `spawn` and `persona` surfaces and share one anchored prompt between the
+two. Standing seats inherit provider and checkout mode, omit a model override,
+and use `execution_mode: interactive` with `timeout: 0`. The reporter is the one
+short-lived seat: spawn-only, with `execution_mode: one_shot` and a bounded
+`timeout`. Definitions never select a terminal backend. The researcher
+additionally declares `idle_ttl_seconds: 900`.
 
-Shared seat guidance is injected by the `roles` rules. Spawn and pipeline-launch
-restrictions prevent seats from bypassing their assigned role; the automatic
-task-close reviewer is the permitted managed review path. Definitions declare
-tool blocks; path-aware rules constrain seats with bounded write scopes.
-Seats with required skills or a fixed loop declare a step workflow. Message-driven
-seats need no empty serve loop. Inspect installed rows and selectors for effective
-policy; editing a bundled YAML alone does not activate it.
+Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
+rule group. The `no-send-keys` rule blocks `send_keys` and `capture_output` for
+every seat that selects it. The Assistant, Orchestrator, Lane Manager and
+Recovery Steward do not select it, so the rule does not block them. Spawn and
+pipeline-launch restrictions prevent seats from bypassing their assigned role;
+the automatic task-close reviewer is the permitted managed review path.
+Definitions declare tool blocks; path-aware rules constrain seats with bounded
+write scopes. Seats with required skills or a fixed loop declare a step workflow.
+Message-driven seats need no empty serve loop. Inspect installed rows and
+selectors for effective policy; editing a bundled YAML alone does not activate it.
 
 All lanes use the single `developer` definition. After claiming, it reads the
 task and routes additional skills by the touched paths:

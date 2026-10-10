@@ -123,6 +123,7 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "name:no-send-keys"
   variables:
     plan_mode: true
 step_workflow:

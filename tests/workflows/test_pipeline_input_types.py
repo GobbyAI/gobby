@@ -145,7 +145,8 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
     mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
 ) -> None:
     root = Path(__file__).resolve().parents[2]
-    definition = yaml.safe_load((root / ".gobby/workflows/pipelines/crew-lane.yaml").read_text())
+    bundled = root / "src/gobby/install/shared/workflows/pipelines"
+    definition = yaml.safe_load((bundled / "team-lane.yaml").read_text())
     # Keep the actual input declarations and guard; this test never executes a spawn step.
     definition["steps"] = definition["steps"][:1]
     pipeline = PipelineDefinition.model_validate(definition)
@@ -160,7 +161,7 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
     register_runbook_seat_tools(registry, ctx)
     proxy = GuardProxy(registry)
     execution = cast(MagicMock, mock_execution_manager.create_execution.return_value)
-    execution.pipeline_name = "crew-lane"
+    execution.pipeline_name = "team-lane"
 
     def update_status(*, execution_id: str, status: ExecutionStatus, **kwargs: Any) -> MagicMock:
         execution.status = status
@@ -184,12 +185,12 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
         patch("gobby.cli.pipelines.get_pipeline_executor", return_value=executor),
         patch("gobby.utils.project_context.get_project_context", return_value=None),
         patch(
-            "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_crew_lane_inputs",
+            "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_team_launch_inputs",
             side_effect=RunbookSeatRefusal("isolated lane guard reached; no seat launched"),
         ) as resolve,
     ):
         result = CliRunner().invoke(
-            pipelines, ["run", "crew-lane", "-i", "seats=researcher", "-i", "lane=3", "--json"]
+            pipelines, ["run", "team-lane", "-i", "seats=researcher", "-i", "lane=3", "--json"]
         )
 
     assert result.exit_code == 1  # The isolated guard deliberately refuses the launch.

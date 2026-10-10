@@ -128,7 +128,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
         with (
             caplog.at_level(logging.WARNING, logger="gobby"),
             patch(
-                "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_crew_lane_inputs",
+                "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_team_launch_inputs",
                 side_effect=RunbookSeatRefusal(reason),
             ),
         ):

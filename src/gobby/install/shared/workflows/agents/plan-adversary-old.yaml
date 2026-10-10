@@ -267,6 +267,7 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "name:no-send-keys"
     exclude:
       # Review/orchestration agents deliberately exclude task-skill gates:
       # lifecycle calls are stage-control actions, not discovery deliverables.

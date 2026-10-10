@@ -50,16 +50,15 @@ def operator_event_is_subagent(
     source: SessionSource | str | None,
     variables: dict[str, Any],
 ) -> bool:
-    """Whether this tool event must not drive an operator terminal channel.
+    """Whether this tool event comes from a provider-native subagent.
 
-    Spawned agents are always blocked. A non-empty ``agent_context_key`` is the
-    issuing native subagent on any CLI. Claude Code omits that key on the main
-    thread, so an empty key is the parent even while ``is_subagent`` is set.
-    Codex and Grok tool events do not carry the key, and those calls keep the
-    session flag.
+    A spawned Gobby agent is not a subagent here: whether it may drive a terminal
+    channel is the opt-in ``no-send-keys`` rule's decision. A non-empty
+    ``agent_context_key`` is the issuing native subagent on any CLI. Claude Code
+    omits that key on the main thread, so an empty key is the parent even while
+    ``is_subagent`` is set. Codex and Grok tool events do not carry the key, and
+    those calls keep the session flag.
     """
-    if variables.get("is_spawned_agent"):
-        return True
     if agent_context_key(event_data):
         return True
     if parse_session_source(source) == SessionSource.CLAUDE:

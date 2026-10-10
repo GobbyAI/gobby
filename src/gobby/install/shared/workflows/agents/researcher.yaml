@@ -31,7 +31,7 @@ prompts:
   agent: &seat |
     ## Role
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
-    - Send findings and proposals to the Orchestrator. Anything Josh must decide goes through the Assistant.
+    - Send findings and proposals to the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask the Orchestrator before killing processes or touching other sessions' resources.
 
     ## Messages
@@ -51,11 +51,11 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-      - "tag:roles"
       - "tag:context-handoff"
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
+      - "name:no-send-keys"
   variables: {}
 
 # Decision 7: required skills need a load step; the seat then serves with no
@@ -112,7 +112,7 @@ step_workflow:
       description: "Research and report"
       status_message: |
         Research the routed question and report findings and proposals to the
-        Orchestrator; send decisions for Josh through the Assistant.
+        Orchestrator; send decisions for the operator through the Assistant.
       # Read-only internal reads (research, memory, sessions, plans) pass any
       # step allowlist; these entries name title bootstrap and messaging.
       allowed_mcp_tools:

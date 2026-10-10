@@ -218,7 +218,11 @@ async def test_restarted_recovery_preserves_rebound_session_claim(
     if owns_recovery:
         assert task.id not in variables.get_variables(session.id)["claimed_tasks"]
         return
-    assert variables.get_variables(session.id)["claimed_tasks"] == {task.id: f"#{task.seq_num}"}
+    # A claim that moved to another session leaves the former owner's projection when it is
+    # released (#23886); recovery itself never touches it.
+    assert variables.get_variables(session.id)["claimed_tasks"] == (
+        {} if binding == "reclaim-during-kill" else {task.id: f"#{task.seq_num}"}
+    )
     if binding == "rebound":
         assert await handler.recover_tasks_from_terminal_agents() == 0
         assert sweep_runs.detail_reads == [old_id]

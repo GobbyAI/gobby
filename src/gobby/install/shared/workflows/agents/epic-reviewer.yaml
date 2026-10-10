@@ -98,6 +98,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
+      - "name:no-send-keys"
 step_workflow:
   variables:
     task_claimed: false

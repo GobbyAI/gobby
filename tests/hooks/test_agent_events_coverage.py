@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from importlib.resources import files
 from types import SimpleNamespace
@@ -59,6 +60,15 @@ PREAMBLE_GUARD = {
     "_agent_identity_reinject": False,
     "_agent_context_rehydrate_pending": False,
 }
+
+
+def _subset_reader(variables: dict[str, Any]) -> Callable[..., dict[str, Any]]:
+    """Stand-in for SessionVariableManager.get_variable_subset over a live dict."""
+
+    def _read(_self: Any, _session_id: str, keys: Iterable[str]) -> dict[str, Any]:
+        return {key: variables[key] for key in keys if key in variables}
+
+    return _read
 
 
 def _staged_preamble_guard(response: HookResponse) -> dict[str, Any]:
@@ -299,13 +309,15 @@ class TestHandleBeforeAgent:
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value={
-                    "_agent_type": "default",
-                    "_active_skill_names": ["brevity"],
-                    "_agent_context_injected": False,
-                    "_agent_context_rehydrate_pending": True,
-                },
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(
+                    {
+                        "_agent_type": "default",
+                        "_active_skill_names": ["brevity"],
+                        "_agent_context_injected": False,
+                        "_agent_context_rehydrate_pending": True,
+                    }
+                ),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -358,17 +370,14 @@ class TestHandleBeforeAgent:
             "_agent_context_rehydrate_pending": True,
         }
 
-        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
-            return dict(variables)
-
         def _merge_variables(_self: Any, _session_id: str, updates: dict[str, Any]) -> bool:
             variables.update(updates)
             return True
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                _get_variables,
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(variables),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -416,14 +425,16 @@ class TestHandleBeforeAgent:
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value={
-                    "_agent_type": "backend-developer",
-                    "_persona_name": "qa-reviewer",
-                    "_agent_context_injected": False,
-                    "_agent_context_rehydrate_pending": True,
-                    "is_spawned_agent": True,
-                },
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(
+                    {
+                        "_agent_type": "backend-developer",
+                        "_persona_name": "qa-reviewer",
+                        "_agent_context_injected": False,
+                        "_agent_context_rehydrate_pending": True,
+                        "is_spawned_agent": True,
+                    }
+                ),
             ),
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
             patch("gobby.workflows.agent_resolver.resolve_agent", return_value=agent) as resolve,
@@ -453,12 +464,14 @@ class TestHandleBeforeAgent:
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value={
-                    "_agent_type": "default",
-                    "_agent_context_injected": False,
-                    "_agent_context_rehydrate_pending": False,
-                },
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(
+                    {
+                        "_agent_type": "default",
+                        "_agent_context_injected": False,
+                        "_agent_context_rehydrate_pending": False,
+                    }
+                ),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -511,17 +524,14 @@ class TestHandleBeforeAgent:
             "_agent_context_rehydrate_pending": False,
         }
 
-        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
-            return dict(variables)
-
         def _merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
             variables.update(updates)
             return True
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                _get_variables,
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(variables),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -590,17 +600,14 @@ class TestHandleBeforeAgent:
             "_agent_context_rehydrate_pending": True,
         }
 
-        def _get_variables(_self: Any, _session_id: str) -> dict[str, Any]:
-            return dict(variables)
-
         def _merge_variables(_session_id: str, updates: dict[str, Any]) -> bool:
             variables.update(updates)
             return True
 
         with (
             patch(
-                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                _get_variables,
+                "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
+                _subset_reader(variables),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",

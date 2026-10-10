@@ -1090,7 +1090,7 @@ async def test_pipeline_sync_landing_and_recovery(
     sha = case.candidate(
         "pipeline-sync",
         {
-            ".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n",
+            ".gobby/workflows/pipelines/example-lane.yaml": "name: example-lane\n",
             other_path: "example\n",
         },
     )
@@ -1138,7 +1138,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
 ) -> None:
     sha = case.candidate(
         "pipeline-sync",
-        {".gobby/workflows/pipelines/crew-lane.yaml": "name: crew-lane\n"},
+        {".gobby/workflows/pipelines/example-lane.yaml": "name: example-lane\n"},
     )
     task = case.reviewed(sha, "Project pipeline sync")
     if move_tip:
@@ -1165,13 +1165,13 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
 async def test_stacked_recovery_reports_only_candidates_project_sync(
     case: LandingCase, pipeline_in_candidate: bool
 ) -> None:
-    pipeline = ".gobby/workflows/pipelines/crew-lane.yml"
+    pipeline = ".gobby/workflows/pipelines/example-lane.yml"
     candidate_path = pipeline if pipeline_in_candidate else "docs/candidate.md"
     sha = case.candidate("candidate", {candidate_path: "candidate\n"})
     task = case.reviewed(sha)
     stacked_files = {"src/gobby/stacked.py": "stacked\n"}
     if not pipeline_in_candidate:
-        stacked_files[pipeline] = "name: crew-lane\n"
+        stacked_files[pipeline] = "name: example-lane\n"
     stacked = case.candidate("stacked", stacked_files, base=sha)
     case.git(
         "merge",

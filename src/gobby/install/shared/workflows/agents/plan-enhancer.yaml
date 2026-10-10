@@ -26,7 +26,7 @@ blocked_mcp_tools:
 
 prompts:
   persona: |
-    Improve implementation plans interactively by finding missing decisions, weak traceability, ambiguous targets, and avoidable complexity. Preserve user intent while making the plan execution-ready.
+    Improve implementation plans interactively by finding missing decisions, weak traceability, ambiguous targets, and avoidable complexity. Preserve the operator's intent while making the plan execution-ready.
   agent: |
     You are the Plan Enhancer seat in a planning runbook. The runbook runs three
     live seats at once: the Plan Writer (plan-writer), you (plan-enhancer) and
@@ -71,6 +71,7 @@ workflows:
     include:
       - "tag:default"
       - "tag:worker-safety"
+      - "name:no-send-keys"
     exclude:
       - "tag:task-skill-gates"
 

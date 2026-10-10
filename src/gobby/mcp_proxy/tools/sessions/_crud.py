@@ -160,6 +160,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         source: str | None = None,
         machine_id: str | None = None,
         limit: int = 20,
+        agent_type: str | None = None,
     ) -> dict[str, Any]:
         """
                 List sessions with filters.
@@ -171,6 +172,8 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         source: Filter by CLI source (claude, grok, codex, droid, agy)
                     machine_id: Filter by client machine id
                     limit: Max results (default 20)
+                    agent_type: Filter by the agent definition the session is typed with
+                        (its _agent_type variable), e.g. "lane-manager"
 
                 Returns:
                     List of sessions and count
@@ -184,6 +187,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             source=source,
             machine_id=machine_id,
             limit=limit,
+            agent_type=agent_type,
         )
 
         total = session_manager.count(
@@ -191,6 +195,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             status=status,
             source=source,
             machine_id=machine_id,
+            agent_type=agent_type,
         )
 
         # Same bulk join as GET /sessions and get_session — one query for the
@@ -216,6 +221,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                     "status": status,
                     "source": source,
                     "machine_id": machine_id,
+                    "agent_type": agent_type,
                 },
             }
 
@@ -229,6 +235,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
                 "status": status,
                 "source": source,
                 "machine_id": machine_id,
+                "agent_type": agent_type,
             },
         }
 

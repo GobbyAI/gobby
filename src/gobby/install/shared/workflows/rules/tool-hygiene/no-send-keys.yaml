@@ -1,0 +1,24 @@
+tags: [send-keys, gobby]
+
+# Terminal control is opt-in per agent definition: a definition that must not
+# type into or read another session's terminal selects this rule with
+# "name:no-send-keys" in workflows.rule_selectors.include. It carries no
+# default tag, so a definition that omits the selector keeps both tools.
+#
+# The engine applies every enabled rule to a session with no resolved agent
+# definition, so the guard keeps the rule off sessions that never selected it,
+# including a root session typed `default` whose definition failed to resolve.
+rules:
+  no-send-keys:
+    description: "Block send_keys and capture_output for agents whose definition selects this rule"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: "variables.get('_agent_type') not in (None, '', 'default')"
+    effects:
+      - type: block
+        mcp_tools: ["gobby-sessions:send_keys", "gobby-sessions:capture_output"]
+        reason: >-
+          Your agent definition does not grant terminal control, so send_keys and
+          capture_output are unavailable. Use gobby-agents:send_message for
+          cross-session communication.

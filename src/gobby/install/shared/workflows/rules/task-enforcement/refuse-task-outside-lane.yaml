@@ -1,8 +1,8 @@
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
-# Josh, 2026-10-08: "I need the agents to stop creating tasks outside of a lane."
-# No session, role or agent type is exempt. A project with no open `lane` epic is
-# unaffected. The rule sees MCP calls only; operator CLI and HTTP paths bypass it.
+# Agents do not create tasks outside a lane. No session, role or agent type is
+# exempt. A project with no open `lane` epic is unaffected. The rule sees MCP
+# calls only; operator CLI and HTTP paths bypass it.
 rules:
   refuse-task-outside-lane:
     description: "Refuse MCP task creation whose parent chain reaches no open lane epic"

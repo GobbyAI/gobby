@@ -1,14 +1,13 @@
-name: crew-lane
+name: team-lane
 type: pipeline
 version: "1.0"
 description: |
-  Relaunch selected seats into an existing workspace and worktree.
+  Relaunch selected seats into an existing workspace and worktree, as one lane team.
   Run with seats and lane; infer the lane manager, workspace, pane, unique idle worktree and
   tab size (from the gclient window showing the workspace).
   Workspace names, worktree branch names and tab sizes are accepted as explicit overrides.
   Approved seats: developer, code-reviewer, researcher and lane-manager.
-  Launches fresh sessions; rerunning duplicates live seats. The operator or the Orchestrator
-  runs this pipeline; the Assistant runs it only while the Orchestrator is down.
+  Launches fresh sessions; rerunning duplicates live seats.
 tags: [runbook]
 resume_on_restart: true
 
@@ -23,8 +22,8 @@ inputs:
     description: "Tab content height override in cells; otherwise the gclient window showing the workspace"
   lane:
     type: string
-    default: "3"
-    description: "Current lane number, overriding historical role-file headings"
+    required: true
+    description: "Lane for the tab and seat titles; the lane manager, pane and worktree are inferred from it"
   workspace:
     type: string
     default: null
@@ -32,7 +31,7 @@ inputs:
   lane_pane:
     type: string
     default: null
-    description: "Pane UUID or ref override; otherwise infer from Lane N or its manager"
+    description: "Pane UUID or ref override; otherwise infer from the lane tab or its manager"
   worktree:
     type: string
     default: null
@@ -44,7 +43,7 @@ inputs:
   report_to:
     type: string
     default: null
-    description: "Live report target override; otherwise use the lane manager from the shared roster"
+    description: "Live report target override; otherwise the lane manager recorded for the lane"
   developer_provider:
     type: string
     default: codex
@@ -54,10 +53,6 @@ inputs:
   developer_reasoning_effort:
     type: string
     default: medium
-  developer_role_file:
-    type: string
-    default: lane-4-runbooks.md
-    description: "Role filename under the shared checkout .gobby/roles/"
   reviewer_provider:
     type: string
     default: claude
@@ -67,10 +62,6 @@ inputs:
   reviewer_reasoning_effort:
     type: string
     default: xhigh
-  reviewer_role_file:
-    type: string
-    default: code-reviewer.md
-    description: "Role filename under the shared checkout .gobby/roles/"
   researcher_provider:
     type: string
     default: codex
@@ -80,10 +71,6 @@ inputs:
   researcher_reasoning_effort:
     type: string
     default: medium
-  researcher_role_file:
-    type: string
-    default: researcher.md
-    description: "Role filename under the shared checkout .gobby/roles/"
   manager_provider:
     type: string
     default: claude
@@ -93,10 +80,6 @@ inputs:
   manager_reasoning_effort:
     type: string
     default: medium
-  manager_role_file:
-    type: string
-    default: lane-manager.md
-    description: "Role filename under the shared checkout .gobby/roles/"
 
 steps:
   - id: guard
@@ -134,6 +117,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: developer
+        lane: "${{ inputs.lane }}"
         provider: "${{ inputs.developer_provider }}"
         model: "${{ inputs.developer_model }}"
         reasoning_effort: "${{ inputs.developer_reasoning_effort }}"
@@ -141,7 +125,7 @@ steps:
         checkout_mode: none
         worktree_id: "${{ steps.guard.output.worktree }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are Lane ${{ inputs.lane }} developer. Your current session ref is fresh; read ${{ steps.guard.output.project_path }}/.gobby/roles/_common.md first, then ${{ steps.guard.output.project_path }}/.gobby/roles/${{ inputs.developer_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        prompt: "You are the developer seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
@@ -154,6 +138,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: code-reviewer
+        lane: "${{ inputs.lane }}"
         provider: "${{ inputs.reviewer_provider }}"
         model: "${{ inputs.reviewer_model }}"
         reasoning_effort: "${{ inputs.reviewer_reasoning_effort }}"
@@ -161,7 +146,7 @@ steps:
         checkout_mode: none
         worktree_id: "${{ steps.guard.output.worktree }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are Lane ${{ inputs.lane }} code reviewer. Your current session ref is fresh; read ${{ steps.guard.output.project_path }}/.gobby/roles/_common.md first, then ${{ steps.guard.output.project_path }}/.gobby/roles/${{ inputs.reviewer_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        prompt: "You are the code reviewer seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
@@ -174,6 +159,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: researcher
+        lane: "${{ inputs.lane }}"
         provider: "${{ inputs.researcher_provider }}"
         model: "${{ inputs.researcher_model }}"
         reasoning_effort: "${{ inputs.researcher_reasoning_effort }}"
@@ -181,7 +167,7 @@ steps:
         checkout_mode: none
         worktree_id: "${{ steps.guard.output.worktree }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are Lane ${{ inputs.lane }} researcher. Your current session ref is fresh; read ${{ steps.guard.output.project_path }}/.gobby/roles/_common.md first, then ${{ steps.guard.output.project_path }}/.gobby/roles/${{ inputs.researcher_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        prompt: "You are the researcher seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
@@ -194,6 +180,7 @@ steps:
       tool: spawn_agent
       arguments:
         agent: lane-manager
+        lane: "${{ inputs.lane }}"
         provider: "${{ inputs.manager_provider }}"
         model: "${{ inputs.manager_model }}"
         reasoning_effort: "${{ inputs.manager_reasoning_effort }}"
@@ -201,7 +188,7 @@ steps:
         checkout_mode: none
         worktree_id: "${{ steps.guard.output.worktree }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are Lane ${{ inputs.lane }} manager. Your current session ref is fresh; read ${{ steps.guard.output.project_path }}/.gobby/roles/_common.md first, then ${{ steps.guard.output.project_path }}/.gobby/roles/${{ inputs.manager_role_file }} and follow that role. Explicit lane assignment: Lane ${{ inputs.lane }}; use this assignment where historical role-file headings or roster refs differ. Report your current session ref, the role file you loaded, whether your agent run counts toward max_active_agents, and every SRT denial you hit. Send that report through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Coordinate roster updates through the Assistant. Do not launch other seats or pipelines."
+        prompt: "You are the lane manager seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,

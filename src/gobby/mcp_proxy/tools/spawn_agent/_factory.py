@@ -326,6 +326,7 @@ def create_spawn_agent_registry(
         network: Literal["none", "trusted"] | None = None,
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
+        lane: str | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -373,6 +374,8 @@ def create_spawn_agent_registry(
                 else tiles the tab evenly across the viewport. A viewport too
                 small for either refuses placement without changing the tab.
                 Refusals carry ``placement_error``.
+            lane: Optional lane label recorded on the agent run and returned as
+                ``lane`` by list_running_agents and list_agent_runs.
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -609,6 +612,14 @@ def create_spawn_agent_registry(
             agent_body = apply_network_override(agent_body, network)
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+        if agent_body is not None and not agent_body.supports_surface("spawn"):
+            return {
+                "success": False,
+                "error": (
+                    f"Agent {agent_body.name!r} does not support the 'spawn' surface; it runs "
+                    "only in an operator-opened pane via apply_agent_definition"
+                ),
+            }
 
         # Delegate to spawn_agent_impl
         result = await spawn_agent_impl(
@@ -654,6 +665,7 @@ def create_spawn_agent_registry(
             write_paths_reason=write_paths_reason,
             reserved_run_id=reserved_run_id,
             placement=placement,
+            lane=(lane or "").strip() or None,
             agent_pane_reserver=(
                 agent_pane_reserver_resolver()
                 if placement is not None and agent_pane_reserver_resolver is not None

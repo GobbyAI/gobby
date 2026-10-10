@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from gobby.agents.crew_lane_inputs import resolve_crew_lane_inputs
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
+from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -36,8 +36,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "same project in the same workspace on the same machine, or when a seat's agent "
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
             "session ref; require_report_to rejects omission without lane inference. "
-            "For crew-lane, lane resolves omitted report_to, workspace, lane_pane and "
-            "worktree from the shared roster and live state, and omitted lane_columns and "
+            "For team-lane, lane resolves omitted report_to from the one running "
+            "lane-manager whose run recorded that lane, and omitted workspace, lane_pane and "
+            "worktree from live state, and omitted lane_columns and "
             "lane_rows from the gclient window showing the workspace; explicit values, "
             "names and UUIDs override. "
             "Ambiguous state refuses with candidates. On success it returns the checked "
@@ -69,7 +70,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             if lane is not None:
                 leases = ctx.lease_registry_resolver() if ctx.lease_registry_resolver else None
                 resolved = asdict(
-                    resolve_crew_lane_inputs(
+                    resolve_team_launch_inputs(
                         ctx.db,
                         caller_session_id=caller_session_id,
                         lane=lane,

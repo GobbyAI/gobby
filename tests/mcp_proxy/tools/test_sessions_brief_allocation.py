@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.integration
 
@@ -73,7 +74,10 @@ def test_brief_list_allocation_ignores_conversation_bodies(
         assert result["sessions"] == expected
         assert result["total"] == 2
         assert result["count"] == min(limit, 2)
-        assert result["filters"] == {key: value for key, value in filters.items() if key != "limit"}
+        assert result["filters"] == {
+            **{key: value for key, value in filters.items() if key != "limit"},
+            "agent_type": None,
+        }
         assert ("warning" in result) is (status == "active" and limit == 1)
         assert all(session["can_proxy_attach"] for session in result["sessions"])
         assert all(session["claimed_task_refs"] == [] for session in result["sessions"])
@@ -127,3 +131,36 @@ def test_brief_list_preserves_attach_liveness(
     assert result["count"] == 1
     assert result["sessions"][0]["id"] == session.id
     assert result["sessions"][0]["can_proxy_attach"] is expected_attach
+
+
+def test_list_sessions_filters_by_agent_type(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", MACHINE_ID)
+    manager = SessionManager(temp_db)
+    variables = SessionVariableManager(temp_db)
+    typed = {
+        "lane-manager": manager.register(
+            external_id="agent-type-a", machine_id=MACHINE_ID, source="codex", project_id=None
+        ),
+        "reporter": manager.register(
+            external_id="agent-type-b", machine_id=MACHINE_ID, source="codex", project_id=None
+        ),
+    }
+    manager.register(
+        external_id="agent-type-untyped", machine_id=MACHINE_ID, source="codex", project_id=None
+    )
+    for agent_type, session in typed.items():
+        variables.set_variable(session.id, "_agent_type", agent_type)
+    registry = InternalToolRegistry(name="gobby-sessions", description="agent type filter")
+    register_crud_tools(registry, manager)
+    list_sessions = registry.get_tool("list_sessions")
+    assert list_sessions is not None
+
+    result = list_sessions(machine_id=MACHINE_ID, agent_type="lane-manager")
+
+    assert [row["id"] for row in result["sessions"]] == [typed["lane-manager"].id]
+    assert result["total"] == 1
+    assert result["filters"]["agent_type"] == "lane-manager"
+    assert list_sessions(machine_id=MACHINE_ID, agent_type="nobody")["total"] == 0
+    assert list_sessions(machine_id=MACHINE_ID)["total"] == 3

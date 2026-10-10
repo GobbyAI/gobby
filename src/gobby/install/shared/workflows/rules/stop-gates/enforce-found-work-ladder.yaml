@@ -59,8 +59,12 @@ rules:
     event: turn_end
     enabled: true
     priority: 44
+    # Coordinator seats file work for others and never code it, so a filing they
+    # leave unclaimed is the intended hand-off, not found work to finish.
     when: >
       unclaimed_found_work
+      and variables.get('_agent_type') not in ['orchestrator', 'assistant', 'lane-manager',
+        'release-manager', 'reporter']
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()

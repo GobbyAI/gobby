@@ -284,6 +284,49 @@ async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "blocked"),
+    [
+        ("orchestrator", False),
+        ("assistant", False),
+        ("lane-manager", False),
+        ("release-manager", False),
+        ("reporter", False),
+        ("developer", True),
+        ("default", True),
+        (None, True),
+    ],
+)
+async def test_bundled_rule_exempts_coordinator_seats(
+    temp_db: HubDatabase, agent_type: str | None, blocked: bool
+) -> None:
+    """Coordinator seats file work and never code it; every other agent type is gated."""
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    variables: dict[str, Any] = {
+        "_memory_initial_stop_checked": True,
+        "is_spawned_agent": False,
+        "stop_attempts": 0,
+    }
+    if agent_type is not None:
+        variables["_agent_type"] = agent_type
+    session_id = "11111111-1111-4111-8111-111111111111"
+
+    response = await RuleEngine(temp_db).evaluate(
+        _event(session_id),
+        session_id=session_id,
+        variables=variables,
+        eval_context={
+            "unclaimed_found_work": True,
+            "unclaimed_found_work_tasks": ["#21484"],
+        },
+    )
+
+    assert (response.decision == "block") is blocked
+    if blocked:
+        assert "Filing is not a terminal state" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_workflow_handler_feeds_unclaimed_fact_for_spawned_claimed_session(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,

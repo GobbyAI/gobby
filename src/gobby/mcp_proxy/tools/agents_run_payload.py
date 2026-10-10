@@ -22,6 +22,7 @@ def _list_run_payload(run: Any) -> dict[str, Any]:
         "tool_calls_count": getattr(run, "tool_calls_count", 0),
         "turns_used": getattr(run, "turns_used", 0),
         "seat": _seat(metadata.get("placement")),
+        "lane": metadata.get("lane"),
     }
 
 

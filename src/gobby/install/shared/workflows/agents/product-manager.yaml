@@ -69,6 +69,7 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "tag:task-skill-gates"
+      - "name:no-send-keys"
     # The Product Reference Document is written into the assigned task with
     # update_task.
     exclude:

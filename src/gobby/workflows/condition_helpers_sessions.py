@@ -24,10 +24,11 @@ def send_keys_target_in_scope(
     It scopes ``send_keys`` and ``capture_output``. The caller and target resolve
     exactly as ``send_keys`` resolves them, and the decision is ``ActorScope.admits``:
     the caller's own session, its project, and its agent tree in either direction.
-    A missing, unresolvable or autonomous caller, and an unresolvable target, pass
-    here. ``send_keys`` refuses each with its own error. For ``capture_output``, a
-    request with no caller is the operator's, agent enforcement refuses autonomous
-    callers before rules run, and the target lookup takes a session UUID, which
+    A missing or unresolvable caller, and an unresolvable target, pass here.
+    ``send_keys`` refuses each with its own error. A spawned agent's calls are
+    scoped like any other caller's: the opt-in ``no-send-keys`` rule decides
+    whether it may use these tools at all. For ``capture_output``, a request with
+    no caller is the operator's, and the target lookup takes a session UUID, which
     resolves here by primary key. Any other failure raises, and a raising block
     condition fails closed.
     """
@@ -38,7 +39,9 @@ def send_keys_target_in_scope(
     if not isinstance(target_ref, str) or not target_ref:
         return True
     try:
-        scope = resolve_actor_scope(session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}")
+        scope = resolve_actor_scope(
+            session_manager, f"{SESSION_ACTOR_PREFIX}{caller_ref}", allow_autonomous=True
+        )
     except ActorScopeError:
         return True
     caller = scope.caller

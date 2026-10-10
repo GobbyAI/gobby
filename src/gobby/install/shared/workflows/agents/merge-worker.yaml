@@ -362,3 +362,4 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
+      - "name:no-send-keys"

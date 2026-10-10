@@ -4,19 +4,19 @@ tags: [roles, seat, enforcement, gobby, default]
 # for an empty path set.
 rules:
   assistant-write-scope:
-    description: "The Assistant writes only under docs/ and .gobby/roles/"
+    description: "The Assistant writes only under docs/"
     event: before_tool
     enabled: true
     priority: 15
     when: >
       variables.get('_agent_type') == 'assistant'
       and event.data.get('canonical_tool_kind') == 'write'
-      and not write_paths_within(event.data, tool_input, ['docs/', '.gobby/roles/'])
+      and not write_paths_within(event.data, tool_input, ['docs/'])
     effects:
       - type: block
         reason: >-
-          The Assistant writes only under `docs/` and `.gobby/roles/`. Name the
-          target with a literal path inside them.
+          The Assistant writes only under `docs/`. Name the target with a literal
+          path inside it.
 
   archivist-write-scope:
     description: "The Archivist writes only the dated desktop digest"

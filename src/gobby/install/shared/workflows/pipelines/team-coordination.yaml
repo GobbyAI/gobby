@@ -1,0 +1,233 @@
+name: team-coordination
+type: pipeline
+version: "1.0"
+description: |
+  Coordination runbook: launches a team of seats into one lane tab in the shared checkout.
+  Approved seats: archivist, log-monitor, release-manager, inbox-manager and recovery-steward.
+  recovery-steward is optional; request it by name in `seats`.
+
+  Placement: the first launched seat opens the lane tab, or splits the lane_pane when one is
+  supplied; every later seat splits right of the first launched seat. Each seat runs its own
+  agent definition. Relaunch missing seats with a fresh run that names them in `seats`; a
+  failed runbook execution is never resumed. Supply lane_pane to add seats to an existing tab
+  across runs.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  lane:
+    type: string
+    required: true
+    description: "Lane for the tab and seat titles"
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace UUID or ref"
+  lane_pane:
+    type: string
+    default: null
+    description: "Existing lane pane to split; omit to open one lane tab"
+  project_path:
+    type: string
+    required: true
+    description: "Shared project checkout; no worktree is created"
+  seats:
+    type: string
+    default: archivist
+    description: "Comma-separated missing seats: archivist, log-monitor, release-manager, inbox-manager, recovery-steward"
+  report_to:
+    type: string
+    required: true
+    description: "Live operator session ref for readiness, blockers and unassigned waits"
+  archivist_provider:
+    type: string
+    default: claude
+    description: "Seat provider; override to change the default"
+  archivist_model:
+    type: string
+    default: claude-opus-5-5
+    description: "Seat model; override to change the default"
+  archivist_reasoning_effort:
+    type: string
+    default: medium
+    description: "Seat reasoning effort; override to change the default"
+  log_monitor_provider:
+    type: string
+    default: claude
+    description: "Seat provider; override to change the default"
+  log_monitor_model:
+    type: string
+    default: claude-sonnet-5-5
+    description: "Seat model; override to change the default"
+  log_monitor_reasoning_effort:
+    type: string
+    default: medium
+    description: "Seat reasoning effort; override to change the default"
+  release_manager_provider:
+    type: string
+    default: codex
+    description: "Seat provider; override to change the default"
+  release_manager_model:
+    type: string
+    default: gpt-6.1-sol
+    description: "Seat model; override to change the default"
+  release_manager_reasoning_effort:
+    type: string
+    default: medium
+    description: "Seat reasoning effort; override to change the default"
+  inbox_manager_provider:
+    type: string
+    default: claude
+    description: "Seat provider; override to change the default"
+  inbox_manager_model:
+    type: string
+    default: claude-opus-5-5
+    description: "Seat model; override to change the default"
+  inbox_manager_reasoning_effort:
+    type: string
+    default: medium
+    description: "Seat reasoning effort; override to change the default"
+  recovery_steward_provider:
+    type: string
+    default: claude
+    description: "Seat provider; override to change the default"
+  recovery_steward_model:
+    type: string
+    default: claude-opus-5-5
+    description: "Seat model; override to change the default"
+  recovery_steward_reasoning_effort:
+    type: string
+    default: high
+    description: "Seat reasoning effort; override to change the default"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        catalogue:
+          - name: archivist
+            title: "${{ 'Lane ' + inputs.lane + ' archivist' }}"
+            agent: archivist
+          - name: log-monitor
+            title: "${{ 'Lane ' + inputs.lane + ' log monitor' }}"
+            agent: log-monitor
+          - name: release-manager
+            title: "${{ 'Lane ' + inputs.lane + ' release manager' }}"
+            agent: release-manager
+          - name: inbox-manager
+            title: "${{ 'Lane ' + inputs.lane + ' inbox manager' }}"
+            agent: inbox-manager
+          - name: recovery-steward
+            title: "${{ 'Lane ' + inputs.lane + ' recovery steward' }}"
+            agent: recovery-steward
+
+  - id: archivist
+    condition: "${{ 'archivist' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: archivist
+        provider: "${{ inputs.archivist_provider }}"
+        model: "${{ inputs.archivist_model }}"
+        reasoning_effort: "${{ inputs.archivist_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the archivist seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane,
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' archivist'}}
+          if inputs.lane_pane
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: log-monitor
+    condition: "${{ 'log-monitor' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: log-monitor
+        provider: "${{ inputs.log_monitor_provider }}"
+        model: "${{ inputs.log_monitor_model }}"
+        reasoning_effort: "${{ inputs.log_monitor_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the log monitor seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' log monitor'}}
+          if inputs.lane_pane or 'archivist' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: release-manager
+    condition: "${{ 'release-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: release-manager
+        provider: "${{ inputs.release_manager_provider }}"
+        model: "${{ inputs.release_manager_model }}"
+        reasoning_effort: "${{ inputs.release_manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the release manager seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' release manager'}}
+          if inputs.lane_pane or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: inbox-manager
+    condition: "${{ 'inbox-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: inbox-manager
+        provider: "${{ inputs.inbox_manager_provider }}"
+        model: "${{ inputs.inbox_manager_model }}"
+        reasoning_effort: "${{ inputs.inbox_manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the inbox manager seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref if 'log-monitor' in inputs.seats.split(',') else steps['release-manager'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' inbox manager'}}
+          if inputs.lane_pane or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',') or 'release-manager' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: recovery-steward
+    condition: "${{ 'recovery-steward' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: recovery-steward
+        provider: "${{ inputs.recovery_steward_provider }}"
+        model: "${{ inputs.recovery_steward_model }}"
+        reasoning_effort: "${{ inputs.recovery_steward_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the recovery steward seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref if 'log-monitor' in inputs.seats.split(',') else steps['release-manager'].output.pane_ref if 'release-manager' in inputs.seats.split(',') else steps['inbox-manager'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' recovery steward'}}
+          if inputs.lane_pane or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',') or 'release-manager' in inputs.seats.split(',') or 'inbox-manager' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
