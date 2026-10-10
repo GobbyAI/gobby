@@ -97,6 +97,7 @@ class _TestHandler(AgentEventHandlerMixin):
         self._session_manager = self.session_manager_mock
         self._session_coordinator = None
         self._message_processor_resolver = _resolve_none
+        self._event_loop = None
         self._task_manager = None
         self._workflow_handler = None
         self._workflow_config_resolver = _resolve_none
