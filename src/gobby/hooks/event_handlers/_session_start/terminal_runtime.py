@@ -158,6 +158,8 @@ def _terminal_context_reused(
 ) -> bool:
     """Recognize a reused pane or tty, including after its CLI process restarts."""
     previous = parse_terminal_context_value(stored)
+    if not previous:
+        return False
     pane = current.get("tmux_pane")
     if pane and pane == previous.get("tmux_pane"):
         # Retain socket/server scope checks without matching a shared session name.

@@ -270,6 +270,10 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
             "id": "recycled-pid",
             "terminal_context": {"parent_pid": 4242, "parent_create_time": 1000.0},
         },
+        {
+            "id": "invalid-context",
+            "terminal_context": "null",
+        },
     ]
     session_manager.mark_session_expired.return_value = True
     handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
