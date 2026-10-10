@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -12,16 +14,27 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.hook_manager import HookManager
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._transitions import claim_task
 from gobby.utils.project_context import reset_project_context, set_project_context
-from gobby.utils.session_context import session_context_for_test
+from gobby.utils.session_context import (
+    reset_seeded_contexts,
+    resolve_and_seed_contexts,
+    session_context_for_test,
+)
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.step_tool_input import inner_tool_input
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.observers import reconcile_claimed_tasks
 from gobby.workflows.state_manager import SessionVariableManager
@@ -214,6 +227,196 @@ def test_submit_refuses_handoff_of_an_unassigned_task(seats: _Seats, task_ref: s
     assert response is not None and response.decision == "block"
     assert "Hand off only the assigned task" in str(response.reason)
     assert _current_step(seats.db, seats.former) == "submit"
+
+
+@pytest.mark.parametrize("argument_key", ["arguments", "args"])
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("assigned", [False, True])
+def test_submit_condition_uses_inner_task_despite_outer_shadow(
+    seats: _Seats, argument_key: str, encoded: bool, assigned: bool
+) -> None:
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    inner_ref = seats.task_id if assigned else "foreign-task"
+    arguments = {"task_id": inner_ref, "reason": "Handed off"}
+    event = _before_escalation(seats, inner_ref)
+    event.data["tool_input"] = {
+        "server_name": "gobby-tasks",
+        "tool_name": "escalate_task",
+        "task_id": "foreign-task" if assigned else seats.task_id,
+        argument_key: json.dumps(arguments) if encoded else arguments,
+    }
+    response = RuleEngine(seats.db)._check_step_tool_enforcement(event, seats.former, {})
+    if assigned:
+        assert response is None
+    else:
+        assert response is not None and response.decision == "block"
+        assert "Hand off only the assigned task" in str(response.reason)
+    assert _current_step(seats.db, seats.former) == "submit"
+
+
+@pytest.mark.parametrize("arguments", [None, "{broken", "[]", []])
+def test_unreadable_inner_arguments_do_not_fall_back_to_outer(arguments: Any) -> None:
+    assert inner_tool_input({"task_id": "allowed", "arguments": arguments}) == {}
+
+
+def test_missing_proxy_arguments_do_not_use_outer_keys() -> None:
+    assert (
+        inner_tool_input(
+            {"server_name": "gobby-tasks", "tool_name": "escalate_task", "task_id": "allowed"}
+        )
+        == {}
+    )
+
+
+def _task_proxy(seats: _Seats) -> ToolProxyService:
+    """Use real proxy dispatch with step enforcement as the workflow adapter."""
+    engine = RuleEngine(seats.db)
+
+    def evaluate(event: HookEvent) -> HookResponse:
+        if event.event_type == HookEventType.BEFORE_TOOL:
+            return engine._check_step_tool_enforcement(event, seats.former, {}) or HookResponse(
+                decision="allow"
+            )
+        asyncio.run(engine._process_step_after_tool(event, seats.former, {}))
+        return HookResponse(decision="allow")
+
+    registries = InternalRegistryManager()
+    registries.add_registry(create_task_registry(LocalTaskManager(seats.db)))
+    sessions = SessionManager(seats.db)
+    hook_manager = SimpleNamespace(
+        _session_manager=sessions,
+        _workflow_handler=SimpleNamespace(evaluate=evaluate),
+    )
+    manager = cast(
+        MCPClientManager,
+        SimpleNamespace(session_manager=sessions, project_id=None),
+    )
+    return ToolProxyService(
+        manager,
+        internal_manager=registries,
+        hook_manager_resolver=lambda: cast(HookManager, hook_manager),
+    )
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+async def test_submit_proxy_handoff_checks_resolved_project_task(
+    seats: _Seats, foreign: bool, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    own_task = tasks.get_task(seats.task_id)
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, own_task.project_id, str(tmp_path))
+    other_project = LocalProjectManager(seats.db).create("shadow-project")
+    other_task = tasks.create_task(
+        other_project.id,
+        "Same number in another project",
+        validation_criteria="The developer cannot hand this task off.",
+    )
+    assert other_task.seq_num == own_task.seq_num
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    project_id = other_project.id if foreign else own_task.project_id
+    arguments = {"task_id": seats.ref, "reason": "Handed off: reviewer LAND"}
+    provider_event = _before_escalation(seats, seats.ref)
+    provider_event.data["tool_input"]["project_id"] = project_id
+    engine = RuleEngine(seats.db)
+    response = engine._check_step_tool_enforcement(provider_event, seats.former, {})
+    if foreign:
+        assert response is not None and response.decision == "block"
+    else:
+        assert response is None
+
+    # The real request seed honors explicit project context before proxy dispatch.
+    tokens = await resolve_and_seed_contexts(
+        seats.former, SessionManager(seats.db), project_ref=project_id, db=seats.db
+    )
+    try:
+        result = await _task_proxy(seats).call_tool(
+            "gobby-tasks",
+            "escalate_task",
+            arguments,
+            session_id=seats.former,
+            project_id=project_id,
+            enforce_workflow=True,
+        )
+    finally:
+        reset_seeded_contexts(tokens)
+    if foreign:
+        assert result["success"] is False
+        assert result["error_code"] == "TOOL_BLOCKED"
+        assert "Hand off only the assigned task" in result["error"]
+        assert tasks.get_task(seats.task_id).claimed_by_session_id == seats.former
+        assert _current_step(seats.db, seats.former) == "submit"
+    else:
+        assert result == {}
+        assert tasks.get_task(seats.task_id).is_escalated
+        assert tasks.get_task(seats.task_id).claimed_by_session_id is None
+        assert _current_step(seats.db, seats.former) == "claim"
+    assert not tasks.get_task(other_task.id).is_escalated
+
+
+@pytest.mark.parametrize(
+    ("agent", "step", "tool", "flag", "output", "next_step"),
+    [
+        ("epic-reviewer", "claim", "claim_task", "task_claimed", {}, "load_skill"),
+        (
+            "epic-reviewer",
+            "claim",
+            "get_task",
+            "closed_epic",
+            {"state": {"is_closed": True}},
+            "load_skill",
+        ),
+        (
+            "tech-writer",
+            "implement",
+            "close_task",
+            "implementation_complete",
+            {"closed": True},
+            "terminate",
+        ),
+    ],
+)
+@pytest.mark.parametrize("assigned", [False, True])
+async def test_dispatched_seat_handlers_match_resolved_assigned_task(
+    seats: _Seats,
+    agent: str,
+    step: str,
+    tool: str,
+    flag: str,
+    output: dict[str, Any],
+    next_step: str,
+    assigned: bool,
+) -> None:
+    body = AgentDefinitionBody.model_validate(
+        yaml.safe_load(_DEVELOPER.with_name(f"{agent}.yaml").read_text("utf-8"))
+    )
+    assert body.step_workflow is not None
+    variables = {
+        **body.step_workflow.variables,
+        "assigned_task_id": seats.ref,
+        "assigned_task_uuid": seats.task_id,
+    }
+    instance = build_step_instance(
+        body,
+        session_id=seats.former,
+        step_workflow_id=None,
+        variables=variables,
+        current_step=step,
+    )
+    AgentStepInstanceManager(seats.db).save(instance)
+    foreign = LocalTaskManager(seats.db).create_task(
+        LocalTaskManager(seats.db).get_task(seats.task_id).project_id,
+        "Unassigned handler target",
+        validation_criteria="It cannot advance the dispatched seat.",
+    )
+    task_ref = seats.ref if assigned else f"#{foreign.seq_num}"
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(seats.former, tool, {"task_id": task_ref}, output), seats.former, {}
+    )
+    current_step, state = _instance_state(seats.db, seats.former)
+    assert state[flag] is assigned
+    assert current_step == (next_step if assigned else step)
 
 
 async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> None:

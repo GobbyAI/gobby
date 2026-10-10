@@ -78,7 +78,10 @@ def test_handoff_transitions_to_end_agent_run_termination() -> None:
         if item["server"] == "gobby-tasks" and item["tool"] == "close_task"
     )
     assert "tool_output.get('closed') is True" in close_hook["when"]
-    assert "tool_input.get('task_id') == vars.get('assigned_task_id')" in close_hook["when"]
+    assert (
+        "tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))"
+        in close_hook["when"]
+    )
     assert implement["transitions"] == [
         {
             "to": "terminate",

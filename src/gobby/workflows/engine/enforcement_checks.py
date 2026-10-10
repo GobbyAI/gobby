@@ -23,6 +23,7 @@ from gobby.workflows.engine.skill_load_guidance import (
     skill_load_block_guidance,
     skill_load_call_lead,
 )
+from gobby.workflows.engine.step_tool_input import inner_tool_input, step_tool_input
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
@@ -888,7 +889,9 @@ class EnforcementCheckMixin:
                 if mcp_key:
                     if event.metadata.get("_mcp_proxy_duplicate_before_tool") is True:
                         return None
-                    handler_tool_input = self._step_handler_tool_input(tool_input)
+                    handler_tool_input = self._step_handler_tool_input(
+                        tool_input, project_id=event.project_id
+                    )
                     before_response = self._process_step_before_mcp_tool(
                         event,
                         session_id,
@@ -926,7 +929,7 @@ class EnforcementCheckMixin:
             if variable_name:
                 return f"variable:{variable_name.casefold()}"
         if mcp_tool_name == "set_variable":
-            resolved_input = EnforcementCheckMixin._step_handler_tool_input(tool_input)
+            resolved_input = inner_tool_input(tool_input)
             variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
             if variable_name:
                 return f"variable:{variable_name.casefold()}"
@@ -947,11 +950,7 @@ class EnforcementCheckMixin:
         if not is_native_set_variable and not is_mcp_set_variable:
             return None
 
-        resolved_input = (
-            EnforcementCheckMixin._step_handler_tool_input(tool_input)
-            if is_mcp_set_variable
-            else tool_input
-        )
+        resolved_input = inner_tool_input(tool_input) if is_mcp_set_variable else tool_input
         variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
         if is_reserved_workflow_variable(variable_name):
             return variable_name
@@ -975,19 +974,10 @@ class EnforcementCheckMixin:
         metadata = registry.get_tool_metadata(tool_name) if registry is not None else None
         return metadata is not None and metadata.read_only
 
-    @staticmethod
-    def _step_handler_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
-        """Return handler input with nested MCP arguments promoted for conditions."""
-        handler_tool_input = dict(tool_input)
-        raw_handler_args = tool_input.get("arguments", tool_input.get("args"))
-        if isinstance(raw_handler_args, str):
-            try:
-                raw_handler_args = json.loads(raw_handler_args)
-            except (json.JSONDecodeError, TypeError):
-                raw_handler_args = None
-        if isinstance(raw_handler_args, dict):
-            handler_tool_input = {**raw_handler_args, **handler_tool_input}
-        return handler_tool_input
+    def _step_handler_tool_input(
+        self, tool_input: dict[str, Any], *, project_id: str | None = None
+    ) -> dict[str, Any]:
+        return step_tool_input(tool_input, getattr(self, "db", None), project_id)
 
     @staticmethod
     def _is_native_set_variable_tool(tool_name: str) -> bool:

@@ -134,14 +134,14 @@ step_workflow:
         - server: gobby-tasks
           tool: get_task
           when: >-
-            tool_input.get('task_id') == vars.get('assigned_task_id')
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))
             and tool_output.get('result', {}).get('state', {}).get('is_closed') is True
           action: set_variable
           variable: closed_epic
           value: true
         - server: gobby-tasks
           tool: claim_task
-          when: "tool_input.get('task_id') == vars.get('assigned_task_id')"
+          when: "tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_uuid'))"
           action: set_variable
           variable: task_claimed
           value: true
