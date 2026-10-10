@@ -596,10 +596,6 @@ def _classify_shell_segment_without_redirection(
                         git_cwd = _rebase_shell_paths([target], git_cwd)[0]
                 git_subcommand_index += 2
                 continue
-            if part.startswith("-C"):
-                git_cwd = _rebase_shell_paths([part[2:]], git_cwd)[0]
-                git_subcommand_index += 1
-                continue
             if part.startswith("-"):
                 git_scope_unknown = True
                 git_subcommand_index += 1
@@ -661,7 +657,12 @@ def _classify_shell_segment_without_redirection(
             and git_cwd
             and any(flag in args for flag in {"--quit", "--skip", "--continue"})
         ):
-            return _ShellSegmentMetadata("write", paths=(git_cwd,), repo_mutation=True)
+            return _ShellSegmentMetadata(
+                "write",
+                paths=(git_cwd,),
+                repo_mutation=True,
+                extra={"canonical_edit_file_paths": []},
+            )
         return _ShellSegmentMetadata("write", repo_mutation=True)
 
     if cmd == "patch":

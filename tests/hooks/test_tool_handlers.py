@@ -19,6 +19,7 @@ from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.parser import ParsedSkill
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     patch_local_machine_id,
@@ -1053,6 +1054,64 @@ class TestToolHandlerEdgeCases:
         )
         assert code_index_trigger.notify_file_changed.call_count == 1
         assert code_index_trigger.notify_file_changed.call_args is not None
+
+    @pytest.mark.parametrize("directory", [".", "nested"])
+    @pytest.mark.parametrize("copy_file", [False, True], ids=["scope-only", "mixed-copy"])
+    def test_sequencer_directory_scope_does_not_enter_edit_ledger(
+        self,
+        mock_dependencies: dict[str, Any],
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        directory: str,
+        copy_file: bool,
+    ) -> None:
+        self._land_file(tmp_path, "owned.py")
+        (tmp_path / "nested").mkdir()
+        (tmp_path / "foreign.py").write_text("foreign = True\n", encoding="utf-8")
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="sequencer-ledger")
+        session = SessionManager(temp_db).register(
+            external_id="sequencer-ledger-session",
+            machine_id=machine_id,
+            source="codex",
+            project_id=project.id,
+        )
+        write_project_marker(tmp_path, project_id=project.id, name=project.name)
+        session_id = session.id
+        manager = SessionVariableManager(temp_db)
+        assert manager.select_task_claim(session_id, "task-123", "#123")
+        assert manager.record_edited_files(session_id, ["owned.py"], checkout_root=str(tmp_path))
+        mock_dependencies["session_manager"].db = temp_db
+        handlers = EventHandlers(**mock_dependencies)
+        target = tmp_path / directory
+        command = "git revert --quit" if directory == "." else f"git -C {target} revert --quit"
+        if copy_file:
+            command += f" && cp foreign.py {target}"
+            (target / "copied.py").write_text("copied = True\n", encoding="utf-8")
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": command, "cwd": str(tmp_path)},
+                "project_path": str(tmp_path),
+            },
+            metadata={"_platform_session_id": session_id},
+        )
+        event.cwd = str(tmp_path)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_repo_mutation"] is True
+        assert event.data["canonical_file_paths"] == [str(target)]
+        assert event.data["canonical_edit_file_paths"] == ([str(target)] if copy_file else [])
+
+        handlers._record_successful_file_mutation(event, session_id, is_canonical_edit=True)
+
+        after = manager.get_variables(session_id)
+        expected_paths = ["owned.py", directory] if copy_file else ["owned.py"]
+        assert after["task_edited_files"] == {"task-123": expected_paths}
+        assert after["session_dirty_files"] == expected_paths
+        assert after["task_edited_file_checkouts"] == {"task-123": {str(tmp_path): expected_paths}}
 
     def test_after_tool_edit_attributes_gobby_internal_files(
         self,

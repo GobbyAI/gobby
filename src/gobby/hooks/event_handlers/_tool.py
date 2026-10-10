@@ -127,7 +127,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         ):
             return
         tool_input = data.get("tool_input")
-        paths = data.get("canonical_file_paths")
+        paths = data.get("canonical_edit_file_paths", data.get("canonical_file_paths"))
         if not isinstance(paths, list):
             path = None
             if isinstance(tool_input, dict):
@@ -354,7 +354,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 or tool_input.get("path")
             )
 
-        canonical_paths = input_data.get("canonical_file_paths")
+        canonical_paths = input_data.get(
+            "canonical_edit_file_paths", input_data.get("canonical_file_paths")
+        )
         if is_canonical_edit and isinstance(canonical_paths, list):
             file_paths = list(
                 dict.fromkeys(path for path in canonical_paths if isinstance(path, str) and path)

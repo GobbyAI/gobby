@@ -171,7 +171,7 @@ def test_relative_command_paths_resolve_against_the_tool_cwd(
 
 @pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
 @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue"])
-@pytest.mark.parametrize("directory_option", ["", "-C {root}", "-C{root}"])
+@pytest.mark.parametrize("directory_option", ["", "-C {root}"])
 def test_git_sequencer_state_writes_have_worktree_scope(
     tmp_path: Path, operation: str, flag: str, directory_option: str
 ) -> None:
@@ -183,6 +183,7 @@ def test_git_sequencer_state_writes_have_worktree_scope(
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_file_paths"] == [str(root)]
+    assert data["canonical_edit_file_paths"] == []
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
@@ -191,6 +192,15 @@ def test_git_sequencer_dynamic_directory_is_unknown(tmp_path: Path, operation: s
     data = _invocation_metadata(f'git -C "$WT" {operation} --quit', tool_cwd=tmp_path)
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("wrapper", ["{}", 'bash -c "{}"'])
+def test_git_sequencer_scope_keeps_mixed_directory_edit(tmp_path: Path, wrapper: str) -> None:
+    command = wrapper.format(f"git revert --quit && cp source.py {tmp_path}")
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == [str(tmp_path)]
+    assert data["canonical_edit_file_paths"] == [str(tmp_path)]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
 def test_git_sequencer_repeated_relative_directory_changes(tmp_path: Path) -> None:

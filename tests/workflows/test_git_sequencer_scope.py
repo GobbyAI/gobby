@@ -102,6 +102,7 @@ async def test_claimed_pending_revert_can_quit(
     engine: RuleEngine, pending_worktree: tuple[Path, Path], explicit_directory: bool
 ) -> None:
     root, revert_head = pending_worktree
+    assert revert_head.exists()
     command = f"git -C {root} revert --quit" if explicit_directory else "git revert --quit"
     event = _event(command, root)
     response = await engine.evaluate(
@@ -111,10 +112,10 @@ async def test_claimed_pending_revert_can_quit(
     assert event.data["canonical_repo_mutation"] is True
     assert event.data["canonical_file_paths"] == [str(root)]
     assert not event.data.get("canonical_repo_mutation_scope_unknown")
-    assert revert_head.exists()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wrapper", ["{}", "({})", "result=$({})", "result=`{}`"])
 @pytest.mark.parametrize("explicit_directory", [False, True], ids=["cwd", "literal-C"])
 @pytest.mark.parametrize(
     "command", ["git revert --abort", "git cherry-pick --abort", "git reset --hard"]
@@ -124,16 +125,17 @@ async def test_destructive_recovery_remains_denied(
     pending_worktree: tuple[Path, Path],
     command: str,
     explicit_directory: bool,
+    wrapper: str,
 ) -> None:
-    root, revert_head = pending_worktree
+    root, _ = pending_worktree
     if explicit_directory:
         command = command.replace("git ", f"git -C {root} ", 1)
+    command = wrapper.format(command)
     response = await destructive_engine.evaluate(
         _event(command, root), session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
     )
     assert response.decision == "block"
     assert "no-destructive-git-interactive" in (response.reason or "")
-    assert revert_head.exists()
 
 
 @pytest.mark.asyncio
@@ -141,7 +143,7 @@ async def test_destructive_recovery_remains_denied(
 async def test_dynamic_git_scope_remains_denied(
     engine: RuleEngine, pending_worktree: tuple[Path, Path], command: str
 ) -> None:
-    root, revert_head = pending_worktree
+    root, _ = pending_worktree
     event = _event(command, root)
     response = await engine.evaluate(
         event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
@@ -149,4 +151,3 @@ async def test_dynamic_git_scope_remains_denied(
     assert event.data["canonical_repo_mutation_scope_unknown"] is True
     assert response.decision == "block"
     assert "block-unresolved-scope-shell-write" in (response.reason or "")
-    assert revert_head.exists()
