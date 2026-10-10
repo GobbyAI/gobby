@@ -1346,6 +1346,7 @@ class TestSessionStartNewSession:
         [("grok", "new"), ("droid", "resume")],
         ids=["grok-new", "droid-resume-of-unknown-session"],
     )
+    @pytest.mark.parametrize("take_fails", [False, True])
     def test_clear_successor_source_promotes_matching_clear_continuation(
         self,
         mock_sv_mgr_cls: MagicMock,
@@ -1354,11 +1355,15 @@ class TestSessionStartNewSession:
         mock_schedule: MagicMock,
         cli_source: str,
         observed_source: str,
+        take_fails: bool,
         mock_dependencies: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Grok /clear successors emit source=new and Droid's emit source=resume for a
         session no row knows; a matching marker binds either as the clear successor."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+        if take_fails:
+            mock_take.side_effect = RuntimeError("marker storage unavailable")
         term = {
             "tmux_pane": "%100",
             "tmux_socket_path": "/tmp/tmux",
@@ -1424,13 +1429,18 @@ class TestSessionStartNewSession:
         assert mock_take.call_args.args[1] == "predecessor-sess"
         assert mock_take.call_args.kwargs["attempt_id"] == "attempt-1"
         assert mock_take.call_args.kwargs["successor_id"] == "successor-sess"
-        mock_schedule.assert_called_once()
+        if take_fails:
+            mock_schedule.assert_not_called()
+            assert "Failed to take clear handoff marker" in caplog.text
+            assert "marker storage unavailable" in caplog.text
+        else:
+            mock_schedule.assert_called_once()
         assert any(
             len(call.args) >= 2
             and isinstance(call.args[1], dict)
             and call.args[1].get("handoff_pull_pending") is True
             for call in mock_sv_mgr_cls.return_value.merge_variables.call_args_list
-        )
+        ) is (not take_fails)
 
     @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
     def test_resume_of_a_known_session_is_never_promoted_to_clear(
@@ -1996,6 +2006,46 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
 
 def _cli_process(pid: int) -> dict[str, object]:
     return {"parent_pid": pid, "parent_create_time": psutil.Process(pid).create_time()}
+
+
+def test_native_clear_binding_failure_warns_without_aborting_activation(
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = session_manager.register(
+        external_id="native-clear-bind-failure",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, session_manager),
+        get_machine_id=require_machine_id,
+    )
+    event = make_event(
+        HookEventType.SESSION_START,
+        session_id=session.external_id,
+        data={"source": "clear"},
+    )
+    with (
+        patch.object(
+            session_manager,
+            "bind_native_clear_successor",
+            side_effect=RuntimeError("native binding storage unavailable"),
+        ) as bind,
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent"),
+    ):
+        handlers._activate_materialized_session(
+            event,
+            session.id,
+            session_obj=session,
+            project_id=sample_project["id"],
+        )
+    bind.assert_called_once_with(session.id)
+    assert "Failed to bind native clear successor" in caplog.text
+    assert "native binding storage unavailable" in caplog.text
 
 
 def _activate_with_context(

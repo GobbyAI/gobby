@@ -3494,13 +3494,209 @@ async def test_telegram_target_survives_manager_restart(
     await restarted.stop()
 
 
+@pytest.mark.parametrize("child_depth", [0, 1])
+@pytest.mark.parametrize("end_first", [False, True])
+async def test_native_clear_transfers_dm_only_to_same_depth_successor(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    child_depth: int,
+    end_first: bool,
+) -> None:
+    from typing import cast
+
+    from gobby.hooks.event_handlers import EventHandlers
+    from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+    from gobby.hooks.session_types import HookSessionManager
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    context = {
+        "parent_pid": 4242,
+        "parent_create_time": 1234.5,
+        "gobby_pane_ref": "native-clear-pane",
+    }
+    predecessor = sessions.register(
+        external_id="native-clear-predecessor",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Lane 3",
+        terminal_context=context,
+    )
+    # An unrelated Assistant must not take precedence over the linked successor.
+    sessions.register(
+        external_id="native-clear-other-assistant",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Assistant",
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", predecessor.id)
+
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, sessions),
+        get_machine_id=lambda: predecessor.machine_id,
+        resolve_project_id=lambda _project, _cwd: sample_project["id"],
+    )
+    if end_first:
+        handlers.handle_session_end(
+            HookEvent(
+                event_type=HookEventType.SESSION_END,
+                session_id=predecessor.external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=_FIXED_TS,
+                machine_id=predecessor.machine_id,
+                data={"reason": "clear"},
+                metadata={"_platform_session_id": predecessor.id},
+            )
+        )
+        ended = sessions.get(predecessor.id)
+        assert ended is not None
+        assert ended.status == "expired"
+        await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+        assert manager._conversation_attachments[(channel.id, "dm:42")] == predecessor.id
+
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="native-clear-successor",
+        source=SessionSource.CLAUDE,
+        timestamp=_FIXED_TS,
+        machine_id=predecessor.machine_id,
+        data={"source": "clear", "terminal_context": context, "agent_depth": child_depth},
+    )
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent"),
+        patch.object(handlers, "_compose_session_response", return_value=HookResponse()),
+        patch(
+            "gobby.hooks.terminal_context.psutil.Process",
+            return_value=MagicMock(
+                **{"name.return_value": "claude", "create_time.return_value": 1234.5}
+            ),
+        ),
+        patch(
+            "gobby.hooks.event_handlers._session_start.profile.read_user_profile_content",
+            return_value="",
+        ),
+    ):
+        response = handlers.handle_session_start(event)
+    assert response.decision == "allow"
+    successor = sessions.find_by_external_id(
+        "native-clear-successor", sample_project["id"], "claude"
+    )
+    assert successor is not None
+    assert successor.parent_session_id == (predecessor.id if child_depth == 0 else None)
+    for transition in transitions:
+        await manager.handle_session_status_transition(transition)
+
+    expected_holder = successor.id if child_depth == 0 else predecessor.id
+    assert manager._conversation_attachments[(channel.id, "dm:42")] == expected_holder
+    assert manager.attached_session(channel.id, "dm:42") == (
+        successor.id if child_depth == 0 else None
+    )
+    assert manager.list_conversation_attachments() == (
+        [{"channel": channel.name, "conversation_id": "dm:42", "session_id": successor.id}]
+        if child_depth == 0
+        else []
+    )
+    stored = store.get_channel(channel.id)
+    assert stored is not None
+    assert stored.config_json["telegram_agent_targets"] == {"dm:42": expected_holder}
+    adapter.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, True),
+        ({"parent_pid": 43}, False),
+        ({"parent_pid": None}, False),
+        ({"parent_create_time": 1235.5}, False),
+        ({"parent_create_time": None}, False),
+    ],
+)
+def test_native_clear_matching_requires_cli_process_identity(
+    changes: dict[str, Any], expected: bool
+) -> None:
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
+
+    context = {"parent_pid": 42, "parent_create_time": 1234.5, "gobby_pane_ref": "clear-pane"}
+    assert terminal_process_contexts_match(context, {**context, **changes}) is expected
+
+
+async def test_native_clear_does_not_take_sibling_panes_dm(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
+
+    sessions = SessionManager(temp_db)
+    shared_context = {
+        "tmux_session": "operator-panes",
+        "tmux_socket_path": "/tmp/native-clear-test.sock",
+    }
+    sibling = sessions.register(
+        external_id="native-clear-sibling",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context={
+            **shared_context,
+            "parent_pid": 4242,
+            "parent_create_time": 1234.5,
+            "gobby_pane_ref": "sibling-pane",
+        },
+    )
+    successor = sessions.register(
+        external_id="native-clear-other-pane",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        terminal_context={
+            **shared_context,
+            "parent_pid": 4243,
+            "parent_create_time": 1235.5,
+            "gobby_pane_ref": "clear-pane",
+        },
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    manager.attach_conversation(channel.name, "dm:42", sibling.id)
+
+    assert not terminal_process_contexts_match(sibling.terminal_context, successor.terminal_context)
+    assert sessions.bind_native_clear_successor(successor.id) is None
+    refreshed_sibling = sessions.get(sibling.id)
+    refreshed_successor = sessions.get(successor.id)
+    assert refreshed_sibling is not None and refreshed_sibling.status == "active"
+    assert refreshed_successor is not None and refreshed_successor.parent_session_id is None
+    assert manager.attached_session(channel.id, "dm:42") == sibling.id
+    stored = store.get_channel(channel.id)
+    assert stored is not None
+    assert stored.config_json["telegram_agent_targets"] == {"dm:42": sibling.id}
+
+
 @pytest.mark.parametrize("end", ["deleted", "staged-clear", "consumed-clear"])
 @pytest.mark.parametrize("assistant_available", [True, False])
+@pytest.mark.parametrize("linked_successor", [False, True])
 async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     end: str,
     assistant_available: bool,
+    linked_successor: bool,
 ) -> None:
     from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
     from gobby.sessions.status_events import SessionStatusTransition
@@ -3526,11 +3722,12 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Assistant - Main",
-        parent_session_id=predecessor.id,
+        title="Lane 4 continued" if linked_successor else "Assistant - Main",
+        parent_session_id=target.id if linked_successor else predecessor.id,
         agent_depth=0,
     )
-    assert sessions.update_session_status(predecessor.id, "expired")
+    if not linked_successor or not assistant_available:
+        assert sessions.update_session_status(predecessor.id, "expired")
     if not assistant_available:
         assert sessions.update_session_status(successor.id, "expired")
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
@@ -3570,8 +3767,9 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     stored = store.get_channel(channel.id)
     assert stored is not None
     if assistant_available:
-        assert manager.attached_session(channel.id, "dm:99") == successor.id
-        assert stored.config_json["telegram_agent_targets"] == {"dm:99": successor.id}
+        expected_holder = predecessor.id if linked_successor else successor.id
+        assert manager.attached_session(channel.id, "dm:99") == expected_holder
+        assert stored.config_json["telegram_agent_targets"] == {"dm:99": expected_holder}
         adapter.send_message.assert_not_awaited()
     else:
         assert manager.attached_session(channel.id, "dm:99") is None

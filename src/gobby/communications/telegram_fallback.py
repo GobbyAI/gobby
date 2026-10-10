@@ -86,6 +86,7 @@ async def _fallback_telegram_targets(
         and session.session_type == "terminal"
         and session.agent_run_id is None
     )
+    successor: Session | None = None
     if resumable:
         variables = await asyncio.to_thread(
             read_session_variables,
@@ -93,9 +94,34 @@ async def _fallback_telegram_targets(
             transition.session_id,
             keys=(CLEAR_ATTEMPT_VARIABLE,),
         )
-        # A clear starts another session, even before its marker is consumed.
-        # Retaining the predecessor would strand its chat after the successor binds.
+        # Marker-bearing clears retain the existing Assistant-pool fallback.
         resumable = not isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict)
+    if resumable and session is not None:
+        children = await asyncio.to_thread(
+            manager._session_store.find_children, transition.session_id
+        )
+        # Native /clear may link a successor without staging a handoff marker.
+        # Same-depth terminal lineage distinguishes it from spawned children.
+        clear_successors = [
+            child
+            for child in children
+            if child.session_type == "terminal"
+            and child.agent_depth == session.agent_depth
+            and child.agent_run_id is None
+            and child.source == session.source
+            and child.machine_id == session.machine_id
+            and child.project_id == session.project_id
+        ]
+        if clear_successors:
+            resumable = False
+            successor = next(
+                (
+                    child
+                    for child in reversed(clear_successors)
+                    if child.status in LIVE_SESSION_STATUSES
+                ),
+                None,
+            )
     with manager._attachment_lock:
         attached = []
         for key, holder in list(manager._conversation_attachments.items()):
@@ -121,13 +147,14 @@ async def _fallback_telegram_targets(
         (session for session in sessions if _is_assistant(session)),
         key=lambda session: session.project_id != transition.project_id,
     )
+    targets = ([successor] if successor is not None else []) + assistants
     for channel_id, conversation_id in attached:
         try:
             channel = await asyncio.to_thread(manager.get_channel, channel_id)
             if channel is None or channel.channel_type != "telegram":
                 continue
             rebound = False
-            for assistant in assistants:
+            for assistant in targets:
                 try:
                     switched = await asyncio.to_thread(
                         _switch_if_current,

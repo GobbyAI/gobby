@@ -210,13 +210,19 @@ def _bind_clear_successor(
     supersedes = getattr(resolution, "clear_supersedes", None)
     if not isinstance(supersedes, str):
         supersedes = None
-    won = take_clear_handoff_marker(
-        handler._session_manager.db,
-        predecessor_id,
-        attempt_id=attempt_id,
-        successor_id=successor_id,
-        supersede_successor_id=supersedes,
-    )
+    try:
+        won = take_clear_handoff_marker(
+            handler._session_manager.db,
+            predecessor_id,
+            attempt_id=attempt_id,
+            successor_id=successor_id,
+            supersede_successor_id=supersedes,
+        )
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to take clear handoff marker for successor %s: %s", successor_id, exc
+        )
+        return False
     if not won:
         handler.logger.warning(
             "Clear handoff take lost for predecessor %s successor %s",
@@ -402,6 +408,18 @@ def activate_materialized_session(
     clear_predecessor = getattr(resolution, "clear_predecessor", None)
     if session_obj is not None and (session_source == "clear" or clear_predecessor is not None):
         bound = _bind_clear_successor(handler, resolution, session_obj)
+        if (
+            not bound
+            and clear_predecessor is None
+            and session_source == "clear"
+            and handler._session_manager is not None
+        ):
+            try:
+                handler._session_manager.bind_native_clear_successor(session_id)
+            except Exception as exc:
+                handler.logger.warning(
+                    "Failed to bind native clear successor %s: %s", session_id, exc
+                )
         # Codex fires SessionStart only when the successor thread's first prompt is
         # submitted, so a prompt is already in flight there (the clear delivery typed
         # the pull prompt itself); typing another would queue a duplicate turn.
