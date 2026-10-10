@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import patch
 
 import click
+import httpx
 import pytest
 import yaml
 from click.testing import CliRunner, Result
@@ -73,6 +74,21 @@ class FakeHub:
             self.requests.append(Recorded(method, handler.path, body, handler.headers["Cookie"]))
         if method == "POST" and handler.path == "/api/auth/keys/bootstrap":
             self._bootstrap(handler, body)
+        elif method == "POST" and handler.path == "/api/auth/keys":
+            if handler.headers["Authorization"] not in {
+                f"Bearer {key}" for key_id, key in self.keys.items() if key_id in self.live
+            }:
+                _respond(handler, 401, b"{}")
+                return
+            self._bootstrap(
+                handler,
+                body
+                | {
+                    "email": EMAIL,
+                    "password": PASSWORD,
+                    "machine_id": MACHINE_ID,
+                },
+            )
         elif method == "POST" and handler.path == "/api/auth/login":
             if (body.get("email"), body.get("password")) != (EMAIL, PASSWORD):
                 _respond(handler, 401, b'{"error": "invalid credentials"}')
@@ -733,3 +749,350 @@ def test_key_show_prints_hint_only(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     assert missing.exit_code != 0
     assert "gobby auth login" in missing.output
+
+
+@dataclass
+class KeyAPI:
+    node: Node
+    key: str = field(default_factory=api_key_format.generate)
+    key_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    requests: list[httpx.Request] = field(default_factory=list)
+    on_mint: Callable[[], None] | None = None
+    on_status: Callable[[], None] | None = None
+    authenticated: object = True
+    delete_status: int = 200
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.method == "POST":
+            if self.on_mint:
+                self.on_mint()
+            return httpx.Response(
+                200,
+                json={
+                    "key": self.key,
+                    "key_id": self.key_id,
+                    "hint": api_key_format.hint(self.key),
+                    "user_id": USER_ID,
+                    "machine_id": MACHINE_ID,
+                },
+            )
+        if request.url.path == "/api/auth/status":
+            if self.on_status:
+                self.on_status()
+            return httpx.Response(200, json={"authenticated": self.authenticated})
+        if request.method == "DELETE":
+            return httpx.Response(self.delete_status, json={})
+        return httpx.Response(
+            200,
+            json={
+                "keys": [
+                    {
+                        "id": PRIOR_KEY_ID,
+                        "hint": api_key_format.hint(self.node.prior_key),
+                        "label": LABEL,
+                        "machine_id": MACHINE_ID,
+                        "created_at": "created",
+                        "last_used_at": "last-used",
+                        "revoked_at": None,
+                    }
+                ]
+            },
+        )
+
+
+def _key_api(node: Node, monkeypatch: pytest.MonkeyPatch) -> KeyAPI:
+    api = KeyAPI(node)
+    real_client = httpx.Client
+
+    def client(**kwargs: Any) -> httpx.Client:
+        assert kwargs["trust_env"] is False
+        assert kwargs["timeout"].connect == auth_login.NETWORK_TIMEOUT_SECONDS
+        return real_client(**kwargs, transport=httpx.MockTransport(api.handle))
+
+    monkeypatch.setattr(httpx, "Client", client)
+    return api
+
+
+def _rewrite(node: Node, **changes: object) -> None:
+    node.bootstrap.write_text(yaml.safe_dump(node.read() | changes), encoding="utf-8")
+
+
+def test_rotate_verifies_before_revoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    observed: list[str] = []
+    api.on_status = lambda: observed.append(node.read()["api_key_id"])
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code == 0, result.output
+    assert observed == [api.key_id]
+    assert [(r.method, r.url.path) for r in api.requests] == [
+        ("POST", "/api/auth/keys"),
+        ("GET", "/api/auth/status"),
+        ("DELETE", f"/api/auth/keys/{PRIOR_KEY_ID}"),
+    ]
+    assert [r.headers["Authorization"] for r in api.requests] == [
+        f"Bearer {node.prior_key}",
+        f"Bearer {api.key}",
+        f"Bearer {api.key}",
+    ]
+    assert json.loads(api.requests[0].content) == {"label": socket.gethostname()}
+    assert node.read()["api_key"] == api.key
+    assert api.key_id in result.output
+    assert api_key_format.hint(api.key) in result.output
+    assert api.key not in result.output
+
+
+@pytest.mark.parametrize("concurrent_key", [False, True])
+def test_rotate_failed_verification_preserves_other_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concurrent_key: bool,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.authenticated = False
+    winner = str(uuid.uuid4())
+
+    def write_during_verification() -> None:
+        _rewrite(node, unrelated="preserved")
+        if concurrent_key:
+            _rewrite(node, api_key="winner-key", api_key_id=winner)
+
+    api.on_status = write_during_verification
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert node.read()["unrelated"] == "preserved"
+    assert node.read()["api_key_id"] == (winner if concurrent_key else PRIOR_KEY_ID)
+    assert node.read()["api_key"] == ("winner-key" if concurrent_key else node.prior_key)
+    deleted = [r for r in api.requests if r.method == "DELETE"]
+    assert [r.url.path for r in deleted] == (
+        [] if concurrent_key else [f"/api/auth/keys/{api.key_id}"]
+    )
+    if concurrent_key:
+        assert api.key_id in result.output
+        assert "gobby auth key list" in result.output
+    else:
+        assert deleted[0].headers["Authorization"] == f"Bearer {node.prior_key}"
+
+
+def test_rotate_concurrent_writer_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    winner = str(uuid.uuid4())
+    api.on_mint = lambda: _rewrite(node, api_key="winner-key", api_key_id=winner)
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert node.read()["api_key_id"] == winner
+    assert node.read()["api_key"] == "winner-key"
+    assert [r.url.path for r in api.requests] == [
+        "/api/auth/keys",
+        f"/api/auth/keys/{api.key_id}",
+    ]
+    assert api.requests[-1].headers["Authorization"] == f"Bearer {node.prior_key}"
+
+
+@pytest.mark.parametrize("stage", ["before-replace", "fsync", "readback"])
+def test_rotate_settles_failed_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    failure = (
+        _fail_replace_for(node.bootstrap)
+        if stage == "before-replace"
+        else _FailAfterBootstrapReplace(node.bootstrap, stage)
+    )
+    with failure:
+        result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert node.read()["api_key_id"] == (PRIOR_KEY_ID if stage == "before-replace" else api.key_id)
+    assert [r.url.path for r in api.requests if r.method == "DELETE"] == (
+        [f"/api/auth/keys/{api.key_id}"] if stage == "before-replace" else []
+    )
+    if stage != "before-replace":
+        assert api.key_id in result.output
+        assert "gobby auth key list" in result.output
+
+
+def test_rotate_revoke_failure_keeps_new_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.delete_status = 503
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code == 0, result.output
+    assert node.read()["api_key_id"] == api.key_id
+    assert PRIOR_KEY_ID in result.output
+    assert "gobby auth key list" in result.output
+
+
+def test_key_list_and_revoke_send_the_bootstrap_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    before = node.snapshot()
+    listed = CliRunner().invoke(auth, ["key", "list"])
+    assert listed.exit_code == 0, listed.output
+    for value in (PRIOR_KEY_ID, LABEL, MACHINE_ID, "created", "last-used", "current"):
+        assert value in listed.output
+    assert node.prior_key not in listed.output
+    own = CliRunner().invoke(auth, ["key", "revoke", PRIOR_KEY_ID])
+    assert own.exit_code != 0
+    assert "--rotate" in own.output
+    assert len(api.requests) == 1
+    revoked = CliRunner().invoke(auth, ["key", "revoke", api.key_id])
+    assert revoked.exit_code == 0, revoked.output
+    api.delete_status = 404
+    foreign = CliRunner().invoke(auth, ["key", "revoke", str(uuid.uuid4())])
+    assert foreign.exit_code != 0
+    assert "not found among your keys" in foreign.output
+    assert all(r.headers["Authorization"] == f"Bearer {node.prior_key}" for r in api.requests)
+    assert node.snapshot() == before
+
+
+def test_key_mint_prints_once_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    before = node.snapshot()
+    result = CliRunner().invoke(auth, ["key", "--mint", LABEL])
+    assert result.exit_code == 0, result.output
+    assert result.output.count(api.key) == 1
+    assert api.key_id in result.output
+    assert api_key_format.hint(api.key) in result.output
+    assert "not shown again" in result.output
+    assert json.loads(api.requests[0].content) == {"label": LABEL}
+    assert api.requests[0].headers["Authorization"] == f"Bearer {node.prior_key}"
+    assert node.snapshot() == before
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--show", "--rotate"],
+        ["--show", "--mint", LABEL],
+        ["--rotate", "--mint", LABEL],
+        ["--rotate", "list"],
+        ["--show", "revoke", PRIOR_KEY_ID],
+    ],
+)
+def test_key_options_are_exclusive(options: list[str]) -> None:
+    result = CliRunner().invoke(auth, ["key", *options])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+
+
+def test_key_no_option_prints_usage() -> None:
+    result = CliRunner().invoke(auth, ["key"])
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in result.output
+    assert "--rotate" in result.output
+
+
+def test_key_mint_uses_pinned_tls_hub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tls_hub: FakeHub,
+) -> None:
+    node = _node(tmp_path, monkeypatch, tls_hub.origin)
+    before = node.snapshot()
+    tls_hub.keys[PRIOR_KEY_ID] = node.prior_key
+    rejected = CliRunner().invoke(auth, ["key", "--mint", LABEL])
+    assert rejected.exit_code != 0
+    assert tls_hub.requests == []
+    assert node.snapshot() == before
+
+    node.pem.write_text(tls_hub.pem, encoding="utf-8")
+    pinned = node.snapshot()
+    minted = CliRunner().invoke(auth, ["key", "--mint", LABEL])
+    assert minted.exit_code == 0, minted.output
+    assert tls_hub.paths() == ["/api/auth/keys"]
+    assert tls_hub.requests[0].body == {"label": LABEL}
+    issued = [key for key_id, key in tls_hub.keys.items() if key_id != PRIOR_KEY_ID]
+    assert len(issued) == 1
+    assert minted.output.count(issued[0]) == 1
+    assert node.snapshot() == pinned
+
+
+def test_key_local_hub_uses_daemon_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    _rewrite(node, datastore_mode="local")
+    monkeypatch.setattr(auth_login, "daemon_url", lambda: "http://127.0.0.1:23456")
+    api = _key_api(node, monkeypatch)
+    result = CliRunner().invoke(auth, ["key", "list"])
+    assert result.exit_code == 0, result.output
+    assert str(api.requests[0].url) == "http://127.0.0.1:23456/api/auth/keys"
+
+
+@pytest.mark.parametrize("authenticated", [None, 1, "true"])
+def test_rotate_requires_literal_authenticated_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authenticated: object,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.authenticated = authenticated
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert node.read()["api_key_id"] == PRIOR_KEY_ID
+    assert [r.url.path for r in api.requests if r.method == "DELETE"] == [
+        f"/api/auth/keys/{api.key_id}",
+    ]
+
+
+def test_rotate_failed_restore_keeps_both_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    api.authenticated = False
+
+    def fail_restore() -> None:
+        def publish(*args: object) -> None:
+            raise OSError("restore failed")
+
+        monkeypatch.setattr(auth_login, "publish_bootstrap_yaml_locked", publish)
+
+    api.on_status = fail_restore
+    result = CliRunner().invoke(auth, ["key", "--rotate"])
+    assert result.exit_code != 0
+    assert "restore failed" in result.output
+    assert api.key_id in result.output
+    assert "gobby auth key list" in result.output
+    assert node.read()["api_key_id"] == api.key_id
+    assert not any(r.method == "DELETE" for r in api.requests)
+
+
+@pytest.mark.parametrize("options", [["--rotate"], ["--mint", LABEL]])
+def test_key_missing_machine_fails_before_mint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+) -> None:
+    node = _node(tmp_path, monkeypatch, "http://127.0.0.1:12345", pinned=False)
+    api = _key_api(node, monkeypatch)
+    before = node.snapshot()
+
+    def missing_machine() -> str:
+        raise RuntimeError("machine identity missing")
+
+    monkeypatch.setattr(auth_login, "require_machine_id", missing_machine)
+    result = CliRunner().invoke(auth, ["key", *options])
+    assert result.exit_code != 0
+    assert "machine identity missing" in result.output
+    assert api.requests == []
+    assert node.snapshot() == before
