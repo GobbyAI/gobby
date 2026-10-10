@@ -8,7 +8,7 @@ from typing import Any
 
 import psycopg
 
-from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.utils import spawn
 
@@ -204,7 +204,7 @@ def expire_stale_terminal_sessions_for_context(
             continue
         stored_context = _row_value(row, "terminal_context")
         try:
-            if not terminal_contexts_match(terminal_context, stored_context):
+            if not terminal_process_contexts_match(terminal_context, stored_context):
                 continue
         except Exception as e:  # Stale context scans are an owned fail-open boundary.
             handler.logger.warning(

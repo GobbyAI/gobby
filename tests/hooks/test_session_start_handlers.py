@@ -225,6 +225,8 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
             "terminal_context": {
                 "tmux_pane": "%73",
                 "tmux_socket_path": "/tmp/tmux-501/default",
+                "parent_pid": 4242,
+                "parent_create_time": 1234.5,
             },
         },
         {
@@ -232,6 +234,8 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
             "terminal_context": {
                 "tmux_pane": "%74",
                 "tmux_socket_path": "/tmp/tmux-501/default",
+                "parent_pid": 4343,
+                "parent_create_time": 2345.6,
             },
         },
         {
@@ -239,6 +243,8 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
             "terminal_context": {
                 "tmux_pane": "%73",
                 "tmux_socket_path": "/tmp/tmux-501/other",
+                "parent_pid": 4242,
+                "parent_create_time": 1234.5,
             },
         },
     ]
@@ -252,6 +258,8 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         terminal_context={
             "tmux_pane": "%73",
             "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 4242,
+            "parent_create_time": 1234.5,
         },
     )
 
@@ -278,6 +286,8 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
             "terminal_context": {
                 "tmux_pane": "%73",
                 "tmux_socket_path": "/tmp/tmux-501/default",
+                "parent_pid": 4242,
+                "parent_create_time": 1234.5,
             },
         },
         {
@@ -285,6 +295,8 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
             "terminal_context": {
                 "tmux_pane": "%73",
                 "tmux_socket_path": "/tmp/tmux-501/default",
+                "parent_pid": 4242,
+                "parent_create_time": 1234.5,
             },
         },
     ]
@@ -298,6 +310,8 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
         terminal_context={
             "tmux_pane": "%73",
             "tmux_socket_path": "/tmp/tmux-501/default",
+            "parent_pid": 4242,
+            "parent_create_time": 1234.5,
         },
     )
 
@@ -2228,7 +2242,11 @@ def test_expire_stale_terminal_sessions_keeps_codex_seats_in_other_panes() -> No
         },
         {
             "id": "previous-seat-same-pane",
-            "terminal_context": {"tty": "/dev/ttys001", "parent_pid": 18877},
+            "terminal_context": {
+                "tty": "/dev/ttys001",
+                "parent_pid": 22512,
+                "parent_create_time": 1234.5,
+            },
         },
     ]
     expired: list[tuple[str, str]] = []
@@ -2244,7 +2262,7 @@ def test_expire_stale_terminal_sessions_keeps_codex_seats_in_other_panes() -> No
         handler,
         session_id="seat-a",
         project_id="project-1",
-        terminal_context={"tty": "/dev/ttys001", "parent_pid": 22512},
+        terminal_context={"tty": "/dev/ttys001", "parent_pid": 22512, "parent_create_time": 1234.5},
     )
 
     assert expired == [("previous-seat-same-pane", "context_reuse")]
