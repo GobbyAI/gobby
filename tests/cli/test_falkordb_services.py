@@ -116,7 +116,13 @@ class TestFalkorDBHealthAndStatus:
             )
 
         assert redis_factory.calls == [
-            {"host": "localhost", "port": 6379, "password": "secret", "socket_timeout": 5}
+            {
+                "host": "localhost",
+                "port": 6379,
+                "password": "secret",
+                "socket_connect_timeout": 5.0,
+                "socket_timeout": 5.0,
+            }
         ]
         assert client.ping_count == 1
         assert client.close_count == 1

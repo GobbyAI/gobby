@@ -44,7 +44,6 @@ def test_memory_package_exports_compatibility_symbols() -> None:
     from gobby.cli.memory import (
         MemoryManager,
         __all__,
-        _get_daemon_client,
         get_memory_manager,
         memory,
         resolve_memory_id,
@@ -53,7 +52,6 @@ def test_memory_package_exports_compatibility_symbols() -> None:
 
     assert memory.name == "memory"
     assert callable(get_memory_manager)
-    assert callable(_get_daemon_client)
     assert callable(resolve_memory_id)
     assert callable(resolve_project_ref)
     assert MemoryManager is not None
@@ -62,7 +60,7 @@ def test_memory_package_exports_compatibility_symbols() -> None:
 
 
 def test_get_daemon_client_rejects_missing_cli_context_config() -> None:
-    from gobby.cli.memory import _get_daemon_client
+    from gobby.cli.memory.common import _get_daemon_client
 
     ctx = click.Context(click.Command("memory"), obj=None)
 
@@ -71,7 +69,7 @@ def test_get_daemon_client_rejects_missing_cli_context_config() -> None:
 
 
 def test_get_daemon_client_rejects_invalid_cli_context_config() -> None:
-    from gobby.cli.memory import _get_daemon_client
+    from gobby.cli.memory.common import _get_daemon_client
 
     ctx = click.Context(click.Command("memory"), obj={"config": object()})
 
@@ -80,8 +78,9 @@ def test_get_daemon_client_rejects_invalid_cli_context_config() -> None:
 
 
 def test_get_daemon_client_uses_resolved_daemon_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gobby.cli.memory import _get_daemon_client
+    from gobby.cli.memory.common import _get_daemon_client
 
+    monkeypatch.delenv("GOBBY_DAEMON_URL", raising=False)
     monkeypatch.setenv("GOBBY_PORT", "12345")
     runtime = CliRuntime(config_file=None, config=DaemonConfig(daemon_port=60887))
     ctx = click.Context(click.Command("memory"), obj=runtime)
