@@ -306,12 +306,14 @@ def title_applied_session(
 
     ``None`` titles it with the definition name unless the session already has a
     manual title; a nonblank string sets that title; a blank string leaves it alone.
+    The default title is automatic (task source): it outranks provisional titles,
+    and a later apply or task claim may replace it. An explicit title is manual.
     The title set is reported as ``result["title"]``.
     """
     if db is None or not result.get("success"):
         return result
     from gobby.storage.sessions import SessionManager
-    from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
+    from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE, TASK_TITLE_SOURCE
     from gobby.utils.session_context import get_session_context
 
     context = get_session_context()
@@ -319,15 +321,17 @@ def title_applied_session(
     if not session_id:
         return result
     manager = SessionManager(db)
+    source = MANUAL_TITLE_SOURCE
     if title is None:
         session = manager.get(session_id)
         if session is None or session.title_source == MANUAL_TITLE_SOURCE:
             return result
         title = agent.replace("-", " ").title()
+        source = TASK_TITLE_SOURCE
     if not title.strip():
         return result
     try:
-        updated = manager.update_title(session_id, title.strip(), title_source=MANUAL_TITLE_SOURCE)
+        updated = manager.update_title(session_id, title.strip(), title_source=source)
     except Exception:
         logger.warning("Failed to title session %s for %s", session_id, agent, exc_info=True)
         return result

@@ -401,11 +401,27 @@ def _render_contributors(
 
 
 def _drop_rank(
-    part: tuple[str, str], limit: int, protected: Collection[str]
+    part: tuple[str, str], room: int, protected: Collection[str]
 ) -> tuple[bool, bool, int]:
     """Higher ranks drop first: unshippable parts, then unprotected, then largest."""
     label, text = part
-    return (len(text) > limit, label not in protected, len(text))
+    return (len(text) > room, label not in protected, len(text))
+
+
+def _room_beside_breadcrumb(
+    index: int,
+    kept: list[tuple[str, str]],
+    omitted: list[tuple[str, str]],
+    limit: int,
+    result_id: str | None,
+) -> int:
+    """Space kept[index] has when it ships alone, beside a breadcrumb naming every other part."""
+    others = [label for label, _ in omitted] + [
+        label for i, (label, _) in enumerate(kept) if i != index
+    ]
+    if not others and not result_id:
+        return limit
+    return limit - len("\n\n") - len(_overflow_breadcrumb(others, result_id))
 
 
 def _truncate_contributors(
@@ -423,7 +439,12 @@ def _truncate_contributors(
             return ContextFit(candidate, omitted)
         if not kept:
             return ContextFit(candidate[:limit], omitted)
-        index = max(range(len(kept)), key=lambda i: _drop_rank(kept[i], limit, protected))
+        index = max(
+            range(len(kept)),
+            key=lambda i: _drop_rank(
+                kept[i], _room_beside_breadcrumb(i, kept, omitted, limit, result_id), protected
+            ),
+        )
         omitted.append(kept.pop(index))
 
 

@@ -87,6 +87,15 @@ def test_part_larger_than_the_limit_drops_before_protected_ones() -> None:
     assert fit.omitted == [("rule:huge", "h" * 200)]
 
 
+def test_part_with_no_room_for_the_breadcrumb_drops_first() -> None:
+    fit = fit_additional_context(
+        [("rule:x", "a" * 9940), ("rule:y", "b" * 500)], limit=9950, protected={"rule:x"}
+    )
+
+    assert fit.text == "b" * 500 + "\n\nomitted contributors=[rule:x]"
+    assert fit.omitted == [("rule:x", "a" * 9940)]
+
+
 def test_fitting_text_reports_nothing_omitted() -> None:
     fit = fit_additional_context([("a", "x"), ("b", "y")], limit=80)
 

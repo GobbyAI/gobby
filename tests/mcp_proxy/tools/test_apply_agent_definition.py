@@ -949,6 +949,21 @@ async def test_apply_titles_the_pane_with_the_definition_name(
     assert session_title(db, session_id) == "X"
 
 
+def test_default_title_yields_to_a_later_apply_and_a_task_claim(
+    db: HubDatabase, session_id: str
+) -> None:
+    from gobby.mcp_proxy.tools.apply_agent_definition import title_applied_session
+    from gobby.storage.sessions._title_defaults import TASK_TITLE_SOURCE
+
+    with session_context_for_test(session_id):
+        title_applied_session(db, {"success": True}, "developer", None)
+        relabeled = title_applied_session(db, {"success": True}, "code-reviewer", None)
+
+    assert relabeled["title"] == "Code Reviewer"
+    SessionManager(db).update_title(session_id, "#7 Fix it", title_source=TASK_TITLE_SOURCE)
+    assert session_title(db, session_id) == "#7 Fix it"
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("definitions")
 async def test_default_title_keeps_a_manual_title_and_explicit_title_replaces_it(
