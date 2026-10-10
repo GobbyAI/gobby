@@ -313,6 +313,15 @@ step_workflow:
         - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-tasks:link_commit"
+        - "gobby-tasks:escalate_task"
+      on_mcp_before:
+        - server: gobby-tasks
+          tool: escalate_task
+          action: block
+          when: >-
+            tool_input.get('task_id') is None
+            or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+          reason: "Hand off only the assigned task from submit."
       on_mcp_success:
         - server: gobby-agents
           tool: send_message

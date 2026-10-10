@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,10 +13,13 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._transitions import claim_task
+from gobby.utils.project_context import reset_project_context, set_project_context
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -49,7 +52,7 @@ def seats(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
-) -> _Seats:
+) -> Iterator[_Seats]:
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", MACHINE_ID)
     sessions = SessionManager(temp_db)
     former, successor = (
@@ -68,13 +71,17 @@ def seats(
     )
     for session_id in (former, successor):
         SessionVariableManager(temp_db).merge_variables(session_id, {"is_spawned_agent": True})
-    return _Seats(
-        db=temp_db,
-        former=former,
-        successor=successor,
-        task_id=task.id,
-        ref=f"#{task.seq_num}",
-    )
+    token = set_project_context(sample_project)
+    try:
+        yield _Seats(
+            db=temp_db,
+            former=former,
+            successor=successor,
+            task_id=task.id,
+            ref=f"#{task.seq_num}",
+        )
+    finally:
+        reset_project_context(token)
 
 
 def _seat(seats: _Seats, session_id: str, step: str, *, bound: bool = True) -> None:
@@ -144,6 +151,110 @@ def _force_transfer(seats: _Seats) -> None:
 
 def _release(seats: _Seats) -> None:
     LocalTaskManager(seats.db).release_task_claim(seats.task_id)
+
+
+def _before_escalation(seats: _Seats, task_ref: str | None) -> HookEvent:
+    event = _after_tool(
+        seats.former, "escalate_task", {"task_id": task_ref, "reason": "Handed off"}, {}
+    )
+    return replace(event, event_type=HookEventType.BEFORE_TOOL)
+
+
+@pytest.mark.parametrize("use_ref", [False, True])
+async def test_submit_handoff_releases_binding_and_allows_next_claim(
+    seats: _Seats, use_ref: bool
+) -> None:
+    manager = LocalTaskManager(seats.db)
+    registry = create_task_registry(manager)
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    task_ref = seats.ref if use_ref else seats.task_id
+    event = _before_escalation(seats, task_ref)
+    engine = RuleEngine(seats.db)
+    assert engine._check_step_tool_enforcement(event, seats.former, {}) is None
+
+    with session_context_for_test(seats.former):
+        result = await registry.call(
+            "escalate_task", {"task_id": task_ref, "reason": "Handed off: reviewer LAND"}
+        )
+    assert result == {}
+    await engine._process_step_after_tool(
+        _after_tool(seats.former, "escalate_task", {"task_id": task_ref}, result),
+        seats.former,
+        {},
+    )
+    assert _current_step(seats.db, seats.former) == "claim"
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "claim"
+    assert state["assigned_task_id"] is None and state["task_claimed"] is False
+    handed_off = manager.get_task(seats.task_id)
+    assert handed_off.is_escalated and handed_off.claimed_by_session_id is None
+    next_task = manager.create_task(
+        handed_off.project_id,
+        "Next directed task",
+        validation_criteria="The released developer can claim this task.",
+    )
+    claim_event = replace(
+        _after_tool(seats.former, "claim_task", {"task_id": next_task.id}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    assert engine._check_step_tool_enforcement(claim_event, seats.former, {}) is None
+    with session_context_for_test(seats.former):
+        claimed = await registry.call("claim_task", {"task_id": next_task.id})
+    assert claimed["success"] is True
+
+
+@pytest.mark.parametrize("task_ref", ["#999999", "foreign-task", None])
+def test_submit_refuses_handoff_of_an_unassigned_task(seats: _Seats, task_ref: str | None) -> None:
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "submit")
+    response = RuleEngine(seats.db)._check_step_tool_enforcement(
+        _before_escalation(seats, task_ref), seats.former, {}
+    )
+    assert response is not None and response.decision == "block"
+    assert "Hand off only the assigned task" in str(response.reason)
+    assert _current_step(seats.db, seats.former) == "submit"
+
+
+async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> None:
+    manager = LocalTaskManager(seats.db)
+    registry = create_task_registry(manager)
+    claim_task(seats.db, seats.task_id, seats.former)
+    manager.link_commit(seats.task_id, COMMIT)
+    _seat(seats, seats.former, "submit")
+    with session_context_for_test(seats.former):
+        assert (
+            await registry.call(
+                "escalate_task", {"task_id": seats.ref, "reason": "Handed off: reviewer LAND"}
+            )
+            == {}
+        )
+    assert _current_step(seats.db, seats.former) == "claim"
+    manager.de_escalate_task(seats.task_id, reason="Landed and released")
+    with session_context_for_test(seats.former):
+        claimed = await registry.call("claim_task", {"task_id": seats.ref})
+    assert claimed["success"] is True
+    engine = RuleEngine(seats.db)
+    await engine._process_step_after_tool(
+        _after_tool(seats.former, "claim_task", {"task_id": seats.ref}, claimed), seats.former, {}
+    )
+    assert _current_step(seats.db, seats.former) == "route_skills"
+    # Complete the same skill-routing preconditions as a newly claimed task.
+    _seat(seats, seats.former, "route_skills")
+    await engine._process_step_after_tool(
+        _after_tool(
+            seats.former,
+            "get_task",
+            {"task_id": seats.ref},
+            {"id": seats.task_id, "ref": seats.ref},
+        ),
+        seats.former,
+        {},
+    )
+    assert _current_step(seats.db, seats.former) == "submit"
+    close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
+    close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
+    assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
 
 
 @pytest.mark.parametrize("move", [_transfer, _force_transfer, _release])
