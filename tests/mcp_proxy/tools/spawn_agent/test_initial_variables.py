@@ -877,6 +877,7 @@ class TestSpawnAgentStepVariables:
         assert agent_body.workflows.rule_selectors.include == [
             "tag:default",
             "tag:worker-safety",
+            "name:no-send-keys",
         ]
         assert agent_body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
 

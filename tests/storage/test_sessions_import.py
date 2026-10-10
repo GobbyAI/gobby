@@ -49,7 +49,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "terminal_context: 'dict[str, Any] | None', workflow_name: 'str | None', "
     "agent_depth: 'int', sandbox_enabled: 'bool | None') -> 'Session | None'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
-    "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
+    "source: 'str | None' = None, machine_id: 'str | None' = None, "
+    "agent_type: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
     "create_web_chat_session": "(self, *, machine_id: 'str | None', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
@@ -112,6 +113,9 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
     "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
     "'list[Session]'",
+    "list_brief": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
+    "source: 'str | None' = None, limit: 'int' = 100, machine_id: 'str | None' = None, "
+    "agent_type: 'str | None' = None) -> '_Sessions'",
     "list_newest_created": "(self, project_id: 'str | None' = None, "
     "status: 'str | None' = None, source: 'str | None' = None, limit: 'int' = 100, "
     "from_created_at: 'datetime | None' = None, from_id: 'str | None' = None) "
