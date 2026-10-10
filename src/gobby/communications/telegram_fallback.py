@@ -7,7 +7,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.communications.agent_labels import agent_label
+from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
+from gobby.storage.sessions._contested_expiry import read_session_variables
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -84,6 +86,16 @@ async def _fallback_telegram_targets(
         and session.session_type == "terminal"
         and session.agent_run_id is None
     )
+    if resumable:
+        variables = await asyncio.to_thread(
+            read_session_variables,
+            manager.store.db,
+            transition.session_id,
+            keys=(CLEAR_ATTEMPT_VARIABLE,),
+        )
+        # A clear starts another session, even before its marker is consumed.
+        # Retaining the predecessor would strand its chat after the successor binds.
+        resumable = not isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict)
     with manager._attachment_lock:
         attached = []
         for key, holder in list(manager._conversation_attachments.items()):

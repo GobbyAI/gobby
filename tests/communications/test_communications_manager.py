@@ -3494,10 +3494,17 @@ async def test_telegram_target_survives_manager_restart(
     await restarted.stop()
 
 
-async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
+@pytest.mark.parametrize("end", ["deleted", "staged-clear", "consumed-clear"])
+@pytest.mark.parametrize("assistant_available", [True, False])
+async def test_ended_target_falls_back_to_real_assistant_clear_successor(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    end: str,
+    assistant_available: bool,
 ) -> None:
+    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
     from gobby.sessions.status_events import SessionStatusTransition
+    from gobby.workflows.state_manager import SessionVariableManager
 
     sessions = SessionManager(temp_db)
     target = sessions.register(
@@ -3524,6 +3531,8 @@ async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
         agent_depth=0,
     )
     assert sessions.update_session_status(predecessor.id, "expired")
+    if not assistant_available:
+        assert sessions.update_session_status(successor.id, "expired")
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(
         channel_type="telegram", channel_id="33333333-3333-4333-8333-333333333335"
@@ -3531,15 +3540,26 @@ async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
     manager.switch_conversation(channel.name, "dm:99", target.id)
-    assert sessions.update_session_status(target.id, "deleted")
+    if end != "deleted":
+        SessionVariableManager(temp_db).set_variable(
+            target.id,
+            CLEAR_ATTEMPT_VARIABLE,
+            {
+                "attempt_id": "clear-attempt",
+                "consumed_by": successor.id if end == "consumed-clear" else None,
+            },
+        )
+    assert sessions.update_session_status(target.id, "deleted" if end == "deleted" else "expired")
 
     await manager.handle_session_status_transition(
         SessionStatusTransition(
             session_id=target.id,
             project_id=sample_project["id"],
             agent_run_id=None,
-            status="deleted",
+            status="deleted" if end == "deleted" else "expired",
             transitioned_at=_FIXED_TS,
             seq_num=target.seq_num,
             title="Lane 4",
@@ -3547,10 +3567,17 @@ async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
         )
     )
 
-    assert manager.attached_session(channel.id, "dm:99") == successor.id
     stored = store.get_channel(channel.id)
     assert stored is not None
-    assert stored.config_json["telegram_agent_targets"] == {"dm:99": successor.id}
+    if assistant_available:
+        assert manager.attached_session(channel.id, "dm:99") == successor.id
+        assert stored.config_json["telegram_agent_targets"] == {"dm:99": successor.id}
+        adapter.send_message.assert_not_awaited()
+    else:
+        assert manager.attached_session(channel.id, "dm:99") is None
+        assert stored.config_json["telegram_agent_targets"] == {}
+        adapter.send_message.assert_awaited_once()
+        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
 
 
 def test_atomic_channel_config_update_preserves_telegram_target(

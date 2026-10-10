@@ -26,8 +26,8 @@ On an explicit unregister/detach request, call `detach_conversation` with the
 same channel and conversation ID. DM/topic selections survive daemon restarts.
 An operator-owned terminal session retains its selection while expired and
 receives messages again once resumed with the same session ID. Expired sessions
-receive no live delivery. Deletion or a managed agent run ending releases the
-selection and may return the DM to a live Assistant.
+receive no live delivery. A clear continuation (staged or consumed), or a managed
+agent run ending, releases the selection and may return the DM to a live Assistant.
 `list_conversation_attachments()` lists current live holders for coordination;
 an attached agent needs no Assistant relay.
 
