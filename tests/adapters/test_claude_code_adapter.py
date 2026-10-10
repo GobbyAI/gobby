@@ -1684,6 +1684,29 @@ def test_the_carry_keeps_already_carried_parts_within_one_delivery(
     assert carried == [["rule:old", "o" * 6_000]]
 
 
+def test_the_carry_renders_whole_on_the_next_delivery(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, variables, session_id = _carry_session(
+        temp_db, monkeypatch, "21000000-0000-4000-8000-000000000007"
+    )
+
+    first = HookResponse(decision="allow", metadata={"session_id": session_id})
+    first.add_context(("rule:policy", "o" * 5_950), ("rule:common", "c" * 4_000))
+    first.add_context(("agent_prompt", "p" * 6_000), prepend=True)
+    _deliver(adapter, temp_db, first)
+
+    carried = variables.get_variables(session_id)[CARRIED_CONTEXT_VARIABLE]
+    assert carried == [["rule:policy", "o" * 5_950]]
+
+    second = HookResponse(decision="allow", metadata={"session_id": session_id})
+    second.add_context(("rule:reminder", "r" * 1_000))
+    shipped = _deliver(adapter, temp_db, second)
+
+    assert shipped == "o" * 5_950 + "\n\n" + "r" * 1_000
+    assert variables.get_variables(session_id).get(CARRIED_CONTEXT_VARIABLE) is None
+
+
 def test_a_part_reinjected_every_turn_is_carried_once(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
