@@ -24,6 +24,7 @@ from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.utils.git import run_git_command
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
@@ -130,6 +131,7 @@ def lane_env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Pat
     sessions.update(managers[2], terminal_context={"pane_ref": pane})
     worktree_path = tmp_path / "lane-3-idle"
     worktree_path.mkdir()
+    assert run_git_command(["git", "init", "--quiet"], worktree_path) == ""
     worktree = LocalWorktreeManager(temp_db).create(project, "lane-3-idle", str(worktree_path))
     return LaneEnv(
         temp_db,
@@ -362,6 +364,55 @@ def test_missing_explicit_topology_refuses_with_candidates(
     assert (lane_env.workspace if kind == "workspace" else lane_env.pane) in str(error.value)
 
 
+@pytest.mark.parametrize("state", ["untracked", "modified", "staged", "unreadable"])
+def test_dirty_or_unreadable_worktree_refuses(lane_env: LaneEnv, state: str) -> None:
+    tree = LocalWorktreeManager(lane_env.db).get(lane_env.worktree)
+    assert tree is not None
+    path = Path(tree.worktree_path)
+    file = path / "work.txt"
+    if state == "unreadable":
+        (path / ".git").rename(path / "broken-git")
+    else:
+        file.write_text("initial\n")
+        if state != "untracked":
+            assert run_git_command(["git", "add", "work.txt"], path) == ""
+            assert (
+                run_git_command(
+                    [
+                        "git",
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.com",
+                        "commit",
+                        "--quiet",
+                        "-m",
+                        "initial",
+                    ],
+                    path,
+                )
+                == ""
+            )
+            file.write_text("changed\n")
+            if state == "staged":
+                assert run_git_command(["git", "add", "work.txt"], path) == ""
+    with pytest.raises(RunbookSeatRefusal, match="worktree.*candidates") as failure:
+        resolve(lane_env)
+    diagnostic = str(failure.value)
+    assert "lane-3-idle" in diagnostic
+    assert ("Git status unavailable" if state == "unreadable" else "dirty") in diagnostic
+
+
+def test_clean_candidate_wins_over_dirty_idle_worktree(lane_env: LaneEnv) -> None:
+    path = lane_env.root.parent / "lane-3-dirty"
+    path.mkdir()
+    assert run_git_command(["git", "init", "--quiet"], path) == ""
+    (path / "untracked.txt").write_text("foreign work\n")
+    LocalWorktreeManager(lane_env.db).create(lane_env.project, "lane-3-dirty", str(path))
+    assert resolve(lane_env)["worktree"] == lane_env.worktree
+    assert (path / "untracked.txt").read_text() == "foreign work\n"
+
+
 @pytest.mark.parametrize("count", [0, 2])
 def test_worktree_ambiguity_names_candidates(lane_env: LaneEnv, count: int) -> None:
     trees = LocalWorktreeManager(lane_env.db)
@@ -378,6 +429,7 @@ def test_worktree_ambiguity_names_candidates(lane_env: LaneEnv, count: int) -> N
     else:
         path = lane_env.root.parent / "lane-3-extra"
         path.mkdir()
+        assert run_git_command(["git", "init", "--quiet"], path) == ""
         trees.create(lane_env.project, "lane-3-extra", str(path))
     with pytest.raises(RunbookSeatRefusal, match="worktree.*candidates") as failure:
         resolve(lane_env)
@@ -459,6 +511,7 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     if ambiguous:
         extra = lane_env.root.parent / "lane-3-other"
         extra.mkdir()
+        assert run_git_command(["git", "init", "--quiet"], extra) == ""
         LocalWorktreeManager(lane_env.db).create(lane_env.project, "lane-3-other", str(extra))
     renderer = StepRenderer(TemplateEngine())
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot"}
