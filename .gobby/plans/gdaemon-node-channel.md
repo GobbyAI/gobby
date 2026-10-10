@@ -1520,8 +1520,10 @@ Consumers unchanged:
   - Routing:
     - 1.1 to 1.5 are code leaves: `task_type` feature,
       `implementation_domain` backend, and `tdd` true.
-    - 1.6 is a test leaf: `task_type` chore and `tdd` false, with no
-      `assigned_agent` override.
+    - 1.6 is a test leaf: `task_type` chore, `assigned_agent` developer, and
+      `tdd` false. The derive gate requires `assigned_agent` for a test leaf,
+      and the Orchestrator ruled on 2026-10-10 that Lane 2's developer seats
+      write the pair test.
     - Dependencies follow the headings: 1.1 has none, 1.2 depends on 1.1,
       1.3 on 1.2, 1.4 on 1.3, 1.5 on 1.4, and 1.6 on 1.3, 1.4, and 1.5.
       There are no external edges.
