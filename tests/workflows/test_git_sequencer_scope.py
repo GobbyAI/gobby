@@ -115,6 +115,25 @@ async def test_claimed_pending_revert_can_quit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_directory", [False, True], ids=["cwd", "literal-C"])
+async def test_plain_cherry_pick_is_not_scope_blocked(
+    engine: RuleEngine, pending_worktree: tuple[Path, Path], explicit_directory: bool
+) -> None:
+    root, _ = pending_worktree
+    commit = _git("-C", str(root), "rev-parse", "HEAD")
+    command = f"git cherry-pick {commit}"
+    if explicit_directory:
+        command = command.replace("git ", f"git -C {root} ", 1)
+    event = _event(command, root)
+    response = await engine.evaluate(
+        event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
+    )
+    assert response.decision == "allow", response.reason
+    assert event.data["canonical_tool_kind"] == "execute"
+    assert not event.data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("wrapper", ["{}", "({})", "result=$({})", "result=`{}`"])
 @pytest.mark.parametrize("explicit_directory", [False, True], ids=["cwd", "literal-C"])
 @pytest.mark.parametrize(

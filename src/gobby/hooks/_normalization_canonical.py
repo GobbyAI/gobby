@@ -647,16 +647,17 @@ def _classify_shell_segment_without_redirection(
             repo_mutation=True,
         )
 
-    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] in [
-        ["revert"],
-        ["cherry-pick"],
-    ]:
-        args = parts[git_subcommand_index + 1 :]
-        if (
-            not git_scope_unknown
-            and git_cwd
-            and any(flag in args for flag in {"--quit", "--skip", "--continue"})
-        ):
+    sequencer_recovery = any(
+        flag in parts[git_subcommand_index + 1 :] for flag in {"--quit", "--skip", "--continue"}
+    )
+    if cmd == "git" and (
+        parts[git_subcommand_index : git_subcommand_index + 1] == ["revert"]
+        or (
+            parts[git_subcommand_index : git_subcommand_index + 1] == ["cherry-pick"]
+            and sequencer_recovery
+        )
+    ):
+        if not git_scope_unknown and git_cwd and sequencer_recovery:
             return _ShellSegmentMetadata(
                 "write",
                 paths=(git_cwd,),
