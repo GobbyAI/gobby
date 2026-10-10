@@ -402,6 +402,13 @@ def activate_materialized_session(
     clear_predecessor = getattr(resolution, "clear_predecessor", None)
     if session_obj is not None and (session_source == "clear" or clear_predecessor is not None):
         bound = _bind_clear_successor(handler, resolution, session_obj)
+        if (
+            not bound
+            and clear_predecessor is None
+            and session_source == "clear"
+            and handler._session_manager is not None
+        ):
+            handler._session_manager.bind_native_clear_successor(session_id)
         # Codex fires SessionStart only when the successor thread's first prompt is
         # submitted, so a prompt is already in flight there (the clear delivery typed
         # the pull prompt itself); typing another would queue a duplicate turn.

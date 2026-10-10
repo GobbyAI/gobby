@@ -87,6 +87,15 @@ async def _fallback_telegram_targets(
         and session.agent_run_id is None
     )
     successor: Session | None = None
+    if resumable:
+        variables = await asyncio.to_thread(
+            read_session_variables,
+            manager.store.db,
+            transition.session_id,
+            keys=(CLEAR_ATTEMPT_VARIABLE,),
+        )
+        # Marker-bearing clears retain the existing Assistant-pool fallback.
+        resumable = not isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict)
     if resumable and session is not None:
         children = await asyncio.to_thread(
             manager._session_store.find_children, transition.session_id
@@ -113,16 +122,6 @@ async def _fallback_telegram_targets(
                 ),
                 None,
             )
-    if resumable:
-        variables = await asyncio.to_thread(
-            read_session_variables,
-            manager.store.db,
-            transition.session_id,
-            keys=(CLEAR_ATTEMPT_VARIABLE,),
-        )
-        # A clear starts another session, even before its marker is consumed.
-        # Retaining the predecessor would strand its chat after the successor binds.
-        resumable = not isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict)
     with manager._attachment_lock:
         attached = []
         for key, holder in list(manager._conversation_attachments.items()):

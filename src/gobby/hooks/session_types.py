@@ -161,6 +161,8 @@ class HookSessionManager(Protocol):
 
     def mark_session_expired(self, session_id: str, *, cause: ContestedExpiryCause) -> bool: ...
 
+    def bind_native_clear_successor(self, successor_id: str) -> Session | None: ...
+
     def backfill_terminal_context(
         self,
         session_id: str,

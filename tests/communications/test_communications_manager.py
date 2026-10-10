@@ -3495,20 +3495,29 @@ async def test_telegram_target_survives_manager_restart(
 
 
 @pytest.mark.parametrize("child_depth", [0, 1])
+@pytest.mark.parametrize("end_first", [False, True])
 async def test_native_clear_transfers_dm_only_to_same_depth_successor(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     child_depth: int,
+    end_first: bool,
 ) -> None:
+    from typing import cast
+
+    from gobby.hooks.event_handlers import EventHandlers
+    from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+    from gobby.hooks.session_types import HookSessionManager
     from gobby.sessions.status_events import SessionStatusTransition
 
     sessions = SessionManager(temp_db)
+    context = {"tty": "/dev/ttys-native-clear"}
     predecessor = sessions.register(
         external_id="native-clear-predecessor",
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
         title="Lane 3",
+        terminal_context=context,
     )
     # An unrelated Assistant must not take precedence over the linked successor.
     sessions.register(
@@ -3517,15 +3526,6 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         source="claude",
         project_id=sample_project["id"],
         title="Assistant",
-    )
-    successor = sessions.register(
-        external_id="native-clear-successor",
-        machine_id=None,
-        source="claude",
-        project_id=sample_project["id"],
-        title="Lane 3 continued",
-        parent_session_id=predecessor.id,
-        agent_depth=child_depth,
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
@@ -3536,10 +3536,58 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
     manager._adapters[channel.name] = adapter
     manager.attach_conversation(channel.name, "dm:42", predecessor.id)
 
-    assert sessions.update_session_status(predecessor.id, "expired")
-    ended = sessions.get(predecessor.id)
-    assert ended is not None
-    await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+    handlers = EventHandlers(
+        session_manager=cast(HookSessionManager, sessions),
+        get_machine_id=lambda: predecessor.machine_id,
+        resolve_project_id=lambda _project, _cwd: sample_project["id"],
+    )
+    if end_first:
+        handlers.handle_session_end(
+            HookEvent(
+                event_type=HookEventType.SESSION_END,
+                session_id=predecessor.external_id,
+                source=SessionSource.CLAUDE,
+                timestamp=_FIXED_TS,
+                machine_id=predecessor.machine_id,
+                data={"reason": "clear"},
+                metadata={"_platform_session_id": predecessor.id},
+            )
+        )
+        ended = sessions.get(predecessor.id)
+        assert ended is not None
+        assert ended.status == "expired"
+        await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+        assert manager._conversation_attachments[(channel.id, "dm:42")] == predecessor.id
+
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="native-clear-successor",
+        source=SessionSource.CLAUDE,
+        timestamp=_FIXED_TS,
+        machine_id=predecessor.machine_id,
+        data={"source": "clear", "terminal_context": context, "agent_depth": child_depth},
+    )
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(handlers, "_activate_default_agent"),
+        patch.object(handlers, "_compose_session_response", return_value=HookResponse()),
+        patch(
+            "gobby.hooks.event_handlers._session_start.profile.read_user_profile_content",
+            return_value="",
+        ),
+    ):
+        response = handlers.handle_session_start(event)
+    assert response.decision == "allow"
+    successor = sessions.find_by_external_id(
+        "native-clear-successor", sample_project["id"], "claude"
+    )
+    assert successor is not None
+    assert successor.parent_session_id == (predecessor.id if child_depth == 0 else None)
+    for transition in transitions:
+        await manager.handle_session_status_transition(transition)
 
     expected_holder = successor.id if child_depth == 0 else predecessor.id
     assert manager._conversation_attachments[(channel.id, "dm:42")] == expected_holder
@@ -3559,11 +3607,13 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
 
 @pytest.mark.parametrize("end", ["deleted", "staged-clear", "consumed-clear"])
 @pytest.mark.parametrize("assistant_available", [True, False])
+@pytest.mark.parametrize("linked_successor", [False, True])
 async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     end: str,
     assistant_available: bool,
+    linked_successor: bool,
 ) -> None:
     from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
     from gobby.sessions.status_events import SessionStatusTransition
@@ -3589,11 +3639,12 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Assistant - Main",
-        parent_session_id=predecessor.id,
+        title="Lane 4 continued" if linked_successor else "Assistant - Main",
+        parent_session_id=target.id if linked_successor else predecessor.id,
         agent_depth=0,
     )
-    assert sessions.update_session_status(predecessor.id, "expired")
+    if not linked_successor or not assistant_available:
+        assert sessions.update_session_status(predecessor.id, "expired")
     if not assistant_available:
         assert sessions.update_session_status(successor.id, "expired")
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
@@ -3633,8 +3684,9 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     stored = store.get_channel(channel.id)
     assert stored is not None
     if assistant_available:
-        assert manager.attached_session(channel.id, "dm:99") == successor.id
-        assert stored.config_json["telegram_agent_targets"] == {"dm:99": successor.id}
+        expected_holder = predecessor.id if linked_successor else successor.id
+        assert manager.attached_session(channel.id, "dm:99") == expected_holder
+        assert stored.config_json["telegram_agent_targets"] == {"dm:99": expected_holder}
         adapter.send_message.assert_not_awaited()
     else:
         assert manager.attached_session(channel.id, "dm:99") is None
