@@ -322,10 +322,10 @@ class TestWorktreeGitManagerCreateWorktree:
         assert "Failed to create" in result.message
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_create_reuses_existing_branch_when_new_branch_exists(
-        self, mock_run, manager, tmp_path
+    async def test_create_refuses_existing_branch_when_new_branch_requested(
+        self, mock_run: AsyncMock, manager: WorktreeGitManager, tmp_path: Path
     ) -> None:
-        """Restarted builds can reuse task branches left after artifact cleanup."""
+        """A branch collision never silently discards the requested base."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
@@ -341,9 +341,9 @@ class TestWorktreeGitManagerCreateWorktree:
                 stderr="fatal: a branch named 'feature/test' already exists",
             ),
             subprocess.CompletedProcess(
-                args=["worktree", "add"],
+                args=["rev-parse"],
                 returncode=0,
-                stdout="Preparing worktree",
+                stdout="a" * 40 + "\n",
                 stderr="",
             ),
         ]
@@ -356,12 +356,14 @@ class TestWorktreeGitManagerCreateWorktree:
             use_local=True,
         )
 
-        assert result.success is True
-        assert "Created worktree" in result.message
+        assert result.success is False
+        assert "feature/test" in result.message
+        assert "a" * 40 in result.message
+        assert "integration-branch" in result.message
         assert [call.args[0][:2] for call in mock_run.call_args_list] == [
-            ["rev-parse", "--verify"],
+            ["show-ref", "--verify"],
             ["worktree", "add"],
-            ["worktree", "add"],
+            ["show-ref", "--verify"],
         ]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)

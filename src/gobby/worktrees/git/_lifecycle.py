@@ -107,15 +107,23 @@ async def create_worktree(
         if create_branch:
             if use_local:
                 # Create worktree from local branch (preserves unpushed commits)
-                # Verify local branch exists
+                base_ref = (
+                    base_branch
+                    if base_branch.startswith("refs/heads/")
+                    else f"refs/heads/{base_branch}"
+                )
                 verify_result = await runner._run_git(
-                    ["rev-parse", "--verify", base_branch], timeout=5
+                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
                 )
                 if verify_result.returncode != 0:
+                    error = (
+                        f"Local base branch '{base_branch}' could not be resolved as "
+                        f"'{base_ref}': {verify_result.stderr.strip()}"
+                    )
                     return GitOperationResult(
                         success=False,
-                        message=f"Local branch '{base_branch}' not found",
-                        error=verify_result.stderr,
+                        message=error,
+                        error=error,
                     )
 
                 # Create worktree with new branch based on local ref
@@ -126,7 +134,7 @@ async def create_worktree(
                         "-b",
                         branch_name,
                         str(worktree_path),
-                        base_branch,  # Local ref, not origin/
+                        verify_result.stdout.strip(),
                     ],
                     timeout=60,
                 )
@@ -161,14 +169,21 @@ async def create_worktree(
             )
 
         if create_branch and result.returncode != 0 and _is_branch_exists_error(result.stderr):
-            logger.info(
-                "Branch %s already exists while creating worktree; reusing existing branch",
-                branch_name,
+            branch_ref = (
+                branch_name
+                if branch_name.startswith("refs/heads/")
+                else f"refs/heads/{branch_name}"
             )
-            result = await runner._run_git(
-                ["worktree", "add", str(worktree_path), branch_name],
-                timeout=60,
+            existing = await runner._run_git(
+                ["show-ref", "--verify", "--hash", branch_ref], timeout=5
             )
+            tip = existing.stdout.strip() if existing.returncode == 0 else "unresolved"
+            error = (
+                f"Destination branch '{branch_name}' already exists at {tip}; "
+                f"refusing to create it from requested base '{base_branch}'. "
+                "Use create_branch=False to explicitly check out the existing branch."
+            )
+            return GitOperationResult(success=False, message=error, error=error)
 
         if result.returncode == 0:
             return GitOperationResult(
