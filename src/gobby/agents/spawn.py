@@ -25,6 +25,7 @@ from gobby.agents.spawners import (
     create_prompt_file,
 )
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
+from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE, recompute_automatic_title
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import read_managed_signing_key
 
@@ -274,6 +275,8 @@ def prepare_terminal_spawn(
             SessionVariableManager(session_manager._storage.db).merge_variables(
                 child_session.id, initial_variables
             )
+            if initial_variables.get(DEFINITION_TITLE_VARIABLE):
+                recompute_automatic_title(session_manager._storage, child_session.id)
 
         def bind_fresh_run(run_id: str) -> None:
             session_manager.update_terminal_pickup_metadata(
@@ -412,6 +415,8 @@ def prepare_terminal_resume(
                 child_session.id,
                 initial_variables,
             )
+            if initial_variables.get(DEFINITION_TITLE_VARIABLE):
+                recompute_automatic_title(session_manager._storage, child_session.id)
         prepared = _prepare_run_for_session(
             session_manager=session_manager,
             session_id=child_session.id,

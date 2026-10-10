@@ -134,6 +134,8 @@ steps:
       tool: spawn_agent
       arguments:
         agent: archivist
+        initial_variables:
+          _definition_title: "${{ 'Lane ' + inputs.lane + ' archivist' }}"
         provider: "${{ inputs.archivist_provider }}"
         model: "${{ inputs.archivist_model }}"
         reasoning_effort: "${{ inputs.archivist_reasoning_effort }}"
@@ -155,6 +157,8 @@ steps:
       tool: spawn_agent
       arguments:
         agent: log-monitor
+        initial_variables:
+          _definition_title: "${{ 'Lane ' + inputs.lane + ' log monitor' }}"
         provider: "${{ inputs.log_monitor_provider }}"
         model: "${{ inputs.log_monitor_model }}"
         reasoning_effort: "${{ inputs.log_monitor_reasoning_effort }}"
@@ -176,6 +180,8 @@ steps:
       tool: spawn_agent
       arguments:
         agent: release-manager
+        initial_variables:
+          _definition_title: "${{ 'Lane ' + inputs.lane + ' release manager' }}"
         provider: "${{ inputs.release_manager_provider }}"
         model: "${{ inputs.release_manager_model }}"
         reasoning_effort: "${{ inputs.release_manager_reasoning_effort }}"
@@ -197,6 +203,8 @@ steps:
       tool: spawn_agent
       arguments:
         agent: inbox-manager
+        initial_variables:
+          _definition_title: "${{ 'Lane ' + inputs.lane + ' inbox manager' }}"
         provider: "${{ inputs.inbox_manager_provider }}"
         model: "${{ inputs.inbox_manager_model }}"
         reasoning_effort: "${{ inputs.inbox_manager_reasoning_effort }}"
@@ -218,6 +226,8 @@ steps:
       tool: spawn_agent
       arguments:
         agent: recovery-steward
+        initial_variables:
+          _definition_title: "${{ 'Lane ' + inputs.lane + ' recovery steward' }}"
         provider: "${{ inputs.recovery_steward_provider }}"
         model: "${{ inputs.recovery_steward_model }}"
         reasoning_effort: "${{ inputs.recovery_steward_reasoning_effort }}"
