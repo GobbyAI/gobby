@@ -13,7 +13,7 @@ Use `gobby-agents:send_message` for coordination between coding sessions.
 2. Load `messages.md` before sending or reading external messages.
 3. Load `attachments.md` before delivering files.
 4. Load `identities.md` for external-user/session mappings.
-5. Load `routing.md` for destinations and responder project selection.
+5. Load `routing.md` for Telegram registration, destinations, and responder project selection.
 
 Confirm the intended channel and destination before an authorized send.
 Inspect `success` and delivery errors; successful channel creation alone does

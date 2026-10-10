@@ -96,6 +96,38 @@
     {
       "surface": "mcp",
       "server": "gobby-communications",
+      "tool": "resolve_operator_conversation",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/routing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "create_communications_registry.resolve_operator_conversation"
+      },
+      "verification": [
+        "inventory",
+        "schemas",
+        "operator-registration"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-communications",
+      "tool": "list_conversation_attachments",
+      "audience": "agent",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/routing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "create_communications_registry.list_conversation_attachments"
+      },
+      "verification": [
+        "inventory",
+        "schemas",
+        "operator-registration"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-communications",
       "tool": "attach_conversation",
       "audience": "agent",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/routing.md",
@@ -555,7 +587,7 @@
     {
       "id": "inventory",
       "command": "gcode outline/symbol-at on communications MCP registry, CLI and HTTP routes; AST route inventory",
-      "result": "42 operations inventoried and mapped: 18 MCP, 10 CLI, 14 HTTP. The 2026-09-23 recount (#22804) added attach_conversation and detach_conversation to list_tools(gobby-communications); neither has a CLI or HTTP route."
+      "result": "44 operations inventoried and mapped: 20 MCP, 10 CLI, 14 HTTP. The 2026-10-10 update (#23909) adds resolve_operator_conversation and list_conversation_attachments; these and attach_conversation/detach_conversation have no CLI or HTTP route."
     },
     {
       "id": "conversation-attachment",
@@ -574,8 +606,13 @@
     },
     {
       "id": "schemas",
-      "command": "get_tool_schema on all 18 gobby-communications tools",
-      "result": "All registered parameters and defaults inspected; no live external mutations. attach_conversation and detach_conversation were read on 2026-09-23 (#22804)."
+      "command": "get_tool_schema on the original 18 gobby-communications tools; gcode symbol-at on create_communications_registry.resolve_operator_conversation and list_conversation_attachments",
+      "result": "All 20 registered tool parameters and defaults inspected; no live external mutations. attach_conversation and detach_conversation were read on 2026-09-23 (#22804); resolve_operator_conversation(channel: str) and list_conversation_attachments() were read on 2026-10-10 (#23909)."
+    },
+    {
+      "id": "operator-registration",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/communications/test_communications_manager.py tests/mcp_proxy/tools/test_mcp_proxy_tools_communications.py -q",
+      "result": "173 passed. Focused coverage verifies operator DM resolution without identity enumeration, registration confirmation and replies, plain and reply inbound mailbox delivery, explicit detach, session-end cleanup/notice, live attachment discovery, and DM preservation after group metadata changes."
     },
     {
       "id": "notification-red-green",

@@ -157,7 +157,7 @@ async def test_operator_registration_releases_on_request_or_session_end(
 ) -> None:
     from gobby.sessions.status_events import SessionStatusTransition
 
-    manager, channel, holder, _ = operator_telegram
+    manager, channel, holder, adapter = operator_telegram
     manager.attach_conversation(channel.name, "dm:42", holder.id)
     if end_session:
         holder.status = "expired"
@@ -173,8 +173,11 @@ async def test_operator_registration_releases_on_request_or_session_end(
                 source="codex",
             )
         )
+        adapter.send_message.assert_awaited_once()
+        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
     else:
         manager.detach_conversation(channel.name, "dm:42", holder.id)
+    assert (channel.id, "dm:42") not in manager._conversation_attachments
     assert manager.list_conversation_attachments() == []
     assert manager.attached_destination(channel.id, holder.id) is None
     assert manager.resolve_operator_conversation(channel.name)["session_id"] is None
