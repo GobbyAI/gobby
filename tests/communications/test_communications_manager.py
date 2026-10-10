@@ -255,6 +255,146 @@ async def test_operator_dm_is_remembered_after_group_identity_metadata_changes(
     assert manager.resolve_operator_conversation(channel.name)["conversation_id"] == "dm:42"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["resume", "restart", "resume-after-restart"])
+@pytest.mark.parametrize("reply_to", [None, "confirmation-id"])
+async def test_registered_dm_survives_resume_and_daemon_restart(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    event: str,
+    reply_to: str | None,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    holder = sessions.register(
+        external_id="telegram-resumable-holder",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Assistant",
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(
+        channel_type="telegram",
+        channel_id=str(uuid.uuid4()),
+        config_json={"allow_from": ["42"]},
+    )
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    source = CommsMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        direction="outbound",
+        content="Registered",
+        session_id=holder.id,
+        platform_message_id="confirmation-id",
+        metadata_json={"platform_destination": "42"},
+        created_at=_FIXED_TS,
+    )
+    store.create_message(source)
+
+    if event != "restart":
+        assert sessions.update_session_status(holder.id, "expired")
+        ended = sessions.get(holder.id)
+        assert ended is not None
+        await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+        assert manager.attached_session(channel.id, "dm:42") is None
+        adapter.send_message.assert_not_awaited()
+
+    if event != "resume":
+        # A new manager and fresh channel row represent a new daemon process.
+        restored = store.get_channel(channel.id)
+        assert restored is not None
+        assert restored.config_json["telegram_agent_targets"] == {"dm:42": holder.id}
+        manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+        manager._channel_by_name[channel.name] = restored
+        manager._adapters[channel.name] = adapter
+        manager._restore_telegram_targets()
+
+    if event != "restart":
+        resumed = sessions.revive_expired_terminal_session(holder.id)
+        assert resumed is not None
+        assert resumed.id == holder.id
+        assert resumed.status == "active"
+        # Delayed expiry events must not clear an already resumed holder.
+        assert ended is not None
+        await manager.handle_session_status_transition(SessionStatusTransition.from_session(ended))
+
+    assert manager.attached_session(channel.id, "dm:42") == holder.id
+    mailbox = MagicMock(send=AsyncMock(return_value=MailboxSendResult()))
+    manager.set_telegram_action_controller(TelegramActionController(manager, sessions, mailbox))
+    manager.event_callback = AsyncMock()
+    inbound = CommsMessage(
+        id=str(uuid.uuid4()),
+        channel_id=channel.id,
+        direction="inbound",
+        content="Continue after resume",
+        identity_id="42",
+        created_at=_FIXED_TS,
+        metadata_json={
+            "chat_id": "42",
+            "conversation_type": "private",
+            **({"reply_to_message_id": reply_to} if reply_to else {}),
+        },
+    )
+    handled = await manager.handle_inbound_messages(channel.name, [inbound])
+    assert handled[0].session_id == holder.id
+    assert handled[0].metadata_json["session_route"] == ("reply" if reply_to else "attached")
+    mailbox.send.assert_awaited_once()
+    manager.event_callback.assert_not_awaited()
+    adapter.send_message.assert_not_awaited()
+
+    manager.detach_conversation(channel.name, "dm:42", holder.id)
+    restored = store.get_channel(channel.id)
+    assert restored is not None
+    assert restored.config_json["telegram_agent_targets"] == {}
+    restarted = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    restarted._channel_by_name[channel.name] = restored
+    restarted._restore_telegram_targets()
+    assert restarted.attached_session(channel.id, "dm:42") is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_during_fallback_does_not_clear_target_or_send_notice(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    manager, channel, holder, adapter = operator_telegram
+    holder.agent_run_id = "managed-run"
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    holder.status = "expired"
+
+    def resume_during_lookup(**kwargs: object) -> list[object]:
+        holder.status = "active"
+        return []
+
+    cast(MagicMock, manager._session_store).list.side_effect = resume_during_lookup
+    await manager.handle_session_status_transition(
+        SessionStatusTransition(
+            session_id=holder.id,
+            project_id="project-1",
+            agent_run_id="managed-run",
+            status="expired",
+            transitioned_at=_FIXED_TS,
+            seq_num=1,
+            title="Assistant",
+            source="codex",
+        )
+    )
+    assert manager.attached_session(channel.id, "dm:42") == holder.id
+    adapter.send_message.assert_not_awaited()
+    cast(MagicMock, manager.store).set_telegram_agent_target.assert_called_once_with(
+        channel.id, "dm:42", holder.id
+    )
+
+
 def make_config() -> CommunicationsConfig:
     return CommunicationsConfig(
         enabled=True,
@@ -3336,7 +3476,7 @@ async def test_telegram_target_survives_manager_restart(
     assert restarted.attached_session(channel.id, "dm:99") == target.id
 
 
-async def test_ended_target_falls_back_to_real_assistant_clear_successor(
+async def test_deleted_target_falls_back_to_real_assistant_clear_successor(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     from gobby.sessions.status_events import SessionStatusTransition
@@ -3374,14 +3514,14 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
     manager.switch_conversation(channel.name, "dm:99", target.id)
-    assert sessions.update_session_status(target.id, "expired")
+    assert sessions.update_session_status(target.id, "deleted")
 
     await manager.handle_session_status_transition(
         SessionStatusTransition(
             session_id=target.id,
             project_id=sample_project["id"],
             agent_run_id=None,
-            status="expired",
+            status="deleted",
             transitioned_at=_FIXED_TS,
             seq_num=target.seq_num,
             title="Lane 4",

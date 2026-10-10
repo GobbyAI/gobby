@@ -42,8 +42,23 @@ def _switch_if_current(
     with manager._attachment_lock:
         if manager._conversation_attachments.get((channel_id, conversation_id)) != ended_session_id:
             return False
+        if manager.attached_session(channel_id, conversation_id) == ended_session_id:
+            return False
         manager.switch_conversation(channel_name, conversation_id, replacement_id)
         return True
+
+
+def _clear_if_ended(
+    manager: CommunicationsManager,
+    channel_name: str,
+    channel_id: str,
+    conversation_id: str,
+    ended_session_id: str,
+) -> bool:
+    with manager._attachment_lock:
+        if manager.attached_session(channel_id, conversation_id) == ended_session_id:
+            return False
+        return manager.clear_conversation_target(channel_name, conversation_id, ended_session_id)
 
 
 async def fallback_telegram_targets(
@@ -59,10 +74,24 @@ async def fallback_telegram_targets(
 async def _fallback_telegram_targets(
     manager: CommunicationsManager, transition: SessionStatusTransition
 ) -> None:
+    session = await asyncio.to_thread(manager._session_store.get, transition.session_id)
+    if session is not None and session.status in LIVE_SESSION_STATUSES:
+        # A queued expiry notification can arrive after the provider resumed.
+        return
+    resumable = (
+        session is not None
+        and session.status == "expired"
+        and session.session_type == "terminal"
+        and session.agent_run_id is None
+    )
     with manager._attachment_lock:
         attached = []
         for key, holder in list(manager._conversation_attachments.items()):
             if holder != transition.session_id:
+                continue
+            if resumable and key in manager._managed_telegram_targets:
+                # Operator-owned CLIs can resume. Keep the durable selection while
+                # attached_session excludes expired holders from live delivery.
                 continue
             if key[1].startswith("dm:") or key in manager._managed_telegram_targets:
                 attached.append(key)
@@ -107,8 +136,10 @@ async def _fallback_telegram_targets(
                 continue
 
             cleared = await asyncio.to_thread(
-                manager.clear_conversation_target,
+                _clear_if_ended,
+                manager,
                 channel.name,
+                channel.id,
                 conversation_id,
                 transition.session_id,
             )

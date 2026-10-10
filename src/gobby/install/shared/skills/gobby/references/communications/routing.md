@@ -23,8 +23,11 @@ While registered, send operator-facing replies directly with `send_message` on
 that channel as the calling session. Inbound DM messages arrive in your durable
 mailbox. The send is the reply; avoid duplicate terminal or Assistant relays.
 On an explicit unregister/detach request, call `detach_conversation` with the
-same channel and conversation ID. Session end releases the attachment through
-the status-transition handler and may return the DM to a live Assistant.
+same channel and conversation ID. DM/topic selections survive daemon restarts.
+An operator-owned terminal session retains its selection while expired and
+receives messages again once resumed with the same session ID. Expired sessions
+receive no live delivery. Deletion or a managed agent run ending releases the
+selection and may return the DM to a live Assistant.
 `list_conversation_attachments()` lists current live holders for coordination;
 an attached agent needs no Assistant relay.
 
@@ -41,10 +44,10 @@ non-comms session to one Telegram conversation: `dm:<chat_id>`,
 `group:<chat_id>`, or `topic:<chat_id>:<thread_id>`. Plain inbound messages
 there route to that session instead of the responder, and its sends default to
 that conversation. A conversation has one holder and a session holds one
-conversation; attaching elsewhere fails until you detach. An ordinary binding
-is in-process: it drops when the session stops being live or the daemon restarts.
+conversation; attaching elsewhere fails until you detach. Group bindings are
+in-process; DM/topic bindings persist until detach, replacement, or permanent end.
 In an authorized private Telegram chat, `/agent` can select a live root agent.
-That selection persists across daemon restarts. When its agent ends, the chat
+That selection persists across daemon restarts. When its session permanently ends, the chat
 targets a live Assistant if one is available; otherwise the bot clears the
 selection and prompts for `/agent`.
 `detach_conversation` with the same arguments releases it, holder only.
