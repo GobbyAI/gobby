@@ -372,6 +372,18 @@ resolves the installed `~/.gobby/bin/gdaemon`;
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: landed after this leaf (#23108) and replays against `daemon_instance` behind the front door as landed.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: landed after this leaf and uses `DaemonInstance` and `daemon_instance` behind the front door as landed.
+- `tests/mcp_proxy/test_mcp_proxy_stdio.py` — no-edit-reason: never imports `gobby.cli.daemon`; it drives `daemon_control.restart_daemon_process` with stop and start mocked and asserts only the `gobby restart --verbose` hint text.
+- `tests/e2e/composer_proof_runner.py` — no-edit-reason: added after this leaf landed; calls `gobby.runner.main` in-process as an isolated test runner.
+- `tests/e2e/daemon_git_deadline_bootstrap.py` — no-edit-reason: added after this leaf landed; runs `gobby.runner` as `__main__` through `runpy` after patching `run_daemon`.
+- `tests/workflows/placed_runbook_live_support.py` — no-edit-reason: added after this leaf landed; calls `gobby.runner.main` in-process after patching step-execution writes.
+- `tests/e2e/test_api_key_bootstrap_lockout.py` — no-edit-reason: added after this leaf landed; requests `daemon_instance` behind the front door as landed and reads its `http_port`.
+- `tests/e2e/test_local_api_key_adoption.py` — no-edit-reason: added after this leaf landed; requests `daemon_instance` and calls its `stop()` and `restart()` as landed.
+- `tests/workflows/test_placed_pipeline_fixture.py` — no-edit-reason: added after this leaf landed; re-exports `daemon_instance`, types `DaemonInstance`, and names `prepare_daemon_env` only in a comment.
+- `tests/e2e/test_auth_login_e2e.py` — no-edit-reason: added after this leaf landed; spawns `DaemonInstance` through `spawn_daemon_instance` and calls `prepare_daemon_env(home_dir=...)` as landed.
+- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: added after this leaf landed; casts a `SimpleNamespace` to `DaemonInstance` and starts no daemon.
+- `tests/test_terminal_client_wire.py` — no-edit-reason: added after this leaf landed; wraps a `Mock(spec=DaemonInstance)` and starts no daemon.
+- `tests/e2e/test_terminal_host_reap.py` — no-edit-reason: added after this leaf landed; a generated child script imports `prepare_daemon_env` and calls it with `home_dir` as landed.
+- `tests/fixtures/test_e2e_run_cleanup.py` — no-edit-reason: added after this leaf landed; asserts `prepare_daemon_env`'s run-id and home handling as landed.
 
 **Acceptance:**
 
@@ -464,7 +476,7 @@ Targets:
 - `src/gobby/config/bootstrap.py::*` — scope-reason: the dataclass, `bootstrap_from_mapping`, and the new pinned-client helpers change together; `tls.mode` defaults to `off` so constructor sites need no edit
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve` loads or generates the TLS identity and wraps both listeners
-- `crates/gdaemon/src/front_door/tls.rs`
+- `crates/gdaemon/src/front_door/tls.rs::*` — scope-reason: created by #23270 in `4d1c9bf195`; the whole file is in scope
 - `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains TLS variants of the passthrough, typed-503, and WS-splice tests
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
 - `tests/e2e/conftest.py::daemon_instance`
@@ -507,6 +519,12 @@ typed-503, and WS-splice tests.
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses `daemon_instance` with the default `tls` off, so `http_url` stays `http`.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: uses `DaemonInstance` and `daemon_instance` with the default `tls` off.
+- `tests/e2e/test_api_key_bootstrap_lockout.py` — no-edit-reason: added after this leaf landed; requests `daemon_instance` with `tls` defaulting to off and builds an `http` URL from `http_port`.
+- `tests/e2e/test_local_api_key_adoption.py` — no-edit-reason: added after this leaf landed; requests `daemon_instance` with `tls` defaulting to off.
+- `tests/workflows/test_placed_pipeline_fixture.py` — no-edit-reason: added after this leaf landed; re-exports `daemon_instance` with `tls` defaulting to off and types `DaemonInstance`.
+- `tests/e2e/test_auth_login_e2e.py` — no-edit-reason: added after this leaf landed; spawns `DaemonInstance` with the `self-signed` and `files` TLS modes this leaf introduced, consuming the fixture contract without changing it.
+- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: casts a `SimpleNamespace` carrying `gobby_home` and a `ws://` URL to `DaemonInstance` and starts no daemon, so TLS never applies.
+- `tests/test_terminal_client_wire.py` — no-edit-reason: added after this leaf landed; wraps a `Mock(spec=DaemonInstance)` and starts no daemon.
 
 **Acceptance:**
 
@@ -526,14 +544,14 @@ Targets:
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: derived schema carrier regenerated
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: derived schema carrier regenerated
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated derived schema carrier
-- `src/gobby/storage/api_keys.py`
-- `src/gobby/utils/api_key_format.py`
-- `crates/gcore/src/api_key_format.rs`
+- `src/gobby/storage/api_keys.py::*` — scope-reason: created by #23271 in `4be693a340`; the whole file is in scope
+- `src/gobby/utils/api_key_format.py::*` — scope-reason: created by #23271 in `48470a3a9f`; the whole file is in scope
+- `crates/gcore/src/api_key_format.rs::*` — scope-reason: created by #23519 in `23328c7392`; the whole file is in scope
 - `src/gobby/servers/routes/auth.py::create_auth_router`
-- `src/gobby/servers/routes/auth.py::_LoginRateLimiter`
-- `src/gobby/servers/routes/api_keys.py`
+- `src/gobby/servers/routes/auth.py::LoginRateLimiter`
+- `src/gobby/servers/routes/api_keys.py::*` — scope-reason: created by #23271 in `039020b23b`; the whole file is in scope
 - `src/gobby/servers/_app_routes.py::*` — scope-reason: mount the api_keys router
-- `src/gobby/cli/install.py::_provision_local_api_token`
+- `src/gobby/cli/install.py::*` — scope-reason: 4.2 changed `_provision_local_api_token`, which #23519 later removed
 - `src/gobby/runner_init/helpers.py::ensure_machine_identity`
 - `src/gobby/runner_init/storage.py::*` — scope-reason: consumer of `ensure_machine_identity`; the call site is unchanged, verification only
 - `src/gobby/config/bootstrap.py::*` — scope-reason: the dataclass and `bootstrap_from_mapping` gain the four key fields; all default to absent so constructor sites need no edit
@@ -542,9 +560,9 @@ Targets:
 - `crates/gcore/src/bootstrap.rs::HubDatabaseBootstrap`
 - `crates/gcore/src/bootstrap.rs::parse_hub_database_bootstrap`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
-- `tests/storage/test_api_keys.py`
-- `tests/utils/test_api_key_format.py`
-- `tests/servers/routes/test_api_keys.py`
+- `tests/storage/test_api_keys.py::*` — scope-reason: created by #23271 in `4be693a340`; the whole file is in scope
+- `tests/utils/test_api_key_format.py::*` — scope-reason: created by #23271 in `48470a3a9f`; the whole file is in scope
+- `tests/servers/routes/test_api_key_routes.py::*` — scope-reason: created by #23271 in `039020b23b` and renamed by #23779 in `f2ec9007f7`; the whole file is in scope
 - `tests/cli/test_cli_install.py::*` — scope-reason: consumer of `_provision_local_api_token`; asserts the minted key lands in bootstrap
 - `tests/cli/test_install_coverage.py::*` — scope-reason: consumer of `_provision_local_api_token`; same
 - `tests/cli/test_install_prompts.py::*` — scope-reason: consumer of `_provision_local_api_token`; verification only
@@ -590,7 +608,7 @@ to once a minute.
 
 Routes (`src/gobby/servers/routes/api_keys.py`, mounted in `_app_routes.py`):
 - `POST /api/auth/keys/bootstrap` (public path, behind the existing
-  `_LoginRateLimiter` keyed by client id): body `{email, password, machine_id,
+  `LoginRateLimiter` keyed by client id): body `{email, password, machine_id,
   hostname, os, label}`; verifies via `AuthService.verify_password`; upserts the
   machine under that user through `LocalMachineManager.upsert_seen` (which raises
   `MachineOwnershipConflictError` for a machine owned by someone else, mapped to
@@ -654,17 +672,17 @@ Consumers unchanged:
 
 - 4.2.1 - Migration 454 creates `api_keys` and the two `machines` columns, and every derived carrier is regenerated. file: `crates/gcore/assets/schema/migrations/454_add_api_keys.sql`.
 - 4.2.2 - `generate`/`parse`/`hash` agree across Python and Rust on shared vectors, and `parse` rejects a bad checksum. test: `tests/utils/test_api_key_format.py::test_cross_language_vectors`.
-- 4.2.3 - Bootstrap route verifies the password, binds the machine, and returns the plaintext once; a foreign-owned machine gets 403. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
+- 4.2.3 - Bootstrap route verifies the password, binds the machine, and returns the plaintext once; a foreign-owned machine gets 403. test: `tests/servers/routes/test_api_key_routes.py::test_bootstrap_mints_bound_key`.
 - 4.2.4 - Install and startup adoption mint the local machine's key into bootstrap. symbol: `ensure_machine_identity`.
-- 4.2.5 - List and revoke are owner-scoped and redacted: one user cannot list or revoke another user's keys, a foreign revoke answers 404 like an absent id, and list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted`.
+- 4.2.5 - List and revoke are owner-scoped and redacted: one user cannot list or revoke another user's keys, a foreign revoke answers 404 like an absent id, and list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_key_routes.py::test_key_routes_use_verified_front_door_identity`.
 
 ### 4.5 `gobby auth login` and `gobby auth key` [category: code] (depends: 4.2)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/cli/auth.py::auth`
-- `src/gobby/cli/auth_login.py`
-- `tests/cli/test_auth_login.py`
+- `src/gobby/cli/auth_login.py::*` — scope-reason: created by #23272 in `adb703592a`; the whole file is in scope
+- `tests/cli/test_auth_login.py::*` — scope-reason: created by #23272 in `adb703592a`; the whole file is in scope
 - `tests/cli/test_cli_auth.py::*` — scope-reason: consumer of the `auth` group; gains the `login` and `key` subcommand cases
 - `tests/e2e/test_auth_login.py`
 - `docs/guides/cli-commands.md`
@@ -709,8 +727,8 @@ CLI (`src/gobby/cli/auth_login.py`, registered under the existing `auth` group;
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/src/front_door/auth.rs`
-- `crates/gdaemon/src/front_door/challenge.rs`
+- `crates/gdaemon/src/front_door/auth.rs::*` — scope-reason: created by #23519 in `23328c7392`; the whole file is in scope
+- `crates/gdaemon/src/front_door/challenge.rs::*` — scope-reason: created by #23519 in `23328c7392`; the whole file is in scope
 - `crates/gdaemon/src/front_door/proxy.rs::*` — scope-reason: strips client-supplied identity headers and forwards the resolved identity with the front-door secret
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: wires key validation and the local interactive challenge into the front door
 - `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains the key-validation and challenge tests
@@ -758,11 +776,6 @@ Targets:
 - `crates/gterminal/tests/terminal_theme.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `src/gobby/servers/auth_service.py::AuthService.authenticate`
 - `src/gobby/servers/auth_service.py::AuthService._accepted_bearer`
-- `src/gobby/servers/auth_service.py::AuthService.verify_bearer`
-- `src/gobby/servers/auth_service.py::AuthService.verify_ws_token`
-- `src/gobby/servers/auth_service.py::AuthService.refresh`
-- `src/gobby/servers/auth_service.py::AuthService._token_hash_snapshot`
-- `src/gobby/servers/auth_service.py::AuthService.local_token`
 - `src/gobby/servers/auth_service.py::AuthService.bind_runtime`
 - `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`
 - `src/gobby/servers/middleware/auth.py::_LOGIN_GUIDANCE`
@@ -780,7 +793,6 @@ Targets:
 - `src/gobby/utils/local_token.py::*` — scope-reason: module rewritten: the file reader becomes the bootstrap key reader, `local_token_path` is deleted, issuers and verifier sign with `signing_secret`, `daemon_auth_headers` drops the identity env headers
 - `src/gobby/agents/constants.py::*` — scope-reason: the spawn env builder's `operator_token` parameter becomes `signing_secret`
 - `src/gobby/agents/spawn.py::*` — scope-reason: passes `current_lease().grant_signing_secret` instead of `read_local_api_token()` to the env builder and `materialize_managed_launch`
-- `src/gobby/agents/tmux/spawner.py::*` — scope-reason: same for the tmux env builder call
 - `src/gobby/agents/code_index.py::*` — scope-reason: the preflight passes the lease signing secret to `materialize_managed_launch`, and the runtime-home reaper drops the `local_cli_token` name and keeps `.secret_kek`
 - `src/gobby/terminals/frame_client.py::*` — scope-reason: `_read_local_cli_token` calls the deleted `local_token_path`; the frames credential comes from `read_local_api_token()`
 - `src/gobby/terminals/native_runtime.py::*` — scope-reason: `_frame_token` reads `read_local_api_token()` and drops the socket-directory candidate with gterm
@@ -790,7 +802,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::*` — scope-reason: `code_index_api_token` becomes the lease signing secret, and the selection block moves out (split below)
 - `src/gobby/mcp_proxy/tools/spawn_agent/_selection.py`
 - `src/gobby/hooks/inbox.py::*` — scope-reason: consumer of `read_local_api_token`; the missing-credential warning names `gobby auth login` instead of the token file, and the drain loop and retention passes move out (split below)
-- `src/gobby/hooks/inbox_maintenance.py`
+- `src/gobby/hooks/inbox_maintenance.py::*` — scope-reason: created by #23519 in `23328c7392`; the whole file is in scope
 - `src/gobby/runner_maintenance/messaging.py::*` — scope-reason: import of `drain_hook_inbox_loop` moves to `gobby.hooks.inbox_maintenance`
 - `tests/hooks/test_inbox.py::*` — scope-reason: imports of `_compute_sleep_seconds` and `prune_orphaned_inbox_temp_files` and the `_JITTER_RANDOM` patch move to `gobby.hooks.inbox_maintenance`; `read_local_api_token` patches keep their path
 - `tests/hooks/test_inbox_temp_reaper.py::*` — scope-reason: imports and the `get_hook_inbox_dir` and `prune_orphaned_inbox_temp_files` patches move to `gobby.hooks.inbox_maintenance`
@@ -803,8 +815,7 @@ Targets:
 - `src/gobby/agents/external_write_grants.py::*` — scope-reason: consumer of `sensitive_write_roots`; the returned set loses the token file, call site unchanged
 - `src/gobby/agents/sandbox.py::*` — scope-reason: consumer of `sensitive_write_roots`; call site unchanged
 - `src/gobby/agents/sandbox_resolvers.py::*` — scope-reason: consumer of `sensitive_write_roots`; call site unchanged
-- `src/gobby/cli/auth.py::token`
-- `src/gobby/cli/install.py::_provision_local_api_token`
+- `src/gobby/cli/install.py::*` — scope-reason: removes `_provision_local_api_token`, which #23519 removed in `23328c7392`
 - `src/gobby/runner_init/servers.py::_handshake_factory`
 - `src/gobby/runner_init/servers.py::init_servers`
 - `src/gobby/runner.py::run_gobby`
@@ -820,6 +831,10 @@ Targets:
 - `tests/servers/test_auth_middleware.py::*` — scope-reason: same
 - `tests/servers/test_http_middleware.py::*` — scope-reason: consumer of `AuthService.authenticate`; same
 - `tests/servers/websocket/test_servers_websocket_auth.py::*` — scope-reason: same
+- `tests/e2e/composer_proof_live.py::*` — scope-reason: edited by #23519 in `23328c7392`; the frames handshake reads the key through `daemon_token` instead of the `local_cli_token` file
+- `tests/e2e/test_composer_live_proof.py::*` — scope-reason: edited by #23519 in `23328c7392`; `copy_daemon_api_key` replaces the `local_cli_token` writes
+- `tests/runtime_grants/test_maintenance_launch.py::*` — scope-reason: edited by #23519 in `23328c7392`; `AuthService` is built with `break_glass_file` instead of `token_file`
+- `tests/workflows/test_placed_runbook_live.py::*` — scope-reason: edited by #23519 in `23328c7392` (`copy_daemon_api_key` replaces the `local_cli_token` writes) and `0ab31d3b80` (waits for startup recovery before launching)
 - `tests/servers/routes/test_runtime_handshake.py::*` — scope-reason: challenge and handshake against forwarded identity
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: consumers of `AuthService.local_token`, `issue_for_operator`, and `verify_agent_api_token`; use the signing secret
 - `tests/servers/test_mcp_programmatic_boundary.py::*` — scope-reason: consumer of `AuthService.local_token`; uses the signing secret
@@ -871,7 +886,7 @@ Targets:
 - `tests/contracts/http/runtime_handshake_challenge.json::*` — scope-reason: re-recorded at `schema_version` 2; only the version changes
 - `tests/contracts/http/runtime_handshake.json::*` — scope-reason: re-recorded at `schema_version` 2; only the version changes
 - `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: advanced by hand to `schema_version` 2, keeping `backend: down` and its body
-- `tests/contracts/http/health_backend_down.json`
+- `tests/contracts/http/health_backend_down.json::*` — scope-reason: created by #23109 in `c76c6251f7`; the whole file is in scope
 - `crates/gcore/src/grant/tests.rs::*` — scope-reason: managed-token signing secret changes
 - `tests/runtime_grants/test_golden_vectors.py::*` — scope-reason: same
 - `docs/contracts/secrets.md`
@@ -1042,6 +1057,17 @@ Consumers unchanged:
 - `tests/storage/test_config_store.py` — no-edit-reason: seeds retired `memory.*` rows and asserts their deletion; adding the auth key to the set leaves that outcome unchanged.
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: reads the key through `daemon_token` and `daemon_auth_headers`, whose signatures are unchanged; the version-2 cases are data (4.3.7).
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: writes `daemon_token`'s result to an explicit `--token-file`, which gclient still reads as a key file.
+- `tests/servers/test_break_glass_admission.py` — no-edit-reason: added by #23517 in `67f85082c1` ahead of this cutover; it builds `AuthService` from `bootstrap_file` and `break_glass_file` with no token file and asserts the loopback break-glass decisions.
+- `tests/servers/test_managed_clear_identity.py` — no-edit-reason: added after this leaf landed; builds `AuthService` from a bootstrap key and calls `bind_runtime` and `authenticate` as landed.
+- `tests/e2e/test_auth_login_e2e.py` — no-edit-reason: calls `prepare_daemon_env(home_dir=...)`, whose signature is unchanged; the key provisioning happens inside it.
+- `tests/e2e/test_terminal_host_reap.py` — no-edit-reason: a generated child script calls `prepare_daemon_env(home_dir=...)`, whose signature is unchanged.
+- `tests/fixtures/test_e2e_run_cleanup.py` — no-edit-reason: added after this leaf landed; asserts `prepare_daemon_env`'s run-id and home handling as landed.
+- `tests/workflows/test_placed_pipeline_fixture.py` — no-edit-reason: re-exports `daemon_instance` and reads the bearer through `daemon_token(gobby_home)`, whose signatures are unchanged; names `prepare_daemon_env` only in a comment.
+- `tests/e2e/test_api_key_bootstrap_lockout.py` — no-edit-reason: requests `daemon_instance`, whose signature is unchanged, and posts bad bootstrap passwords without a key.
+- `tests/e2e/test_local_api_key_adoption.py` — no-edit-reason: requests `daemon_instance`, whose signature is unchanged, and asserts the bootstrap bytes survive a restart.
+- `tests/e2e/composer_proof_races.py` — no-edit-reason: reads the key through `daemon_token(gobby_home)`, whose signature is unchanged.
+- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: patches `daemon_token` with a fixed value and starts no daemon.
+- `tests/terminals/test_composer_proof_races.py` — no-edit-reason: patches `daemon_token` with a fixed value.
 
 **Flag-day gterm activation.** The installed gterm host read the token file once at
 start and has no reload method, and a daemon restart adopts the surviving host (it
@@ -1205,6 +1231,9 @@ runs no maintenance loop (run-modes 2.2), and that revoking the key closes the c
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the single-daemon `daemon_instance`; the hub and node pairing is the pair test's.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: same.
+- `tests/e2e/test_api_key_bootstrap_lockout.py` — no-edit-reason: same.
+- `tests/e2e/test_local_api_key_adoption.py` — no-edit-reason: same.
+- `tests/workflows/test_placed_pipeline_fixture.py` — no-edit-reason: same.
 
 **Acceptance:**
 
@@ -1226,13 +1255,13 @@ modules retire.
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/src/lease/mod.rs`
-- `crates/gdaemon/src/lease/standby.rs`
+- `crates/gdaemon/src/lease/mod.rs::*` — scope-reason: created by #23454 in `4d3dd8e41f`; the whole file is in scope
+- `crates/gdaemon/src/lease/standby.rs::*` — scope-reason: created by #23454 in `4d3dd8e41f`; the whole file is in scope
 - `crates/gdaemon/src/lease/admin_api.rs`
 - `crates/gdaemon/src/state.rs`
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: acquires the lease before serving and enters standby without it
 - `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: serves `/api/health` as the typed 503 `standby` body
-- `crates/gdaemon/tests/lease.rs`
+- `crates/gdaemon/tests/lease.rs::*` — scope-reason: created by #23454 in `4d3dd8e41f`; the whole file is in scope
 - `src/gobby/daemon_lease.py::ActiveDaemonLease`
 - `src/gobby/daemon_lease.py::ActiveDaemonLease.try_acquire`
 - `src/gobby/daemon_lease.py::current_lease`
@@ -1280,6 +1309,10 @@ locks), so a seeded row without the lock is sufficient. Rejected: spawning the p
 test gdaemon to take a real lease, because it would add a Rust binary dependency to a
 Python test.
 
+Consumers unchanged:
+- `tests/servers/test_break_glass_admission.py` — no-edit-reason: added after this leaf landed; asserts break-glass decisions from `authenticate` as landed.
+- `tests/servers/test_managed_clear_identity.py` — no-edit-reason: added after this leaf landed; asserts `authenticate` decisions for a bound runtime as landed.
+
 **Acceptance:**
 
 - 5.1.1 - gdaemon acquires the lease, rotates the secret, and bumps the epoch; a second gdaemon enters standby. test: `crates/gdaemon/tests/lease.rs::second_daemon_enters_standby`.
@@ -1293,16 +1326,16 @@ Python test.
 
 Targets:
 - `crates/gdaemon/src/lifecycle/mod.rs`
-- `crates/gdaemon/src/lifecycle/pid_file.rs`
-- `crates/gdaemon/src/lifecycle/backend.rs`
-- `crates/gdaemon/src/lifecycle/shutdown_intent.rs`
+- `crates/gdaemon/src/lifecycle/pid_file.rs::*` — scope-reason: created by #23455 in `0f766a8bef`; the whole file is in scope
+- `crates/gdaemon/src/lifecycle/backend.rs::*` — scope-reason: created by #23456 in `39c61a6242`; the whole file is in scope
+- `crates/gdaemon/src/lifecycle/shutdown_intent.rs::*` — scope-reason: created by #23456 in `39c61a6242`; the whole file is in scope
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: claims the pid port, supervises the backend, and drops the `GOBBY_PARENT_FD` watch
 - `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: public health reports the backend's `refused` state
-- `crates/gdaemon/tests/pid_file_golden.rs`
-- `crates/gdaemon/tests/lifecycle.rs`
+- `crates/gdaemon/tests/pid_file_golden.rs::*` — scope-reason: created by #23455 in `0f766a8bef`; the whole file is in scope
+- `crates/gdaemon/tests/lifecycle.rs::*` — scope-reason: created by #23456 in `39c61a6242`; the whole file is in scope
 - `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: adapts the in-process `serve` call site if its signature changes; adds no supervisor
-- `tests/fixtures/pid_file_records/daemon_claim.json`
-- `tests/fixtures/pid_file_records/service_reservation.json`
+- `tests/fixtures/pid_file_records/daemon_claim.json::*` — scope-reason: created by #23455 in `0f766a8bef`; the whole file is in scope
+- `tests/fixtures/pid_file_records/service_reservation.json::*` — scope-reason: created by #23455 in `0f766a8bef`; the whole file is in scope
 - `src/gobby/cli/daemon_start.py::*` — scope-reason: `start` spawns `gdaemon serve` after its admissions
 - `src/gobby/cli/daemon.py::_do_stop`
 - `src/gobby/cli/daemon.py::stop`
@@ -1363,7 +1396,7 @@ Targets:
 - `tests/runner_init/test_runner_init_storage.py::*` — scope-reason: consumer of `init_storage_and_config`; the dirty-bundled-content case asserts `StartRefusal`
 - `tests/runner_helpers.py::*` — scope-reason: consumer of `init_storage_and_config`; verification only
 - `tests/test_runner_shutdown.py::*` — scope-reason: consumer of `runner.main`; gains the refusal exit status and supervisor-pipe EOF cases
-- `crates/gdaemon/src/lease/mod.rs`
+- `crates/gdaemon/src/lease/mod.rs::*` — scope-reason: created by #23454 in `4d3dd8e41f`; the whole file is in scope
 - `src/gobby/storage/schema_contract.py::*` — scope-reason: adds `SchemaVerifyRefusal` and raises it from `_run_gdaemon`'s missing-binary and nonzero-exit branches
 - `src/gobby/storage/schema_divergence.py::*` — scope-reason: consumer of `SchemaContractError`; the subclass is still caught, verification only
 - `tests/storage/test_schema_contract.py::*` — scope-reason: gains the refusal-versus-transient classification cases
@@ -1588,6 +1621,12 @@ directly with the service env; `_resolve_install_context` renders the gdaemon pa
 and `service.py`/`service_linux.py` consume it. The runner's `main` no longer probes
 for a healthy daemon or adopts a claim.
 
+Consumers unchanged:
+- `tests/mcp_proxy/test_mcp_proxy_stdio.py` — no-edit-reason: never imports `gobby.cli.daemon`; it drives `daemon_control.restart_daemon_process` with stop and start mocked, so moving `stop`, `restart`, and `status` leaves it untouched.
+- `tests/e2e/composer_proof_runner.py` — no-edit-reason: calls `gobby.runner.main` in-process as an isolated test runner; this leaf keeps `main`'s signature and changes only its refusal exit statuses and startup probe.
+- `tests/e2e/daemon_git_deadline_bootstrap.py` — no-edit-reason: runs `gobby.runner` as `__main__` through `runpy`; same.
+- `tests/workflows/placed_runbook_live_support.py` — no-edit-reason: calls `gobby.runner.main` in-process; same.
+
 **Acceptance:**
 
 - 5.2.1 - Rust and Python parse each other's pid records and reservations. test: `crates/gdaemon/tests/pid_file_golden.rs::python_records_parse`.
@@ -1649,6 +1688,9 @@ stop, and restart. Update `admin-operations.md` for the native lease routes.
 Consumers unchanged:
 - `tests/contracts/test_http_corpus.py` — no-edit-reason: uses the running `daemon_instance` only; the lifecycle the fixture drives is internal to it.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: same; it reads the instance's paths and logs, which the fixture keeps.
+- `tests/e2e/test_api_key_bootstrap_lockout.py` — no-edit-reason: uses the running `daemon_instance` only and posts to its `http_port`.
+- `tests/e2e/test_local_api_key_adoption.py` — no-edit-reason: calls the instance's `stop()` and `restart()`; this leaf moves the lifecycle behind them to gdaemon, and the test asserts only that the bootstrap bytes survive the restart.
+- `tests/workflows/test_placed_pipeline_fixture.py` — no-edit-reason: uses the running `daemon_instance` only; the lifecycle the fixture drives is internal to it.
 
 **Acceptance:**
 
@@ -1980,6 +2022,25 @@ built and installed binaries:
   #23248 (per-case backend state), and the canonical M1 routing and dependency decisions
   from `4cc206f4d9` are preserved. The superseded M1s remain in Git history. The
   Adversary derives and applies fresh M1 to both committed narratives.
+- 2026-10-10: Renewed consensus required. Stale-path and index drift repair under the
+  Orchestrator's ruling (gobby#15977), by Writer gobby#15987 for Adversary gobby#16087.
+  #23779 renamed `tests/servers/routes/test_api_keys.py` to
+  `tests/servers/routes/test_api_key_routes.py` in `f2ec9007f7`. 4.2's Target, 4.2.3,
+  and 4.2.5 now cite the new path. 4.2.5 cites
+  `test_key_routes_use_verified_front_door_identity`, which the Adversary confirmed keeps
+  every owner-scope and redaction assertion of the deleted test (the API keys/nodes
+  slice's 4.2.6 repoint, `ecd105458a`). Twenty-four bare-file Targets for files the
+  slice tasks have since created are now `::*`, with the creating task and commit. 4.2's
+  `_LoginRateLimiter` Target and prose name `LoginRateLimiter`, renamed by #23271. In 4.2 and 4.3,
+  `src/gobby/cli/install.py` is a `::*` Target because #23519 removed
+  `_provision_local_api_token` in `23328c7392`. 4.3 drops its Targets on the
+  `AuthService` and `cli/auth.py` symbols #23519 removed; its prose still records those
+  removals. 4.3 also drops `src/gobby/agents/tmux/spawner.py`, which #22856 deleted in
+  `0048987b32`. 4.3 gains four test Targets that #23519 edited in `23328c7392` and
+  `0ab31d3b80`. Consumers added after their leaves landed are inventoried in 1.3, 4.1,
+  4.3, 4.4, 5.1, 5.2, and 5.3. Acceptance text is unchanged apart from the 4.2 path and
+  test name. M1 is withdrawn (memory `f5577ae0`), and the Adversary derives a fresh M1
+  in full. Its bytes stay in Git history.
 
 **Round 1** `kind: enhancement`
 
@@ -1995,513 +2056,3 @@ built and installed binaries:
 - declined:
   - E2 / better / wrap bootstrap enrollment's `upsert_seen` and `mint` in one transaction with a fault-injection test: over-mechanism at rung 1. `upsert_seen` runs first and raises the ownership conflict before any write; a mint failure after it leaves only an idempotently re-upsertable machine row and no key, which the next `gobby auth login` completes.
 - resolution_notes: The user read all five suggestions and confirmed the votes as recommended. Four folded into 3.2, 4.2, and 4.4 as listed. Targets inventories unchanged (every named test file was already a Target). Constraints and the Decision Record unchanged.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Front-door bootstrap keys and the backend port helper
-  category: config
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: Both parsers accept the `front_door` block, default
-    `enabled` to true, and reject an unknown route value. symbol: `parse_hub_database_bootstrap`.
-    file: `src/gobby/config/bootstrap.py`.
-
-    1.1.2: `backend_ports` returns the `+100` pair in both languages. test: `tests/config/test_bootstrap.py::test_backend_ports_offset`.
-
-    1.1.3: The runtime config contract carrier is regenerated and validation passes.
-    file: `crates/gcore/assets/config/runtime_config_contract.json`.
-
-    1.1.4: The block and the offset convention are documented. behavior: "front_door
-    block" in `docs/guides/configuration.md`.'
-  labels:
-  - covers:gdaemon-front-door:1.1:1.1.1
-  - covers:gdaemon-front-door:1.1:1.1.2
-  - covers:gdaemon-front-door:1.1:1.1.3
-  - covers:gdaemon-front-door:1.1:1.1.4
-  tdd: true
-  source_section: '1.1'
-  assigned_agent: backend-developer
-- title: '`gdaemon serve`: HTTP proxy, WS splice, routing table, typed 503'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: `gdaemon serve` proxies HTTP with headers and streaming
-    bodies intact. test: `crates/gdaemon/tests/front_door.rs::http_passthrough_preserves_headers_and_body`.
-
-    1.2.2: WS upgrade is spliced byte-for-byte including deflate and close codes.
-    test: `crates/gdaemon/tests/front_door.rs::ws_splice_preserves_deflate_and_close`.
-
-    1.2.3: A refused backend yields the typed 503 body with `Retry-After`. test: `crates/gdaemon/tests/front_door.rs::refused_backend_returns_typed_503`.
-
-    1.2.4: The routing table honors `proxy`, `native`, and `compare` for the `health`
-    family. symbol: `crates/gdaemon/src/front_door/routes.rs`. file: `crates/gdaemon/src/front_door/routes.rs`.
-
-    1.2.5: The golden WS corpus replays through the proxy unchanged. test: `crates/gdaemon/tests/ws_golden_proxy.rs::corpus_replays_byte_equal_through_proxy`.'
-  labels:
-  - covers:gdaemon-front-door:1.2:1.2.1
-  - covers:gdaemon-front-door:1.2:1.2.2
-  - covers:gdaemon-front-door:1.2:1.2.3
-  - covers:gdaemon-front-door:1.2:1.2.4
-  - covers:gdaemon-front-door:1.2:1.2.5
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Runner-owned front door, backend ports, e2e front-door mode
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  - '1.4'
-  validation_criteria: '1.3.1: `gobby start` launches the runner by the service or
-    the direct path and waits for public health, and the runner spawns gdaemon as
-    its child in both cases; `front_door.enabled: false` restores today''s topology.
-    test: `tests/test_runner_front_door.py::test_runner_spawns_child_for_either_launch_path`.
-
-    1.3.2: The runner binds the backend pair on loopback behind the front door. test:
-    `tests/test_runner_lifecycle.py::test_backend_ports_behind_front_door`.
-
-    1.3.3: The e2e fixture runs the real runner behind the pinned gdaemon and the
-    lifecycle and auth suites pass through it. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_starts_behind_front_door`.
-
-    1.3.4: `src/gobby/cli/daemon.py` is below 1,000 lines after the split. file: `src/gobby/cli/daemon.py`.
-
-    1.3.5: `gdaemon serve` exits on EOF of `GOBBY_PARENT_FD`, closing both public
-    listeners, and runs with no watch when the variable is absent. test: `crates/gdaemon/tests/front_door.rs::parent_fd_eof_stops_serve`.
-
-    1.3.6: The runner passes the child no pid-lock descriptor, waits for the public
-    pair before reusing it, fails startup when the child does not bind within 10 s,
-    and respawns a crashed child with backoff. test: `tests/test_runner_front_door.py::test_child_reuse_failure_and_respawn`.
-
-    1.3.7: `gobby stop` returns with the public ports free and two consecutive `gobby
-    restart` calls succeed. test: `tests/e2e/test_daemon_lifecycle.py::test_stop_and_restart_free_public_ports`.
-
-    1.3.8: A runner killed with SIGKILL leaves no gdaemon on the public ports within
-    5 s. test: `tests/e2e/test_daemon_lifecycle.py::test_runner_sigkill_frees_public_ports`.
-
-    1.3.9: Shutdown cancels the restart monitor before terminating the child: a child
-    that exits during shutdown, and one waiting in backoff when shutdown begins, is
-    not respawned. test: `tests/test_runner_front_door.py::test_shutdown_disarms_respawn`.'
-  labels:
-  - covers:gdaemon-front-door:1.3:1.3.1
-  - covers:gdaemon-front-door:1.3:1.3.2
-  - covers:gdaemon-front-door:1.3:1.3.3
-  - covers:gdaemon-front-door:1.3:1.3.4
-  - covers:gdaemon-front-door:1.3:1.3.5
-  - covers:gdaemon-front-door:1.3:1.3.6
-  - covers:gdaemon-front-door:1.3:1.3.7
-  - covers:gdaemon-front-door:1.3:1.3.8
-  - covers:gdaemon-front-door:1.3:1.3.9
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: ghook treats the typed 503 as unreachable
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '1.4.1: A typed 503 classifies as `Connect` and suppresses
-    fail-open hooks under a fresh shutdown marker; an untyped 503 stays `Http`. test:
-    `crates/ghook/tests/contract.rs::typed_503_counts_as_unreachable`.'
-  labels:
-  - covers:gdaemon-front-door:1.4:1.4.1
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: Front-door TLS with self-signed generation and pinned client
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  validation_criteria: '4.1.1: Both parsers default `tls.mode` to `off` on loopback
-    and refuse `off` on a non-loopback bind. symbol: `parse_hub_database_bootstrap`.
-    file: `src/gobby/config/bootstrap.py`.
-
-    4.1.2: First `serve` in `self-signed` mode generates key and certificate 0600
-    and prints the fingerprint. test: `crates/gdaemon/tests/front_door.rs::self_signed_generated_on_first_serve`.
-
-    4.1.3: HTTP passthrough, typed 503, and WS splice pass over TLS with the pinned
-    client. test: `crates/gdaemon/tests/front_door.rs::ws_splice_over_self_signed_tls`.
-
-    4.1.4: The pinned client rejects a different certificate and system roots are
-    not consulted. test: `crates/gcore/tests/tls.rs::pinned_client_rejects_unpinned_cert`.
-
-    4.1.5: The e2e fixture serves `https` with `tls="self-signed"` and the lifecycle
-    suite passes over it. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.'
-  labels:
-  - covers:gdaemon-front-door:4.1:4.1.1
-  - covers:gdaemon-front-door:4.1:4.1.2
-  - covers:gdaemon-front-door:4.1:4.1.3
-  - covers:gdaemon-front-door:4.1:4.1.4
-  - covers:gdaemon-front-door:4.1:4.1.5
-  tdd: true
-  source_section: '4.1'
-  implementation_domain: backend
-- title: '`api_keys`, key format, issuance routes, and local-key adoption'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  - '4.1'
-  validation_criteria: '4.2.1: Migration 454 creates `api_keys` and the two `machines`
-    columns, and every derived carrier is regenerated. file: `crates/gcore/assets/schema/migrations/454_add_api_keys.sql`.
-
-    4.2.2: `generate`/`parse`/`hash` agree across Python and Rust on shared vectors,
-    and `parse` rejects a bad checksum. test: `tests/utils/test_api_key_format.py::test_cross_language_vectors`.
-
-    4.2.3: Bootstrap route verifies the password, binds the machine, and returns the
-    plaintext once; a foreign-owned machine gets 403. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
-
-    4.2.4: Install and startup adoption mint the local machine''s key into bootstrap.
-    symbol: `ensure_machine_identity`.
-
-    4.2.5: List and revoke are owner-scoped and redacted: one user cannot list or
-    revoke another user''s keys, a foreign revoke answers 404 like an absent id, and
-    list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted`.'
-  labels:
-  - covers:gdaemon-front-door:4.2:4.2.1
-  - covers:gdaemon-front-door:4.2:4.2.2
-  - covers:gdaemon-front-door:4.2:4.2.3
-  - covers:gdaemon-front-door:4.2:4.2.4
-  - covers:gdaemon-front-door:4.2:4.2.5
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: backend
-- title: '`gobby auth login` and `gobby auth key`'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  - '4.2'
-  validation_criteria: '4.5.1: `gobby auth login` pins by fingerprint, refuses a mismatch,
-    and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
-
-    4.5.2: Rotate mints, verifies, then revokes the old key, and rolls back on verify
-    failure. test: `tests/cli/test_auth_login.py::test_rotate_verifies_before_revoke`.
-
-    4.5.3: Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs
-    from `hub_daemon_url`, before any network call and with bootstrap byte-identical.
-    test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.'
-  labels:
-  - covers:gdaemon-front-door:4.5:4.5.1
-  - covers:gdaemon-front-door:4.5:4.5.2
-  - covers:gdaemon-front-door:4.5:4.5.3
-  tdd: true
-  source_section: '4.5'
-  implementation_domain: backend
-- title: Hub-side key validation, front-door identity, and shared-token cutover
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  - '4.2'
-  - '4.5'
-  validation_criteria: '4.3.1: gdaemon resolves a valid key to user and machine, forwards
-    the identity headers with the front-door secret, and rejects revoked, malformed,
-    or unknown-kind bearers with 401 (the last two without a database hit). test:
-    `crates/gdaemon/tests/front_door.rs::valid_key_forwards_identity_headers`.
-
-    4.3.2: Python accepts the operator principal only with the matching front-door
-    secret on HTTP and WS, and no longer accepts the token or the alias. test: `tests/servers/test_auth_service.py::test_front_door_identity_requires_secret`.
-
-    4.3.3: Managed capability tokens sign and verify with `grant_signing_secret` and
-    the golden vectors are regenerated. test: `tests/runtime_grants/test_golden_vectors.py::test_managed_token_signed_with_grant_secret`.
-
-    4.3.4: The interactive challenge is answered locally by gdaemon and never forwarded;
-    the managed challenge reaches Python. test: `crates/gdaemon/tests/front_door.rs::interactive_challenge_answered_locally`.
-
-    4.3.5: A node user''s interactive grant validates at the hub. symbol: `bearer_matches_grant`.
-
-    4.3.6: No reference to `local_cli_token`, `LOCAL_CLI_TOKEN`, `X-Gobby-Local-Token`,
-    or `auth.api_token_hash` remains under `src/` or `crates/`, and none remains in
-    the docs this leaf targets. The only retained strings are the `auth.api_token_hash`
-    entry in `_REMOVED_STORED_KEYS`, which deletes the stored row, and `crates/CHANGELOG.md`
-    release history (literal sweep recorded in the leaf; 4.6.1 covers the rest of
-    `docs/`). behavior: "API key" in `docs/contracts/secrets.md`.
-
-    4.3.7: The e2e suites pass with a provisioned key. The manifest and all eleven
-    cases carry `schema_version` 2, the auth cases are re-recorded, the two `down`
-    cases keep `backend: down`, and every `up` case replays equal in Python. test:
-    `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
-
-    4.3.8: `src/gobby/hooks/inbox.py` is below 1,000 lines after the loop and retention
-    move, and the moved loop still drains and prunes on its own cadence. file: `src/gobby/hooks/inbox_maintenance.py`.
-
-    4.3.9: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` is below 1,000
-    lines after the selection move. file: `src/gobby/mcp_proxy/tools/spawn_agent/_selection.py`.
-
-    4.3.10: Startup on an install that still stores `auth.api_token_hash` deletes
-    that row before fail-closed resolution, and a different unknown stored key still
-    refuses. test: `tests/config/test_removed_config_fields.py::test_retired_auth_token_hash_row_is_deleted`.
-
-    4.3.11: After the bootstrap key changes, the next frames hello with the new key
-    is accepted and one with the old key is refused with `invalid_token`, an already
-    attached connection keeps streaming, and an empty or unreadable bootstrap key
-    is refused. test: `crates/gterminal/tests/frame_protocol.rs::rotated_key_applies_to_next_hello`.
-
-    4.3.12: The admin guide carries the flag-day gterm activation procedure: BEFORE
-    notice, quiet worker and validator window, restore manifest, `host_shutdown`,
-    promotion, owner restoration with binding proof, DAEMON BACK. behavior: "Flag-day
-    gterm activation" in `docs/guides/admin-operations.md`.
-
-    4.3.13: The Rust harness loads the version-2 corpus and replays every case in
-    its declared backend state. test: `crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state`.'
-  labels:
-  - covers:gdaemon-front-door:4.3:4.3.1
-  - covers:gdaemon-front-door:4.3:4.3.2
-  - covers:gdaemon-front-door:4.3:4.3.3
-  - covers:gdaemon-front-door:4.3:4.3.4
-  - covers:gdaemon-front-door:4.3:4.3.5
-  - covers:gdaemon-front-door:4.3:4.3.6
-  - covers:gdaemon-front-door:4.3:4.3.7
-  - covers:gdaemon-front-door:4.3:4.3.8
-  - covers:gdaemon-front-door:4.3:4.3.9
-  - covers:gdaemon-front-door:4.3:4.3.10
-  - covers:gdaemon-front-door:4.3:4.3.11
-  - covers:gdaemon-front-door:4.3:4.3.12
-  - covers:gdaemon-front-door:4.3:4.3.13
-  tdd: true
-  source_section: '4.3'
-  implementation_domain: backend
-- title: Guides and examples drop the token file
-  category: docs
-  task_type: chore
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  - '4.3'
-  validation_criteria: '4.6.1: No reference to `local_cli_token`, `X-Gobby-Local-Token`,
-    or `auth.api_token_hash` remains under `docs/` outside `docs/evidence/` (literal
-    sweep recorded in the leaf). behavior: "gobby auth login" in `docs/guides/system-requirements.md`.
-
-    4.6.2: The observability example authenticates Prometheus with an operator-written
-    key file. behavior: "gobby auth key --show" in `docs/examples/observability/README.md`.'
-  labels:
-  - covers:gdaemon-front-door:4.6:4.6.1
-  - covers:gdaemon-front-door:4.6:4.6.2
-  tdd: false
-  source_section: '4.6'
-  assigned_agent: tech-writer
-- title: Node channel, relay backend, and `/api/machines`
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.4'
-  - '4.1'
-  - '4.3'
-  - '4.5'
-  validation_criteria: '4.4.1: A node relays to `hub_daemon_url` over the pinned connection
-    and reports the typed 503 when the hub is down. test: `crates/gdaemon/tests/nodes.rs::node_relays_over_pinned_tls`.
-
-    4.4.2: The channel registers the machine, heartbeats, and is replaced by a newer
-    connection; when the old channel''s cleanup runs after the new ack, the new channel
-    stays registered and `connected` in `/api/machines`. test: `crates/gdaemon/tests/nodes.rs::channel_registers_and_replaces`.
-
-    4.4.3: Revocation closes the channel within one heartbeat interval. test: `crates/gdaemon/tests/nodes.rs::revoked_key_closes_channel_on_heartbeat`.
-
-    4.4.4: `/api/machines` lists rows with connection state. file: `crates/gdaemon/src/nodes/machines_api.rs`.
-
-    4.4.5: The hub-node pair test passes over self-signed TLS end to end, including
-    one WS upgrade relayed through the node. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`.
-
-    4.4.6: A node relays a WS upgrade to `wss://<hub_daemon_url host:port>/ws` over
-    the pinned connection and the golden frames and close codes pass byte-equal. test:
-    `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.'
-  labels:
-  - covers:gdaemon-front-door:4.4:4.4.1
-  - covers:gdaemon-front-door:4.4:4.4.2
-  - covers:gdaemon-front-door:4.4:4.4.3
-  - covers:gdaemon-front-door:4.4:4.4.4
-  - covers:gdaemon-front-door:4.4:4.4.5
-  - covers:gdaemon-front-door:4.4:4.4.6
-  tdd: true
-  source_section: '4.4'
-  implementation_domain: backend
-- title: Lease in Rust, standby surface, Python reads its runtime row
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.1'
-  - '4.2'
-  - '4.5'
-  - '4.3'
-  - '4.6'
-  - '4.4'
-  validation_criteria: '5.1.1: gdaemon acquires the lease, rotates the secret, and
-    bumps the epoch; a second gdaemon enters standby. test: `crates/gdaemon/tests/lease.rs::second_daemon_enters_standby`.
-
-    5.1.2: Standby serves the typed 503 `standby` body and the native lease admin
-    routes. test: `crates/gdaemon/tests/lease.rs::standby_serves_typed_503_and_admin_routes`.
-
-    5.1.3: Lease loss stops the backend and re-enters standby. test: `crates/gdaemon/tests/lease.rs::lost_connection_reenters_standby`.
-
-    5.1.4: Python reads epoch and secret from its row and never writes them. test:
-    `tests/test_daemon_lease.py::test_view_reads_deployment_runtime_row`.
-
-    5.1.5: `gobby status` prints `standby` for a standby daemon. symbol: `health`.'
-  labels:
-  - covers:gdaemon-front-door:5.1:5.1.1
-  - covers:gdaemon-front-door:5.1:5.1.2
-  - covers:gdaemon-front-door:5.1:5.1.3
-  - covers:gdaemon-front-door:5.1:5.1.4
-  - covers:gdaemon-front-door:5.1:5.1.5
-  tdd: true
-  source_section: '5.1'
-  implementation_domain: backend
-- title: 'Lifecycle: pid claim port, backend supervision, `gobby start/stop/restart/status`,
-    service templates'
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.1'
-  - '4.2'
-  - '4.5'
-  - '4.3'
-  - '4.6'
-  - '4.4'
-  - '5.1'
-  validation_criteria: '5.2.1: Rust and Python parse each other''s pid records and
-    reservations. test: `crates/gdaemon/tests/pid_file_golden.rs::python_records_parse`.
-
-    5.2.2: `probe_daemon_lock` reports a gdaemon-held claim as a live daemon. test:
-    `tests/test_runner_pid_file.py::test_probe_reports_gdaemon_claim`.
-
-    5.2.3: The supervisor spawns the backend only when active, restarts it on crash,
-    and reports `starting`. test: `crates/gdaemon/tests/lifecycle.rs::supervisor_restarts_crashed_backend`.
-
-    5.2.4: Backend-only restart keeps the epoch and existing grants valid; `--full`
-    bumps the epoch. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_keeps_grants`.
-
-    5.2.5: Service templates launch gdaemon and `service_unit_has_launch_env` still
-    detects the launch env. file: `src/gobby/install/shared/services/gobby-daemon.service.j2`.
-
-    5.2.6: `src/gobby/cli/daemon.py` stays below 1,000 lines after the lifecycle split.
-    file: `src/gobby/cli/daemon_lifecycle.py`.
-
-    5.2.7: `POST /api/admin/restart` keeps its admission checks, writes intent `restart`,
-    spawns no helper, and the deleted helper functions are gone. test: `tests/servers/routes/test_admin.py::test_restart_writes_intent_without_helper`.
-
-    5.2.8: The supervisor parses a Python-written shutdown-intent marker and respawns
-    on `restart`, exits on `stop`, and backs off on a crash; a `stop` marker present
-    before the spawn followed by an early backend death backs off, and a consumed
-    `restart` marker followed by an early death backs off with the marker file still
-    present. test: `crates/gdaemon/tests/lifecycle.rs::shutdown_intent_marker_drives_respawn`.
-
-    5.2.9: `gobby restart` (both forms) and `gobby cutover` refuse before any stop
-    when `restart_start_refusal` fails, leaving the running daemon untouched, and
-    cutover restarts with `--full`. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_runs_start_preflight`.
-
-    5.2.10: The supervisor does not respawn after a start-refusal exit (status 78)
-    and reports the typed 503 with `backend.state: refused` and the refusal text,
-    and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
-
-    5.2.11: `gobby stop` reaches the pid-record SIGTERM fallback only after the singleton,
-    protected-run, and handoff admissions pass. test: `tests/cli/test_daemon_handoffs.py::test_stop_fallback_runs_after_admissions`.
-
-    5.2.12: `runner.main` exits 78 for the worktree, dirty-bundled-content, and startup
-    schema-verify (`SchemaVerifyRefusal`) refusals and 1 for any other failure. test:
-    `tests/test_runner_shutdown.py::test_start_refusals_exit_78`.
-
-    5.2.13: `gobby start` stops waiting when public health reports `backend.state:
-    refused`, prints the refusal text, and exits 1; `gobby restart` without `--full`
-    takes the `--full` form while the backend is not serving. test: `tests/cli/test_cli_daemon.py::test_start_and_restart_handle_refused_backend`.
-
-    5.2.14: The runner requests the shutdown drain with intent `stop` when the supervisor''s
-    liveness pipe reaches EOF. test: `tests/test_runner_shutdown.py::test_supervisor_pipe_eof_requests_shutdown`.
-
-    5.2.15: After a start-refusal exit the refused gdaemon releases the lease and
-    keeps its pid claim, a second gdaemon on the same database acquires the lease
-    and starts its backend, and the refused gdaemon stays `refused` without contending
-    when the lock frees again. One test covers every refusal class because the supervisor
-    sees only status 78; 5.2.12 tests the classes. test: `crates/gdaemon/tests/lifecycle.rs::refused_daemon_releases_lease_to_standby`.
-
-    5.2.16: `_run_gdaemon` raises `SchemaVerifyRefusal` for a missing gdaemon and
-    a nonzero exit and plain `SchemaContractError` for a timeout and a launch `OSError`,
-    and `runner.main` exits 1 for the latter two. test: `tests/storage/test_schema_contract.py::test_verify_refusal_versus_transient_failure`.
-
-    5.2.17: `run_gobby` spawns no gdaemon child, `serve` reads no `GOBBY_PARENT_FD`,
-    and `gobby stop` and two consecutive `gobby restart` calls under the supervisor
-    topology keep 1.3.7''s assertions. test: `tests/e2e/test_daemon_lifecycle.py::test_stop_and_restart_free_public_ports`.
-
-    5.2.18: A backend killed with SIGKILL is respawned while gdaemon keeps both public
-    ports answering (typed 503, then health). test: `tests/e2e/test_daemon_lifecycle.py::test_backend_sigkill_keeps_public_ports`.
-
-    5.2.19: A gdaemon killed with SIGKILL leaves no listener on the public ports within
-    5 s, and its backend sees `GOBBY_SUPERVISOR_FD` EOF, starts the normal shutdown
-    drain with intent `stop`, and exits within that drain''s configured bound (`uvicorn_drain_timeout`
-    plus the runner''s settle margin; no new kill deadline). test: `tests/e2e/test_daemon_lifecycle.py::test_gdaemon_sigkill_frees_public_ports`.
-
-    5.2.20: After this leaf the in-process `serve` entry the corpus harness calls
-    (corpus plan 3.2 and 3.3, **Harness**) still starts no lease, backend, or child
-    process, and the corpus `down` cases replay equal with `backend.state: down` unchanged.
-    test: `crates/gdaemon/tests/http_contracts.rs::front_door_backend_down_replays_equal`.'
-  labels:
-  - covers:gdaemon-front-door:5.2:5.2.1
-  - covers:gdaemon-front-door:5.2:5.2.2
-  - covers:gdaemon-front-door:5.2:5.2.3
-  - covers:gdaemon-front-door:5.2:5.2.4
-  - covers:gdaemon-front-door:5.2:5.2.5
-  - covers:gdaemon-front-door:5.2:5.2.6
-  - covers:gdaemon-front-door:5.2:5.2.7
-  - covers:gdaemon-front-door:5.2:5.2.8
-  - covers:gdaemon-front-door:5.2:5.2.9
-  - covers:gdaemon-front-door:5.2:5.2.10
-  - covers:gdaemon-front-door:5.2:5.2.11
-  - covers:gdaemon-front-door:5.2:5.2.12
-  - covers:gdaemon-front-door:5.2:5.2.13
-  - covers:gdaemon-front-door:5.2:5.2.14
-  - covers:gdaemon-front-door:5.2:5.2.15
-  - covers:gdaemon-front-door:5.2:5.2.16
-  - covers:gdaemon-front-door:5.2:5.2.17
-  - covers:gdaemon-front-door:5.2:5.2.18
-  - covers:gdaemon-front-door:5.2:5.2.19
-  - covers:gdaemon-front-door:5.2:5.2.20
-  tdd: true
-  source_section: '5.2'
-  implementation_domain: backend
-- title: Retire the Python lease modules
-  category: refactor
-  task_type: chore
-  depends_on:
-  - '4.1'
-  - '4.2'
-  - '4.5'
-  - '4.3'
-  - '4.6'
-  - '4.4'
-  - '5.2'
-  validation_criteria: '5.3.1: The three modules and their tests are deleted and nothing
-    imports them. file: `src/gobby/daemon_lease_control.py`.
-
-    5.3.2: The runner starts with no lease acquisition and exits cleanly on SIGTERM
-    from gdaemon. test: `tests/test_runner_lease_lifecycle.py::test_runner_has_no_lease_paths`.
-
-    5.3.3: e2e start, stop, and restart go through gdaemon and the lifecycle suite
-    passes. symbol: `daemon_instance`.'
-  labels:
-  - covers:gdaemon-front-door:5.3:5.3.1
-  - covers:gdaemon-front-door:5.3:5.3.2
-  - covers:gdaemon-front-door:5.3:5.3.3
-  tdd: false
-  source_section: '5.3'
-  assigned_agent: backend-developer
-```
