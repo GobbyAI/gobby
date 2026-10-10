@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -44,10 +45,14 @@ class FakeTaskClient:
         *,
         error: Exception | None = None,
         envelope: dict[str, Any] | None = None,
+        offloaded_content: str | None = None,
+        page_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.tasks = {task["id"]: task for task in tasks or []}
         self.error = error
         self.envelope = envelope
+        self.offloaded_content = offloaded_content
+        self.page_overrides = page_overrides or {}
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def call_mcp_tool(
@@ -58,6 +63,24 @@ class FakeTaskClient:
             raise self.error
         if self.envelope is not None:
             return self.envelope
+        if server_name == "gobby-results":
+            assert tool_name == "get_tool_result"
+            assert arguments["result_id"] == "stored-task"
+            assert self.offloaded_content is not None
+            offset = arguments["offset"]
+            content = self.offloaded_content[offset : offset + 80]
+            end = offset + len(content)
+            return {
+                "success": True,
+                "result": {
+                    "content": content,
+                    "offset": offset,
+                    "next_offset": end if end < len(self.offloaded_content) else None,
+                    "stored_chars": len(self.offloaded_content),
+                    "total_chars": len(self.offloaded_content),
+                    **self.page_overrides,
+                },
+            }
         if tool_name == "list_tasks":
             rows = [
                 {"id": task["id"]}
@@ -71,6 +94,8 @@ class FakeTaskClient:
             offset = arguments.get("offset", 0)
             rows = rows[offset : offset + arguments["limit"]]
             return {"success": True, "result": {"tasks": rows, "count": len(rows)}}
+        if self.offloaded_content is not None:
+            return {"success": True, "result": {"offloaded": True, "result_id": "stored-task"}}
         return {"success": True, "result": self.tasks[arguments["task_id"]]}
 
 
@@ -125,6 +150,53 @@ def test_lookup_keeps_open_owners_open() -> None:
     )
 
     assert (task.closed_at, task.closed_reason) == (None, None)
+
+
+def test_lookup_reads_all_offloaded_pages_and_caches_the_full_task() -> None:
+    record = task_record(title="Completed work — ✓")
+    content = json.dumps(record, ensure_ascii=False)
+    client = FakeTaskClient([record], offloaded_content=content)
+    lookup = DaemonTaskLookup(client)
+
+    first = lookup.list_tasks(
+        project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
+    )
+    second = lookup.list_tasks(
+        project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
+    )
+
+    assert first == second
+    [task] = first
+    assert task.closed_at == datetime(2026, 10, 7, 3, tzinfo=UTC)
+    assert task.title == record["title"]
+    retrieval_calls = [call for call in client.calls if call[0] == "gobby-results"]
+    assert [call[2]["offset"] for call in retrieval_calls] == list(range(0, len(content), 80))
+    assert sum(call[1] == "get_task" for call in client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("content", "page_overrides", "message"),
+    [
+        ("{}", {}, "get_task returned a malformed task"),
+        ("[]", {}, "offloaded result is malformed"),
+        ("{", {}, "offloaded result is malformed"),
+        ("{}", {"stored_chars": 1}, "offloaded result is malformed"),
+        ("{}", {"next_offset": 0}, "offloaded result is malformed"),
+        ("{}", {"error": "expired result"}, "get_tool_result failed: expired result"),
+    ],
+    ids=["task-schema", "non-object", "invalid-json", "truncated", "stalled", "expired"],
+)
+def test_lookup_rejects_malformed_or_unavailable_offloaded_records(
+    content: str, page_overrides: dict[str, Any], message: str
+) -> None:
+    client = FakeTaskClient(
+        [task_record()], offloaded_content=content, page_overrides=page_overrides
+    )
+
+    with pytest.raises(CompletedSectionExemptionsUnavailable, match=message):
+        DaemonTaskLookup(client).list_tasks(
+            project_id="project-1", label=LABEL, limit=2, offset=0, sort_by="updated_at"
+        )
 
 
 @pytest.mark.parametrize(

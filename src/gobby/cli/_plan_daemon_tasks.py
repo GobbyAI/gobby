@@ -8,6 +8,7 @@ until gobby-tasks is rebuilt in Rust.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -90,9 +91,15 @@ class DaemonTaskLookup:
                 ) from exc
         return self._tasks[task_id]
 
-    def _call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _call(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        server_name: str = "gobby-tasks",
+    ) -> dict[str, Any]:
         try:
-            response = self._client.call_mcp_tool("gobby-tasks", tool_name, arguments)
+            response = self._client.call_mcp_tool(server_name, tool_name, arguments)
         except (httpx.HTTPError, DaemonAuthenticationError, ValueError) as exc:
             raise CompletedSectionExemptionsUnavailable(
                 f"daemon task API {tool_name} failed: {exc}"
@@ -106,4 +113,44 @@ class DaemonTaskLookup:
             raise CompletedSectionExemptionsUnavailable(
                 f"daemon task API {tool_name} failed: {result['error']}"
             )
+        if result.get("offloaded") is True:
+            return self._offloaded_result(result)
         return result
+
+    def _offloaded_result(self, projection: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result_id = projection["result_id"]
+            if not isinstance(result_id, str) or not result_id:
+                raise ValueError("missing result_id")
+            chunks: list[str] = []
+            offset = 0
+            while True:
+                page = self._call(
+                    "get_tool_result",
+                    {"result_id": result_id, "offset": offset, "limit": 14000},
+                    server_name="gobby-results",
+                )
+                content = page["content"]
+                if (
+                    not isinstance(content, str)
+                    or page["offset"] != offset
+                    or page["stored_chars"] != page["total_chars"]
+                ):
+                    raise ValueError("malformed or truncated result page")
+                chunks.append(content)
+                offset += len(content)
+                next_offset = page["next_offset"]
+                if next_offset is None:
+                    if offset != page["stored_chars"]:
+                        raise ValueError("incomplete result")
+                    break
+                if type(next_offset) is not int or next_offset != offset or not content:
+                    raise ValueError("result pagination did not advance")
+            record = json.loads("".join(chunks))
+            if not isinstance(record, dict):
+                raise ValueError("result is not an object")
+            return record
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CompletedSectionExemptionsUnavailable(
+                f"daemon task API offloaded result is malformed: {exc!r}"
+            ) from exc
