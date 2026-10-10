@@ -108,7 +108,7 @@ pub fn pane_corners<W: WorkspaceView>(
     };
     let identity = agent
         .filter(|agent| {
-            agent.manual_title.is_some()
+            agent.identity_title.is_some()
                 || agent.agent_definition_name.is_some()
                 || !agent.provider.trim().is_empty()
         })

@@ -947,6 +947,8 @@ async def test_apply_titles_the_pane_with_the_definition_name(
 
     assert result["title"] == "X"
     assert session_title(db, session_id) == "X"
+    session = SessionManager(db).get(session_id)
+    assert session is not None and session.title_source == "definition"
 
 
 def test_default_title_yields_to_a_later_apply_and_a_task_claim(

@@ -6,6 +6,7 @@ from typing import Any
 
 PROVISIONAL_TITLE_SOURCE = "provisional"
 TASK_TITLE_SOURCE = "task"
+DEFINITION_TITLE_SOURCE = "definition"
 MANUAL_TITLE_SOURCE = "manual"
 
 _PROVIDER_TITLE_LABELS = {

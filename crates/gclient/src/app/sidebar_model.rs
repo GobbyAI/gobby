@@ -85,9 +85,9 @@ pub struct AgentEntry {
     pub name: String,
     /// The run's agent definition (`backend-developer`); no rung of `name`.
     pub agent_definition_name: Option<String>,
-    /// The session's manual title without its ref prefix; it takes the
+    /// The session's manual or definition title without its ref prefix; it takes the
     /// definition's place in the row's line 1 and the pane header.
-    pub manual_title: Option<String>,
+    pub identity_title: Option<String>,
     pub provider: String,
     pub model: Option<String>,
     /// The model's provider-printed name, resolved daemon-side; the row
@@ -153,10 +153,10 @@ impl SandboxState {
 }
 
 impl AgentEntry {
-    /// The session's manual title, else the run's agent definition name,
+    /// The session's manual or definition title, else the run's agent definition name,
     /// else the provider label a session's provisional title carries.
     pub fn definition_label(&self) -> String {
-        self.manual_title
+        self.identity_title
             .clone()
             .or_else(|| self.agent_definition_name.clone())
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
@@ -319,14 +319,14 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
-            let manual_title = session
+            let identity_title = session
                 .and_then(|(project, session)| {
                     let name = rows
                         .projects
                         .iter()
                         .find(|row| row.id == project)
                         .map_or("", |row| row.name.as_str());
-                    session.manual_title(name)
+                    session.identity_title(name)
                 })
                 .map(str::to_owned);
             let machine_id = session
@@ -343,7 +343,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 backend: terminal.backend,
                 name,
                 agent_definition_name,
-                manual_title,
+                identity_title,
                 provider: provider.unwrap_or_default(),
                 model: entry
                     .model
