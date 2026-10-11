@@ -419,11 +419,15 @@ async def test_dispatched_seat_handlers_match_resolved_assigned_task(
     assert current_step == (next_step if assigned else step)
 
 
-async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> None:
+@pytest.mark.parametrize("has_commit", [False, True])
+async def test_reclaimed_handoff_restores_ordinary_close_gate(
+    seats: _Seats, has_commit: bool
+) -> None:
     manager = LocalTaskManager(seats.db)
     registry = create_task_registry(manager)
     claim_task(seats.db, seats.task_id, seats.former)
-    manager.link_commit(seats.task_id, COMMIT)
+    if has_commit:
+        manager.link_commit(seats.task_id, COMMIT)
     _seat(seats, seats.former, "submit")
     with session_context_for_test(seats.former):
         assert (
@@ -465,8 +469,13 @@ async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> N
         _after_tool(seats.former, "claim_task", {"task_id": seats.ref}, claimed), seats.former, {}
     )
     assert _current_step(seats.db, seats.former) == "route_skills"
-    # Complete the same skill-routing preconditions as a newly claimed task.
-    _seat(seats, seats.former, "route_skills")
+    # Keep the live instance: rebuilding defaults would hide stale completion rights.
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    assert instance.variables["_developer_handoff_tasks"] == []
+    instance.variables.update(skills_routed=True, additional_skills_loaded=True)
+    instances.save(instance)
     await engine._process_step_after_tool(
         _after_tool(
             seats.former,
@@ -477,10 +486,15 @@ async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> N
         seats.former,
         {},
     )
-    assert _current_step(seats.db, seats.former) == "submit"
+    assert _current_step(seats.db, seats.former) == ("submit" if has_commit else "implement")
     close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
     close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
-    assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
+    response = engine._check_step_tool_enforcement(close_event, seats.former, {})
+    if has_commit:
+        assert response is None
+    else:
+        assert response is not None and response.decision == "block"
+        assert "Finish only a task this developer handed off" in str(response.reason)
 
 
 @pytest.mark.parametrize("step", ["claim", "implement", "submit"])
@@ -512,8 +526,9 @@ def test_developer_cannot_forge_handoff_permission(seats: _Seats) -> None:
 
 
 @pytest.mark.parametrize("active_step", ["implement", "submit"])
+@pytest.mark.parametrize("reviewer_closes", [False, True])
 async def test_handoff_close_preserves_next_task_binding(
-    seats: _Seats, tmp_path: Path, active_step: str
+    seats: _Seats, tmp_path: Path, active_step: str, reviewer_closes: bool
 ) -> None:
     """Exercise real MCP gates and close storage without a live criteria reviewer."""
     tasks = LocalTaskManager(seats.db)
@@ -580,10 +595,16 @@ async def test_handoff_close_preserves_next_task_binding(
         == {}
     )
     assert not tasks.get_task(seats.task_id).is_escalated
-    result = await call(
-        "close_task", {"task_id": seats.ref, "changes_summary": "All children finished."}
-    )
-    assert result["closed"] is True
+    if reviewer_closes:
+        # Automatic review closes out of band; the developer observes its verdict.
+        tasks.close_task(seats.task_id, reason="completed")
+        observed = await call("get_task", {"task_id": seats.ref})
+        assert observed["state"]["is_closed"] is True
+    else:
+        result = await call(
+            "close_task", {"task_id": seats.ref, "changes_summary": "All children finished."}
+        )
+        assert result["closed"] is True
     assert tasks.get_task(seats.task_id).closed_at is not None
     step_after, state_after = _instance_state(seats.db, seats.former)
     assert step_after == before[0]
