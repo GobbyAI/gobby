@@ -51,6 +51,18 @@ def create_communications_registry(
             )
         return resolve_session_reference(db, session_id, get_current_project_id())
 
+    async def _resolve_session_id_async(session_id: str | None) -> str | None:
+        """Keep session-reference database queries off the async tool's event loop."""
+        if session_id is None:
+            return None
+        from gobby.app_context import get_app_context
+
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            result: str | None = await app_context.run_db(_resolve_session_id, session_id)
+            return result
+        return await asyncio.to_thread(_resolve_session_id, session_id)
+
     @registry.tool(
         description=(
             "Send a message to a communication channel. session_id defaults to the calling "
@@ -95,7 +107,7 @@ def create_communications_registry(
                     metadata["link_preview_options"] = link_preview_options
 
             target_session = (
-                _resolve_session_id(session_id)
+                await _resolve_session_id_async(session_id)
                 if session_id is not None
                 else get_current_session_id()
             )
@@ -247,7 +259,7 @@ def create_communications_registry(
                 filename=filename,
                 content_type=resolved_content_type,
                 content=caption,
-                session_id=_resolve_session_id(session_id),
+                session_id=await _resolve_session_id_async(session_id),
                 metadata=metadata,
             )
             return {
