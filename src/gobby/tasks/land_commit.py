@@ -41,7 +41,8 @@ __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _LANDING_ACTION = re.compile(
     r"gobby-land candidate=(?P<candidate>[0-9a-f]{40}) "
-    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(ACTIVATION_CLASSES)})(?:: .*)?"
+    rf"mode=(?P<mode>ff|merge) class=(?P<class>{'|'.join(ACTIVATION_CLASSES)})"
+    r"(?: lander=(?P<lander>[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))?(?:: .*)?"
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
@@ -224,6 +225,7 @@ async def _recover_landing(
         "activation_class": "unknown",
         "retest_required": True,
         "provenance": "unknown",
+        "landed_by_session_id": "unknown",
     }
     try:
         if await _git(main, "rev-parse", "--show-ref-format") != "files":
@@ -258,6 +260,7 @@ async def _recover_landing(
                 "activation_class": activation_class,
                 "retest_required": action["mode"] == "merge",
                 "provenance": "reflog",
+                "landed_by_session_id": action["lander"] or "unknown",
             }
             if action["mode"] == "merge":
                 facts["merge_commit"] = entry.new
@@ -304,7 +307,9 @@ def _receipt_result(receipt: CloseReceipt, *, already_landed: bool = True) -> La
         **_facts_result(receipt.commit_sha, receipt.facts),
         "receipt_id": receipt.id,
         "already_landed": already_landed,
-        "landed_by_session_id": receipt.author_session_id,
+        "landed_by_session_id": str(
+            receipt.facts.get("landed_by_session_id", receipt.author_session_id)
+        ),
     }
 
 
@@ -326,7 +331,9 @@ async def _record_and_notify(
         return {
             **_facts_result(sha, facts),
             "already_landed": already_landed,
-            "landed_by_session_id": caller,
+            "landed_by_session_id": str(
+                facts.get("landed_by_session_id", "unknown" if already_landed else caller)
+            ),
             "receipt_pending": True,
         }
     result = _receipt_result(receipt, already_landed=already_landed or not created)
@@ -488,7 +495,8 @@ async def land_candidate(
                     "LC_ALL": "C",
                     "GOBBY_LAND_COMMIT": "1",
                     "GIT_REFLOG_ACTION": (
-                        f"gobby-land candidate={sha} mode={mode} class={activation_class}"
+                        f"gobby-land candidate={sha} mode={mode} class={activation_class} "
+                        f"lander={caller_session_id}"
                     ),
                 }
                 result = await daemon_git.run(
@@ -506,6 +514,7 @@ async def land_candidate(
                         "project_sync_required": requires_project_sync(paths),
                         "retest_required": mode == "merge",
                         "provenance": "recorded",
+                        "landed_by_session_id": caller_session_id,
                     }
                     if mode == "merge":
                         facts["merge_commit"] = target
