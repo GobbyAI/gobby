@@ -8,6 +8,7 @@ import pytest
 
 from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 from gobby.hooks._normalization_canonical import (
+    _classify_shell_command,
     _classify_shell_segment_without_redirection,
     _set_canonical_tool_metadata,
 )
@@ -617,7 +618,41 @@ def test_malformed_heredoc_keeps_prior_complete_substitution(tmp_path: Path) -> 
 )
 def test_sequencer_commands_keep_resolved_scope(tmp_path: Path, command: str) -> None:
     data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] in {"execute", "write"}
     assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $'\\'$(' ; git apply x.patch ; echo \")\"",
+        "echo $'\\''$(git apply x.patch)",
+    ],
+)
+def test_ansi_c_quote_cannot_mask_a_live_mutation(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_ansi_c_quote_substitution_text_stays_read_only(tmp_path: Path) -> None:
+    data = _invocation_metadata("cat $'a$(b)'", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "read"
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize("parser", ["scan_shell_command", "command_substitution_bodies"])
+def test_shell_parser_failure_fails_closed(tmp_path: Path, parser: str) -> None:
+    with patch(f"gobby.hooks._normalization_canonical.{parser}", side_effect=ValueError("invalid")):
+        data = _classify_shell_command("echo safe", cwd=str(tmp_path), depth=0, base_cwd=tmp_path)
+    assert data == {
+        "canonical_tool_kind": "write",
+        "canonical_tool_confidence": "low",
+        "canonical_repo_mutation": True,
+        "canonical_repo_mutation_scope_unknown": True,
+    }
 
 
 @pytest.mark.parametrize(

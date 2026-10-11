@@ -218,7 +218,12 @@ def _classify_shell_command(
             return _build_canonical_tool_metadata(
                 "execute", confidence="low", extra={"canonical_script_execution": True}
             )
-        return {}
+        return _build_canonical_tool_metadata(
+            "write",
+            repo_mutation=True,
+            confidence="low",
+            extra={"canonical_repo_mutation_scope_unknown": True},
+        )
 
     tokens = scan.tokens
     if not tokens:
