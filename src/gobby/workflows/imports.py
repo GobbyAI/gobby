@@ -34,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 _KIND_TABLES = ("agent", "rule", "variable", "pipeline")
 _KIND_SUBDIRS = ("rules", "agents", "pipelines", "variables")
+_PROJECT_IMPORT_TAG = "project-workflow-import"
+_KIND_MANAGERS: dict[
+    str,
+    type[AgentDefinitionManager]
+    | type[RuleDefinitionManager]
+    | type[SessionVariableDefaultManager]
+    | type[PipelineDefinitionManager],
+] = {
+    "agent": AgentDefinitionManager,
+    "rule": RuleDefinitionManager,
+    "variable": SessionVariableDefaultManager,
+    "pipeline": PipelineDefinitionManager,
+}
 
 
 def _lookup_existing_kind(db: Any, name: str, project_id: str | None) -> str | None:
@@ -191,6 +204,19 @@ def sync_imported_definition(
     return _upsert_pipeline(db, data, project_id)
 
 
+def _mark_project_import(db: Any, kind: str, name: str, project_id: str | None) -> None:
+    """Record filesystem ownership separately from the shared installed source."""
+    if project_id is None:
+        return
+    manager = _KIND_MANAGERS[kind](db)
+    row = manager.get_by_name(name, project_id=project_id)
+    if row is None or row.project_id != project_id or row.source != "installed":
+        return
+    tags = row.tags or []
+    if "gobby" not in tags and _PROJECT_IMPORT_TAG not in tags:
+        manager.update_from_sync(row.id, tags=[*tags, _PROJECT_IMPORT_TAG])
+
+
 def sync_imported_workflow_file(
     db: Any,
     path: Path,
@@ -205,6 +231,10 @@ def sync_imported_workflow_file(
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.
         result = sync_rule_file(db, rule_file=path, project_id=project_id)
+        if on_disk is not None:
+            for name in data["rules"]:
+                if isinstance(name, str):
+                    _mark_project_import(db, "rule", name, project_id)
         if result["errors"]:
             raise ValueError("; ".join(result["errors"]))
         if on_disk is not None:
@@ -217,7 +247,9 @@ def sync_imported_workflow_file(
         kind = data.get("type")
         if kind not in _KIND_TABLES:
             kind = validate_workflow_definition_data(data)
-        on_disk.add((kind, _imported_definition_name(data, kind)))
+        name = _imported_definition_name(data, kind)
+        _mark_project_import(db, kind, name, project_id)
+        on_disk.add((kind, name))
     return result
 
 
@@ -252,7 +284,7 @@ def sync_imported_workflows(
     for root, scope_id in roots:
         # An absent workflows directory in a live checkout is an empty scan.
         # An unavailable checkout must never authorize deleting its definitions.
-        if scope_id is not None and not root.parent.parent.is_dir():
+        if scope_id is not None and not root.parent.is_dir():
             continue
         on_disk: set[tuple[str, str]] = set()
         scan_complete = True
@@ -274,18 +306,17 @@ def sync_imported_workflows(
                 scan_complete = False
 
         if scope_id is not None and scan_complete:
-            managers = (
-                ("agent", AgentDefinitionManager(db)),
-                ("rule", RuleDefinitionManager(db)),
-                ("variable", SessionVariableDefaultManager(db)),
-                ("pipeline", PipelineDefinitionManager(db)),
-            )
-            for kind, manager in managers:
+            for kind, manager_type in _KIND_MANAGERS.items():
+                manager = manager_type(db)
                 for row in manager.list_all(project_id=scope_id):
                     if (
                         row.project_id == scope_id
                         and row.source == "installed"
                         and "gobby" not in (row.tags or [])
+                        # Pipeline DB writers use custom source; installed also
+                        # identifies older file imports (including crew-*).
+                        # Other kinds share installed source with DB-only writers.
+                        and (kind == "pipeline" or _PROJECT_IMPORT_TAG in (row.tags or []))
                         and (kind, row.name) not in on_disk
                     ):
                         manager.delete(row.id)

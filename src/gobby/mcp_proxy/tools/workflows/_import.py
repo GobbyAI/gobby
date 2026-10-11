@@ -31,6 +31,7 @@ def reload_cache(
             project_id=project_id,
         )
         result["imported_workflows_synced"] = imported["synced"]
+        result["imported_workflows_retired"] = imported.get("orphaned", 0)
         if imported["errors"]:
             result["imported_workflow_sync_errors"] = imported["errors"]
 

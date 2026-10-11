@@ -11,6 +11,25 @@ from gobby.mcp_proxy.tools.workflows._import import reload_cache
 pytestmark = pytest.mark.unit
 
 
+def test_reload_cache_reports_import_retirement(monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = MagicMock()
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+        lambda *_args, **_kwargs: {"synced": 2, "orphaned": 3, "errors": []},
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import.sync_bundled_content_to_db",
+        lambda *_args, **_kwargs: {"details": {}, "errors": []},
+    )
+
+    result = reload_cache(loader, db=object())
+
+    assert result["success"] is True
+    assert result["imported_workflows_synced"] == 2
+    assert result["imported_workflows_retired"] == 3
+    loader.clear_cache.assert_called_once_with()
+
+
 def test_reload_cache_surfaces_bundled_sync_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     loader = MagicMock()
     monkeypatch.setattr(

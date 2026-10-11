@@ -27,6 +27,7 @@ from gobby.workflows.imports import (
 )
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_models import PipelineDefinition
+from gobby.workflows.sync_rules import sync_rule_file
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -62,6 +63,8 @@ def test_deleted_project_pipeline_is_retired_without_touching_other_rows(
     assert first["errors"] == []
     assert stale is not None and stale.project_id == project.id
     assert present is not None
+    # Older file imports (the retired crew-* pipelines) have no provenance tag.
+    manager.update_from_sync(stale.id, tags=[])
 
     if remove_directory:
         shutil.rmtree(root)
@@ -140,7 +143,7 @@ def test_deleted_project_definition_is_retired(
     assert manager.get(row.id, include_deleted=True).deleted_at is not None
 
 
-@pytest.mark.parametrize("failure", ["invalid", "unreadable", "missing-checkout"])
+@pytest.mark.parametrize("failure", ["invalid", "unreadable", "missing-checkout", "empty-checkout"])
 def test_incomplete_project_scan_does_not_retire_rows(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
@@ -171,13 +174,15 @@ def test_incomplete_project_scan_does_not_retire_rows(
             return original_iterdir(directory)
 
         monkeypatch.setattr(Path, "iterdir", fail_scan)
-    else:
+    elif failure == "missing-checkout":
         project_path.rename(tmp_path / "unavailable")
+    else:
+        shutil.rmtree(project_path / ".gobby")
 
     result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
 
     assert result["orphaned"] == 0
-    assert bool(result["errors"]) is (failure != "missing-checkout")
+    assert bool(result["errors"]) is (failure in {"invalid", "unreadable"})
     assert manager.get(row.id).deleted_at is None
 
 
@@ -210,6 +215,67 @@ def test_project_multi_rule_scan_retires_only_removed_rules(
     assert result["orphaned"] == 1
     assert manager.get(stale.id, include_deleted=True).deleted_at is not None
     assert manager.get(present.id).deleted_at is None
+
+
+def test_project_sync_preserves_db_owned_installed_agent_and_external_rule(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = tmp_path / "db-owned"
+    project = isolated_checkout_factory(temp_db, "db-owned", root=project_path).project
+    path = project_path / ".gobby" / "workflows" / "pipelines" / "retired.yaml"
+    _write_pipeline(path, "retired")
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    initial = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    pipelines = PipelineDefinitionManager(temp_db)
+    stale = pipelines.get_by_name("retired", project_id=project.id)
+    assert initial["errors"] == []
+    assert stale is not None
+    agents = AgentDefinitionManager(temp_db)
+    # HTTP creates DB-owned rows with installed source and no exported file.
+    agent = agents.upsert_with_steps(
+        "db-agent",
+        {
+            "name": "db-agent",
+            "prompts": {"agent": "Inspect."},
+            "workflows": {"rule_selectors": {"include": []}},
+        },
+        None,
+        project_id=project.id,
+        source="installed",
+        create_only=True,
+    )
+    external_path = tmp_path / "external-rules.yaml"
+    external_path.write_text(
+        yaml.safe_dump(
+            {
+                "rules": {
+                    "external-rule": {
+                        "event": "before_tool",
+                        "effects": [{"type": "block", "reason": "stop"}],
+                    }
+                }
+            }
+        )
+    )
+    imported = sync_rule_file(temp_db, external_path, project_id=project.id)
+    rules = RuleDefinitionManager(temp_db)
+    external = rules.get_by_name("external-rule", project_id=project.id)
+    assert imported["errors"] == []
+    assert external is not None and external.source == "installed"
+    path.unlink()
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == 1
+    assert pipelines.get(stale.id, include_deleted=True).deleted_at is not None
+    assert agents.get(agent.id).deleted_at is None
+    assert rules.get(external.id).deleted_at is None
 
 
 def test_pipeline_yaml_tags_persist_on_import(
