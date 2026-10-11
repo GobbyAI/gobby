@@ -29,6 +29,7 @@ from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.block_audit import audit_source_block
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +235,38 @@ class ChatLifecycleMixin:
                 with staging:
                     return cast(HookResponse, workflow_handler.evaluate(event))
 
-            response: HookResponse = await run_db(self, evaluate)
+            try:
+                response: HookResponse = await run_db(self, evaluate)
+            except WorkflowEvaluationTimeout:
+                raise
+            except Exception as exc:
+                if event_type is not HookEventType.BEFORE_TOOL:
+                    raise
+                logger.exception("Lifecycle rule evaluation failed for %s: %s", event_type, exc)
+                reason = (
+                    "Workflow evaluation failed; blocking tool call for safety: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                log_structured_block(
+                    logger,
+                    session_id=db_session_id,
+                    event=event_type.value,
+                    tool=block_tool_name_from_event_data(event.data),
+                    source="hook",
+                    rule="hook-before-tool-safety",
+                    reason=reason,
+                )
+                await audit_source_block(
+                    workflow_handler, event, rule_id="hook-before-tool-safety", reason=reason
+                )
+                response = HookResponse(decision="block", reason=reason)
+                return {
+                    "decision": response.decision,
+                    "context": response.context,
+                    "context_parts": response.context_contributors(),
+                    "reason": response.reason,
+                    "system_message": response.system_message,
+                }
             logger.debug(
                 "_fire_lifecycle: %s → decision=%s, context_len=%s",
                 event_type.name,
@@ -392,31 +424,6 @@ class ChatLifecycleMixin:
             return result
         except Exception as e:
             logger.exception("Lifecycle evaluation failed for %s: %s", event_type, e)
-            if event_type is HookEventType.BEFORE_TOOL:
-                reason = (
-                    "Workflow evaluation failed; blocking tool call for safety: "
-                    f"{type(e).__name__}: {e}"
-                )
-                log_structured_block(
-                    logger,
-                    session_id=db_session_id,
-                    event=event_type.value,
-                    tool=block_tool_name_from_event_data(event.data),
-                    source="hook",
-                    rule="hook-before-tool-safety",
-                    reason=reason,
-                )
-                await audit_source_block(
-                    workflow_handler, event, rule_id="hook-before-tool-safety", reason=reason
-                )
-                response = HookResponse(decision="block", reason=reason)
-                return {
-                    "decision": response.decision,
-                    "context": response.context,
-                    "context_parts": response.context_contributors(),
-                    "reason": response.reason,
-                    "system_message": response.system_message,
-                }
             # PreCompact runs on the SDK compaction path; failures must not
             # abort compaction or strand the active conversation.
             return None

@@ -28,7 +28,7 @@ from gobby.hooks.hook_manager import HookManager
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -201,6 +201,19 @@ async def test_other_lifecycle_evaluation_errors_keep_fail_open(
     host.workflow_handler.evaluate.side_effect = RuntimeError("matcher failed")
 
     result = await host._fire_lifecycle("conv-1", event_type, {})
+
+    assert result is None
+    host.workflow_handler.evaluate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_before_tool_evaluation_timeout_keeps_fail_open(host: ChatMixinHost) -> None:
+    host.workflow_handler = _make_workflow_handler()
+    host.workflow_handler.evaluate.side_effect = WorkflowEvaluationTimeout(
+        event_type=HookEventType.BEFORE_TOOL, session_id=SESSION_ID, timeout_seconds=0.1
+    )
+
+    result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {})
 
     assert result is None
     host.workflow_handler.evaluate.assert_called_once()
@@ -640,9 +653,7 @@ class TestFireLifecycleMessagePiggyback:
             "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
         )
 
-        assert result is not None
-        assert result["decision"] == "block"
-        assert "RuntimeError: dispatch failed" in result["reason"]
+        assert result is None
         assert delivered == []
         mgr.get_undelivered_messages.assert_called_once_with(SESSION_ID)
 
