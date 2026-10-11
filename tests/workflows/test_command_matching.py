@@ -26,6 +26,54 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
+    "command,expected",
+    [
+        pytest.param("{ case x in x) gem push x;; esac; }", True, id="R1"),
+        pytest.param("if true; then case x in x) gem push x;; esac; fi", True, id="R2"),
+        pytest.param("! case x in x) gem push x;; esac", True, id="R3"),
+        pytest.param("time case x in x) gem push x;; esac", True, id="R4"),
+        pytest.param("time -p case x in x) gem push x;; esac", True, id="R5"),
+        pytest.param("while true; do case x in x) gem push x;; esac; done", True, id="R6"),
+        pytest.param("if case x in x) gem push x;; esac; then :; fi", True, id="R7"),
+        pytest.param("while case x in x) gem push x;; esac; do :; done", True, id="R8"),
+        pytest.param("until case x in x) gem push x;; esac; do :; done", True, id="R9"),
+        pytest.param("if false; then :; else case x in x) gem push x;; esac; fi", True, id="R10"),
+        pytest.param(
+            "if false; then :; elif case x in x) gem push x;; esac; then :; fi", True, id="R11"
+        ),
+        pytest.param("if ! case x in x) gem push x;; esac; then :; fi", True, id="R12"),
+        pytest.param("{ time case x in x) gem push x;; esac; }", True, id="R13"),
+        pytest.param('eval "case x in x) gem push x;; esac"', True, id="R14"),
+        pytest.param('bash -c "time case x in x) gem push x;; esac"', True, id="R15"),
+        pytest.param("true && { case x in x) gem push x;; esac; }", True, id="R16"),
+        pytest.param("{ case x in x)gem push x;; esac; }", True, id="R17"),
+        pytest.param("if true; then case x in x)gem push x;; esac; fi", True, id="R18"),
+        pytest.param("time case x in 'x)' | y) gem push x;; esac", True, id="R19"),
+        pytest.param("if true; then case x in x) echo ok;; esac; fi", False, id="R20"),
+        pytest.param("time case x in x) echo gem push x;; esac", False, id="R21"),
+    ],
+)
+def test_case_header_reserved_word_prefixes(
+    command: str, expected: bool, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is expected
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in(x)gem push x;; esac",
+        "case x in(x) gem push x;; esac",
+        "case x in(x|y) gem push x;; esac",
+    ],
+)
+def test_case_header_unspaced_keyword_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
     "command",
     [
         pytest.param("case x in x)gem push x;; esac", id="G1"),

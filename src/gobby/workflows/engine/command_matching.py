@@ -631,9 +631,50 @@ def _subjects(
             command=command,
             spans=spans_by_token,
         )
-        while kept and not kept[0].quoted and kept[0].value in {"case", "esac"}:
+        while kept:
+            case_tokens = kept
+            while (
+                case_tokens
+                and not case_tokens[0].quoted
+                and case_tokens[0].value
+                in {
+                    "if",
+                    "then",
+                    "else",
+                    "elif",
+                    "fi",
+                    "while",
+                    "until",
+                    "do",
+                    "done",
+                    "!",
+                    "time",
+                    "{",
+                    "}",
+                }
+            ):
+                word = case_tokens[0].value
+                case_tokens = case_tokens[1:]
+                if word == "time":
+                    for option in ("-p", "--"):
+                        if (
+                            case_tokens
+                            and not case_tokens[0].quoted
+                            and case_tokens[0].value == option
+                        ):
+                            case_tokens = case_tokens[1:]
+            if (
+                not case_tokens
+                or case_tokens[0].quoted
+                or case_tokens[0].value not in {"case", "esac"}
+            ):
+                break
             kept, case_depth, pending = case_arm_tokens(
-                kept, case_depth=case_depth, new_arm=False, command=command, spans=spans_by_token
+                case_tokens,
+                case_depth=case_depth,
+                new_arm=False,
+                command=command,
+                spans=spans_by_token,
             )
         segment_spans = scan.spans[segment.first : segment.last + 1]
         cursor = min(start for start, _ in segment_spans)

@@ -24,6 +24,35 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
+    "command,unknown,paths",
+    [
+        ("case x in(x)git apply x.patch;; esac", True, None),
+        ("case x in(x) git apply x.patch;; esac", True, None),
+        ("case x in(x)cp a b;; esac", None, ["b"]),
+        ("case x in(x|y) git apply x.patch;; esac", True, None),
+        ("case x in (x) git apply x.patch;; esac", True, None),
+    ],
+)
+def test_case_header_unspaced_keyword_write_scope(
+    tmp_path: Path, command: str, unknown: bool | None, paths: list[str] | None
+) -> None:
+    data = normalize_tool_fields(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+    )
+    assert (
+        data.get("canonical_tool_kind"),
+        data.get("canonical_repo_mutation"),
+        data.get("canonical_repo_mutation_scope_unknown"),
+        data.get("canonical_script_execution"),
+        data.get("canonical_file_paths"),
+    ) == ("write", True, unknown, None, paths)
+
+
+@pytest.mark.parametrize(
     "command,kind,mutation,unknown,paths",
     [
         pytest.param("case x in x)git apply x.patch;; esac", "write", True, True, None, id="G1"),

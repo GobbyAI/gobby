@@ -123,6 +123,7 @@ def case_arm_tokens(
 ) -> tuple[list[ShellToken], int, bool]:
     """Remove case header/pattern syntax; keep each arm's executable tokens."""
     parts = list(tokens)
+    pattern_start: int | None = None
     if parts and not parts[0].quoted and parts[0].value == "esac":
         return parts[1:], max(0, case_depth - 1), False
     if parts and not parts[0].quoted and parts[0].value == "case":
@@ -132,16 +133,25 @@ def case_arm_tokens(
             (
                 index
                 for index, token in enumerate(parts[2:], 2)
-                if not token.quoted and token.value == "in"
+                if not token.quoted
+                and (token.value == "in" or command[slice(*spans[id(token)])].startswith("in("))
             ),
             len(parts),
         )
-        parts = parts[keyword + 1 :]
+        if keyword < len(parts) and command[slice(*spans[id(parts[keyword])])].startswith("in("):
+            pattern_start = spans[id(parts[keyword])][0] + 2
+            parts = parts[keyword:]
+        else:
+            parts = parts[keyword + 1 :]
         new_arm = True
     if case_depth and new_arm:
         if not parts:
             return [], case_depth, True
-        start = min(spans[id(token)][0] for token in parts)
+        start = (
+            pattern_start
+            if pattern_start is not None
+            else min(spans[id(token)][0] for token in parts)
+        )
         end = max(spans[id(token)][1] for token in parts)
         terminator = case_pattern_end(command, start, end)
         if terminator is None:
