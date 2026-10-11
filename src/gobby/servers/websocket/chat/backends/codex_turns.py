@@ -421,7 +421,15 @@ async def stream_codex_turn(
             and (final_record.message_id == last_text_item_id or not unkeyed_delta_text)
             and isinstance(final_record.content, str)
         ):
-            recovered = _recover_item_text(final_record.message_id, final_record.content)
+            recovery_item_id = final_record.message_id
+            if recovery_item_id not in streamed_text_by_item and last_text_item_id is not None:
+                last_streamed_text = streamed_text_by_item.get(last_text_item_id, "")
+                if last_streamed_text and (
+                    final_record.content.startswith(last_streamed_text)
+                    or last_streamed_text.startswith(final_record.content)
+                ):
+                    recovery_item_id = last_text_item_id
+            recovered = _recover_item_text(recovery_item_id, final_record.content)
             if recovered is not None:
                 yield recovered
 

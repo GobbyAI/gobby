@@ -1799,6 +1799,40 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("transcript_id", [None, "msg_other"])
+    @pytest.mark.parametrize(
+        "streamed_text, expected_text",
+        [("Answer.", "Answer."), ("Ans", "Answer."), ("Answer. Extra", "Answer. Extra")],
+    )
+    async def test_final_transcript_with_other_id_does_not_replay_streamed_text(
+        self, tmp_path: Path, transcript_id: str | None, streamed_text: str, expected_text: str
+    ) -> None:
+        payload: dict[str, Any] = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Answer."}],
+        }
+        if transcript_id is not None:
+            payload["id"] = transcript_id
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "itemId": "f1", "delta": streamed_text},
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[json.dumps({"type": "response_item", "payload": payload})],
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk))
+            == expected_text
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
     async def test_new_turn_deltas_are_not_filtered_by_previous_turn_id(self) -> None:
         events, _session = await _collect_codex_backend_events(
             [
