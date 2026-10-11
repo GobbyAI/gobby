@@ -36,6 +36,98 @@ from gobby.tasks.transcript_outcomes import EvidenceOutcome
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_typescript_expect_matcher_counts_as_assertion(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    test_file = repo / "menu.test.tsx"
+    test_file.write_text(
+        """it("offers lifecycle actions", () => {
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Assign", "Close"]);
+});
+""",
+        encoding="utf-8",
+    )
+    sha = _commit(repo, "frontend assertion fixture")
+    result = evaluate_acceptance_artifacts(
+        criteria="test: `menu.test.tsx::offers lifecycle actions`",
+        repo_path=str(repo),
+        commit_shas=[sha],
+    )
+    assert result.passed, result.findings
+    assert len(result.tests) == 1
+
+
+@pytest.mark.parametrize("expression", ["true", "1", '"constant"'])
+def test_typescript_constant_expect_is_placebo(expression: str) -> None:
+    test = AcceptanceTest(
+        "menu.test.ts::constant",
+        "menu.test.ts",
+        "constant",
+        f"expect({expression}).toEqual({expression});",
+    )
+    findings = artifacts_module._test_body_findings(test)
+    assert findings == [f"{test.reference}: contains a constant, stub, or placebo assertion"]
+
+
+@pytest.mark.parametrize("extension", ["ts", "tsx", "js", "jsx", "mjs", "cjs"])
+@pytest.mark.parametrize("assertion", ["assert(actual)", "assert.strictEqual(actual, expected)"])
+def test_javascript_assert_calls_count(extension: str, assertion: str) -> None:
+    path = f"feature.test.{extension}"
+    test = AcceptanceTest(f"{path}::feature", path, "feature", assertion)
+    assert artifacts_module._test_body_findings(test) == []
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "expect(load()).resolves.not.toEqual(null)",
+        "expect(load()).rejects.toThrow()",
+        "expect(`result: ${actual}`).toEqual('expected')",
+    ],
+)
+def test_javascript_matcher_modifiers_and_interpolation_are_dynamic(assertion: str) -> None:
+    test = AcceptanceTest("feature.test.ts::feature", "feature.test.ts", "feature", assertion)
+    assert artifacts_module._test_body_findings(test) == []
+
+
+def test_javascript_same_file_assertion_helper_counts() -> None:
+    test = AcceptanceTest(
+        "feature.test.ts::feature",
+        "feature.test.ts",
+        "feature",
+        "check(actual)",
+        ("function check(value) { expect(value).toBeTruthy(); }",),
+    )
+    assert artifacts_module._test_body_findings(test) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "expect(actual);",
+        "// expect(actual).toEqual(expected);",
+        'const example = "expect(actual).toEqual(expected)";',
+        "const pattern = /expect(actual).toEqual(expected)/;",
+        "function assert(value) { return value; }",
+        "assert();",
+    ],
+)
+def test_javascript_assertion_requires_executable_matcher(body: str) -> None:
+    test = AcceptanceTest("feature.test.ts::feature", "feature.test.ts", "feature", body)
+    assert artifacts_module._test_body_findings(test) == [
+        f"{test.reference}: contains no executable assertion or panic expectation"
+    ]
+
+
+@pytest.mark.parametrize("prefix", ["- TDD cycle:", "Named test:"])
+def test_unlabeled_test_reference_is_not_silently_dropped(prefix: str) -> None:
+    reference = "tests/x_test.py::test_a"
+    findings = malformed_test_reference_findings(f"{prefix} test: `{reference}`")
+    accepted = artifacts_module.extract_artifact_references(f"{prefix} test: `{reference}`", "test")
+    assert reference in accepted or any(reference in finding for finding in findings)
+
+
 def test_artifact_references_ignore_prose_file_line_token() -> None:
     criteria = "The plan uses file:line anchors.\nfile: `docs/evidence.md`."
 
