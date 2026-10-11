@@ -240,6 +240,7 @@ def _classify_shell_command(
         segment_start = min(spans_by_token[id(token)][0] for token in segment.tokens)
         segment_end = max(spans_by_token[id(token)][1] for token in segment.tokens)
         _, process_bodies = process_substitution_bodies(segment.tokens, spans_by_token, command)
+        directory.end_list(segment.separator_before)
         arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
             segment.tokens,
             gap,
@@ -359,6 +360,9 @@ def _classify_shell_command(
                 )
             ):
                 directory.change(None if segment.separator_before in {"||", "&"} else cd_target)
+                directory.list_conditional |= (
+                    segment.separator_before == "&&" or directory.in_conditional
+                )
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
