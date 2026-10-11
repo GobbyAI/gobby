@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 HANDOFF_TURN_END_PENDING_VARIABLE = "_handoff_turn_end_pending"
+DEVELOPER_HANDOFF_TASKS_VARIABLE = "_developer_handoff_tasks"
 
 if TYPE_CHECKING:
     from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -12,7 +13,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Names the session's agent definition, which selects its rules and
         # send_message target modes; only spawn and persona application set it.
         "_agent_type",
-        "_developer_handoff_tasks",
+        DEVELOPER_HANDOFF_TASKS_VARIABLE,
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,
         "consecutive_tool_blocks",

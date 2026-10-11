@@ -148,7 +148,6 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
-        - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"

@@ -534,10 +534,19 @@ def test_developer_cannot_forge_handoff_permission(seats: _Seats) -> None:
     assert "managed by the step workflow runtime" in str(response.reason)
 
 
+@pytest.mark.parametrize("use_ref", [False, True])
+def test_claim_step_refuses_escalation(seats: _Seats, use_ref: bool) -> None:
+    _seat(seats, seats.former, "claim", bound=False)
+    event = _before_escalation(seats, seats.ref if use_ref else seats.task_id)
+    response = RuleEngine(seats.db)._check_step_tool_enforcement(event, seats.former, {})
+    assert response is not None and response.decision == "block"
+    assert "escalate_task' is not allowed in the 'claim' step" in str(response.reason)
+
+
 @pytest.mark.parametrize("active_step", ["implement", "submit"])
 @pytest.mark.parametrize("reviewer_closes", [False, True])
 @pytest.mark.parametrize(
-    "handoff_step", ["claim", "route_skills", "load_additional_skills", "implement", "submit"]
+    "handoff_step", ["route_skills", "load_additional_skills", "implement", "submit"]
 )
 @pytest.mark.parametrize("use_ref", [False, True])
 async def test_handoff_close_preserves_next_task_binding(
