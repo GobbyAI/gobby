@@ -8,9 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_binding import release_lost_binding
-from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from gobby.workflows.step_instances import (
+    AgentStepInstance,
+    AgentStepInstanceManager,
+    build_removed_step_fallback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +84,7 @@ def _get_active_step_workflow_context(
         if step is None:
             if instance.current_definition is None:
                 continue
-            step = WorkflowStep(
-                name=instance.current_step,
-                description="The installed definition removed the active step.",
-                status_message=(
-                    f"The installed definition removed step '{instance.current_step}'. "
-                    "Tools are restricted to capability-neutral handoff and memory access, "
-                    "plus end_agent_run with blockers. Coordinate recovery with your lane manager."
-                ),
-                allowed_tools=["mcp__gobby__call_tool"],
-                allowed_mcp_tools=[],
-            )
+            step = build_removed_step_fallback(instance.current_step)
 
         return StepWorkflowContext(
             workflow_name=instance.agent_name,

@@ -149,12 +149,7 @@ def create_workflows_registry(
         description=(
             "Get agent-step status for the current session. "
             "Shows the current installed step list and retained session/step variables. "
-            "After sync, the next tool call uses the installed definition (project row, "
-            "then global row) for step permissions, handlers, transitions and exit condition. "
-            "The instance keeps its current step and variables; its stored snapshot is "
-            "activation provenance and the fallback when the row is missing or has no "
-            "step_workflow. A removed active step fails closed to capability-neutral "
-            "handoff and memory access, plus end_agent_run with blockers."
+            "Includes the active agent, current step, and exit condition."
         ),
     )
     def _get_step_status(session_id: str | None = None) -> dict[str, Any]:
