@@ -283,7 +283,13 @@ def test_sync_imported_workflows_reads_kind_subdirs_not_root(
     monkeypatch.setattr("gobby.workflows.imports.get_global_workflows_dir", lambda: global_dir)
     seen: list[str] = []
 
-    def _capture(_db: object, path: Path, _project_id: str | None) -> None:
+    def _capture(
+        _db: object,
+        path: Path,
+        _project_id: str | None,
+        *,
+        on_disk: set[tuple[str, str]] | None = None,
+    ) -> None:
         seen.append(path.name)
 
     monkeypatch.setattr("gobby.workflows.imports.sync_imported_workflow_file", _capture)

@@ -34,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 _KIND_TABLES = ("agent", "rule", "variable", "pipeline")
 _KIND_SUBDIRS = ("rules", "agents", "pipelines", "variables")
+_PROJECT_IMPORT_TAG = "project-workflow-import"
+_KIND_MANAGERS: dict[
+    str,
+    type[AgentDefinitionManager]
+    | type[RuleDefinitionManager]
+    | type[SessionVariableDefaultManager]
+    | type[PipelineDefinitionManager],
+] = {
+    "agent": AgentDefinitionManager,
+    "rule": RuleDefinitionManager,
+    "variable": SessionVariableDefaultManager,
+    "pipeline": PipelineDefinitionManager,
+}
 
 
 def _lookup_existing_kind(db: Any, name: str, project_id: str | None) -> str | None:
@@ -191,10 +204,25 @@ def sync_imported_definition(
     return _upsert_pipeline(db, data, project_id)
 
 
+def _mark_project_import(db: Any, kind: str, name: str, project_id: str | None) -> None:
+    """Record filesystem ownership separately from the shared installed source."""
+    if project_id is None:
+        return
+    manager = _KIND_MANAGERS[kind](db)
+    row = manager.get_by_name(name, project_id=project_id)
+    if row is None or row.project_id != project_id or row.source != "installed":
+        return
+    tags = row.tags or []
+    if "gobby" not in tags and _PROJECT_IMPORT_TAG not in tags:
+        manager.update_from_sync(row.id, tags=[*tags, _PROJECT_IMPORT_TAG])
+
+
 def sync_imported_workflow_file(
     db: Any,
     path: Path,
     project_id: str | None,
+    *,
+    on_disk: set[tuple[str, str]] | None = None,
 ) -> Any:
     """Load one workflow YAML file and upsert it into the runtime database."""
     with path.open(encoding="utf-8") as file:
@@ -203,12 +231,26 @@ def sync_imported_workflow_file(
         # A rule file in the `gobby rules import` format: file-level group and
         # tags over a `rules` mapping. Import it through that same path.
         result = sync_rule_file(db, rule_file=path, project_id=project_id)
+        if on_disk is not None:
+            for name in data["rules"]:
+                if isinstance(name, str):
+                    _mark_project_import(db, "rule", name, project_id)
         if result["errors"]:
             raise ValueError("; ".join(result["errors"]))
+        if on_disk is not None:
+            on_disk.update(("rule", name) for name in data["rules"])
         return result
     if not isinstance(data, dict) or "name" not in data:
         raise ValueError("Invalid workflow: missing 'name' field")
-    return sync_imported_definition(db, data, project_id)
+    result = sync_imported_definition(db, data, project_id)
+    if on_disk is not None:
+        kind = data.get("type")
+        if kind not in _KIND_TABLES:
+            kind = validate_workflow_definition_data(data)
+        name = _imported_definition_name(data, kind)
+        _mark_project_import(db, kind, name, project_id)
+        on_disk.add((kind, name))
+    return result
 
 
 def sync_imported_workflows(
@@ -237,20 +279,51 @@ def sync_imported_workflows(
             roots.append((Path(checkout_root) / ".gobby" / "workflows", project.id))
 
     synced = 0
+    orphaned = 0
     errors: list[str] = []
     for root, scope_id in roots:
-        if not root.is_dir():
+        # An absent workflows directory in a live checkout is an empty scan.
+        # An unavailable checkout must never authorize deleting its definitions.
+        if scope_id is not None and not root.parent.is_dir():
             continue
-        for path in _iter_kind_yaml(root):
+        on_disk: set[tuple[str, str]] = set()
+        scan_complete = True
+        try:
+            paths = _iter_kind_yaml(root)
+        except OSError as exc:
+            message = f"Failed to scan imported workflows {root}: {exc}"
+            logger.warning(message)
+            errors.append(message)
+            continue
+        for path in paths:
             try:
-                sync_imported_workflow_file(db, path, scope_id)
+                sync_imported_workflow_file(db, path, scope_id, on_disk=on_disk)
                 synced += 1
             except Exception as exc:
                 message = f"Failed to sync imported workflow {path}: {exc}"
                 logger.warning(message)
                 errors.append(message)
+                scan_complete = False
 
-    return {"synced": synced, "errors": errors}
+        if scope_id is not None and scan_complete:
+            for kind, manager_type in _KIND_MANAGERS.items():
+                manager = manager_type(db)
+                for row in manager.list_all(project_id=scope_id):
+                    if (
+                        row.project_id == scope_id
+                        and row.source == "installed"
+                        and "gobby" not in (row.tags or [])
+                        # Pipeline DB writers use custom source; installed also
+                        # identifies older file imports (including crew-*).
+                        # Other kinds share installed source with DB-only writers.
+                        and (kind == "pipeline" or _PROJECT_IMPORT_TAG in (row.tags or []))
+                        and (kind, row.name) not in on_disk
+                    ):
+                        manager.delete(row.id)
+                        orphaned += 1
+                        logger.debug("Retired imported %s %s from %s", kind, row.name, root)
+
+    return {"synced": synced, "orphaned": orphaned, "errors": errors}
 
 
 def _iter_kind_yaml(root: Path) -> list[Path]:
@@ -258,7 +331,11 @@ def _iter_kind_yaml(root: Path) -> list[Path]:
     paths: list[Path] = []
     for kind in _KIND_SUBDIRS:
         kind_dir = root / kind
-        if not kind_dir.is_dir():
+        try:
+            entries = list(kind_dir.iterdir())
+        except FileNotFoundError:
             continue
-        paths.extend(sorted((*kind_dir.glob("*.yaml"), *kind_dir.glob("*.yml"))))
+        # iterdir surfaces access failures; glob suppresses them, which would
+        # turn an unreadable directory into an authoritative empty scan.
+        paths.extend(sorted(path for path in entries if path.suffix in {".yaml", ".yml"}))
     return paths

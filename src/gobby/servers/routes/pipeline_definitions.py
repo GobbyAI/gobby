@@ -283,6 +283,11 @@ def create_pipeline_definitions_router(server: HTTPServer) -> APIRouter:
 
     @router.post("")
     async def create_definition(request: CreatePipelineRequest) -> dict[str, Any]:
+        if request.project_id is not None and request.source == "installed":
+            raise HTTPException(
+                status_code=400,
+                detail="Project installed pipelines are owned by workflow files; use source=custom",
+            )
         try:
             data = _parse_definition(request.definition_json)
         except (json.JSONDecodeError, ValidationError, ValueError) as e:

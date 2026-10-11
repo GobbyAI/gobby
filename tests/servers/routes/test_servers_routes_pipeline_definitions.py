@@ -326,6 +326,29 @@ def test_restore_from_template_and_moves(
     assert globalized.json()["definition"]["project_id"] is None
 
 
+def test_http_create_rejects_file_owned_project_source(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    client: TestClient,
+    pipe_manager: PipelineDefinitionManager,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "file-owned-http", root=tmp_path).project
+    response = client.post(
+        "/api/pipelines/definitions",
+        json={
+            "name": "file-owned-http-pipe",
+            "project_id": project.id,
+            "source": "installed",
+            "definition_json": json.dumps(SAMPLE_PIPELINE),
+        },
+    )
+
+    assert response.status_code == 400
+    assert "use source=custom" in response.json()["detail"]
+    assert pipe_manager.get_by_name("file-owned-http-pipe", project_id=project.id) is None
+
+
 def test_create_project_override_when_global_exists(
     isolated_checkout_factory: IsolatedCheckoutFactory,
     client: TestClient,
