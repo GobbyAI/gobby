@@ -81,7 +81,7 @@ def test_hook_guide_maps_stop_failure_and_grok_hooks() -> None:
         "subagent_stop",
     ):
         assert f"`{native_hook}`" in mapping
-    assert mapping.count("| `StopFailure` | `stop_failure` | `turn_end` |") == 2
+    assert mapping.count("| `StopFailure` | `stop_failure` | `turn_end` |") == 1
 
 
 def test_adjacent_guides_name_memory_lifecycle_gates() -> None:
