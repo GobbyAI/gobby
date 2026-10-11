@@ -21,16 +21,19 @@ class CoordinationWaitManager:
         Delivery acknowledgement is irrelevant: expiry ends protection even
         when the terminal outcome is still awaiting delivery.
         """
+        return self.count_active_waits(session_id) > 0
+
+    def count_active_waits(self, session_id: str) -> int:
+        """Count the same unresolved holds that protect a session's stop."""
         row = self.db.fetchone(
-            "SELECT EXISTS (SELECT 1 FROM coordination_waits w "
+            "SELECT COUNT(*) AS active_count FROM coordination_waits w "
             "JOIN sessions owner ON owner.id = w.owner_session_id "
             "WHERE w.waiter_session_id = %s AND w.outcome = 'waiting' "
             "AND w.expires_at > clock_timestamp() "
-            "AND owner.status NOT IN ('completed', 'cancelled', 'closed', 'expired', 'deleted')"
-            ") AS active",
+            "AND owner.status NOT IN ('completed', 'cancelled', 'closed', 'expired', 'deleted')",
             (session_id,),
         )
-        return row is not None and row["active"] is True
+        return int(row["active_count"]) if row is not None else 0
 
     def register(
         self,

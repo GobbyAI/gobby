@@ -333,13 +333,15 @@ class RuleEngine(
 
                 active_agent_wait = False
                 active_coordination_wait = False
+                active_coordination_wait_count: int | None = None
                 durable_task_wait = False
                 if is_turn_end:
                     try:
-                        active_coordination_wait = await offload(
-                            CoordinationWaitManager(self.db).has_active_wait,
+                        active_coordination_wait_count = await offload(
+                            CoordinationWaitManager(self.db).count_active_waits,
                             session_id,
                         )
+                        active_coordination_wait = active_coordination_wait_count > 0
                     except Exception as exc:
                         logger.warning(
                             "Failed to determine active coordination wait for session %s: %s",
@@ -380,6 +382,7 @@ class RuleEngine(
                             )
                 eval_context["_has_active_agent_wait"] = active_agent_wait
                 eval_context["_has_active_coordination_wait"] = active_coordination_wait
+                eval_context["_active_coordination_wait_count"] = active_coordination_wait_count
                 eval_context["_has_durable_stop_wait"] = (
                     active_agent_wait or active_coordination_wait or durable_task_wait
                 )

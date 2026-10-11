@@ -335,6 +335,28 @@ class EvaluationMixin:
                 reason=response.reason,
             )
             gates = block_gates or []
+            if evaluation.is_turn_end and (
+                resolved_rule_name == "require-step-completion"
+                or any(gate.rule_name == "require-step-completion" for gate in gates)
+            ):
+                context = evaluation.eval_context or {}
+                diagnostic = {
+                    "resolved_session_id": evaluation.session_id,
+                    "external_session_id": evaluation.event.session_id,
+                    "has_durable_stop_wait": bool(context.get("_has_durable_stop_wait", False)),
+                    "active_coordination_wait_count": context.get(
+                        "_active_coordination_wait_count"
+                    ),
+                    "decision": response.decision,
+                    "current_step": evaluation.variables.get("current_step"),
+                }
+                logger.info(
+                    "Step completion stop decision: resolved_session_id=%s external_session_id=%s "
+                    "has_durable_stop_wait=%s active_coordination_wait_count=%s decision=%s "
+                    "current_step=%s",
+                    *diagnostic.values(),
+                    extra=diagnostic,
+                )
             audit_rows = [
                 (
                     gate.rule_name,

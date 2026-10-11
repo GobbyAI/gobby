@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,17 +15,23 @@ import pytest
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_lookup import SessionLookupService
+from gobby.hooks.session_types import HookSessionManager
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
@@ -33,6 +42,15 @@ from tests.events.test_coordination_waits import harness as coordination_fixture
 
 pytestmark = pytest.mark.integration
 harness = coordination_fixture
+
+
+@pytest.fixture
+def evaluation_runtime() -> Iterator[WorkflowEvaluationRuntime]:
+    runtime = WorkflowEvaluationRuntime()
+    try:
+        yield runtime
+    finally:
+        runtime.shutdown()
 
 
 def start_hold(h: CoordinationHarness, ending: str) -> dict[str, Any]:
@@ -175,26 +193,50 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
 
 
 @pytest.mark.parametrize("ending", ["reply", "reply_expiry"])
+@pytest.mark.parametrize("owner_shape", ["uuid_active", "ref_paused"])
+@pytest.mark.parametrize("ingress", ["async", "sync"])
 async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
-    harness: CoordinationHarness, ending: str
+    harness: CoordinationHarness,
+    ending: str,
+    owner_shape: str,
+    ingress: str,
+    evaluation_runtime: WorkflowEvaluationRuntime,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.workflows.engine.evaluation")
     sync_bundled_rules(harness.db, get_bundled_rules_path())
     external_id = str(uuid.uuid4())
     harness.db.execute(
         "UPDATE sessions SET external_id = %s WHERE id = %s", (external_id, harness.waiter)
     )
+    sessions = SessionManager(harness.db)
+    owner_ref = harness.owner
+    if owner_shape == "ref_paused":
+        harness.status("paused")
+        harness.db.execute(
+            "UPDATE sessions SET source = 'claude', seq_num = 16002 WHERE id = %s",
+            (harness.owner,),
+        )
+        owner = sessions.get(harness.owner)
+        assert owner is not None
+        owner_ref = f"#{owner.seq_num}"
     registry = create_agents_registry(
         MagicMock(),
-        session_manager=SessionManager(harness.db),
+        session_manager=sessions,
         db=harness.db,
         completion_registry=CompletionEventRegistry(),
     )
-    with session_context_for_test(harness.waiter):
-        registered = await registry.call(
-            "wait_for_coordination", {"owner_session": harness.owner, "reply": True}
-        )
-    assert registered["outcome"] == "waiting"
+    project_token = set_project_context({"id": PERSONAL_PROJECT_ID})
+    try:
+        with session_context_for_test(harness.waiter):
+            registered = await registry.call(
+                "wait_for_coordination", {"owner_session": owner_ref, "reply": True}
+            )
+    finally:
+        reset_project_context(project_token)
+    assert registered.get("outcome") == "waiting", registered
     assert registered["notification_registered"] is True
+    assert registered["owner_session_id"] == harness.owner
     definition: dict[str, Any] = {
         "name": "coordination-seat",
         "prompts": {"agent": "Wait for the lane manager."},
@@ -230,14 +272,32 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         source=SessionSource.CODEX,
         timestamp=datetime.now(UTC),
         data={},
-        metadata={"_native_hook_type": "Stop", "_platform_session_id": harness.waiter},
+        machine_id=require_machine_id(),
+        project_id=PERSONAL_PROJECT_ID,
+        metadata={"_native_hook_type": "Stop"},
     )
+    lookup = SessionLookupService(
+        session_manager=cast(HookSessionManager, sessions),
+        session_coordinator=SessionCoordinator(session_storage=cast(HookSessionManager, sessions)),
+        session_task_manager=SessionTaskManager(harness.db),
+        resolve_project_id=lambda *_: PERSONAL_PROJECT_ID,
+        logger=logging.getLogger(__name__),
+    )
+    assert lookup.resolve(event, apply_session_mutations=False) == harness.waiter
+    assert event.metadata["_platform_session_id"] == harness.waiter
     handler = WorkflowHookHandler(
-        rule_engine=RuleEngine(harness.db), session_manager=SessionManager(harness.db)
+        rule_engine=RuleEngine(harness.db),
+        session_manager=sessions,
+        evaluation_runtime=evaluation_runtime,
     )
-    held = await handler.evaluate_async(event)
+    held = (
+        await asyncio.to_thread(handler.evaluate, event)
+        if ingress == "sync"
+        else await handler.evaluate_async(event)
+    )
     assert held.decision == "allow"
     assert state.get_variables(harness.waiter)["stop_attempts"] == 0
+    assert not [r for r in caplog.records if str(r.msg).startswith("Step completion stop decision")]
     if ending == "reply_expiry":
         harness.db.execute(
             "UPDATE coordination_waits SET expires_at = clock_timestamp() WHERE id = %s",
@@ -248,9 +308,24 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         end_hold(harness, registered["wait_id"], ending)
         assert harness.row(registered["wait_id"])["outcome"] == "replied"
     assert harness.row(registered["wait_id"])["delivered_at"] is None
-    unheld = await handler.evaluate_async(event)
+    unheld = (
+        await asyncio.to_thread(handler.evaluate, event)
+        if ingress == "sync"
+        else await handler.evaluate_async(event)
+    )
     assert unheld.decision == "block"
     assert "[require-step-completion]" in (unheld.reason or "")
+    decisions = [
+        r for r in caplog.records if str(r.msg).startswith("Step completion stop decision")
+    ]
+    assert len(decisions) == 1
+    diagnostic = decisions[0].__dict__
+    assert diagnostic["resolved_session_id"] == harness.waiter
+    assert diagnostic["external_session_id"] == external_id
+    assert diagnostic["has_durable_stop_wait"] is False
+    assert diagnostic["active_coordination_wait_count"] == 0
+    assert diagnostic["decision"] == "block"
+    assert diagnostic["current_step"] == "submit"
 
 
 async def test_failed_hold_lookup_does_not_disable_watchdog(harness: CoordinationHarness) -> None:
@@ -268,3 +343,22 @@ async def test_failed_hold_lookup_does_not_disable_watchdog(harness: Coordinatio
     ):
         assert await monitor.check_autonomous_stuck_agents() == 1
         cleanup.assert_awaited_once()
+
+
+def test_active_hold_count_excludes_expiry_and_terminal_owners(
+    harness: CoordinationHarness,
+) -> None:
+    first = harness.wait(coordination_key="first")
+    harness.wait(coordination_key="second")
+    assert harness.manager.count_active_waits(harness.waiter) == 2
+    assert harness.manager.count_active_waits(harness.stranger) == 0
+    harness.db.execute(
+        "UPDATE coordination_waits SET expires_at = clock_timestamp() WHERE id = %s",
+        (first["id"],),
+    )
+    harness.status("paused")
+    assert harness.manager.count_active_waits(harness.waiter) == 1
+    assert harness.manager.has_active_wait(harness.waiter)
+    harness.status("completed")
+    assert harness.manager.count_active_waits(harness.waiter) == 0
+    assert not harness.manager.has_active_wait(harness.waiter)
