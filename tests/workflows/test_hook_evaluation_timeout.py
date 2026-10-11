@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -23,6 +23,15 @@ from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, Workfl
 from gobby.workflows.hooks import WorkflowHookHandler
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def isolated_worktree_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep external Git startup out of the workflow timeout under test."""
+    monkeypatch.setattr(
+        "gobby.workflows.git_utils.resolve_git_worktree_root_async",
+        AsyncMock(return_value=None),
+    )
 
 
 def _event(tmp_path: Path, *, session_id: str = "platform-session") -> HookEvent:
