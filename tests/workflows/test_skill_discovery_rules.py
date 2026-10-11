@@ -4850,17 +4850,22 @@ class TestCodeIndexNavigationRules:
         [
             "git grep -n P 0.5.0 -- src/",
             "git grep -n P HEAD~1",
+            "git grep -n P a5cf1816c5ff62a1ba11a0b10e17c6b3be7754b5 -- src/",
+            "git show a5cf1816c5ff62a1ba11a0b10e17c6b3be7754b5:src/app.py",
+            "git diff 0.5.0...a5cf1816c5ff62a1ba11a0b10e17c6b3be7754b5",
         ],
     )
     @pytest.mark.asyncio
-    async def test_revision_scoped_git_grep_bypasses_code_index_rules(
+    async def test_revision_scoped_git_reads_bypass_code_index_rules(
         self, db: HubDatabase, command: str
     ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = self._normalized_bash_event(command)
 
-        assert event.data["canonical_search_revision_scoped"] is True
+        assert not event.data.get("canonical_repo_mutation")
+        if command.startswith("git grep"):
+            assert event.data["canonical_search_revision_scoped"] is True
         for loaded in (False, True):
             response = await engine.evaluate(
                 event,
@@ -4868,6 +4873,7 @@ class TestCodeIndexNavigationRules:
                 variables=self._variables(loaded=loaded),
             )
             assert response.decision == "allow", (loaded, command)
+            assert "code-index" not in (response.context or ""), (loaded, command)
 
     @pytest.mark.asyncio
     async def test_worktree_git_grep_still_uses_code_index_rules(self, db: HubDatabase) -> None:
