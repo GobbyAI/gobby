@@ -231,6 +231,67 @@ def test_case_pattern_terminator_unterminated_arm_does_not_raise(tmp_path: Path)
     assert data["canonical_tool_kind"] in {"read", "write", "execute"}
 
 
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ("{ cd sub; } > log.txt; touch y.py", ["log.txt", "sub/y.py"]),
+        ("cat x | { { cd sub; }; touch y.py; }; touch z.py", ["sub/y.py", "z.py"]),
+        ("{ cd sub; echo }; } | cat; touch y.py", ["y.py"]),
+        ("cd sub || exit 1; touch y.py", ["sub/y.py"]),
+        ("cd sub || exit 1; git add x.py", ["sub/x.py"]),
+        ("cd sub || return 1; touch y.py", ["sub/y.py"]),
+        ("cd sub & touch x.py", ["x.py"]),
+    ],
+)
+def test_compound_cwd_followups(tmp_path: Path, command: str, expected: list[str]) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == expected
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "builtin cd sub; touch y.py",
+        'eval "builtin cd sub"; touch y.py',
+        'eval "f() { cd sub; }"; f; touch y.py',
+    ],
+)
+def test_indirect_cwd_followups(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data.get("canonical_repo_mutation_scope_unknown") or data["canonical_file_paths"] == [
+        "sub/y.py"
+    ]
+
+
+@pytest.mark.parametrize("operand", ["-Cd=e", "-C{absolute}"])
+def test_attached_env_directory_preserves_equals(tmp_path: Path, operand: str) -> None:
+    directory = tmp_path / "d=e"
+    argument = operand.format(absolute=directory)
+    data = _invocation_metadata(
+        f"env {argument} touch x.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_file_paths"] == [str(directory / "x.py")]
+
+
+@pytest.mark.parametrize("wrapper", ["env -C d=e", "env --chdir=d=e", "env -Csub"])
+def test_env_directory_operand_controls(tmp_path: Path, wrapper: str) -> None:
+    directory = "sub" if wrapper.endswith("-Csub") else "d=e"
+    data = _invocation_metadata(f"{wrapper} touch x.py", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == [str(tmp_path / directory / "x.py")]
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    ["FOO=1 time", "env time", "nohup time", "command time", '"time"', "env time -p --"],
+)
+def test_external_time_preserves_write_scope(tmp_path: Path, wrapper: str) -> None:
+    data = _invocation_metadata(f"{wrapper} touch x.py", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == ["x.py"]
+    assert data["canonical_repo_mutation"] is True
+
+
 @pytest.mark.parametrize("wrapper", ["sh -c", "bash -c", "zsh -c", "eval", "env sh -c"])
 def test_nested_dollar_pair_quote_write_fails_closed(tmp_path: Path, wrapper: str) -> None:
     program = r"""echo \$\$'\\' ; git apply x.patch ; echo '\\'"""
@@ -682,8 +743,6 @@ def test_combined_grammar_prefixes_preserve_write_classification(
 @pytest.mark.parametrize(
     "command",
     [
-        "cd sub || exit 1; touch y.py",
-        "cd sub || exit 1; git add x.py",
         "cd sub || touch x.py",
         "{ cd sub; } || touch x.py",
         "{ cd sub; } & touch x.py",

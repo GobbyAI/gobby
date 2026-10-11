@@ -51,7 +51,6 @@ const ACTIVITY_LIST_DETAIL_SURFACE_FILES = [
   "src/components/activity/PlanReviewCard.tsx",
   "src/components/activity/RulesTab.tsx",
   "src/components/activity/SkillsTab.tsx",
-  "src/components/activity/StagesTab.tsx",
   "src/components/activity/TasksTabDetailPanel.tsx",
   "src/components/activity/TracesTab.tsx",
   "src/components/activity/fields/KeyValueField.tsx",
@@ -63,8 +62,6 @@ const ACTIVITY_LIST_DETAIL_SURFACE_FILES = [
   "src/components/activity/rules/RulesTabList.tsx",
   "src/components/activity/skills/SkillsHubView.tsx",
   "src/components/activity/skills/SkillsInstalledList.tsx",
-  "src/components/activity/stages/ProfilesList.tsx",
-  "src/components/activity/stages/StagesList.tsx",
   "src/components/activity/taskdetail/TaskDetailKV.tsx",
   "src/components/activity/taskdetail/TaskDetailRelationships.tsx",
 ] as const;
@@ -85,10 +82,6 @@ const ACTIVITY_CHIP_ADOPTER_FILES = [
   "src/components/activity/skills/SkillsHubView.tsx",
   "src/components/activity/skills/SkillsInstalledDetail.tsx",
   "src/components/activity/skills/SkillsInstalledList.tsx",
-  "src/components/activity/stages/ProfileDetailPanel.tsx",
-  "src/components/activity/stages/ProfilesList.tsx",
-  "src/components/activity/stages/StageDetailPanel.tsx",
-  "src/components/activity/stages/StagesList.tsx",
 ] as const;
 const PIPELINE_SURFACE_FILES = [
   "src/components/activity/PipelinesTab.tsx",

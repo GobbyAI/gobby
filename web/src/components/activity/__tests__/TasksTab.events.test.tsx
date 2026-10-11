@@ -95,61 +95,6 @@ function findPostCall(path: string) {
   );
 }
 
-function setupTaskRoutes(tasks: Array<Record<string, unknown>>): void {
-  mockFetch.resetRoutes();
-  mockFetch.mockJsonResponse("/api/stages/registry", {
-    stages: [
-      {
-        name: "development",
-        display_label: "Development",
-        category: "implementation",
-        review_policy: "required",
-        position_hint: 10,
-      },
-      {
-        name: "operator_review",
-        display_label: "Operator Review",
-        category: "verification",
-        review_policy: "required",
-        position_hint: 20,
-      },
-    ],
-  });
-  mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks });
-  mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
-    task: {
-      ...tasks[0],
-      description: "Task detail",
-      category: null,
-      validation_criteria: null,
-    },
-  });
-}
-
-function holdTaskListRefetch(
-  tasks: Array<Record<string, unknown>>,
-): () => void {
-  const originalFetch = mockFetch.fn.getMockImplementation();
-  let resolveListFetch!: (response: Response) => void;
-  const pendingListFetch = new Promise<Response>((resolve) => {
-    resolveListFetch = resolve;
-  });
-  mockFetch.fn.mockImplementation(
-    (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).includes("/api/tasks?")) return pendingListFetch;
-      return originalFetch?.(input, init);
-    },
-  );
-  return () => {
-    resolveListFetch(
-      new Response(JSON.stringify({ tasks }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-  };
-}
-
 describe("TasksTab — events and row actions", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
@@ -506,7 +451,7 @@ describe("TasksTab — events and row actions", () => {
     );
   });
 
-  it("shows resume build for paused task evidence and disables assign without chat", async () => {
+  it("disables assign without a main chat", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -517,9 +462,7 @@ describe("TasksTab — events and row actions", () => {
     expect(
       screen.getByRole("menuitem", { name: "Assign to Main Chat" }),
     ).toBeDisabled();
-    expect(
-      screen.getByRole("menuitem", { name: "Resume Build" }),
-    ).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
@@ -527,158 +470,6 @@ describe("TasksTab — events and row actions", () => {
     expect(
       screen.queryByRole("menuitem", { name: "Release Claim" }),
     ).toBeNull();
-  });
-
-  it("sends build payloads from the quick menu when no build evidence exists", async () => {
-    const startableTask = {
-      ...taskList[1],
-      id: "task-build",
-      ref: "#501",
-      title: "Startable build task",
-      state: { current_stage: null },
-      current_stage: null,
-      stages: [],
-      seq_num: 501,
-      path_cache: "501",
-    };
-    setupTaskRoutes([startableTask]);
-    mockFetch.mockJsonResponse("/api/build/stop", { success: true });
-    mockFetch.mockJsonResponse("/api/build", { success: true });
-
-    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Startable build task")).toBeTruthy();
-    });
-    await screen.findByDisplayValue("Task detail");
-
-    await openTaskMenu("Startable build task");
-    expect(screen.getByRole("menuitem", { name: "Build" })).toBeEnabled();
-    expect(screen.getByRole("menuitem", { name: "Build Quick" })).toBeEnabled();
-    expect(screen.queryByRole("menuitem", { name: "Stop Build" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
-
-    const releaseListRefetch = holdTaskListRefetch([startableTask]);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Build" }));
-    await waitFor(() => {
-      expect(findPostCall("/api/build")).toBeTruthy();
-    });
-    expect(screen.getByDisplayValue("Task detail")).toBeTruthy();
-    expect(screen.queryByText("Task not found")).toBeNull();
-    releaseListRefetch();
-    await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute(
-        "aria-busy",
-        "false",
-      ),
-    );
-    expect(findPostCall("/api/build")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#501" }),
-    });
-
-    await openTaskMenu("Startable build task");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Build Quick" }));
-    await waitFor(() => {
-      const buildCalls = mockFetch.fn.mock.calls.filter(
-        ([url, init]) =>
-          String(url).includes("/api/build") &&
-          !String(url).includes("/api/build/") &&
-          (init as RequestInit | undefined)?.method === "POST",
-      );
-      expect(buildCalls.length).toBeGreaterThanOrEqual(2);
-    });
-    const buildCalls = mockFetch.fn.mock.calls.filter(
-      ([url, init]) =>
-        String(url).includes("/api/build") &&
-        !String(url).includes("/api/build/") &&
-        (init as RequestInit | undefined)?.method === "POST",
-    );
-    expect(buildCalls[buildCalls.length - 1]?.[1]).toMatchObject({
-      body: JSON.stringify({
-        input_ref: "#501",
-        quick: true,
-        stage: [],
-      }),
-    });
-    expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#501" }),
-    });
-  });
-
-  it("resumes paused task-scoped build automation from the quick menu", async () => {
-    mockFetch.mockJsonResponse("/api/build/resume", { success: true });
-
-    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
-    });
-    await screen.findByDisplayValue("Review approved task detail");
-    await openReviewTaskMenu();
-    expect(
-      screen.getByRole("menuitem", { name: "Resume Build" }),
-    ).toBeEnabled();
-    const releaseListRefetch = holdTaskListRefetch(taskList);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Resume Build" }));
-
-    await waitFor(() => {
-      expect(findPostCall("/api/build/resume")).toBeTruthy();
-    });
-    expect(findPostCall("/api/build/resume")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#401" }),
-    });
-    expect(
-      screen.getByDisplayValue("Review approved task detail"),
-    ).toBeTruthy();
-    expect(screen.queryByText("Task not found")).toBeNull();
-    releaseListRefetch();
-    await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute(
-        "aria-busy",
-        "false",
-      ),
-    );
-  });
-
-  it("stops task-scoped build automation from the quick menu", async () => {
-    const activeBuildTask = {
-      ...taskList[0],
-      allow_automation: true,
-      // Automation on -> backend derives a running build_state.
-      build_state: "running",
-    };
-    setupTaskRoutes([activeBuildTask]);
-    mockFetch.mockJsonResponse("/api/build/stop", { success: true });
-
-    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
-    });
-    await screen.findByDisplayValue("Task detail");
-    await openReviewTaskMenu();
-    expect(screen.getByRole("menuitem", { name: "Stop Build" })).toBeEnabled();
-    expect(screen.queryByRole("menuitem", { name: "Build" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Build Quick" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "Resume Build" })).toBeNull();
-    const releaseListRefetch = holdTaskListRefetch([activeBuildTask]);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Stop Build" }));
-
-    await waitFor(() => {
-      expect(findPostCall("/api/build/stop")).toBeTruthy();
-    });
-    expect(findPostCall("/api/build/stop")?.[1]).toMatchObject({
-      body: JSON.stringify({ input_ref: "#401" }),
-    });
-    expect(screen.getByDisplayValue("Task detail")).toBeTruthy();
-    expect(screen.queryByText("Task not found")).toBeNull();
-    releaseListRefetch();
-    await waitFor(() =>
-      expect(screen.getByTestId("task-tree")).toHaveAttribute(
-        "aria-busy",
-        "false",
-      ),
-    );
   });
 
   it("releases a claimed task from the quick menu", async () => {
@@ -691,17 +482,6 @@ describe("TasksTab — events and row actions", () => {
       }),
     };
     mockFetch.resetRoutes();
-    mockFetch.mockJsonResponse("/api/stages/registry", {
-      stages: [
-        {
-          name: "development",
-          display_label: "Development",
-          category: "implementation",
-          review_policy: "required",
-          position_hint: 10,
-        },
-      ],
-    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: [claimedTask] });
     mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
       task: {

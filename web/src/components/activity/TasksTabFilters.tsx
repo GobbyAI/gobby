@@ -5,10 +5,8 @@ import {
   FilterDropdownShell,
   FilterSection,
 } from "./FilterPrimitives";
-import type { StageRegistryEntry } from "../../lib/taskNormalization";
 import {
   DEFAULT_FILTERS,
-  getStageStateColor,
   getTaskFilterColor,
   getTaskFilterLabel,
   STAGE_STATE_FILTERS,
@@ -18,16 +16,12 @@ import {
 
 interface FilterDropdownProps {
   filters: Set<TaskFilterKey>;
-  stages: StageRegistryEntry[];
-  selectedStages: ReadonlySet<string>;
-  onApply: (filters: Set<TaskFilterKey>, stages: Set<string>) => void;
+  onApply: (filters: Set<TaskFilterKey>) => void;
   onClose: () => void;
 }
 
 export function TasksTabFilters({
   filters,
-  stages,
-  selectedStages,
   onApply,
   onClose,
 }: FilterDropdownProps) {
@@ -36,9 +30,6 @@ export function TasksTabFilters({
   // via Escape or overlay click without polluting the visible task list.
   const [draftFilters, setDraftFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(filters),
-  );
-  const [draftStages, setDraftStages] = useState<Set<string>>(
-    () => new Set(selectedStages),
   );
 
   useEffect(() => {
@@ -58,63 +49,23 @@ export function TasksTabFilters({
     });
   }, []);
 
-  const toggleDraftStage = useCallback((name: string) => {
-    setDraftStages((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
-
   const handleApply = useCallback(() => {
-    onApply(draftFilters, draftStages);
+    onApply(draftFilters);
     onClose();
-  }, [onApply, onClose, draftFilters, draftStages]);
+  }, [onApply, onClose, draftFilters]);
 
   const handleReset = useCallback(() => {
     setDraftFilters(new Set(DEFAULT_FILTERS));
-    setDraftStages(new Set(stages.map((stage) => stage.name)));
-  }, [stages]);
+  }, []);
 
   return (
     <FilterDropdownShell
       onClose={onClose}
       outsideInteraction="primary-mousedown"
       ariaLabel="Task filters"
-      className="absolute top-1 right-2 w-[min(24rem,calc(100vw-1.5rem))]"
+      className="absolute top-1 right-2 w-[min(12rem,calc(100vw-1.5rem))]"
     >
-      <div className="grid grid-cols-2 divide-x divide-border">
-        {/* Left column: Stage list (single column, all stages) */}
-        <div className="flex min-w-0 flex-col gap-0.5 p-1.5">
-          <FilterSection label="Stage">
-            {stages.length === 0 ? (
-              <EmptyHint>No stages available</EmptyHint>
-            ) : (
-              <div className="flex flex-col gap-0.5 px-2 py-1">
-                {stages.map((stage) => (
-                  <FilterCheckboxRow
-                    key={stage.name}
-                    label={stage.display_name}
-                    checked={draftStages.has(stage.name)}
-                    onToggle={() => toggleDraftStage(stage.name)}
-                    leading={
-                      <span
-                        className="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor: getStageStateColor(stage.state),
-                        }}
-                        aria-hidden="true"
-                      />
-                    }
-                  />
-                ))}
-              </div>
-            )}
-          </FilterSection>
-        </div>
-
-        {/* Right column: Stage state stacked above Status */}
+      <div>
         <div className="flex min-w-0 flex-col gap-0.5 p-1.5">
           <FilterSection label="Stage state">
             <FilterCheckboxList
@@ -135,14 +86,6 @@ export function TasksTabFilters({
 
       <ActivityFilterFooter onReset={handleReset} onApply={handleApply} />
     </FilterDropdownShell>
-  );
-}
-
-function EmptyHint({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground">
-      {children}
-    </div>
   );
 }
 

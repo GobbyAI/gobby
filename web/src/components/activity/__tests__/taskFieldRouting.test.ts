@@ -23,9 +23,9 @@ describe("taskFieldRouting — endpoint family classification (#14771 / D4)", ()
     expect(isPatchEditableField("unknown_owner")).toBe(false);
   });
 
-  it("routes state and stage to the stage family", () => {
-    expect(classifyEditableField("state")).toBe("stage");
-    expect(classifyEditableField("stage")).toBe("stage");
+  it("does not offer state or stage edits", () => {
+    expect(classifyEditableField("state")).toBeNull();
+    expect(classifyEditableField("stage")).toBeNull();
     expect(isPatchEditableField("state")).toBe(false);
   });
 

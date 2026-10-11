@@ -2,9 +2,11 @@
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
 from gobby.hooks._normalization_compound import case_arm_tokens
-from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
+from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY, env_directory_operands
 from gobby.hooks._normalization_segments import _ShellSegment, _split_shell_segments
 from gobby.hooks._normalization_shell import (
     ShellToken,
@@ -40,10 +42,32 @@ class ShellDirectoryState:
     group_functions: dict[int, str] = field(default_factory=dict)
     function_headers: dict[int, int] = field(default_factory=dict)
     directory_functions: set[str] = field(default_factory=set)
-    groups: list[tuple[str | None, bool, list[_Branch], str | None] | None] = field(
+    groups: list[tuple[str | None, bool, list[_Branch], str | None, bool]] = field(
         default_factory=list
     )
     group_entry: bool = False
+    redirection_cwd: str | None = None
+    group_closed: bool = False
+
+    def redirect_cwd(self) -> str | None:
+        return self.redirection_cwd if self.group_closed else self.cwd
+
+    def invocation_cwd(
+        self, parts: list[str], source_parts: tuple[str, ...], base_cwd: Path | None
+    ) -> str | None:
+        """Resolve env's invocation directory without moving the parent shell."""
+        directories = env_directory_operands(parts)
+        cwd = self.cwd
+        if directories and cwd is None and not self.changed and base_cwd:
+            cwd = str(base_cwd)
+        for operand in directories:
+            cwd = _apply_cd(cwd, operand)
+        if any(
+            not _raw_shell_word_is_literal(word)
+            for word in env_directory_operands(list(source_parts))
+        ):
+            return UNRESOLVED_DIRECTORY
+        return cwd
 
     def prepare_groups(self, segments: list[_ShellSegment]) -> None:
         """Identify pipeline members and function bodies before consuming braces."""
@@ -74,9 +98,9 @@ class ShellDirectoryState:
                             break
                     openings.append((index, id(token)))
                     self.group_isolation[id(token)] = (
-                        segment.separator_before == "|" or function is not None
-                    )
-                elif token.value == "}" and openings:
+                        position == 0 and segment.separator_before == "|"
+                    ) or function is not None
+                elif token.value == "}" and position == 0 and openings:
                     _, opener = openings.pop()
                     if index + 1 < len(segments) and segments[index + 1].separator_before == "|":
                         self.group_isolation[opener] = True
@@ -84,12 +108,12 @@ class ShellDirectoryState:
     def pipeline_stage(self, before: str | None, after: str | None) -> bool:
         return (before == "|" and not self.group_entry) or after == "|"
 
-    def sequence_separator(self, before: str | None) -> None:
+    def sequence_separator(self, before: str | None, *, terminates: bool = False) -> None:
         """Invalidate uncertain cwd only for changes in the current and-or list."""
         if before in {None, ";", "\n"}:
             self.list_changed = False
         elif before in {"||", "&"}:
-            if self.list_changed:
+            if self.list_changed and not (before == "||" and terminates):
                 self.invalidate()
             if before == "&":
                 self.list_changed = False
@@ -116,6 +140,8 @@ class ShellDirectoryState:
         raw: dict[int, str],
     ) -> tuple[list[ShellToken], int, bool]:
         self.group_entry = False
+        self.redirection_cwd = self.cwd
+        self.group_closed = False
         self.case_boundary(tokens, gap)
         tokens, case_depth, pending = case_arm_tokens(
             tokens,
@@ -197,16 +223,18 @@ class ShellDirectoryState:
             elif word == "{":
                 isolated = self.group_isolation.get(id(tokens[0]), False)
                 function = self.group_functions.get(id(tokens[0]))
-                self.groups.append(
-                    (self.cwd, self.changed, self.branches, function) if isolated else None
-                )
+                self.groups.append((self.cwd, self.changed, self.branches, function, isolated))
                 if isolated:
                     self.branches = []
                 self.group_entry = True
                 self.list_ops.append(isolated)
             elif word == "}":
-                if self.groups and (entry := self.groups.pop()) is not None:
-                    self.cwd, self.changed, self.branches = entry[:3]
+                if self.groups:
+                    entry = self.groups.pop()
+                    self.redirection_cwd = entry[0]
+                    self.group_closed = True
+                    if entry[4]:
+                        self.cwd, self.changed, self.branches = entry[:3]
                 self.group_entry = False
                 self.list_ops.append(None)
             else:
@@ -247,6 +275,7 @@ class ShellDirectoryState:
         except ValueError:
             return True
         state = ShellDirectoryState(None)
+        state.prepare_groups(segments)
         for segment in segments:
             tokens = state.conditional_tokens(segment.tokens)
             command = _strip_shell_wrappers([token.value for token in tokens])
@@ -269,7 +298,7 @@ class ShellDirectoryState:
             if frame[2]:
                 break
         for entry in self.groups:
-            if entry is not None and entry[3] is not None:
+            if entry[3] is not None:
                 self.directory_functions.add(entry[3])
         for branch in self.branches:
             branch.altered = True

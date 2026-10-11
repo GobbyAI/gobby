@@ -10,6 +10,24 @@ from gobby.hooks._normalization_canonical import _set_canonical_tool_metadata
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["cd {outside}; grep -rn P", "cd {outside}; git grep -n P", "env -C {outside} grep -rn P"],
+)
+def test_implicit_search_outside_repo(tmp_path: Path, command: str) -> None:
+    outside = tmp_path.parent / "outside"
+    data = _metadata(command.format(outside=outside), tmp_path)
+    assert data["canonical_code_navigation_repo_scope"] is False
+
+
+def test_unresolved_search_not_masked_by_known_search(tmp_path: Path) -> None:
+    data = _metadata('grep -n P README; cd "$X"; grep -rn P', tmp_path)
+    assert data["canonical_code_navigation_repo_scope"] is False
+    assert data["canonical_code_navigation_segments"][-1]["canonical_file_paths"][0].endswith(
+        "$GOBBY_UNRESOLVED_DIRECTORY"
+    )
+
+
 def _metadata(command: str, root: Path) -> dict[str, Any]:
     data: dict[str, Any] = {
         "tool_name": "Bash",

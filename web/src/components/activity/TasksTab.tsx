@@ -1,7 +1,6 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
-import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../types/tasks";
 import {
   getCanonicalTaskState,
@@ -40,7 +39,6 @@ import {
   extractTaskPayload,
   fetchMissingTaskAncestors,
   getBaseUrl,
-  getCurrentStageName,
   mergeTasksById,
   normalizeActivityTask,
 } from "./TasksTabData";
@@ -80,7 +78,6 @@ export const TasksTab = memo(function TasksTab({
   focusTaskRef,
   onFocusHandled,
 }: TasksTabProps) {
-  const { registry: stagesRegistry } = useStagesRegistry();
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -88,16 +85,12 @@ export const TasksTab = memo(function TasksTab({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const {
     activeFilterCount,
-    defaultStageFilters,
     handleFiltersApply,
     includeClosedTasks,
-    selectedStageFilters,
     setShowFilterDropdown,
     showFilterDropdown,
-    stageQueryList,
-    stageSelectionMatchesDefault,
     statusFilters,
-  } = useTasksTabFilters(stagesRegistry);
+  } = useTasksTabFilters();
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
@@ -142,7 +135,6 @@ export const TasksTab = memo(function TasksTab({
       params.set("sort_by", "updated_at");
       params.set("sort_order", "desc");
       params.set("include_stages", "1");
-      stageQueryList.forEach((stageName) => params.append("stage", stageName));
       return params;
     };
 
@@ -182,7 +174,7 @@ export const TasksTab = memo(function TasksTab({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [includeClosedTasks, projectId, stageQueryList]);
+  }, [includeClosedTasks, projectId]);
 
   useEffect(() => {
     fetchTasks();
@@ -442,14 +434,9 @@ export const TasksTab = memo(function TasksTab({
   // Client-side filter + display ordering. The activity Tasks tree should read
   // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
-    const shouldApplyStageFilter =
-      defaultStageFilters.size > 0 && !stageSelectionMatchesDefault;
-    const matchingTasks = tasks.filter((task) => {
-      if (!matchesTaskFilter(task, statusFilters)) return false;
-      if (!shouldApplyStageFilter) return true;
-      const stageName = getCurrentStageName(task);
-      return stageName !== null && selectedStageFilters.has(stageName);
-    });
+    const matchingTasks = tasks.filter((task) =>
+      matchesTaskFilter(task, statusFilters),
+    );
     const recentClosedIds = new Set(
       matchingTasks
         .filter((task) => getTaskDisplayState(task) === "closed")
@@ -472,13 +459,7 @@ export const TasksTab = memo(function TasksTab({
         return recentClosedIds.has(task.id);
       })
       .sort(compareTasksForDisplay);
-  }, [
-    defaultStageFilters,
-    selectedStageFilters,
-    stageSelectionMatchesDefault,
-    statusFilters,
-    tasks,
-  ]);
+  }, [statusFilters, tasks]);
 
   const treeData = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
@@ -632,8 +613,6 @@ export const TasksTab = memo(function TasksTab({
     closeDialogTask,
     closeTaskMenu,
     handleAssignToMainChat,
-    handleBuild,
-    handleBuildQuick,
     handleCloseTask,
     handleDetailClaim,
     handleDetailRelease,
@@ -641,14 +620,11 @@ export const TasksTab = memo(function TasksTab({
     handleOpenCloseTaskDialog,
     handleReleaseClaim,
     handleReopenTask,
-    handleResumeBuild,
-    handleStopBuild,
     setCloseDialogTask,
     taskMenu,
   } = useTasksTabMenuActions({
     applyRawTaskUpdate,
     chatSessionId,
-    fetchTasks,
     setActionError,
     taskDetail,
   });
@@ -691,8 +667,6 @@ export const TasksTab = memo(function TasksTab({
       {showFilterDropdown && (
         <TasksTabFilters
           filters={statusFilters}
-          stages={stagesRegistry}
-          selectedStages={selectedStageFilters}
           onApply={handleFiltersApply}
           onClose={() => setShowFilterDropdown(false)}
         />
@@ -782,10 +756,6 @@ export const TasksTab = memo(function TasksTab({
           activeAction={activeTaskAction}
           onClose={closeTaskMenu}
           onAssignToMainChat={handleAssignToMainChat}
-          onBuild={handleBuild}
-          onBuildQuick={handleBuildQuick}
-          onStopBuild={handleStopBuild}
-          onResumeBuild={handleResumeBuild}
           onReleaseClaim={handleReleaseClaim}
           onCloseTask={handleOpenCloseTaskDialog}
           onReopenTask={handleReopenTask}

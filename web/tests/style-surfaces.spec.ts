@@ -1077,28 +1077,6 @@ function baseApi(
       return { epoch: "capture-epoch", seq: 0, entries: [] };
     case "/api/skills/stats":
       return { total_count: 1, by_type: { impeccable: 1 }, recent_count: 0 };
-    case "/api/stages/registry":
-      return { stages: [PLANNING_STAGE, STAGE_ROW] };
-    case "/api/profiles":
-      return {
-        profiles: [
-          {
-            id: "profile-1",
-            name: "default",
-            display_label: "Default",
-            description: "Standard build profile",
-            skip_stages: [],
-            isolation: "worktree",
-            unattended: false,
-            enabled: true,
-            source: "installed",
-            project_id: null,
-            tags: [],
-            deleted_at: null,
-            state: "bundled",
-          },
-        ],
-      };
     case "/api/tasks": {
       if (url.searchParams.get("parent_task_id")) {
         return { tasks: [], total: 0, stats: {}, limit: 200, offset: 0 };
@@ -1712,7 +1690,6 @@ const TAB_CHECKPOINTS: Record<
       .getByRole("tree", { name: "MCP servers and tools" })
       .getByRole("treeitem", { name: /gobby server/ }),
   agents: (page) => page.getByRole("button", { name: "Select reviewer" }),
-  stages: (page) => page.getByRole("button", { name: "Select Development" }),
   skills: (page) => page.getByRole("button", { name: "Select impeccable" }),
   memory: (page) =>
     page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),

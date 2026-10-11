@@ -87,24 +87,6 @@ describe("TasksTab — filters", () => {
       updated_at: "2026-04-13T00:00:00Z",
     };
     mockFetch.resetRoutes();
-    mockFetch.mockJsonResponse("/api/stages/registry", {
-      stages: [
-        {
-          name: "development",
-          display_label: "Development",
-          category: "implementation",
-          review_policy: "required",
-          position_hint: 10,
-        },
-        {
-          name: "operator_review",
-          display_label: "Operator Review",
-          category: "verification",
-          review_policy: "required",
-          position_hint: 20,
-        },
-      ],
-    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [
         {
@@ -153,105 +135,21 @@ describe("TasksTab — filters", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 
-    expect(screen.getByText("Stage")).toBeTruthy();
+    expect(screen.queryByText("Stage")).toBeNull();
     expect(screen.getByText("Stage state")).toBeTruthy();
     expect(screen.getByText("Status")).toBeTruthy();
-    expect(screen.getAllByText("Development").length).toBeGreaterThan(0);
-    expect(await screen.findByText("Operator Review")).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "Development" })).toBeChecked();
-    expect(
-      screen.getByRole("checkbox", { name: "Operator Review" }),
-    ).toBeChecked();
-    expect(screen.getByText("Needs Review")).toBeTruthy();
-    expect(screen.getByText("Review Approved")).toBeTruthy();
-    expect(screen.getByText("Closed")).toBeTruthy();
-  });
-
-  it("deselecting a stage filter and applying fetches only remaining stages", async () => {
-    render(<TasksTab projectId="proj-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
-    });
-
-    mockFetch.fn.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: "Development" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    await waitFor(() => {
-      const taskFetch = taskListRequestUrls().find((url) =>
-        url.includes("stage=operator_review"),
-      );
-      expect(taskFetch).toContain("include_stages=1");
-      expect(taskFetch).not.toContain("stage=development");
-    });
-  });
-
-  it("deselecting every stage shows a filtered empty state without stage params", async () => {
-    render(<TasksTab projectId="proj-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
-    });
-
-    mockFetch.fn.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: "Development" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: "Operator Review" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText("Tasks exist, but none match the current filters"),
-      ).toBeTruthy();
-    });
-
+    expect(screen.queryByRole("checkbox", { name: "Development" })).toBeNull();
     expect(taskListRequestUrls().every((url) => !/[?&]stage=/.test(url))).toBe(
       true,
     );
-  });
-
-  it("hides retired lifecycle stages from the stage filter", async () => {
-    mockFetch.resetRoutes();
-    mockFetch.mockJsonResponse("/api/stages/registry", {
-      stages: [
-        {
-          name: "development",
-          display_label: "Development",
-          category: "implementation",
-          review_policy: "required",
-          position_hint: 10,
-        },
-        {
-          name: "test_arch",
-          display_label: "Test Architecture",
-          category: "verification",
-          review_policy: "required",
-          position_hint: 20,
-        },
-      ],
-    });
-    mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: [] });
-
-    render(<TasksTab projectId="proj-1" />);
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Filter tasks" }),
-    );
-
     expect(
-      await screen.findByRole("checkbox", { name: "Development" }),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("checkbox", { name: "Test Architecture" }),
-    ).toBeNull();
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes("/api/stages/registry"),
+      ),
+    ).toBe(false);
+    expect(screen.getByText("Needs Review")).toBeTruthy();
+    expect(screen.getByText("Review Approved")).toBeTruthy();
+    expect(screen.getByText("Closed")).toBeTruthy();
   });
 
   it("hides the active-filter badge while statusFilters matches the default set", async () => {
@@ -306,7 +204,7 @@ describe("TasksTab — filters", () => {
     });
   });
 
-  it("reset restores all checked stages and clears the filter badge", async () => {
+  it("reset restores default statuses and clears the filter badge", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
@@ -314,7 +212,7 @@ describe("TasksTab — filters", () => {
     });
 
     fireEvent.click(screen.getByLabelText("Filter tasks"));
-    fireEvent.click(screen.getByLabelText("Development"));
+    fireEvent.click(screen.getByLabelText("Blocked"));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
@@ -327,11 +225,9 @@ describe("TasksTab — filters", () => {
 
     mockFetch.fn.mockClear();
     fireEvent.click(screen.getByLabelText("Filter tasks"));
-    expect(await screen.findByLabelText("Development")).not.toBeChecked();
-    expect(screen.getByLabelText("Operator Review")).toBeChecked();
+    expect(await screen.findByLabelText("Blocked")).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    expect(screen.getByLabelText("Development")).toBeChecked();
-    expect(screen.getByLabelText("Operator Review")).toBeChecked();
+    expect(screen.getByLabelText("Blocked")).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await waitFor(() => {
@@ -340,9 +236,7 @@ describe("TasksTab — filters", () => {
           .getByLabelText("Filter tasks")
           .querySelector("[data-filter-active-count]"),
       ).toBeNull();
-      const taskFetch = taskListRequestUrls()[0];
-      expect(taskFetch).toContain("include_stages=1");
-      expect(taskFetch).not.toMatch(/[?&]stage=/);
+      expect(taskListRequestUrls()).toEqual([]);
     });
   });
 

@@ -1,7 +1,6 @@
 import type {
   LifecycleTask,
   ReviewPolicy,
-  StageAdvanceAction,
   StageState5,
   StageStateView,
 } from "../lib/stageActions";
@@ -11,7 +10,6 @@ export type {
   LifecycleTask,
   OwnerSessionRef,
   ReviewPolicy,
-  StageAdvanceAction,
   StageState5,
   StageStateView,
 };
@@ -50,10 +48,7 @@ export interface GobbyTask extends LifecycleTask {
   dispatch_failure_count?: number | null;
   additional_skills?: string[] | null;
   assigned_agent?: string | null;
-  build_state?: BuildState | null;
 }
-
-export type BuildState = "never_started" | "running" | "paused";
 
 export interface GobbyTaskDetail extends GobbyTask {
   description: string | null;

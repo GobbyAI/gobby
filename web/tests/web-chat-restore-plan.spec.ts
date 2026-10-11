@@ -275,36 +275,6 @@ async function mockApi(page: Page, counters?: MockApiCounters) {
         return;
       }
 
-      if (path === "/api/stages/registry") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            stages: [
-              {
-                name: "planning",
-                display_name: "Planning",
-                category: "development",
-                state: "ready",
-                review_policy: "none",
-                position: 0,
-                sequence_order: 0,
-              },
-              {
-                name: "development",
-                display_name: "Development",
-                category: "development",
-                state: "ready",
-                review_policy: "none",
-                position: 1,
-                sequence_order: 1,
-              },
-            ],
-          }),
-        });
-        return;
-      }
-
       if (path === "/api/tasks") {
         const parentTaskId = url.searchParams.get("parent_task_id");
         const body =
