@@ -889,6 +889,67 @@ async def test_timed_out_completion_mirrors_final_text_on_poll_without_later_rec
     assert send.await_count == 1
 
 
+def _tool_use_line() -> str:
+    return (
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "a1",
+                    "content": [{"type": "tool_use", "id": "call", "name": "Bash", "input": {}}],
+                },
+            }
+        )
+        + "\n"
+    )
+
+
+def _tool_result_line() -> str:
+    return (
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [{"type": "tool_result", "tool_use_id": "call", "content": "out"}]
+                },
+            }
+        )
+        + "\n"
+    )
+
+
+@pytest.mark.parametrize("lagged_tool_result", [False, True])
+async def test_lagged_tool_result_keeps_pending_completion(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    lagged_tool_result: bool,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "lag.jsonl"
+    head = (
+        native_line("user", "u1", "question")
+        + native_line("assistant", "a1", "Working.")
+        + _tool_use_line()
+    )
+    if not lagged_tool_result:
+        head += _tool_result_line()
+    transcript.write_text(head)
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    assert not (await target.complete_turn(session_id, "Final.")).flushed
+    if lagged_tool_result:
+        with transcript.open("a") as stream:
+            stream.write(_tool_result_line())
+        await target._process_all_sessions()
+        assert session_id in target._pending_turn_completions
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", "a2", "Final."))
+    await target._process_all_sessions()
+    send.assert_awaited_once()
+    assert send.call_args.args[0].content.endswith("Final.")
+
+
 @pytest.mark.parametrize("next_id", ["a2", "a2b"])
 @pytest.mark.parametrize("late_reply", [True, False])
 async def test_stale_completion_does_not_close_next_turn(

@@ -489,7 +489,11 @@ class ProcessorTranscriptMixin:
                 completion = self._pending_turn_completions.pop(session_id, None)
                 if completion is not None:
                     completion.flushed = True
-        if any(message.role == "user" for message in messages):
+        if any(
+            message.role == "user"
+            and message.content_type not in ("tool_result", "mcp_tool_result")
+            for message in messages
+        ):
             self._pending_turn_completions.pop(session_id, None)
         if render_state.current_message:
             await self._broadcast_rendered_session_message(
