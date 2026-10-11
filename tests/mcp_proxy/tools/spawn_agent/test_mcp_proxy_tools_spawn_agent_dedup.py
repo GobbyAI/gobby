@@ -273,10 +273,8 @@ class TestSpawnAgentDedup:
             assert "not actionable" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(
-        self, db: HubDatabase
-    ) -> None:
-        """A merge orchestrator may spawn a same-task merge worker without hitting itself."""
+    async def test_merge_worker_spawn_refuses_active_same_task_run(self, db: HubDatabase) -> None:
+        """The requester's parent run still blocks a second spawn on the same task."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         runner = MagicMock()
@@ -377,8 +375,10 @@ class TestSpawnAgentDedup:
             await _drain_spawn_background_tasks()
 
         assert result["success"] is True
-        assert result.get("skipped") is not True
-        mock_execute.assert_awaited_once()
+        assert result["skipped"] is True
+        assert result["run_id"] == "run-orchestrator"
+        assert result["child_session_id"] == "parent-merge-session"
+        mock_execute.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_merge_worker_spawn_dedups_existing_merge_worker_run(self) -> None:

@@ -45,24 +45,9 @@ class TestSpawnAgentImplErrorBranches:
         assert (
             code_index_preflight_mode(
                 checkout_mode="worktree",
-                agent_name="backend-developer",
-                initial_variables=None,
                 task_category="code",
             )
             == "best_effort"
-        )
-
-    def test_planning_code_index_preflight_is_required(self) -> None:
-        from gobby.mcp_proxy.tools.spawn_agent._code_index import code_index_preflight_mode
-
-        assert (
-            code_index_preflight_mode(
-                checkout_mode="none",
-                agent_name="planner",
-                initial_variables={"stage_name": "planning"},
-                task_category="planning",
-            )
-            == "required"
         )
 
     @pytest.mark.asyncio
@@ -999,128 +984,6 @@ test"""
         assert spawn_request.code_index_preflight_mode is None
         assert spawn_request.initial_variables["assigned_task_id"] == "#123"
         assert "code_index_preflight_warning" not in spawn_request.initial_variables
-
-    @pytest.mark.parametrize(
-        ("agent_name", "stage_state"),
-        [("planner", "in_progress"), ("plan-adversary", "needs_review")],
-    )
-    @pytest.mark.asyncio
-    async def test_planning_agents_with_main_context_require_code_index_preflight(
-        self,
-        agent_name: str,
-        stage_state: str,
-        tmp_path: Path,
-    ) -> None:
-        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        runner = MagicMock()
-        runner.can_spawn.return_value = (True, "ok", 0)
-        runner.child_session_manager = MagicMock()
-        runner.run_storage = MagicMock()
-        runner.run_storage.has_active_run_for_task.return_value = False
-        spawn_result = SimpleNamespace(
-            success=True,
-            child_session_id="child-1",
-            status="running",
-            backend="process",
-            terminal_id=None,
-            pid=123,
-            message="spawned",
-        )
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={
-                    "id": "11111111-1111-4111-8111-111111110001",
-                    "project_path": str(repo_path),
-                },
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
-                new=AsyncMock(return_value=spawn_result),
-            ) as mock_execute,
-        ):
-            result = await spawn_agent_impl(
-                prompt="plan",
-                runner=runner,
-                parent_session_id="sess-1",
-                agent_lookup_name=agent_name,
-                provider="codex",
-                checkout_mode="none",
-                initial_variables={"stage_name": "planning", "stage_state": stage_state},
-            )
-            await _drain_spawn_background_tasks()
-
-        assert result["success"] is True
-        assert result["status"] == "starting"
-        mock_execute.assert_awaited_once()
-        assert mock_execute.await_args is not None
-        spawn_request = mock_execute.await_args.args[0]
-        assert spawn_request.cwd == str(repo_path)
-        assert spawn_request.sandbox_config.enabled is True
-        assert spawn_request.code_index_preflight_mode == "required"
-        assert spawn_request.extra_env is None
-
-    @pytest.mark.asyncio
-    async def test_planning_code_index_failure_blocks_spawn_before_execute(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        from gobby.agents.spawn_models import SpawnResult
-        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
-
-        repo_path = tmp_path / "repo"
-        repo_path.mkdir()
-        runner = MagicMock()
-        runner.can_spawn.return_value = (True, "ok", 0)
-        runner.child_session_manager = MagicMock()
-        runner.run_storage = MagicMock()
-        runner.run_storage.has_active_run_for_task.return_value = False
-        runner.agent_lifecycle_monitor = None
-        runner.task_manager = None
-        runner.cancel_run.return_value = True
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-                return_value={
-                    "id": "11111111-1111-4111-8111-111111110001",
-                    "project_path": str(repo_path),
-                },
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
-                new=AsyncMock(
-                    return_value=SpawnResult(
-                        success=False,
-                        run_id="run",
-                        child_session_id="child",
-                        status="failed",
-                        error="planner_code_index_unavailable:gcode_index_unavailable:boom",
-                    )
-                ),
-            ) as mock_execute,
-        ):
-            result = await spawn_agent_impl(
-                prompt="plan",
-                runner=runner,
-                parent_session_id="sess-1",
-                agent_lookup_name="planner",
-                provider="codex",
-                checkout_mode="none",
-                initial_variables={"stage_name": "planning", "stage_state": "in_progress"},
-            )
-            await _drain_spawn_background_tasks()
-
-        assert result["success"] is True
-        assert result["status"] == "starting"
-        mock_execute.assert_awaited_once()
-        execute_args = mock_execute.await_args
-        assert execute_args is not None
-        assert execute_args.args[0].code_index_preflight_mode == "required"
 
     @pytest.mark.asyncio
     async def test_isolated_spawn_returns_executor_preflight_warning(self, tmp_path: Path) -> None:

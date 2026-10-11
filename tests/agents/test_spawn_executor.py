@@ -163,7 +163,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         parent_session_id="parent",
         project_id="project",
         machine_id="21000000-0000-4000-8000-000000000001",
-        code_index_preflight_mode="required",
+        code_index_preflight_mode="best_effort",
         prepared_spawn=prepared_spawn(),
     )
 
@@ -199,47 +199,6 @@ async def test_managed_code_index_preflight_uses_issued_credential(
     assert context.env_vars["PATH"] == "/scoped/bin"
     # The preflight's minted capability stays in its private envelope.
     assert "minted-probe-capability" not in context.env_vars.values()
-
-
-@pytest.mark.asyncio
-async def test_required_managed_code_index_preflight_fails_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context = PreparedSpawn(
-        session_id="child",
-        agent_run_id="run",
-        parent_session_id="parent",
-        project_id="project",
-        workflow_name=None,
-        agent_depth=1,
-        env_vars={},
-        managed_credential=MagicMock(),
-    )
-    request = SpawnRequest(
-        prompt="Plan",
-        cwd="/isolated",
-        provider="codex",
-        session_id="session",
-        run_id="run",
-        parent_session_id="parent",
-        project_id="project",
-        code_index_preflight_mode="required",
-        prepared_spawn=prepared_spawn(),
-    )
-
-    async def fail_preflight(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("scoped bootstrap missing")
-
-    monkeypatch.setattr(
-        "gobby.agents.spawn_executor_providers.ensure_isolation_code_index",
-        fail_preflight,
-    )
-
-    error = await _prepare_managed_code_index(request, context)
-
-    assert error is not None
-    assert error.success is False
-    assert error.error == "planner_code_index_unavailable:scoped bootstrap missing"
 
 
 @pytest.mark.asyncio
