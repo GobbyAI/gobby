@@ -22,12 +22,15 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("merged_into", [None, "0.5.0"])
 async def test_read_only_directory_preserves_registration_until_retry(
     landed_worktree: tuple[Path, Worktree],
     deletion_registry: tuple[InternalToolRegistry, MagicMock],
     force: bool,
+    merged_into: str | None,
 ) -> None:
     repo, worktree = landed_worktree
+    worktree.base_branch = "0.5.0"
     registry, storage = deletion_registry
     path = Path(worktree.worktree_path)
     nested = path / "vendor" / "read-only"
@@ -38,10 +41,14 @@ async def test_read_only_directory_preserves_registration_until_retry(
         assert not os.access(nested, os.W_OK)
         refused = await registry.call(
             "delete_worktree",
-            {"worktree_id": worktree.id, "force": force, "merged_into": "0.5.0"},
+            {"worktree_id": worktree.id, "force": force, "merged_into": merged_into},
         )
         assert refused["success"] is False
-        assert refused["error_code"] == "worktree_not_removable"
+        if merged_into is None:
+            assert refused["error"] == "worktree_not_removable"
+        else:
+            assert refused["error_code"] == "worktree_not_removable"
+        assert str(nested) in refused["message"]
         assert str(path) in _git(repo, "worktree", "list", "--porcelain")
         assert (path / ".git").is_file()
         storage.delete.assert_not_called()
@@ -50,7 +57,7 @@ async def test_read_only_directory_preserves_registration_until_retry(
 
     removed = await registry.call(
         "delete_worktree",
-        {"worktree_id": worktree.id, "force": True, "merged_into": "0.5.0"},
+        {"worktree_id": worktree.id, "force": True, "merged_into": merged_into},
     )
     assert removed["success"] is True
     assert not path.exists()
