@@ -16,6 +16,7 @@ from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessa
 from gobby.mcp_proxy.tools.communications import create_communications_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.machine_id import require_machine_id
@@ -440,6 +441,42 @@ async def test_communications_tools_resolve_session_references(
         mock_manager.update_identity_session.assert_called_once_with("id-1", refs["uuid"])
     else:
         assert [identity["id"] for identity in result["identities"]] == ["id-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["send_message", "send_attachment"])
+@pytest.mark.parametrize("use_executor", [False, True])
+async def test_async_send_resolves_session_off_event_loop(
+    session_reference_tools: tuple[Any, dict[str, str], dict[str, dict[str, Any]]],
+    mock_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    use_executor: bool,
+) -> None:
+    registry, refs, arguments = session_reference_tools
+    loop_thread = threading.get_ident()
+    resolver_threads: list[int] = []
+
+    def tracked_resolver(db: HubDatabase, ref: str, project_id: str | None) -> str:
+        resolver_threads.append(threading.get_ident())
+        return resolve_session_reference(db, ref, project_id)
+
+    run_db = AsyncMock(side_effect=asyncio.to_thread)
+    context = SimpleNamespace(db_executor=object(), run_db=run_db) if use_executor else None
+    monkeypatch.setattr("gobby.app_context.get_app_context", lambda: context)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.resolve_session_reference", tracked_resolver
+    )
+    result = await registry.get_tool(tool_name)(session_id=refs["prefix"], **arguments[tool_name])
+
+    assert result["success"] is True
+    assert len(resolver_threads) == 1
+    assert resolver_threads[0] != loop_thread
+    assert getattr(mock_manager, tool_name).await_args.kwargs["session_id"] == refs["uuid"]
+    if use_executor:
+        run_db.assert_awaited_once()
+    else:
+        run_db.assert_not_awaited()
 
 
 @pytest.mark.asyncio
