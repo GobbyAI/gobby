@@ -94,10 +94,17 @@ def _manager(
 
 
 def _manager_pane(workspaces: WorkspaceManager, manager: Session) -> WorkspaceTarget | None:
-    """Resolve the manager's bound terminal before terminal-context hints."""
+    """Resolve the manager's newest placed live terminal before context hints."""
     context = manager.terminal_context or {}
-    bound_terminal = TerminalManager(workspaces.db).get_live_for_session(manager.id)
-    pane = workspaces.get_pane_for_terminal(bound_terminal.id) if bound_terminal else None
+    pane = next(
+        (
+            pane
+            for terminal in TerminalManager(workspaces.db).list_for_session(manager.id)
+            if terminal.state in {"pending", "live"}
+            if (pane := workspaces.get_pane_for_terminal(terminal.id)) is not None
+        ),
+        None,
+    )
     pane_ref = pane.id if pane else context.get("gobby_pane_ref") or context.get("pane_ref")
     if not pane_ref:
         terminal = context.get("gobby_terminal_id")
@@ -117,6 +124,33 @@ def _manager_pane(workspaces: WorkspaceManager, manager: Session) -> WorkspaceTa
     ):
         return None
     return target
+
+
+def _manager_lane_placement(
+    workspaces: WorkspaceManager, manager: Session, workspace_id: str | None = None
+) -> WorkspaceTarget | None:
+    """Use the manager checkout's unique tab when its terminal is unplaced."""
+    if not manager.workspace_path:
+        return None
+    tree = LocalWorktreeManager(workspaces.db).get_by_path(manager.workspace_path)
+    tabs = [
+        tab
+        for workspace in workspaces.list_for_node(manager.machine_id)
+        for tab in workspaces.list_tabs(workspace.id)
+        if tree is not None
+        and tree.project_id == manager.project_id
+        and tree.machine_id == manager.machine_id
+        and tab.project_id == manager.project_id
+        and tab.worktree_id == tree.id
+        and (workspace_id is None or tab.workspace_id == workspace_id)
+    ]
+    if len(tabs) != 1 or not tabs[0].focused_pane_id:
+        raise RunbookSeatRefusal(
+            f"manager {manager.ref} lane worktree {tree.id if tree else manager.workspace_path} "
+            f"needs one placed lane tab; candidate count: {len(tabs)}; "
+            f"candidates: {', '.join(tab.id for tab in tabs) or '(none)'}"
+        )
+    return workspaces.resolve_reference(tabs[0].focused_pane_id, node=manager.machine_id)
 
 
 def _viewport_refusal(sizes: Collection[tuple[int, int]]) -> RunbookSeatRefusal:
@@ -216,6 +250,11 @@ def resolve_team_launch_inputs(
     elif explicit_pane is not None:
         target = explicit_pane
     else:
+        if manager_pane is None:
+            manager_pane = _manager_lane_placement(workspaces, manager)
+            if manager_pane is not None:
+                assert manager_pane.tab is not None
+                tabs = [manager_pane.tab]
         ids = {tab.workspace_id for tab in tabs}
         if not ids and manager_pane:
             ids.add(manager_pane.workspace.id)
@@ -224,6 +263,11 @@ def resolve_team_launch_inputs(
         target = workspaces.resolve_reference(ids.pop(), node=caller.machine_id)
     if target.node.id != caller.machine_id:
         raise RunbookSeatRefusal("workspace belongs to another machine")
+    if explicit_pane is None and manager_pane is None and workspace is not None:
+        manager_pane = _manager_lane_placement(workspaces, manager, target.workspace.id)
+        if manager_pane is not None:
+            assert manager_pane.tab is not None
+            tabs = [manager_pane.tab]
     tabs = [tab for tab in tabs if tab.workspace_id == target.workspace.id]
     if explicit_pane is not None:
         if (
