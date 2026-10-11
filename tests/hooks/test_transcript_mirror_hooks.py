@@ -10,6 +10,7 @@ import pytest
 from gobby.communications.manager import CommunicationsManager
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.servers.websocket.server import WebSocketServer
 from gobby.sessions.processor_lifecycle import SessionFlushResult
 
 from ._event_handler_helpers import make_event
@@ -79,6 +80,8 @@ class CompletedTurns:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
         self.done = asyncio.Event()
+        self.websocket_server = MagicMock(spec=WebSocketServer)
+        self.websocket_server._is_voice_mode.return_value = False
         self.communications_manager: MagicMock | None = MagicMock(spec=CommunicationsManager)
         self.communications_manager.has_transcript_mirror_attachment.return_value = True
 
@@ -107,6 +110,31 @@ async def test_unattached_completion_never_schedules_mirror(
     assert response.decision == "allow"
     schedule.assert_not_called()
     assert turns.calls == []
+
+
+@pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+async def test_voice_only_completed_turn_still_schedules_flush(
+    event_handlers: EventHandlers, event_type: HookEventType
+) -> None:
+    turns = CompletedTurns()
+    turns.communications_manager = None
+    turns.websocket_server._is_voice_mode.return_value = True
+    event_handlers._event_loop = asyncio.get_running_loop()
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(
+        event_type,
+        data={"last_assistant_message": "last spoken sentence."},
+        metadata={"_platform_session_id": "voice-session"},
+    )
+    event.turn_disposition = "completed"
+    response = (
+        event_handlers.handle_stop(event)
+        if event_type == HookEventType.STOP
+        else event_handlers.handle_after_agent(event)
+    )
+    assert response.decision == "allow"
+    await asyncio.wait_for(turns.done.wait(), timeout=2.0)
+    assert turns.calls == [("voice-session", "last spoken sentence.")]
 
 
 @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
