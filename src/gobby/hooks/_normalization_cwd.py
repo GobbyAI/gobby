@@ -95,6 +95,7 @@ class ShellDirectoryState:
         if self.branches and self.branches[-1].kind == "loop":
             if self.branches[-1].loop in self.unstable_loops:
                 self.cwd = UNRESOLVED_DIRECTORY
+                self.mark_unproven()
 
     def change(self, target: str | None) -> None:
         self.cwd = _apply_cd(self.cwd, target) if target is not None else UNRESOLVED_DIRECTORY

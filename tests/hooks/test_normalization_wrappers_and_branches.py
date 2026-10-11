@@ -20,6 +20,37 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
     return data
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for d in a b; do ./w.sh; cd sub; done",
+        "while true; do ./w.sh; cd sub; done",
+        "until false; do ./w.sh; cd sub; done",
+        "while ./w.sh; do cd sub; done",
+        "for d in a; do for e in b; do ./w.sh; done; cd sub; done",
+    ],
+)
+def test_unstable_loop_body_cannot_prove_relative_script(tmp_path: Path, command: str) -> None:
+    (tmp_path / "w.sh").write_text("cat README\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub/w.sh").write_text("touch evil.py\n")
+    data = _metadata(command, tmp_path)
+    assert data["canonical_script_execution"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["for d in a b; do ./w.sh; done", "if true; then for d in a b; do ./w.sh; done; fi"],
+)
+def test_stable_loop_body_keeps_relative_script_proof(tmp_path: Path, command: str) -> None:
+    (tmp_path / "w.sh").write_text("cat README\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub/w.sh").write_text("touch evil.py\n")
+    data = _metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "read"
+    assert not data.get("canonical_script_execution")
+
+
 @pytest.mark.parametrize("command", ["git -C /tmp/x grep -n P", 'cd "$X"; grep -rn P'])
 def test_implicit_search_root_reports_foreign_or_unknown_scope(
     tmp_path: Path, command: str
