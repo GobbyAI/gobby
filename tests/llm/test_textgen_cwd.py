@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.agents.trust import encode_claude_project_path
 from gobby.llm.textgen_cwd import (
     _gobby_textgen_project_slug_fragment,
     fixed_textgen_cwd,
@@ -16,11 +17,6 @@ from gobby.llm.textgen_cwd import (
 )
 
 pytestmark = pytest.mark.unit
-
-
-def _claude_project_slug(path: Path) -> str:
-    """Mimic Claude Code's cwd -> ~/.claude/projects dir-name transform."""
-    return str(path).replace("/", "-").replace(".", "-")
 
 
 class TestFixedTextgenCwd:
@@ -38,9 +34,9 @@ class TestFixedTextgenCwd:
     ) -> None:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         with fixed_textgen_cwd() as fixed:
-            assert "gobby-textgen-" not in _claude_project_slug(fixed)
+            assert "gobby-textgen-" not in encode_claude_project_path(fixed)
         with neutral_textgen_cwd() as per_call:
-            assert "gobby-textgen-" in _claude_project_slug(per_call)
+            assert "gobby-textgen-" in encode_claude_project_path(per_call)
 
 
 class TestPurgeTextgenProjectDirs:
@@ -51,6 +47,24 @@ class TestPurgeTextgenProjectDirs:
         stamp = time.time() - age_seconds
         os.utime(target, (stamp, stamp))
         return target
+
+    def test_purges_encoded_temp_path_with_underscore_and_space(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("gobby.llm.textgen_cwd.tempfile.gettempdir", lambda: "/tmp/foo_bar baz")
+        old_textgen = self._make_dir(
+            tmp_path, "-tmp-foo-bar-baz-gobby-textgen-abc123", age_seconds=7200
+        )
+        young_textgen = self._make_dir(
+            tmp_path, "-tmp-foo-bar-baz-gobby-textgen-def456", age_seconds=60
+        )
+        unrelated = self._make_dir(tmp_path, "-tmp-foo-bar-baz-another-project", age_seconds=7200)
+
+        assert purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0) == 1
+
+        assert not old_textgen.exists()
+        assert young_textgen.exists()
+        assert unrelated.exists()
 
     def test_removes_only_old_marker_dirs(self, tmp_path: Path) -> None:
         fragment = _gobby_textgen_project_slug_fragment()
