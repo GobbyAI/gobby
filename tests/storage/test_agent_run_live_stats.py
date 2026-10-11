@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from psycopg.abc import Buffer
 
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer, WaitKind
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -20,6 +21,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.terminals import TerminalManager
 
 pytestmark = pytest.mark.unit
 
@@ -216,6 +218,150 @@ async def test_settled_recovery_scan_allocation_ignores_unrelated_metadata(
     # Allow 512 KiB for query/row bookkeeping, independent of the unrelated blob.
     assert peaks[1] < peaks[0] + 512 * 1024, measurements
     assert max(largest_decodes) < 4096, measurements
+
+
+@pytest.mark.integration
+def test_active_monitor_scan_allocation_ignores_unrelated_metadata(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_id = _register_session(session_manager, sample_project, "monitor-allocation")
+    monitor = AgentLifecycleMonitor(
+        agent_manager, temp_db, MagicMock(), terminal_services=MagicMock()
+    )
+    decoded_sizes: list[int] = []
+    original_load = _JsonContainerTextLoader.load
+
+    def counting_load(loader: _JsonContainerTextLoader, data: Buffer) -> Any:
+        decoded_sizes.append(len(data))
+        return original_load(loader, data)
+
+    monkeypatch.setattr(_JsonContainerTextLoader, "load", counting_load)
+    peaks: list[int] = []
+    largest_decodes: list[int] = []
+    for unrelated_bytes in (1024, 4 * 1024 * 1024):
+        run = agent_manager.create(
+            parent_session_id=parent_id,
+            provider="codex",
+            prompt="Monitor allocation fixture",
+            resume_metadata_json={
+                "execution_mode": "autonomous",
+                "unrelated": "x" * unrelated_bytes,
+                "reconciliation_pending": False,
+                "daemon_stop_resume_phase": "finalized",
+                "allow_closed_task": True,
+                "sandbox": {"enforced": True, "backend": "srt"},
+                "stage_name": "implement",
+                "stage_state": "running",
+                "initial_variables": {"stage_name": "build", "stage_state": "waiting"},
+            },
+        )
+        agent_manager.start(run.id)
+        TerminalManager(temp_db).create_pending(
+            terminal_id=run.id,
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=run.id,
+        )
+        temp_db.execute(
+            "UPDATE agent_runs SET terminal_id = %s, result = %s WHERE id = %s",
+            (run.id, " Delivered result ", run.id),
+        )
+        decoded_sizes.clear()
+        tracemalloc.start()
+        try:
+            observed = monitor._get_active_terminal_runs()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert [item.id for item in observed] == [run.id]
+        assert observed[0].terminal_id == run.id
+        assert observed[0].prompt == ""
+        assert observed[0].result == " Delivered result "
+        assert observed[0].is_interactive is False
+        assert observed[0].resume_metadata_json == {
+            "execution_mode": "autonomous",
+            "reconciliation_pending": False,
+            "daemon_stop_resume_phase": "finalized",
+            "allow_closed_task": True,
+            "sandbox": {"enforced": True, "backend": "srt"},
+        }
+        peaks.append(peak)
+        largest_decodes.append(max(decoded_sizes, default=0))
+        agent_manager.complete(run.id, result="done")
+
+    measurements = {"peak_bytes": peaks, "largest_json_bytes": largest_decodes}
+    print(measurements)
+    assert peaks[1] < peaks[0] + 512 * 1024, measurements
+    assert max(largest_decodes) < 4096, measurements
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "metadata",
+    [{"reconciliation_pending": True}, {"daemon_stop_resume_phase": "prepared"}],
+)
+def test_active_monitor_summary_preserves_recovery_fencing(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    parent_id = _register_session(session_manager, sample_project, "monitor-fencing")
+    run = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="codex",
+        prompt="Recovery-protected run",
+        resume_metadata_json={**metadata, "unrelated": "x" * 1024},
+    )
+    agent_manager.start(run.id)
+    TerminalManager(temp_db).create_pending(
+        terminal_id=run.id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=run.id,
+    )
+    temp_db.execute("UPDATE agent_runs SET terminal_id = %s WHERE id = %s", (run.id, run.id))
+    monitor = AgentLifecycleMonitor(
+        agent_manager, temp_db, MagicMock(), terminal_services=MagicMock()
+    )
+
+    assert monitor._get_active_terminal_runs() == []
+    stored = agent_manager.get(run.id)
+    assert stored is not None
+    assert stored.status == "running"
+
+
+@pytest.mark.integration
+def test_active_summary_preserves_interactive_execution_mode(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    parent_id = _register_session(session_manager, sample_project, "interactive-summary")
+    run = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="codex",
+        prompt="Interactive standing seat",
+        resume_metadata_json={
+            "execution_mode": "interactive",
+            "unrelated": "x" * (4 * 1024 * 1024),
+        },
+    )
+    agent_manager.start(run.id)
+
+    observed = agent_manager.list_active_for_machine_summary(run.machine_id)
+
+    assert [candidate.id for candidate in observed] == [run.id]
+    assert observed[0].is_interactive is True
+    assert observed[0].resume_metadata_json is not None
+    assert "unrelated" not in observed[0].resume_metadata_json
 
 
 def test_task_id_filters_apply_to_agent_run_list_queries(

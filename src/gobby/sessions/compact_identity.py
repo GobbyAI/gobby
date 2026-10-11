@@ -36,9 +36,9 @@ def resolve_compact_continuation(
 
     rows = db.fetchall(
         """
-        SELECT s.*, p.name AS project_name, COALESCE(sv.variables ->> 'handoff_source', '') AS compact_marker
+        SELECT s.id, s.status, s.terminal_context,
+               COALESCE(sv.variables ->> 'handoff_source', '') AS compact_marker
         FROM sessions s
-              LEFT JOIN projects p ON p.id = s.project_id
         LEFT JOIN session_variables sv ON sv.session_id = s.id
         WHERE s.source = %s
           AND s.session_type = 'terminal'
@@ -48,24 +48,29 @@ def resolve_compact_continuation(
         (source, MAX_COMPACT_CONTINUATION_CANDIDATES),
     )
     process_rows = [
-        (row, candidate)
+        row
         for row in rows
         if terminal_process_contexts_match(
-            (candidate := Session.from_row(row)).terminal_context, terminal_context
+            Session.parse_terminal_context(row["terminal_context"]), terminal_context
         )
     ]
     # An expired marked row revives only as its process's newest session: a newer row
     # means the process moved on and the compaction it marked never continued.
     matching = [
-        candidate
-        for index, (row, candidate) in enumerate(process_rows)
-        if candidate.status == "awaiting_handoff"
-        or (index == 0 and candidate.status == "expired" and row["compact_marker"] == "compact")
+        row
+        for index, row in enumerate(process_rows)
+        if row["status"] == "awaiting_handoff"
+        or (index == 0 and row["status"] == "expired" and row["compact_marker"] == "compact")
     ]
     if len(matching) == 1:
-        return CompactIdentityResolution(session=matching[0])
+        row = db.fetchone(
+            """SELECT s.*, p.name AS project_name FROM sessions s
+               LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = %s""",
+            (matching[0]["id"],),
+        )
+        return CompactIdentityResolution(session=Session.from_row(row) if row else None)
     if len(matching) > 1:
         return CompactIdentityResolution(
-            conflicting_session_ids=tuple(candidate.id for candidate in matching)
+            conflicting_session_ids=tuple(row["id"] for row in matching)
         )
     return CompactIdentityResolution()

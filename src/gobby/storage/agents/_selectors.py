@@ -22,6 +22,7 @@ class _AgentRunSelectorHost(Protocol):
         limit: bool = False,
         offset: bool = False,
         list_projection: bool = False,
+        lifecycle_projection: bool = False,
     ) -> str: ...
 
 
@@ -34,6 +35,7 @@ class _AgentRunSelectorMixin:
         limit: bool = False,
         offset: bool = False,
         list_projection: bool = False,
+        lifecycle_projection: bool = False,
     ) -> str:
         """Build an agent-run SELECT that overlays live session stats.
 
@@ -47,6 +49,22 @@ class _AgentRunSelectorMixin:
                 ar.continuation_prompt,
                 ar.resume_metadata_json,"""
         list_columns = "ar.resume_metadata_json -> 'sandbox' AS sandbox_metadata,"
+        lifecycle_columns = """'' AS prompt,
+                ar.result,
+                NULL AS error,
+                jsonb_build_object(
+                    'execution_mode', ar.resume_metadata_json -> 'execution_mode',
+                    'reconciliation_pending', ar.resume_metadata_json -> 'reconciliation_pending',
+                    'daemon_stop_resume_phase', ar.resume_metadata_json -> 'daemon_stop_resume_phase',
+                    'allow_closed_task', ar.resume_metadata_json -> 'allow_closed_task',
+                    'sandbox', ar.resume_metadata_json -> 'sandbox'
+                ) AS resume_metadata_json,"""
+        if lifecycle_projection:
+            projected_columns = lifecycle_columns
+        elif list_projection:
+            projected_columns = list_columns
+        else:
+            projected_columns = detail_columns
         sql = f"""
             SELECT
                 ar.id,
@@ -72,7 +90,7 @@ class _AgentRunSelectorMixin:
                 (COALESCE(coordination.parent_wait, FALSE)
                     OR COALESCE(agent_subscription.parent_wait, FALSE)) AS parent_wait,
                 COALESCE(agent_subscription.active, FALSE) AS agent_wait,
-                {list_columns if list_projection else detail_columns}
+                {projected_columns}
                 CASE
                     WHEN ar.status IN ({ACTIVE_AGENT_RUN_STATUS_SQL}) THEN COALESCE(
                         child_s.tool_call_count,
@@ -164,6 +182,7 @@ class _AgentRunSelectorMixin:
         order_by: str = "",
         limit: int | None = None,
         offset: int = 0,
+        lifecycle_projection: bool = False,
     ) -> list[AgentRun]:
         """Fetch agent runs through the live-stat selector."""
         normalized_offset = max(0, offset)
@@ -179,6 +198,7 @@ class _AgentRunSelectorMixin:
                 order_by,
                 limit=limit is not None,
                 offset=normalized_offset > 0,
+                lifecycle_projection=lifecycle_projection,
             ),
             query_params,
         )

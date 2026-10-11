@@ -34,6 +34,7 @@ class _AgentRunQueryHost(Protocol):
         order_by: str = "",
         limit: int | None = None,
         offset: int = 0,
+        lifecycle_projection: bool = False,
     ) -> list[AgentRun]: ...
 
     def _fetch_list_rows_with_live_stats(
@@ -462,6 +463,23 @@ class _AgentRunQueryMixin:
             offset,
             machine_id=machine_id,
             task_ids=task_ids,
+        )
+
+    def list_active_for_machine_summary(
+        self: _AgentRunQueryHost, machine_id: str, limit: int = 100
+    ) -> list[AgentRun]:
+        """Read lifecycle fields without prompt/error bodies or unrelated launch metadata.
+
+        Result text remains available for delivered-result and closed-task completion.
+        Interactive classification, recovery fencing, headless detection and closed-task
+        policy retain their metadata.
+        """
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.status IN ('queued', 'running', 'pending') AND ar.machine_id = %s",
+            (machine_id,),
+            order_by="ORDER BY ar.started_at ASC",
+            limit=limit,
+            lifecycle_projection=True,
         )
 
     def list_active_global(
