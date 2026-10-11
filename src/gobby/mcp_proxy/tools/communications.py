@@ -319,6 +319,12 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Query message history."""
         try:
+            if session_id is not None:
+                if db is None:
+                    raise ValueError(
+                        f"Cannot resolve session '{session_id}': project storage is unavailable"
+                    )
+                session_id = resolve_session_reference(db, session_id, get_current_project_id())
             channel_id = None
             if channel:
                 ch = communications_manager.get_channel_by_name(channel)
@@ -347,6 +353,8 @@ def create_communications_registry(
                     for m in messages
                 ],
             }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}

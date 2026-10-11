@@ -299,6 +299,39 @@ def test_get_messages(registry: Any, mock_store: MagicMock) -> None:
     assert res["messages"][0]["content"] == "Hello"
 
 
+def test_get_messages_resolves_session_prefix(mock_manager: MagicMock, tmp_path: Path) -> None:
+    session_uuid = "4c856ddc-4a60-4798-9db8-0519578f14e3"
+    db = MagicMock()
+    db.fetchall.return_value = [{"id": session_uuid}]
+    mock_manager.list_messages.return_value = []
+    registry = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+
+    handler = registry.get_tool("get_messages")
+    assert handler is not None
+    result = handler(session_id="4c856ddc", direction="outbound")
+
+    assert result == {"success": True, "messages": []}
+    mock_manager.list_messages.assert_called_once_with(
+        channel_id=None, session_id=session_uuid, direction="outbound", limit=50
+    )
+
+
+def test_get_messages_rejects_unknown_session_without_daemon_error(
+    mock_manager: MagicMock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = MagicMock()
+    db.fetchall.return_value = []
+    registry = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+
+    handler = registry.get_tool("get_messages")
+    assert handler is not None
+    result = handler(session_id="missing-session")
+
+    assert result == {"success": False, "error": "Session 'missing-session' not found"}
+    mock_manager.list_messages.assert_not_called()
+    assert not caplog.records
+
+
 @pytest.mark.asyncio
 async def test_add_channel(registry: Any, mock_manager: MagicMock) -> None:
     channel = ChannelConfig(
