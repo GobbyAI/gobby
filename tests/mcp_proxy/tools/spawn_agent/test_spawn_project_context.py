@@ -10,8 +10,9 @@ from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("has_metadata", [False, True])
+@pytest.mark.parametrize("resume_ref", [None, "gobby#123"])
 async def test_explicit_checkout_project_identity_at_tool_boundary(
-    tmp_path: Path, has_metadata: bool
+    tmp_path: Path, has_metadata: bool, resume_ref: str | None
 ) -> None:
     parent_context = {"id": "parent-project", "project_path": "/parent"}
     checkout_context = {"id": "checkout-project", "project_path": str(tmp_path)}
@@ -44,6 +45,7 @@ async def test_explicit_checkout_project_identity_at_tool_boundary(
                 "project_path": str(tmp_path),
                 "parent_session_id": "parent-session",
                 "checkout_mode": "none",
+                "resume_session_id": resume_ref,
             },
         )
 
@@ -52,6 +54,7 @@ async def test_explicit_checkout_project_identity_at_tool_boundary(
     arguments = implementation.await_args
     assert arguments is not None
     assert arguments.kwargs["project_path"] == str(tmp_path)
+    assert arguments.kwargs["project_path_explicit"] is True
     assert arguments.kwargs["target_project_id"] == (
         "checkout-project" if has_metadata else "parent-project"
     )

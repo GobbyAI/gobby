@@ -134,6 +134,7 @@ async def spawn_agent_impl(
     lane: str | None = None,
     agent_pane_reserver: AgentPaneReserver | None = None,
     project_context_authoritative: bool = False,
+    project_path_explicit: bool = True,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     spawn_started_at = start_spawn_phase()
@@ -166,6 +167,13 @@ async def spawn_agent_impl(
             worktree_id, clone_id = await asyncio.to_thread(
                 resume_isolation, resume_target, runner.run_storage
             )
+            if (
+                not (worktree_id or clone_id)
+                and not (project_path and project_path_explicit)
+                and resume_target.workspace_path
+            ):
+                project_path = resume_target.workspace_path
+                checkout_mode = "none"
     try:
         run_lifetime = resolve_run_lifetime(
             agent_body,

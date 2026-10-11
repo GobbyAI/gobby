@@ -167,6 +167,7 @@ async def _drain_spawn_background_tasks() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seat", ["code-reviewer", "researcher", "lane-manager"])
 @pytest.mark.parametrize("dirty", [False, True], ids=["clean", "dirty"])
+@pytest.mark.parametrize("resumed", [False, True], ids=["fresh", "resumed"])
 async def test_team_lane_observer_preserves_candidate_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -175,6 +176,7 @@ async def test_team_lane_observer_preserves_candidate_checkout(
     checkout: IsolatedCheckoutProject,
     seat: str,
     dirty: bool,
+    resumed: bool,
 ) -> None:
     """Render the bundled spawn request and run preparation against a real candidate tree."""
     root = Path(checkout.root_path)
@@ -251,10 +253,37 @@ async def test_team_lane_observer_preserves_candidate_checkout(
     arguments.pop("placement")
     arguments.pop("reserved_run_id")
     arguments.update(execution_mode="one_shot", parent_session_id="parent-1")
+    if resumed:
+        arguments.pop("project_path")
+        arguments.pop("checkout_mode")
+        arguments["resume_session_id"] = "gobby#123"
+        mock_runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
+    target = SimpleNamespace(
+        id="resumed-seat",
+        status="expired",
+        source="claude",
+        external_id="native-thread",
+        agent_run_id="old-run",
+        parent_session_id="parent-1",
+        workflow_name=None,
+        workspace_path=str(candidate),
+    )
     registry = _spawn_registry(mock_runner, storage, _git_manager())
     sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha"))
     with (
         _spawn_flow(agent_body, checkout) as execute_spawn,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._factory._parent_session_project_context",
+            return_value={"id": checkout.project.id, "project_path": checkout.root_path},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_resume_target",
+            return_value=target,
+        ),
+        patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared_spawn()),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.finalize_executed_spawn", AsyncMock()
+        ),
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
             get_project_context,
