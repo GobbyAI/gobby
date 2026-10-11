@@ -329,6 +329,9 @@ def create_communications_registry(
             session_id = _resolve_session_id(session_id)
         except ValueError as e:
             return {"success": False, "error": str(e), "error_type": type(e).__name__}
+        except Exception as e:
+            logger.exception("get_messages failed to resolve session %s", session_id)
+            return {"success": False, "error": str(e)}
 
         try:
             channel_id = None
