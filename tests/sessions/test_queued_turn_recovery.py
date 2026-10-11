@@ -114,6 +114,31 @@ def test_queued_prompt_stop_uses_transcript_order(
         assert result.reason == "stale_provider_turn"
 
 
+@pytest.mark.parametrize("event_kind", ["stop", "resumed"])
+def test_keyless_evidence_keeps_existing_lifecycle_semantics(
+    queued_seat: QueuedSeat,
+    event_kind: str,
+) -> None:
+    seat = queued_seat
+    evidence = TurnEvidence(
+        source="claude",
+        event_time=seat.queued_at + timedelta(seconds=1),
+    )
+    result = (
+        seat.lifecycle.end_turn(seat.session_id, "completed", evidence)
+        if event_kind == "stop"
+        else seat.lifecycle.resumed_work(seat.session_id, evidence)
+    )
+    assert result.reason != "stale_provider_turn"
+    current = seat.sessions.get(seat.session_id)
+    assert current is not None
+    assert current.status == ("paused" if event_kind == "stop" else "active")
+    stored = seat.lifecycle.get(seat.session_id)
+    assert stored.provider_turn_key == "original-prompt"
+    assert stored.generation == 1
+    assert not result.queued_prompt_adopted
+
+
 def test_queued_prompt_tool_event_persists_adopted_generation(queued_seat: QueuedSeat) -> None:
     result = queued_seat.lifecycle.resumed_work(
         queued_seat.session_id,

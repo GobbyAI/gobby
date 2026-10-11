@@ -560,7 +560,14 @@ class TurnLifecycleReducer:
                 )
             queued_prompt_adopted = False
             queued = None
-            if observe_queued_prompt and evidence.source == "claude" and current.started_at:
+            # Keyless hooks retain the ordinary lifecycle semantics; they cannot
+            # correlate an event with a transcript-proven queued prompt.
+            if (
+                observe_queued_prompt
+                and evidence.source == "claude"
+                and evidence.provider_turn_key is not None
+                and current.started_at
+            ):
                 try:
                     queued = ClaudeTranscriptCursor.at_eof(
                         getattr(session, "transcript_path", None)
