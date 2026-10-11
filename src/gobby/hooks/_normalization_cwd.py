@@ -29,6 +29,7 @@ class _Branch:
 class ShellDirectoryState:
     cwd: str | None
     changed: bool = False
+    list_changed: bool = False
     branches: list[_Branch] = field(default_factory=list)
     unstable_loops: frozenset[int] = frozenset()
     altered_loops: set[int] = field(default_factory=set)
@@ -46,20 +47,29 @@ class ShellDirectoryState:
         """Identify pipeline members and function bodies before consuming braces."""
         openings: list[tuple[int, int]] = []
         for index, segment in enumerate(segments):
-            previous = " ".join(t.value for t in segments[index - 1].tokens) if index else ""
             for position, token in enumerate(segment.tokens):
                 if token.quoted:
                     continue
                 if token.value == "{":
-                    header = " ".join(t.value for t in segment.tokens[:position]) or previous
-                    function = re.fullmatch(
-                        r"(?:function\s+([^\s()]+)(?:\s*\(\s*\))?|([^\s()]+)\s*\(\s*\))",
-                        header,
+                    header_tokens = (
+                        segment.tokens[:position]
+                        if position
+                        else segments[index - 1].tokens
+                        if index
+                        else []
                     )
-                    if function:
-                        self.group_functions[id(token)] = function[1] or function[2]
-                        if position:
-                            self.function_headers[id(segment.tokens[0])] = position
+                    function: str | None = None
+                    for start in range(len(header_tokens)):
+                        header = header_tokens[start:]
+                        match = re.fullmatch(
+                            r"(?:function\s+([^\s()]+)(?:\s*\(\s*\))?|([^\s()]+)\s*\(\s*\))",
+                            " ".join(t.value for t in header),
+                        )
+                        if match and all(not t.quoted for t in header):
+                            function = match[1] or match[2]
+                            self.group_functions[id(token)] = function
+                            self.function_headers[id(header[0])] = len(header)
+                            break
                     openings.append((index, id(token)))
                     self.group_isolation[id(token)] = (
                         segment.separator_before == "|" or function is not None
@@ -71,6 +81,18 @@ class ShellDirectoryState:
 
     def pipeline_stage(self, before: str | None, after: str | None) -> bool:
         return (before == "|" and not self.group_entry) or after == "|"
+
+    def sequence_separator(self, before: str | None) -> None:
+        """Invalidate uncertain cwd only for changes in the current and-or list."""
+        if before in {None, ";", "\n"}:
+            self.list_changed = False
+        elif before in {"||", "&"}:
+            if self.list_changed:
+                self.invalidate()
+            if before == "&":
+                self.list_changed = False
+        elif before not in {"&&", "|"}:
+            self.invalidate()
 
     def compound_tokens(
         self, tokens: list[ShellToken], gap: str, case_depth: int, pending: bool
@@ -104,9 +126,10 @@ class ShellDirectoryState:
 
     def conditional_tokens(self, tokens: list[ShellToken]) -> list[ShellToken]:
         """Remove executable if/elif prefixes while restoring branch entry cwd."""
-        if tokens and (header := self.function_headers.get(id(tokens[0]))) is not None:
-            tokens = tokens[header:]
         while tokens and not tokens[0].quoted:
+            if (header := self.function_headers.get(id(tokens[0]))) is not None:
+                tokens = tokens[header:]
+                continue
             word = tokens[0].value
             if word == "if":
                 self.branches.append(_Branch("if", self.cwd, in_condition=True))
@@ -209,6 +232,7 @@ class ShellDirectoryState:
     def mark_changed(self) -> None:
         """Record directory movement in every enclosing branch."""
         self.mark_unproven()
+        self.list_changed = True
         for entry in self.groups:
             if entry is not None and entry[3] is not None:
                 self.directory_functions.add(entry[3])
