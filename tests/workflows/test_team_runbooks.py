@@ -208,7 +208,10 @@ def test_team_lane_renders_operator_inputs(
     assert (args["provider"], args["model"], args["reasoning_effort"]) == (provider, model, effort)
     assert args["execution_mode"] == "interactive"
     assert args["checkout_mode"] == "none"
-    assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
+    if seat == "developer":
+        assert args["worktree_id"] == "pilot-worktree" and "project_path" not in args
+    else:
+        assert args["project_path"] == "/pilot/project" and "worktree_id" not in args
     assert args["reserved_run_id"] == "pilot-run"
     assert args["placement"] == {
         "split": {

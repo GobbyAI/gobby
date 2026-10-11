@@ -659,6 +659,7 @@ def create_spawn_agent_registry(
             parent_session_id=resolved_parent_session_id,
             caller_session_id=caller_session_id,
             project_path=effective_project_path,
+            project_path_explicit=bool(project_path),
             target_project_id=project_id,
             initial_variables=initial_variables,
             session_manager=session_manager,

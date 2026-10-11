@@ -195,6 +195,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name="old-workflow",
+        workspace_path=None,
     )
     sessions = MagicMock()
     sessions.resolve_session_reference.return_value = target.id
@@ -242,6 +243,8 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
             target_project_id="project",
             resume_session_id="gobby#123",
             execution_mode=execution_mode,
+            project_path="/workspace",
+            project_path_explicit=False,
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
                 name="developer",

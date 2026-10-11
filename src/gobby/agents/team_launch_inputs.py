@@ -168,7 +168,7 @@ def resolve_team_launch_inputs(
     caller = SessionManager(db).get(caller_session_id)
     if caller is None:
         raise RunbookSeatRefusal("team-lane needs a caller session")
-    root = Path(require_root(db, caller.project_id, caller.machine_id))
+    require_root(db, caller.project_id, caller.machine_id)
     sessions = SessionManager(db)
     manager = _manager(db, sessions, caller, lane, report_to)
     workspaces = WorkspaceManager(db)
@@ -325,7 +325,7 @@ def resolve_team_launch_inputs(
         pane_id,
         chosen.id,
         manager.ref,
-        str(root),
+        chosen.worktree_path,
         lane_columns,
         lane_rows,
     )
