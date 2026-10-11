@@ -668,8 +668,11 @@ async def _execute_tool(
     timeout: float | None,
     dispatch_id: str | None = None,
 ) -> Any:
+    is_internal = bool(
+        service._internal_manager and service._internal_manager.is_internal(server_name)
+    )
     try:
-        if service._internal_manager and service._internal_manager.is_internal(server_name):
+        if is_internal:
             start_time = time.perf_counter()
             success = False
             try:
@@ -709,18 +712,15 @@ async def _execute_tool(
         result = await service._mcp_manager.call_tool(
             manager_id, tool_name=tool_name, arguments=arguments, **call_kwargs
         )
-        if not server_name.startswith("gobby-"):
-            payload = (
-                result.model_dump(mode="json") if isinstance(result, CallToolResult) else result
+        payload = result.model_dump(mode="json") if isinstance(result, CallToolResult) else result
+        cleaned, counts = clean_untrusted_value(payload)
+        log_invisible_counts(counts, "third-party MCP")
+        if counts.total:
+            result = (
+                CallToolResult.model_validate(cleaned)
+                if isinstance(result, CallToolResult)
+                else cleaned
             )
-            cleaned, counts = clean_untrusted_value(payload)
-            log_invisible_counts(counts, "third-party MCP")
-            if counts.total:
-                result = (
-                    CallToolResult.model_validate(cleaned)
-                    if isinstance(result, CallToolResult)
-                    else cleaned
-                )
         return result
 
     except Exception as e:
@@ -732,7 +732,7 @@ async def _execute_tool(
             )
         else:
             error_message = str(e)
-        if not server_name.startswith("gobby-"):
+        if not is_internal:
             error_message, counts = strip_invisible_unicode(error_message)
             log_invisible_counts(counts, "third-party MCP error")
         is_argument_error = service._is_argument_error(error_message)

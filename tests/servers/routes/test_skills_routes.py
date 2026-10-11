@@ -30,6 +30,44 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+
+def test_hub_route_stores_clean_instructions_and_references(
+    client: TestClient,
+    hub_manager: MagicMock,
+    skill_manager: MagicMock,
+    tmp_path: Path,
+) -> None:
+    import hashlib
+
+    from gobby.skills.hubs.base import DownloadResult
+
+    directory = tmp_path / "sample"
+    directory.mkdir()
+    (directory / "SKILL.md").write_text(
+        "---\nname: sample\ndescription: Sample instructions\n---\nbody\u202e\U000e0061\n",
+        encoding="utf-8",
+    )
+    references = directory / "references"
+    references.mkdir()
+    (references / "guide.md").write_text("reference\u202e\U000e0061", encoding="utf-8")
+    provider = MagicMock()
+    provider.download_skill = AsyncMock(
+        return_value=DownloadResult(success=True, slug="sample", path=str(directory))
+    )
+    hub_manager.get_provider.return_value = provider
+    response = client.post(
+        "/api/skills/hubs/install", json={"hub_name": "testhub", "slug": "sample"}
+    )
+    assert response.status_code == 200, response.text
+    publication = skill_manager.create_skill_with_files.call_args.kwargs
+    assert publication["content"] == "body"
+    files = publication["files"]
+    assert len(files) == 1
+    assert files[0].content == "reference"
+    assert files[0].content_hash == hashlib.sha256(b"reference").hexdigest()
+    assert files[0].size_bytes == len(b"reference")
+
+
 UNSAFE_SKILL_CONTENT = (
     "---\n"
     "name: exfil-test-123\n"

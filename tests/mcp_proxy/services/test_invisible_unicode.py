@@ -11,12 +11,13 @@ from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
 from gobby.mcp_proxy.services.tool_execution import _execute_tool
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("server", ["external", "gobby-skills"])
+@pytest.mark.parametrize("server", ["external", "gobby-evil", "gobby-skills"])
 @pytest.mark.parametrize("model_result", [True, False])
 async def test_external_result_and_own_server_bypass(
     server: str, model_result: bool, caplog: pytest.LogCaptureFixture
@@ -29,7 +30,12 @@ async def test_external_result_and_own_server_bypass(
     )
     original = model if model_result else model.model_dump(mode="json")
     manager = SimpleNamespace(call_tool=AsyncMock(return_value=original))
-    service = SimpleNamespace(_internal_manager=None, _mcp_manager=manager)
+    internal = InternalRegistryManager()
+    if server == "gobby-skills":
+        registry = InternalToolRegistry(server)
+        registry.register("fetch", "", {}, lambda: original)
+        internal.add_registry(registry)
+    service = SimpleNamespace(_internal_manager=internal, _mcp_manager=manager)
     with caplog.at_level(logging.INFO, logger="gobby.prompts.rendering"):
         result = await _execute_tool(
             service=service,
@@ -57,7 +63,7 @@ async def test_external_result_and_own_server_bypass(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("server", ["external", "gobby-skills"])
+@pytest.mark.parametrize("server", ["external", "gobby-evil", "gobby-skills"])
 async def test_public_proxy_caller_receives_cleaned_external_content(
     server: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -67,11 +73,18 @@ async def test_public_proxy_caller_receives_cleaned_external_content(
     manager = MCPClientManager(server_configs=[config], project_id="test-project")
     original = {"text": "private payload\U000e0061\u202e"}
     monkeypatch.setattr(manager, "call_tool", AsyncMock(return_value=original))
-    proxy = ToolProxyService(mcp_manager=manager, validate_arguments=False)
+    internal = InternalRegistryManager()
+    if server == "gobby-skills":
+        registry = InternalToolRegistry(server)
+        registry.register("fetch", "", {}, lambda: original)
+        internal.add_registry(registry)
+    proxy = ToolProxyService(
+        mcp_manager=manager, internal_manager=internal, validate_arguments=False
+    )
     with caplog.at_level(logging.INFO, logger="gobby.prompts.rendering"):
         result = await proxy.call_tool(server, "fetch", {}, enforce_workflow=False, offload=False)
-    assert result == ({"text": "private payload"} if server == "external" else original)
-    if server == "external":
+    assert result == (original if server == "gobby-skills" else {"text": "private payload"})
+    if server != "gobby-skills":
         assert "tags=1" in caplog.text
         assert "bidi=1" in caplog.text
         assert "private payload" not in caplog.text
@@ -80,19 +93,18 @@ async def test_public_proxy_caller_receives_cleaned_external_content(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("server", ["external", "gobby-evil"])
 async def test_downstream_error_text_is_also_untrusted(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, server: str
 ) -> None:
     config = MCPServerConfig(
-        name="external", project_id="test-project", transport="http", url="https://example.test"
+        name=server, project_id="test-project", transport="http", url="https://example.test"
     )
     manager = MCPClientManager(server_configs=[config], project_id="test-project")
     monkeypatch.setattr(manager, "call_tool", AsyncMock(side_effect=MCPError("failed\u202e\x00")))
     proxy = ToolProxyService(mcp_manager=manager, validate_arguments=False)
     with caplog.at_level(logging.INFO, logger="gobby.prompts.rendering"):
-        result = await proxy.call_tool(
-            "external", "fetch", {}, enforce_workflow=False, offload=False
-        )
+        result = await proxy.call_tool(server, "fetch", {}, enforce_workflow=False, offload=False)
     assert result["success"] is False
     assert result["error"] == "failed"
     count_logs = [

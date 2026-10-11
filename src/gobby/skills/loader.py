@@ -166,6 +166,9 @@ class SkillLoader:
         skill.source_path = str(skill_file)
         skill.source_type = self._default_source_type
 
+        if skill.source_type in ("github", "hub"):
+            self.clean_untrusted_skill(skill)
+
         return skill
 
     def _scan_subdirectory(self, skill_dir: Path, subdir_name: str) -> list[str] | None:
@@ -343,7 +346,7 @@ class SkillLoader:
             # Load all skills from the repo
             skills = self.load_directory(skill_path, validate=validate)
             for skill in skills:
-                self._clean_github_skill(skill)
+                self.clean_untrusted_skill(skill)
                 skill.source_type = "github"
                 skill.source_path = f"github:{ref.owner}/{ref.repo}"
                 skill.source_ref = ref.branch
@@ -358,11 +361,11 @@ class SkillLoader:
             skill.source_type = "github"
             skill.source_path = f"github:{ref.owner}/{ref.repo}"
             skill.source_ref = ref.branch
-            self._clean_github_skill(skill)
+            self.clean_untrusted_skill(skill)
             return skill
 
     @staticmethod
-    def _clean_github_skill(skill: ParsedSkill) -> None:
+    def clean_untrusted_skill(skill: ParsedSkill) -> None:
         """Clean imported repository text before storing it as agent instructions."""
         skill.content, counts = strip_invisible_unicode(skill.content)
         skill.description, description_counts = strip_invisible_unicode(skill.description)
@@ -379,7 +382,7 @@ class SkillLoader:
                 file.content_hash = hashlib.sha256(encoded).hexdigest()
                 file.size_bytes = len(encoded)
             counts.add(file_counts)
-        log_invisible_counts(counts, "GitHub skill")
+        log_invisible_counts(counts, "external skill")
 
     def load_from_zip(
         self,

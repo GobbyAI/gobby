@@ -360,11 +360,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
             self.logger.debug("AFTER_TOOL [%s]: %s", status, tool_name)
 
         response = HookResponse(decision="allow")
-        if not str(tool_name).startswith("mcp__") and not is_wrapper_echo_event(event):
+        if not str(tool_name).startswith("mcp__gobby__") and not is_wrapper_echo_event(event):
             output = input_data.get(
                 "tool_output", input_data.get("tool_response", input_data.get("tool_result"))
             )
-            _, counts = clean_untrusted_value(output)
+            _, counts = clean_untrusted_value(
+                output, ignore_leading_bom=tool_name == "Read", ignore_ansi=tool_name == "Bash"
+            )
             log_invisible_counts(counts, "native tool output")
             if counts.total:
                 response.add_context(

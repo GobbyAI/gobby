@@ -16,6 +16,7 @@ _INVISIBLE_UNICODE = re.compile(
     r"|(?P<bidi>[\u202a-\u202e\u2066-\u2069])"
     r"|(?P<controls>[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f])"
 )
+_ANSI_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 @dataclass
@@ -57,16 +58,24 @@ def strip_invisible_unicode(text: str) -> tuple[str, InvisibleCounts]:
     return _INVISIBLE_UNICODE.sub(remove, text), counts
 
 
-def clean_untrusted_value(value: Any) -> tuple[Any, InvisibleCounts]:
-    """Clean text leaves in JSON-shaped content, preserving keys and binary data."""
+def clean_untrusted_value(
+    value: Any, *, ignore_leading_bom: bool = False, ignore_ansi: bool = False
+) -> tuple[Any, InvisibleCounts]:
+    """Clean text leaves, preserving keys/binary; inspection may ignore display annotations."""
     if isinstance(value, str):
+        if ignore_leading_bom:
+            value = value.removeprefix("\ufeff")
+        if ignore_ansi:
+            value = _ANSI_CSI.sub("", value)
         return strip_invisible_unicode(value)
     counts = InvisibleCounts()
     if isinstance(value, (dict, list, tuple)):
         items = value.items() if isinstance(value, dict) else enumerate(value)
         cleaned: dict[Any, Any] = {}
         for key, item in items:
-            cleaned[key], item_counts = clean_untrusted_value(item)
+            cleaned[key], item_counts = clean_untrusted_value(
+                item, ignore_leading_bom=ignore_leading_bom, ignore_ansi=ignore_ansi
+            )
             counts.add(item_counts)
         if isinstance(value, dict):
             return cleaned, counts
