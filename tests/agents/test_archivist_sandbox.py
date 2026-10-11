@@ -64,15 +64,32 @@ async def test_spawn_grants_only_archivist_dated_digests(
     digest_glob = str(home / "Desktop/gobby-digest-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md")
     assert (digest_glob in writes) is (agent_name == "archivist")
     assert str(home / "Desktop") not in writes
-    for filename in ("gobby-digest-2026-10-10.md", "gobby-digest-2026-10-11.md"):
+    for filename in (
+        "gobby-digest-2026-10-10.md",
+        "gobby-digest-2026-10-11.md",
+        "gobby-digest-2026-10-10.md.tmp.1.d4c9fe167b3e",
+        "gobby-digest-2026-10-10.md.tmp.29592.7e53ef56480f",
+        "gobby-digest-2026-10-11.md.tmp.2147483647.012345abcdef",
+    ):
         path = str(home / "Desktop" / filename)
         assert any(fnmatchcase(path, pattern) for pattern in writes) is (agent_name == "archivist")
     for filename in (
         "notes.md",
         "gobby-digest.md",
         "gobby-digest-2026-1-10.md",
+        "gobby-digest-2026-١٠-10.md",
         "gobby-digest-2026-10-10.md.bak",
         "gobby-digest-2026-10-10.md/child",
+        "gobby-digest-2026-10-10.md.tmp.29592.d4c9fe167b3e/child",
+        "gobby-digest-2026-10-10.md.tmp..d4c9fe167b3e",
+        "gobby-digest-2026-10-10.md.tmp.1x.d4c9fe167b3e",
+        "gobby-digest-2026-10-10.md.tmp.12345678901.d4c9fe167b3e",
+        "gobby-digest-2026-10-10.md.tmp.29592.",
+        "gobby-digest-2026-10-10.md.tmp.29592.d4c9fe167b3",
+        "gobby-digest-2026-10-10.md.tmp.29592.d4c9fe167b3ef",
+        "gobby-digest-2026-10-10.md.tmp.29592.d4c9fe167b3g",
+        "gobby-digest-2026-10-10.md.tmp.29592.D4C9FE167B3E",
+        "gobby-digest-2026-10-10.md.tmp.29592.d4c9fe167b3e.bak",
     ):
         path = str(home / "Desktop" / filename)
         assert not any(fnmatchcase(path, pattern) for pattern in writes)

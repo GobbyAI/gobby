@@ -472,6 +472,50 @@ async def test_seat_write_scope_is_path_aware(
     assert await decision(DEVELOPER, _write(project, "src/app.py")) == "allow"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["Write", "Edit"])
+async def test_archivist_staging_scope_is_bounded(
+    engine: RuleEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_name: str
+) -> None:
+    home = (tmp_path / "home").resolve()
+    monkeypatch.setenv("HOME", str(home))
+    desktop = home / "Desktop"
+    digest = "gobby-digest-2026-10-10.md"
+    for filename, expected in (
+        (digest, "allow"),
+        (f"{digest}.tmp.1.d4c9fe167b3e", "allow"),
+        (f"{digest}.tmp.29592.7e53ef56480f", "allow"),
+        (f"{digest}.tmp.2147483647.012345abcdef", "allow"),
+        ("notes.md", "block"),
+        ("gobby-digest-2026-١٠-10.md", "block"),
+        (f"{digest}/child", "block"),
+        (f"{digest}.tmp.29592.d4c9fe167b3e/child", "block"),
+        (f"{digest}.tmp..d4c9fe167b3e", "block"),
+        (f"{digest}.tmp.1x.d4c9fe167b3e", "block"),
+        (f"{digest}.tmp.12345678901.d4c9fe167b3e", "block"),
+        (f"{digest}.tmp.29592.", "block"),
+        (f"{digest}.tmp.29592.d4c9fe167b3", "block"),
+        (f"{digest}.tmp.29592.d4c9fe167b3ef", "block"),
+        (f"{digest}.tmp.29592.d4c9fe167b3g", "block"),
+        (f"{digest}.tmp.29592.D4C9FE167B3E", "block"),
+        (f"{digest}.tmp.29592.d4c9fe167b3e.bak", "block"),
+    ):
+        file_path = str(desktop / filename)
+        tool_input = (
+            {"file_path": file_path, "content": "digest"}
+            if tool_name == "Write"
+            else {"file_path": file_path, "old_string": "old", "new_string": "new"}
+        )
+        response = await _decide(
+            engine,
+            {"tool_name": tool_name, "tool_input": tool_input, "cwd": str(tmp_path)},
+            ARCHIVIST,
+        )
+        assert response.decision == expected, filename
+        if expected == "block":
+            assert "The Archivist writes only" in (response.reason or "")
+
+
 class _ProxyHarness:
     """Drive the proxy before_tool boundary with the real event builder."""
 
