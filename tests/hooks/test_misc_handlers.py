@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,7 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.worktrees.git import BranchDivergenceUnavailableError
+from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import make_event
@@ -472,6 +473,88 @@ class TestNotificationHandlerEdgeCases:
 class TestWorktreeHandlers:
     """Test WORKTREE_CREATE and WORKTREE_REMOVE default behavior."""
 
+    @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged"])
+    @pytest.mark.parametrize("use_local", [True, False])
+    async def test_worktree_create_handles_orphan_branch(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path, state: str, use_local: bool
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git("init", "-b", "main")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test User")
+        git("commit", "--allow-empty", "-m", "initial")
+        git("branch", "feature-auth")
+        if state in {"ancestor", "diverged"}:
+            git("commit", "--allow-empty", "-m", "base advances")
+        if state in {"ahead", "diverged"}:
+            git("switch", "feature-auth")
+            git("commit", "--allow-empty", "-m", "unmerged task")
+            git("switch", "main")
+        branch_tip = git("rev-parse", "refs/heads/feature-auth")
+        git("remote", "add", "origin", str(repo))
+        worktree_path = tmp_path / "recreated"
+        worktree_manager = mock_dependencies["worktree_manager"]
+        worktree_manager.get_by_branch.return_value = MagicMock(
+            id="wt-stale", project_id="proj-123", worktree_path=str(tmp_path / "missing")
+        )
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
+        )
+        git_manager = WorktreeGitManager(repo)
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch.object(
+                git_manager, "has_unpushed_commits", AsyncMock(return_value=(use_local, 0))
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path",
+                return_value=str(worktree_path),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.cleanup_checkout_cargo_target_dir",
+                return_value=None,
+            ),
+            patch("gobby.hooks.event_handlers._misc.copy_project_json_to_worktree"),
+            patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        worktree_manager.delete.assert_called_once_with("wt-stale")
+        assert git("rev-parse", "refs/heads/feature-auth") == branch_tip
+        if state in {"ancestor", "equal"}:
+            assert response.worktree_path == str(worktree_path)
+            assert response.decision == "allow"
+            assert (worktree_path / ".git").is_file()
+            assert (
+                subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=worktree_path,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                == branch_tip
+            )
+            worktree_manager.create.assert_called_once()
+        else:
+            assert response.decision == "block"
+            assert response.reason is not None and "feature-auth" in response.reason
+            assert response.worktree_path is None
+            assert not worktree_path.exists()
+            worktree_manager.create.assert_not_called()
+
     async def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
 
@@ -486,6 +569,9 @@ class TestWorktreeHandlers:
         git_manager.repo_path = "/repo"
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        )
         git_manager.create_worktree = AsyncMock(return_value=MagicMock(success=True, message="ok"))
 
         with (
@@ -549,7 +635,8 @@ class TestWorktreeHandlers:
         ):
             response = await handlers.handle_worktree_create(event)
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+        assert response.reason is not None and "feature-auth" in response.reason
         assert response.worktree_path is None
         assert resolve_context.call_count == 1
         assert cleanup_target.call_count == 1
@@ -558,6 +645,40 @@ class TestWorktreeHandlers:
         assert worktree_manager.create.call_count == 0
         worktree_manager.delete.assert_not_called()
         worktree_manager.create.assert_not_called()
+
+    async def test_worktree_create_refuses_creation_collision(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+        git_manager = MagicMock(repo_path="/repo")
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        )
+        git_manager.create_worktree = AsyncMock(
+            return_value=SimpleNamespace(success=False, message="Destination branch already exists")
+        )
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-race"}, source="claude"
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path", return_value="/tmp/race"
+            ),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "block"
+        assert response.reason is not None and "feature-race" in response.reason
+        assert response.worktree_path is None
+        git_manager.create_worktree.assert_awaited_once()
+        mock_dependencies["worktree_manager"].create.assert_not_called()
 
     async def test_worktree_create_fails_closed_when_base_divergence_is_unavailable(
         self, mock_dependencies: dict
@@ -583,7 +704,8 @@ class TestWorktreeHandlers:
         ):
             response = await handlers.handle_worktree_create(event)
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+        assert response.reason is not None and "feature-unsafe" in response.reason
         assert response.worktree_path is None
         git_manager.create_worktree.assert_not_called()
         mock_dependencies["worktree_manager"].create.assert_not_called()

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.agents.worktree_reuse import (
     ReusedWorktreeRebaseConflict,
+    capture_worktree_base_commit_sha,
     sync_reused_worktree_to_base,
 )
 from gobby.worktrees.git import WorktreeGitManager
@@ -59,6 +60,78 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.parametrize("use_local", [True, False])
+@pytest.mark.parametrize("base_branch", ["main", "refs/heads/main"])
+async def test_capture_base_prefers_branch_over_same_named_tag(
+    tmp_path: Path, use_local: bool, base_branch: str
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "initial")
+    tag_name = "main" if use_local else "origin/main"
+    _git(tmp_path, "tag", tag_name)
+    tag_sha = _git(tmp_path, "rev-parse", f"refs/tags/{tag_name}").stdout.strip()
+    _git(tmp_path, "commit", "--allow-empty", "-m", "base advances")
+    base_sha = _git(tmp_path, "rev-parse", "refs/heads/main").stdout.strip()
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", base_sha)
+    _git(tmp_path, "switch", "-c", "task")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "task commit")
+
+    captured = await capture_worktree_base_commit_sha(
+        git_manager=WorktreeGitManager(tmp_path),
+        worktree_path=str(tmp_path),
+        base_branch=base_branch,
+        use_local=use_local,
+    )
+
+    assert captured == base_sha
+    assert captured != tag_sha
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.parametrize("use_local", [True, False])
+async def test_capture_base_refuses_tag_without_branch(tmp_path: Path, use_local: bool) -> None:
+    _git(tmp_path, "init", "-b", "task")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "task commit")
+    _git(tmp_path, "tag", "main" if use_local else "origin/main")
+
+    with pytest.raises(RuntimeError, match="Failed to resolve base branch refs/"):
+        await capture_worktree_base_commit_sha(
+            git_manager=WorktreeGitManager(tmp_path),
+            worktree_path=str(tmp_path),
+            base_branch="main",
+            use_local=use_local,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_sync_reused_worktree_prefers_branch_over_same_named_tag(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test User")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "initial")
+    _git(tmp_path, "tag", "main")
+    tag_sha = _git(tmp_path, "rev-parse", "refs/tags/main").stdout.strip()
+    _git(tmp_path, "commit", "--allow-empty", "-m", "base advances")
+    base_sha = _git(tmp_path, "rev-parse", "refs/heads/main").stdout.strip()
+    _git(tmp_path, "switch", "-c", "task", tag_sha)
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=WorktreeGitManager(tmp_path), worktree_path=str(tmp_path), base_branch="main"
+    )
+
+    assert result.status == "rebased"
+    assert result.base_commit_sha == base_sha
+    assert _git(tmp_path, "rev-parse", "HEAD").stdout.strip() == base_sha
+
+
+@pytest.mark.asyncio
 @pytest.mark.unit
 async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
@@ -79,8 +152,8 @@ async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: 
     )
 
     assert result.status == "rebased"
-    assert result.base_ref == "0.4.7"
-    assert git.calls[3][0] == ["rebase", "0.4.7"]
+    assert result.base_ref == "refs/heads/0.4.7"
+    assert git.calls[3][0] == ["rebase", "base-sha"]
     assert git.calls[3][1] == worktree
     assert git.calls[3][2] == 120
 
