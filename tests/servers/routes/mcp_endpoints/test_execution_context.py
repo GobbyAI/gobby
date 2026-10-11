@@ -10,13 +10,11 @@ workflow/session context when body arguments target another session.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import psutil
 import pytest
 from fastapi import HTTPException
 
@@ -40,7 +38,6 @@ def _exception_detail(exc: HTTPException) -> dict[str, Any]:
 def _make_server(db: MagicMock | None = None) -> MagicMock:
     server = MagicMock()
     server.session_manager = MagicMock()
-    server.session_manager.backfill_terminal_context.return_value = (None, False)
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
     if db is not None:
         server.session_manager.db = db
@@ -259,13 +256,18 @@ class TestSetContextForRequest:
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None
 
-    async def test_wrapper_session_header_backfills_terminal_context(self) -> None:
+    @pytest.mark.parametrize("fail_backfill", [False, True])
+    async def test_wrapper_session_header_backfills_terminal_context(
+        self, fail_backfill: bool
+    ) -> None:
         """An explicit wrapper session receives the wrapper's current terminal identity."""
         server = _make_server()
-        updated_session = SimpleNamespace(status="expired")
-        server.session_manager.backfill_terminal_context.return_value = (updated_session, False)
+        if fail_backfill:
+            server.session_manager.backfill_terminal_context.side_effect = RuntimeError(
+                "terminal metadata unavailable"
+            )
         terminal_context = {
-            "parent_pid": os.getpid(),
+            "parent_pid": 4242,
             "tmux_pane": "%142",
             "tmux_socket_path": "/tmp/tmux/default",
         }
@@ -290,15 +292,7 @@ class TestSetContextForRequest:
         assert mock_helper.call_args.kwargs["session_ref"] == "#7"
         server.session_manager.backfill_terminal_context.assert_called_once_with(
             SESSION_UUID,
-            {
-                **terminal_context,
-                "parent_create_time": psutil.Process().create_time(),
-                "parent_name": psutil.Process().name(),
-            },
-            server.session_manager.get.return_value,
-        )
-        server.session_manager.revive_expired_terminal_session.assert_called_once_with(
-            SESSION_UUID, updated_session
+            terminal_context,
         )
         server.session_manager.resolve_current_terminal_session.assert_not_called()
 

@@ -391,7 +391,7 @@ fn build_dispatch_envelope(
     inject_machine_identity(&mut input_data);
 
     if terminal_context::enabled_for_hook(hook_type) {
-        terminal_context::inject(&mut input_data);
+        terminal_context::inject(&mut input_data, hook_type);
     }
 
     // Headers: omit on missing (never empty string).
@@ -665,13 +665,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_omits_terminal_context_for_tool_hooks() {
+    fn dispatch_envelope_captures_terminal_context_sender_without_tmux_for_tool_hooks() {
         with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
             let cfg = CliConfig::for_cli("codex").expect("supported CLI");
             let envelope =
                 build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
 
-            assert!(envelope.input_data.get("terminal_context").is_none());
+            let context = &envelope.input_data["terminal_context"];
+            assert!(context["parent_pid"].as_i64().unwrap() > 0);
+            assert!(context.get("tmux_pane").is_none());
         });
     }
 

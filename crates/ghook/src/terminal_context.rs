@@ -42,26 +42,57 @@ pub fn capture() -> Value {
 }
 
 pub fn enabled_for_hook(hook_type: &str) -> bool {
+    sender_context_enabled_for_hook(hook_type)
+        || matches!(
+            normalized_hook_type(hook_type).as_str(),
+            "sessionstart"
+                | "userpromptsubmit"
+                | "beforeagent"
+                | "preinvocation"
+                | "sessionend"
+                | "stop"
+                | "stopcancelled"
+                | "afteragent"
+                | "postinvocation"
+                | "subagentstart"
+                | "subagentstop"
+                | "subagentend"
+        )
+}
+
+fn normalized_hook_type(hook_type: &str) -> String {
+    hook_type
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | '_'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn sender_context_enabled_for_hook(hook_type: &str) -> bool {
     matches!(
-        hook_type
-            .chars()
-            .filter(|ch| !matches!(ch, '-' | '_'))
-            .flat_map(char::to_lowercase)
-            .collect::<String>()
-            .as_str(),
-        "sessionstart"
-            | "userpromptsubmit"
-            | "beforeagent"
-            | "preinvocation"
-            | "sessionend"
-            | "stop"
-            | "stopcancelled"
-            | "afteragent"
-            | "postinvocation"
-            | "subagentstart"
-            | "subagentstop"
-            | "subagentend"
+        normalized_hook_type(hook_type).as_str(),
+        "pretooluse"
+            | "posttooluse"
+            | "posttoolusefailure"
+            | "posttoolbatch"
+            | "beforetool"
+            | "aftertool"
+            | "aftertoolfailure"
+            | "permissionrequest"
     )
+}
+
+pub fn capture_for_hook(hook_type: &str) -> Value {
+    if sender_context_enabled_for_hook(hook_type) {
+        // Tool hooks need the sender that can refresh a stale recorded CLI PID.
+        // Existing pane metadata stays on the row; avoid tmux subprocesses here.
+        json!({
+            "parent_pid": parent_pid_or_null(),
+            "gobby_agent_run_id": env_or_null("GOBBY_AGENT_RUN_ID"),
+        })
+    } else {
+        capture()
+    }
 }
 
 fn build_context(
@@ -117,14 +148,14 @@ fn build_context(
 ///
 /// Existing provider context is preserved. Captured fields fill gaps, while
 /// `gobby_agent_run_id` always comes from ghook's trusted process environment.
-pub fn inject(input_data: &mut Value) {
+pub fn inject(input_data: &mut Value, hook_type: &str) {
     let Some(obj) = input_data.as_object_mut() else {
         return;
     };
 
     match obj.get_mut("terminal_context") {
         Some(Value::Object(existing)) => {
-            let Value::Object(captured) = capture() else {
+            let Value::Object(captured) = capture_for_hook(hook_type) else {
                 return;
             };
             for (key, value) in captured {
@@ -137,7 +168,7 @@ pub fn inject(input_data: &mut Value) {
         }
         Some(_) => {}
         None => {
-            obj.insert("terminal_context".into(), capture());
+            obj.insert("terminal_context".into(), capture_for_hook(hook_type));
         }
     }
 }
@@ -395,16 +426,43 @@ mod tests {
     }
 
     #[test]
-    fn tool_hooks_do_not_enable_terminal_context() {
+    fn tool_hooks_enable_sender_context() {
         for hook_type in [
             "PreToolUse",
             "PostToolUse",
             "BeforeTool",
             "AfterTool",
+            "pre-tool-use",
+            "post_tool_use_failure",
+            "PostToolBatch",
+            "after-tool-failure",
             "PermissionRequest",
         ] {
-            assert!(!enabled_for_hook(hook_type), "{hook_type}");
+            assert!(enabled_for_hook(hook_type), "{hook_type}");
+            let context = capture_for_hook(hook_type);
+            assert_eq!(context.as_object().unwrap().len(), 2, "{hook_type}");
+            assert!(context["parent_pid"].as_i64().unwrap() > 0, "{hook_type}");
+            assert!(context.get("tmux_pane").is_none(), "{hook_type}");
         }
+    }
+
+    #[test]
+    fn tool_sender_capture_cost() {
+        assert!(
+            capture_for_hook("pre-tool-use")["parent_pid"]
+                .as_i64()
+                .unwrap()
+                > 0
+        );
+        let started = std::time::Instant::now();
+        for _ in 0..10_000 {
+            std::hint::black_box(capture_for_hook("pre-tool-use"));
+        }
+        eprintln!(
+            "10000 sender captures: {:?}, mean {:?}",
+            started.elapsed(),
+            started.elapsed() / 10_000
+        );
     }
 
     #[test]
@@ -413,7 +471,7 @@ mod tests {
             "session_id": "s1",
             "terminal_context": {"custom": "preserved"},
         });
-        inject(&mut data);
+        inject(&mut data, "SessionStart");
         assert_eq!(data["terminal_context"]["custom"], "preserved");
         assert!(data["terminal_context"].get("parent_pid").is_some());
         assert!(data["terminal_context"].get("gobby_agent_run_id").is_some());
@@ -422,7 +480,7 @@ mod tests {
     #[test]
     fn inject_no_op_on_non_object() {
         let mut data = json!("not an object");
-        inject(&mut data);
+        inject(&mut data, "SessionStart");
         assert_eq!(data, json!("not an object"));
     }
 

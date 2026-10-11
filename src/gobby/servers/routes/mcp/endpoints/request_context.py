@@ -10,7 +10,6 @@ from uuid import UUID
 
 from fastapi import HTTPException, Request
 
-from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.services.server_resolution import (
     ProjectScopeUnresolvedError,
@@ -295,39 +294,25 @@ async def _set_context_for_request(
     if wrapper_request and tokens.resolved_session_id is None:
         reset_seeded_contexts(tokens)
         _raise_session_required(terminal_context_seen=terminal_context_seen)
-    try:
-        if (
-            wrapper_request
-            and header_session_id
-            and terminal_context is not None
-            and server.session_manager is not None
-        ):
-            current = await server.run_db(server.session_manager.get, tokens.resolved_session_id)
-            verified_context = await server.run_db(
-                enrich_terminal_context_with_cwd,
-                terminal_context,
-                None,
-                external_id=current.external_id if current is not None else None,
-            )
-            updated, _ = await server.run_db(
+    if (
+        wrapper_request
+        and header_session_id
+        and terminal_context is not None
+        and server.session_manager is not None
+    ):
+        try:
+            await server.run_db(
                 server.session_manager.backfill_terminal_context,
                 tokens.resolved_session_id,
-                verified_context,
-                current,
+                terminal_context,
             )
-            # A wrapper PID alone must not retain the departed CLI's creation
-            # time. Only a verified live sender can revive an expired seat.
-            if (
-                updated is not None
-                and updated.status == "expired"
-                and verified_context
-                and verified_context.get("parent_create_time") is not None
-            ):
-                await server.run_db(
-                    server.session_manager.revive_expired_terminal_session,
-                    tokens.resolved_session_id,
-                    updated,
-                )
+        except Exception as exc:
+            logger.debug(
+                "Failed to backfill wrapper terminal context for session %s: %s",
+                tokens.resolved_session_id,
+                exc,
+            )
+    try:
         await _bind_agent_run_context(server, request, tokens, db=db, arguments=arguments)
         _seed_request_principal(server, request, tokens)
     except Exception:
