@@ -152,9 +152,12 @@ def test_lookup_keeps_open_owners_open() -> None:
     assert (task.closed_at, task.closed_reason) == (None, None)
 
 
-def test_lookup_reads_all_offloaded_pages_and_caches_the_full_task() -> None:
-    record = task_record(title="Completed work — ✓")
+@pytest.mark.parametrize("description_size", [0, 16000], ids=["small", "oversized"])
+def test_lookup_reads_all_offloaded_pages_and_caches_the_full_task(description_size: int) -> None:
+    record = task_record(title="Completed work — ✓", description="x" * description_size)
     content = json.dumps(record, ensure_ascii=False)
+    if description_size:
+        assert len(content) > 15000
     client = FakeTaskClient([record], offloaded_content=content)
     lookup = DaemonTaskLookup(client)
 
@@ -169,6 +172,8 @@ def test_lookup_reads_all_offloaded_pages_and_caches_the_full_task() -> None:
     [task] = first
     assert task.closed_at == datetime(2026, 10, 7, 3, tzinfo=UTC)
     assert task.title == record["title"]
+    assert task.labels == [LABEL]
+    assert task.commits == ["abc1234"]
     retrieval_calls = [call for call in client.calls if call[0] == "gobby-results"]
     assert [call[2]["offset"] for call in retrieval_calls] == list(range(0, len(content), 80))
     assert sum(call[1] == "get_task" for call in client.calls) == 1
