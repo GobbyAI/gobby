@@ -181,6 +181,32 @@ class TestGobbyRunnerInit:
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
 
+    def test_communications_store_uses_daemon_project_context(
+        self,
+        tmp_path: Path,
+        mock_config_with_websocket: MagicMock,
+    ) -> None:
+        from gobby.config.communications import CommunicationsConfig
+
+        project_id = "33333333-3333-4333-8333-333333333333"
+        mock_config_with_websocket.communications = CommunicationsConfig(enabled=True)
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("")
+        with ExitStack() as stack:
+            for context in patches:
+                stack.enter_context(context)
+            stack.enter_context(
+                patch(
+                    "gobby.utils.project_context.get_project_context",
+                    return_value={"id": project_id},
+                )
+            )
+            runner = GobbyRunner(config_path=config_file)
+        assert runner.project_id == project_id
+        assert runner.communications_manager is not None
+        assert runner.communications_manager.store.project_id == project_id
+
     def test_construction_skips_model_registry_fetch_and_metadata_write(
         self,
         tmp_path: Path,

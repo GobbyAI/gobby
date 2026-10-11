@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
@@ -24,6 +25,8 @@ class SessionActivityManager(Protocol):
 
 class _SessionChangeNotifier(Protocol):
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+    def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -143,8 +146,18 @@ def reconcile_compact_session_activity(
                 error=f"Compact session {current.id} is deleted.",
             )
         for ghost in ghosts:
-            conn.execute("DELETE FROM sessions WHERE id = %s", (ghost.id,))
-            deleted_ids.append(ghost.id)
+            row = conn.execute(
+                """DELETE FROM sessions WHERE id = %s
+                RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name""",
+                (ghost.id,),
+            ).fetchone()
+            if row is not None:
+                deleted_ids.append(str(row["id"]))
+                cast(_SessionChangeNotifier, manager)._notify_status_transition(
+                    SessionStatusTransition.from_session(
+                        Session.from_row(row), status="deleted", transitioned_at=now
+                    )
+                )
         _rebind_provider_identity(conn, current.id, rebind)
 
     _notify_session_change(manager, "session_updated", current.id)

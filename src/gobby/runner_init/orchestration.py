@@ -793,7 +793,9 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             from gobby.communications.manager import CommunicationsManager
             from gobby.storage.communications import LocalCommunicationsStore
 
-            comms_store = LocalCommunicationsStore(runner.database)
+            comms_store = LocalCommunicationsStore(
+                runner.database, project_id=runner.project_id or ""
+            )
             runner.communications_manager = CommunicationsManager(
                 config=config.communications,
                 store=comms_store,
