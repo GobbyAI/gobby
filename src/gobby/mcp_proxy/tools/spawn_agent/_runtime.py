@@ -10,6 +10,7 @@ from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.resume_metadata import build_resume_metadata
 from gobby.agents.sandbox import SandboxConfig
+from gobby.llm.context_windows import reconcile_observed_model
 
 if TYPE_CHECKING:
     from gobby.providers.capabilities.local_context import LocalContextObservation
@@ -167,7 +168,9 @@ def _normalize_optional_model(value: str | None) -> str | None:
     if value is None:
         return None
     value = value.strip()
-    return value if value and value.lower() != "inherit" else None
+    if not value or value.lower() == "inherit":
+        return None
+    return reconcile_observed_model(None, value)
 
 
 def _persist_spawn_runtime(

@@ -262,6 +262,13 @@ pub fn build(inputs: &SidebarInputs) -> SidebarModel {
 /// Roster entries with a terminal, joined to the focused project's sessions
 /// and runs. Terminal rows, sessions, and runs are all fetched for the
 /// focused project, so an entry that joins neither is placed there too.
+fn concrete_model(model: Option<&str>) -> Option<String> {
+    model
+        .map(str::trim)
+        .filter(|model| !model.is_empty() && !(model.starts_with('<') && model.ends_with('>')))
+        .map(str::to_owned)
+}
+
 fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
     let rows = inputs.rows;
     inputs
@@ -350,12 +357,12 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 agent_definition_name,
                 identity_title,
                 provider: provider.unwrap_or_default(),
-                model: entry
-                    .model
-                    .clone()
-                    .or_else(|| run.and_then(|(_, run)| run.model.clone()))
-                    .or_else(|| session.and_then(|(_, session)| session.model.clone())),
-                model_display_name: entry.model_display_name.clone(),
+                model: concrete_model(entry.model.as_deref())
+                    .or_else(|| concrete_model(run.and_then(|(_, run)| run.model.as_deref())))
+                    .or_else(|| {
+                        concrete_model(session.and_then(|(_, session)| session.model.as_deref()))
+                    }),
+                model_display_name: concrete_model(entry.model_display_name.as_deref()),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),

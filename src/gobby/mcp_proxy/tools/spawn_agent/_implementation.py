@@ -162,7 +162,7 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         provider = resume_target.source
-        model = _normalize_optional_model(model) or resume_target.model
+        model = _normalize_optional_model(model) or _normalize_optional_model(resume_target.model)
         reasoning_effort = reasoning_effort or resume_target.reasoning_effort
         if checkout_mode is None and not worktree_id and not clone_id:
             # A resumed seat returns to the checkout its last run worked in.

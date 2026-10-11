@@ -184,12 +184,23 @@ async def test_resume_refuses_missing_session() -> None:
 @pytest.mark.usefixtures("stub_srt_verifier")
 @pytest.mark.parametrize("execution_mode", [None, "interactive", "one_shot"])
 @pytest.mark.parametrize("workspace", ["none", "stored", "explicit", "explicit-missing"])
-@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize(
+    ("stored_model", "definition_model", "override_model", "expected_model"),
+    [
+        ("gpt-6.1-sol", None, None, "gpt-6.1-sol"),
+        ("gpt-6.1-sol", None, "gpt-6-sol", "gpt-6-sol"),
+        ("<synthetic>", "claude-fable-5-1", None, "claude-fable-5-1"),
+        (" <synthetic> ", "claude-fable-5-1", None, "claude-fable-5-1"),
+    ],
+)
 async def test_resume_binds_existing_identity_and_passes_native_thread(
     tmp_path: Path,
     execution_mode: Literal["one_shot", "interactive"] | None,
     workspace: str,
-    override: bool,
+    stored_model: str,
+    definition_model: str | None,
+    override_model: str | None,
+    expected_model: str,
 ) -> None:
     requested = tmp_path / "requested"
     requested.mkdir()
@@ -199,17 +210,18 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
         (stored / "in-flight.txt").write_text("preserve this work\n")
     explicit = workspace.startswith("explicit")
     expected_path = stored if workspace == "stored" else requested
+    provider = "claude" if expected_model.startswith("claude-") else "codex"
     target = SimpleNamespace(
         id="existing",
         project_id="project",
-        source="codex",
+        source=provider,
         external_id="native-thread",
         status="expired",
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name="old-workflow",
         workspace_path=None if workspace == "none" else str(stored),
-        model="gpt-6.1-sol",
+        model=stored_model,
         reasoning_effort="medium",
     )
     sessions = MagicMock()
@@ -255,14 +267,15 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
             parent_session_id="parent",
             target_project_id="project",
             resume_session_id="gobby#123",
-            model="gpt-6-sol" if override else None,
-            reasoning_effort="high" if override else None,
+            model=override_model,
+            reasoning_effort="high" if override_model else None,
             execution_mode=execution_mode,
             project_path=str(requested),
             project_path_explicit=explicit,
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
                 name="developer",
+                model=definition_model,
                 prompts={"agent": "Continue"},
                 step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="load_skills")]),
             ),
@@ -274,12 +287,12 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
     fresh.assert_not_called()
     assert resume.call_args.kwargs["existing_session_id"] == "existing"
     assert resume.call_args.kwargs["original_run_id"] == "old-run"
-    assert resume.call_args.kwargs["model"] == ("gpt-6-sol" if override else "gpt-6.1-sol")
-    expected_effort = "high" if override else "medium"
+    assert resume.call_args.kwargs["model"] == expected_model
+    expected_effort = "high" if override_model else "medium"
     assert resume.call_args.kwargs["requested_reasoning_effort"] == expected_effort
     assert resume.call_args.kwargs["effective_reasoning_effort"] == expected_effort
     request = execute.call_args.args[0]
-    assert request.provider == "codex"
+    assert request.provider == provider
     assert request.resume_session_id == "native-thread"
     assert request.cwd == str(expected_path)
     assert isolation.call_args.args[0] == "none"

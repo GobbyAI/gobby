@@ -203,9 +203,13 @@ def reconcile_observed_model(
     existing_model: str | None,
     observed_model: str | None,
 ) -> str | None:
-    """Preserve explicit context-tier metadata across equivalent observations."""
+    """Ignore transcript placeholders and preserve explicit context-tier metadata."""
     existing = existing_model.strip() if isinstance(existing_model, str) else ""
     observed = observed_model.strip() if isinstance(observed_model, str) else ""
+    if existing.startswith("<") and existing.endswith(">"):
+        existing = ""
+    if observed.startswith("<") and observed.endswith(">"):
+        observed = ""
     if not observed:
         return existing or None
     if not existing:
