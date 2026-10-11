@@ -30,6 +30,7 @@ from ._registration import (
     require_registered_machine,
     require_valid_title_source,
 )
+from ._session_mapping_cache import invalidate_session_caches
 from ._title_defaults import (
     PROVISIONAL_TITLE_SOURCE,
     format_provisional_session_title,
@@ -379,5 +380,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         raise RuntimeError(f"Session {session_id} not found after creation")
                     session = created
 
+        for deleted_id in reconciliation.deleted_ids:
+            invalidate_session_caches(self, deleted_id)
+            self._notify_session_change("session_deleted", deleted_id)
         self._notify_session_change(change_event, session.id)
         return session
