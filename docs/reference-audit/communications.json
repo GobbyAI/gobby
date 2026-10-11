@@ -641,8 +641,8 @@
     },
     {
       "id": "cli-help-complete",
-      "command": "uv run gobby comms <operation> --help for all ten inventoried CLI commands",
-      "result": "All ten CLI operations verified across this and previous context; channels remove additionally supports --yes."
+      "command": "uv run gobby comms <operation> --help for all six inventoried CLI commands",
+      "result": "All six CLI operations verified across this and previous context; channels remove additionally supports --yes."
     },
     {
       "id": "installed-persona",
@@ -804,6 +804,6 @@
     }
   ],
   "coverage_notes": [
-    "All 27 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel mutations. Final post-metadata validation is recorded in the task close transcript."
+    "All 31 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel mutations. Final post-metadata validation is recorded in the task close transcript."
   ]
 }
