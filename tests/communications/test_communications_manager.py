@@ -595,6 +595,58 @@ def _delete_legacy_target(sessions: SessionManager, canonical: Session, deletion
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("deletion", ["identity"])
+@pytest.mark.parametrize("observation", ["cache", "event", "rollback"])
+@pytest.mark.usefixtures("_legacy_identity_index")
+def test_identity_delete_invalidates_caches_and_emits_committed_change(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    deletion: str,
+    observation: str,
+) -> None:
+    sessions = SessionManager(temp_db)
+    canonical, holder = _legacy_delete_target(sessions, sample_project["id"], deletion)
+    sessions.cache_session_mapping(
+        external_id=canonical.external_id,
+        session_id=holder.id,
+        source=holder.source,
+        project_id=holder.project_id,
+        session_type=holder.session_type,
+    )
+    sessions._session_metadata[holder.id] = {"title": holder.title}
+    key = (canonical.external_id, holder.source, holder.project_id, holder.session_type)
+    assert sessions._session_mapping[key] == holder.id
+    assert key in sessions._session_mapping_timestamps
+    changes: list[tuple[str, str]] = []
+
+    def record_change(event: str, session_id: str) -> None:
+        changes.append((event, session_id))
+
+    sessions.register_session_change_listener(record_change)
+    if observation == "rollback":
+        with pytest.raises(RuntimeError, match="rollback identity collapse"):
+            with temp_db.transaction():
+                _delete_legacy_target(sessions, canonical, deletion)
+                assert changes == []
+                raise RuntimeError("rollback identity collapse")
+        assert sessions.get(holder.id) is not None
+        assert changes == []
+        return
+
+    with temp_db.transaction():
+        _delete_legacy_target(sessions, canonical, deletion)
+        assert changes == []
+    assert sessions.get(holder.id) is None
+    assert sessions.get(canonical.id) is not None
+    if observation == "cache":
+        assert holder.id not in sessions._session_mapping.values()
+        assert key not in sessions._session_mapping_timestamps
+        assert holder.id not in sessions._session_metadata
+    else:
+        assert changes == [("session_deleted", holder.id), ("session_updated", canonical.id)]
+
+
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deletion", ["compact", "identity"])
 @pytest.mark.parametrize("assistant_available", [False, True])
