@@ -67,7 +67,10 @@ def _test_referenced(artifact_ref: str, validation_criteria: str) -> bool:
 
 
 def _behavior_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
-    if _contains_ref(validation_criteria, item.artifact_ref, case_sensitive=False):
+    if any(
+        _contains_ref(validation_criteria, ref, case_sensitive=False)
+        for ref in (item.artifact_ref, item.artifact_ref.replace("`", ""))
+    ):
         return True
     path_candidates = _extract_path_candidates(item.prose) | _extract_path_candidates(
         item.artifact_ref

@@ -13,18 +13,39 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
-    ("acceptance", "phrase"),
+    ("acceptance", "expected_line"),
     [
-        (f'Document login. behavior: "{phrase}"', phrase)
+        (
+            f'Document login. behavior: "{phrase}" in `docs/auth.md`.',
+            f'- A1.1: behavior: "{phrase}"',
+        )
         for phrase in ["gobby auth login", "gobby auth key --mint", "git reset"]
     ]
     + [
-        ('Running `gobby auth login` stores the key. behavior: "stores the key"', "stores the key"),
-        ("Document login. behavior: `gobby auth login`", "gobby auth login"),
+        (
+            'Running `gobby auth login` stores the key. behavior: "stores the key" in `docs/auth.md`.',
+            '- A1.1: behavior: "stores the key"',
+        ),
+        (
+            "Document login. behavior: `gobby auth login` in `docs/auth.md`.",
+            '- A1.1: behavior: "gobby auth login"',
+        ),
+        (
+            'Doc. behavior: "run `gobby auth login` to store" in `docs/auth.md`.',
+            '- A1.1: behavior: "run gobby auth login to store"',
+        ),
+        (
+            "Doc. behavior: run `gobby auth login` to store.",
+            '- A1.1: behavior: "run gobby auth login to store"',
+        ),
+        (
+            'Doc. behavior: "stores the key" in `gobby auth login`.',
+            '- A1.1: behavior: "stores the key"',
+        ),
     ],
 )
 def test_behavior_artifact_does_not_become_close_command(
-    tmp_path: Path, acceptance: str, phrase: str
+    tmp_path: Path, acceptance: str, expected_line: str
 ) -> None:
     plan_path = tmp_path / "behavior.md"
     plan_path.write_text(
@@ -36,7 +57,7 @@ Targets:
 - `docs/auth.md`
 
 **Acceptance:**
-- A1.1 - {acceptance} in `docs/auth.md`.
+- A1.1 - {acceptance}
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -65,6 +86,6 @@ Targets:
     assert authored_criterion_commands(leaf["validation"]) == [
         "uv run pytest tests/auth/test_cli.py -q"
     ]
-    assert f'behavior: "{phrase}" in `docs/auth.md`' in leaf["validation"]
+    assert expected_line == leaf["validation"].splitlines()[-1]
     assert artifact_referenced(plan.sections[0].acceptance_items[0], leaf["validation"])
     assert leaf["affected_files"] == ["docs/auth.md"]

@@ -6,7 +6,6 @@ Turns a parsed plan document into a compiled expansion spec.
 from __future__ import annotations
 
 import logging
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -256,13 +255,7 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
     artifact_lines = []
     for item in section.acceptance_items:
         if item.artifact_kind is ArtifactKind.behavior:
-            artifact = f'behavior: "{item.artifact_ref}"'
-            path_clause = re.search(
-                r"""\bbehavior:\s*(?:`[^`]+`|"[^"]+"|'[^']+')\s+(in\s+`[^`]+`)""",
-                item.prose,
-            )
-            if path_clause:
-                artifact += f" {path_clause.group(1)}"
+            artifact = f'behavior: "{item.artifact_ref.replace("`", "")}"'
         else:
             artifact = f"{item.artifact_kind.value}: `{item.artifact_ref}`"
         artifact_lines.append(f"- {item.item_id}: {artifact}")
