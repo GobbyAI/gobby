@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -29,11 +29,13 @@ from gobby.sessions.handoff_records import (
     latest_delivered_clear_handoff,
     record_handoff_delivery,
 )
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
@@ -150,6 +152,131 @@ async def test_set_handoff_rejects_an_undispositioned_finding(
     )
     staged = temp_db.fetchone("SELECT 1 FROM session_handoffs WHERE session_id = %s", (session.id,))
     assert staged is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["set_handoff", "feedback"])
+@pytest.mark.parametrize(
+    "owner,action,accepted",
+    [
+        pytest.param("caller", "claimed", True, id="former-caller-claim"),
+        pytest.param("descendant", "claimed", True, id="former-descendant-claim"),
+        pytest.param("unrelated", "claimed", False, id="unrelated-claim"),
+        pytest.param("caller", "worked_on", False, id="worked-on-only"),
+        pytest.param("caller", "created", False, id="created-only"),
+    ],
+)
+async def test_fixed_disposition_uses_historical_claims_after_creator_closes(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    tool_name: str,
+    owner: str,
+    action: str,
+    accepted: bool,
+) -> None:
+    project_id = _registered_session(session_manager).project_id
+    assert project_id is not None
+    caller = session_manager.register(
+        external_id="historical-claim-caller",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=project_id,
+        session_type="web_chat",
+    )
+    creator = session_manager.register(
+        external_id="historical-claim-creator",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=project_id,
+    )
+    claimant = caller
+    if owner != "caller":
+        claimant = session_manager.register(
+            external_id=f"historical-claim-{owner}",
+            machine_id=MACHINE_ID,
+            source="codex",
+            project_id=project_id,
+        )
+    if owner == "descendant":
+        LocalAgentRunManager(temp_db).create(
+            parent_session_id=caller.id,
+            child_session_id=claimant.id,
+            provider="codex",
+            prompt="Fix the discovered bug.",
+        )
+    task_manager = LocalTaskManager(temp_db)
+    task = task_manager.create_task(
+        project_id=project_id,
+        title="Fixed finding",
+        created_in_session_id=creator.id,
+        validation_criteria="The finding is fixed and its regression test passes.",
+    )
+    if action == "claimed":
+        task_manager.claim_task(task.id, claimant.id)
+        task_manager.release_task_claim(task.id)
+    else:
+        SessionTaskManager(temp_db).link_task(claimant.id, task.id, action=action)
+    closed = task_manager.close_task(task.id, closed_in_session_id=creator.id)
+    assert closed.claimed_by_session_id is None
+    assert closed.closed_in_session_id == creator.id
+
+    compact = AsyncMock(return_value={"compacted": True})
+    chat_registry = SimpleNamespace(
+        find_session=lambda _session_id: (None, None), compact_session=compact
+    )
+    registry = create_session_messages_registry(
+        session_manager=session_manager,
+        task_manager=task_manager,
+        db=temp_db,
+        web_chat_session_registry=chat_registry,
+    )
+    task_ref = f"#{task.seq_num}"
+    with session_context_for_test(caller.id):
+        if tool_name == "set_handoff":
+            result = await registry.call(
+                tool_name,
+                {
+                    "current_state": "Fixed the finding.",
+                    "next_steps": ["Continue."],
+                    "found_work": [dict(FIXED, ref=task_ref)],
+                },
+            )
+        else:
+            result = await registry.call(
+                tool_name,
+                {
+                    "observations": [
+                        {
+                            "source": "gobby-sessions:set_handoff",
+                            "kind": "bug",
+                            "evidence": f"Fixed the finding in {task_ref}.",
+                            "impact": "Handoff can continue.",
+                            "frequency": "once",
+                            "disposition": "fixed",
+                        }
+                    ]
+                },
+            )
+    staged = temp_db.fetchone(
+        "SELECT rendered_markdown FROM session_handoffs WHERE session_id = %s", (caller.id,)
+    )
+    if not accepted:
+        assert result["success"] is False
+        assert result["error_code"] == (
+            "invalid_handoff" if tool_name == "set_handoff" else "invalid_feedback"
+        )
+        assert "'fixed' requires a task claimed or closed" in result["error"]
+        assert staged is None
+        compact.assert_not_awaited()
+    elif tool_name == "set_handoff":
+        assert result.get("compacted") is True, result
+        assert result["handoff_staged"] is True
+        assert staged is not None
+        assert task_ref in staged["rendered_markdown"]
+        compact.assert_awaited_once()
+    else:
+        assert result["success"] is True, result
+        assert result["created"] == 1
 
 
 @pytest.mark.asyncio

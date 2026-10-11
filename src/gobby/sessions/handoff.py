@@ -160,6 +160,7 @@ def normalize_feedback_observations(
     observations: Sequence[Mapping[str, Any]] | None,
     *,
     resolve_task: Callable[[str], Task | None] | None = None,
+    resolve_claimant_sessions: Callable[[str], Collection[str]] | None = None,
     session_id: str | None = None,
     descendant_session_ids: Collection[str] = (),
 ) -> list[FeedbackObservation]:
@@ -202,6 +203,7 @@ def normalize_feedback_observations(
             session_ref_present=_FEEDBACK_SESSION_REF_RE.search(evidence) is not None,
             ref_location="in evidence",
             resolve_task=resolve_task,
+            resolve_claimant_sessions=resolve_claimant_sessions,
             session_id=session_id,
             fixed_owner_session_ids=fixed_owner_session_ids,
         )
@@ -248,6 +250,7 @@ def normalize_found_work(
     entries: Sequence[Mapping[str, Any]] | None,
     *,
     resolve_task: Callable[[str], Task | None] | None = None,
+    resolve_claimant_sessions: Callable[[str], Collection[str]] | None = None,
     session_id: str | None = None,
     descendant_session_ids: Collection[str] = (),
 ) -> list[FoundWorkEntry]:
@@ -273,6 +276,7 @@ def normalize_found_work(
             session_ref_present=_FEEDBACK_SESSION_REF_RE.fullmatch(ref) is not None,
             ref_location="as ref",
             resolve_task=resolve_task,
+            resolve_claimant_sessions=resolve_claimant_sessions,
             session_id=session_id,
             fixed_owner_session_ids=fixed_owner_session_ids,
         )
@@ -297,6 +301,7 @@ def _validate_ladder_disposition(
     session_ref_present: bool,
     ref_location: str,
     resolve_task: Callable[[str], Task | None] | None,
+    resolve_claimant_sessions: Callable[[str], Collection[str]] | None,
     session_id: str | None,
     fixed_owner_session_ids: Collection[str],
 ) -> None:
@@ -326,6 +331,10 @@ def _validate_ladder_disposition(
     elif (
         get_claimed_session_id(task) not in fixed_owner_session_ids
         and task.closed_in_session_id not in fixed_owner_session_ids
+        and (
+            resolve_claimant_sessions is None
+            or not set(fixed_owner_session_ids).intersection(resolve_claimant_sessions(task.id))
+        )
     ):
         _raise_disposition_error(
             field,

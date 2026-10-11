@@ -26,6 +26,7 @@ from gobby.sessions.handoff_reconciliation import (
     reconcile_late_compact_handoff,
 )
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
+from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions._title_defaults import MANUAL_TITLE_SOURCE
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True)
 class _FeedbackTaskResolver:
     resolve_task: Callable[[str], Task | None]
+    resolve_claimant_sessions: Callable[[str], set[str]]
     descendant_session_ids: frozenset[str]
 
 
@@ -139,7 +141,11 @@ def build_feedback_task_resolver(
         except (TaskNotFoundError, ValueError):
             return None
 
-    return _FeedbackTaskResolver(resolve_task, descendant_session_ids)
+    def resolve_claimant_sessions(task_id: str) -> set[str]:
+        with session_manager.db.transaction() as conn:
+            return claimant_sessions(conn, task_id)
+
+    return _FeedbackTaskResolver(resolve_task, resolve_claimant_sessions, descendant_session_ids)
 
 
 def register_handoff_tools(
@@ -372,6 +378,9 @@ def register_handoff_tools(
             normalized = normalize_feedback_observations(
                 observations,
                 resolve_task=(task_resolver.resolve_task if task_resolver is not None else None),
+                resolve_claimant_sessions=(
+                    task_resolver.resolve_claimant_sessions if task_resolver is not None else None
+                ),
                 descendant_session_ids=(
                     task_resolver.descendant_session_ids if task_resolver is not None else ()
                 ),
