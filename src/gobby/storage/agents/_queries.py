@@ -471,7 +471,8 @@ class _AgentRunQueryMixin:
         """Read lifecycle fields without prompt/error bodies or unrelated launch metadata.
 
         Result text remains available for delivered-result and closed-task completion.
-        Recovery fencing, headless detection and closed-task policy retain their metadata.
+        Interactive classification, recovery fencing, headless detection and closed-task
+        policy retain their metadata.
         """
         return self._fetch_runs_with_live_stats(
             "WHERE ar.status IN ('queued', 'running', 'pending') AND ar.machine_id = %s",

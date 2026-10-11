@@ -53,6 +53,7 @@ class _AgentRunSelectorMixin:
                 ar.result,
                 NULL AS error,
                 jsonb_build_object(
+                    'execution_mode', ar.resume_metadata_json -> 'execution_mode',
                     'reconciliation_pending', ar.resume_metadata_json -> 'reconciliation_pending',
                     'daemon_stop_resume_phase', ar.resume_metadata_json -> 'daemon_stop_resume_phase',
                     'allow_closed_task', ar.resume_metadata_json -> 'allow_closed_task',

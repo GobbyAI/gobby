@@ -248,6 +248,7 @@ def test_active_monitor_scan_allocation_ignores_unrelated_metadata(
             provider="codex",
             prompt="Monitor allocation fixture",
             resume_metadata_json={
+                "execution_mode": "autonomous",
                 "unrelated": "x" * unrelated_bytes,
                 "reconciliation_pending": False,
                 "daemon_stop_resume_phase": "finalized",
@@ -281,7 +282,9 @@ def test_active_monitor_scan_allocation_ignores_unrelated_metadata(
         assert observed[0].terminal_id == run.id
         assert observed[0].prompt == ""
         assert observed[0].result == " Delivered result "
+        assert observed[0].is_interactive is False
         assert observed[0].resume_metadata_json == {
+            "execution_mode": "autonomous",
             "reconciliation_pending": False,
             "daemon_stop_resume_phase": "finalized",
             "allow_closed_task": True,
@@ -333,6 +336,32 @@ def test_active_monitor_summary_preserves_recovery_fencing(
     stored = agent_manager.get(run.id)
     assert stored is not None
     assert stored.status == "running"
+
+
+@pytest.mark.integration
+def test_active_summary_preserves_interactive_execution_mode(
+    agent_manager: LocalAgentRunManager,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    parent_id = _register_session(session_manager, sample_project, "interactive-summary")
+    run = agent_manager.create(
+        parent_session_id=parent_id,
+        provider="codex",
+        prompt="Interactive standing seat",
+        resume_metadata_json={
+            "execution_mode": "interactive",
+            "unrelated": "x" * (4 * 1024 * 1024),
+        },
+    )
+    agent_manager.start(run.id)
+
+    observed = agent_manager.list_active_for_machine_summary(run.machine_id)
+
+    assert [candidate.id for candidate in observed] == [run.id]
+    assert observed[0].is_interactive is True
+    assert observed[0].resume_metadata_json is not None
+    assert "unrelated" not in observed[0].resume_metadata_json
 
 
 def test_task_id_filters_apply_to_agent_run_list_queries(
