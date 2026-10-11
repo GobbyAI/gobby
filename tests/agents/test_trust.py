@@ -19,6 +19,17 @@ from gobby.agents.trust import (
 
 
 class TestEncodePath:
+    @pytest.mark.parametrize(
+        "directory,expected",
+        [
+            ("/work/my_project", "-work-my-project"),
+            ("/work/my project", "-work-my-project"),
+            ("/work/café@team", "-work-caf--team"),
+        ],
+    )
+    def test_non_alphanumeric_characters(self, directory: str, expected: str) -> None:
+        assert encode_claude_project_path(directory) == expected
+
     def test_basic_path(self) -> None:
         assert (
             encode_claude_project_path("/Users/josh/Projects/gobby") == "-Users-josh-Projects-gobby"
