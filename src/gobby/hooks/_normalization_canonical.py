@@ -23,7 +23,6 @@ from gobby.hooks._normalization_compound import (
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_env import (
-    UNRESOLVED_DIRECTORY,
     UNRESOLVED_WRAPPER,
     env_directory_operands,
 )
@@ -73,7 +72,6 @@ from gobby.hooks._normalization_segments import (
 )
 from gobby.hooks._normalization_shell import (
     ShellToken,
-    _apply_cd,
     _contains_unexpanded_shell_reference,
     _get_command_text,
     _has_perl_inplace_option,
@@ -269,9 +267,15 @@ def _classify_shell_command(
             ),
         )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
-        in_pipeline = directory.pipeline_stage(segment.separator_before, next_separator)
-        directory.sequence_separator(segment.separator_before)
         raw_parts = shell_token_values(segment.tokens)
+        in_pipeline = (
+            directory.pipeline_stage(segment.separator_before, next_separator)
+            or next_separator == "&"
+        )
+        directory.sequence_separator(
+            segment.separator_before,
+            terminates=raw_parts[:1] in (["exit"], ["return"]) and next_separator not in {"|", "&"},
+        )
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         substitution_bodies = [
             body
@@ -290,16 +294,7 @@ def _classify_shell_command(
         if git_selector_setup(raw_parts, parts):
             exported_git_selector.set(True)
         env_directories = env_directory_operands(raw_parts)
-        segment_cwd = directory.cwd
-        if env_directories and segment_cwd is None and not directory.changed and base_cwd:
-            segment_cwd = str(base_cwd)
-        for operand in env_directories:
-            segment_cwd = _apply_cd(segment_cwd, operand)
-        if any(
-            not _raw_shell_word_is_literal(word)
-            for word in env_directory_operands(list(source_parts))
-        ):
-            segment_cwd = UNRESOLVED_DIRECTORY
+        segment_cwd = directory.invocation_cwd(raw_parts, source_parts, base_cwd)
         segment_base = None if directory.changed or starts_elsewhere(parts) else base_cwd
         if env_directories:
             segment_base = Path(segment_cwd) if segment_cwd else None
@@ -388,7 +383,7 @@ def _classify_shell_command(
                 _classify_shell_segment(
                     segment.tokens,
                     parts,
-                    directory.cwd,
+                    directory.redirect_cwd(),
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
                     base_cwd=segment_base,

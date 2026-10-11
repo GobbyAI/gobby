@@ -49,7 +49,9 @@ def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
             index += 2
         elif word.startswith(("--chdir=", "-C", "--unset=", "-u", "--argv0=", "-a", "-P")):
             if word.startswith(("--chdir=", "-C")):
-                directories = (word.split("=", 1)[1] if "=" in word else word[2:],)
+                directories = (
+                    word[len("--chdir=") :] if word.startswith("--chdir=") else word[2:],
+                )
             index += 1
         elif word.startswith("-"):
             return [UNRESOLVED_WRAPPER], ()
@@ -61,11 +63,11 @@ def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
 
 
 def _utility_command(parts: list[str]) -> list[str]:
-    """Unwrap nohup, timeout and nice using their option/operand boundaries."""
+    """Unwrap utility commands using their option/operand boundaries."""
     if not parts:
         return parts
     name = parts[0].rsplit("/", 1)[-1]
-    if name not in {"nohup", "timeout", "nice"}:
+    if name not in {"nohup", "timeout", "nice", "time"}:
         return parts
     index = 1
     while index < len(parts):
@@ -75,7 +77,9 @@ def _utility_command(parts: list[str]) -> list[str]:
             break
         if word in {"--help", "--version"}:
             return []
-        if name == "timeout" and word in {"--foreground", "--preserve-status", "--verbose", "-v"}:
+        if name == "time" and word == "-p":
+            index += 1
+        elif name == "timeout" and word in {"--foreground", "--preserve-status", "--verbose", "-v"}:
             index += 1
         elif name == "timeout" and word in {"-s", "--signal", "-k", "--kill-after"}:
             if index + 1 >= len(parts):
@@ -107,9 +111,10 @@ def _utility_command(parts: list[str]) -> list[str]:
 def _prefix(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
     if parts and (_ASSIGNMENT.match(parts[0]) or parts[0] in {"do", "then", "else"}):
         return parts[1:], ()
-    if parts[:1] == ["command"]:
+    if parts and parts[0] in {"command", "builtin"}:
         index = 1
-        while index < len(parts) and parts[index] in {"-p", "--"}:
+        options = {"-p", "--"} if parts[0] == "command" else {"--"}
+        while index < len(parts) and parts[index] in options:
             index += 1
         if index < len(parts) and not parts[index].startswith("-"):
             return parts[index:], ()
