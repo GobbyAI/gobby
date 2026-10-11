@@ -13,6 +13,7 @@ from gobby.runtime_grants.handshake import HandshakeService
 from gobby.runtime_grants.launch import ManagedLaunch, merge_child_env
 from gobby.runtime_grants.maintenance import HandshakeMaintenanceLaunchFactory
 from gobby.storage.managed_credentials import ManagedCredentialManager
+from gobby.utils.local_token import read_managed_api_token
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
@@ -47,7 +48,8 @@ def test_maintenance_launch_exports_its_envelope_owner(
         assert child_env.get("GOBBY_PROJECT_ID") == "orphan-project"
         assert "GOBBY_AGENT_RUN_ID" not in child_env
         assert "GOBBY_SESSION_ID" not in child_env
-        assert child_env["GOBBY_AGENT_API_TOKEN"] == grant.managed_api_token
+        assert "GOBBY_AGENT_API_TOKEN" not in child_env
+        assert read_managed_api_token(child_env) == grant.managed_api_token
 
 
 def test_launch_signs_with_current_bootstrap_key(
@@ -85,7 +87,9 @@ def test_launch_signs_with_current_bootstrap_key(
         replacement.write_text(f"api_key: {key}\n")
         replacement.replace(bootstrap)
         with factory.open("project-1", timeout_seconds=30) as launch:
-            token = launch.env["GOBBY_AGENT_API_TOKEN"]
+            assert "GOBBY_AGENT_API_TOKEN" not in launch.env
+            token = read_managed_api_token(launch.env)
+            assert token is not None
             tokens.append(token)
             request = Request(
                 {
