@@ -142,7 +142,10 @@ fn release_gcore_uses_workspace_validation() {
         "gobby-core release default clippy step count"
     );
     assert_eq!(
-        count_run_step(workflow, "cargo nextest run --profile ci --workspace"),
+        count_run_step(
+            workflow,
+            "cargo nextest run --profile ci --workspace -E 'not binary(catalog_manifest_freshness)'"
+        ),
         1,
         "gobby-core release default test step count"
     );
