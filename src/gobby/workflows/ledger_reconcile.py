@@ -146,7 +146,14 @@ async def reconcile_edit_ledgers(
     normalized_dirty = {
         path for value in dirty if (path := normalize_task_edited_path(value)) is not None
     }
-    clean = candidates - normalized_dirty
+    clean = {
+        candidate
+        for candidate in candidates
+        if not any(
+            path == candidate or path.startswith(candidate.rstrip("/") + "/")
+            for path in normalized_dirty
+        )
+    }
     if not clean:
         return []
 

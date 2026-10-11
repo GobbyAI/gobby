@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape
+from gobby.hooks._normalization_env import env_command
 from gobby.hooks._normalization_paths import _append_unique_path
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -674,8 +675,11 @@ def _strip_shell_wrappers(parts: list[str]) -> list[str]:
     while stripped:
         while stripped and _is_env_assignment(stripped[0]):
             stripped = stripped[1:]
-        # A wrapper with options stays whole, or an option would read as the command.
-        if stripped[:1] in (["command"], ["env"]) and not "".join(stripped[1:2]).startswith("-"):
+        env_parts, _ = env_command(stripped)
+        if env_parts != stripped:
+            stripped = env_parts
+            continue
+        if stripped[:1] == ["command"] and not "".join(stripped[1:2]).startswith("-"):
             stripped = stripped[1:]
             continue
         # Loop/conditional body keywords prefix the real command after a

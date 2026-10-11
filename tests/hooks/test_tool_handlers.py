@@ -1120,6 +1120,9 @@ class TestToolHandlerEdgeCases:
     @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue", "--abort"])
     @pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
     @pytest.mark.parametrize("location", ["sibling", "nested"])
+    @pytest.mark.parametrize(
+        "wrapper", ["git -C {target}", "env -C {target} git", "env --chdir={target} git"]
+    )
     def test_foreign_sequencer_scope_is_blocked(
         self,
         mock_dependencies: dict[str, Any],
@@ -1127,6 +1130,7 @@ class TestToolHandlerEdgeCases:
         flag: str,
         operation: str,
         location: str,
+        wrapper: str,
     ) -> None:
         handlers = EventHandlers(**mock_dependencies)
         own = tmp_path / "own"
@@ -1137,7 +1141,10 @@ class TestToolHandlerEdgeCases:
             HookEventType.BEFORE_TOOL,
             data={
                 "tool_name": "Bash",
-                "tool_input": {"command": f"git -C {foreign} {operation} {flag}", "cwd": str(own)},
+                "tool_input": {
+                    "command": f"{wrapper.format(target=foreign)} {operation} {flag}",
+                    "cwd": str(own),
+                },
                 "project_path": str(own),
             },
         )

@@ -13,6 +13,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import subprocess
 import threading
 from collections import OrderedDict
 from collections.abc import Collection, Coroutine
@@ -38,6 +39,7 @@ from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import ChildEvaluationCancelled, WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler, snapshot_variables
+from gobby.workflows.ledger_reconcile import reconcile_edit_ledgers
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
 from tests.storage.tasks._stage_test_helpers import set_stage_state
@@ -2204,6 +2206,69 @@ class TestLedgerDirtyState:
         assert variables["session_dirty_files"] == ["b.py"]
         assert variables["task_edited_files"] == {"task-1": ["b.py"]}
         assert variables["session_edited_files"] == ["a.py", "b.py"]
+
+    @pytest.mark.asyncio
+    async def test_directory_ledgers_survive_dirty_children_until_commit(
+        self,
+        tmp_path: Path,
+        session_var_manager: SessionVariableManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def git(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["git", "-C", str(tmp_path), *arguments],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        git("init")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests/a.py").write_text("value = 1\n")
+        (tmp_path / "tests-other").mkdir()
+        (tmp_path / "tests-other/b.py").write_text("value = 2\n")
+        session_var_manager.select_task_claim(SESSION_ID, "task-1", "#1")
+        session_var_manager.record_edited_files(
+            SESSION_ID, ["tests", "tests-other"], checkout_root=str(tmp_path)
+        )
+
+        async def local_status(
+            cwd: str,
+            paths: Collection[str] = (),
+            *,
+            timeout: float = 10.0,
+            env: dict[str, str] | None = None,
+        ) -> GitOk:
+            del timeout, env
+            assert cwd == str(tmp_path)
+            output = await asyncio.to_thread(
+                git, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *paths
+            )
+            return GitOk(
+                status="ok", argv=("git", "status"), stdout=output.stdout, stderr=output.stderr
+            )
+
+        monkeypatch.setattr(daemon_git, "status", local_status)
+        variables = session_var_manager.get_variables(SESSION_ID)
+        assert (
+            await reconcile_edit_ledgers(
+                variables,
+                SESSION_ID,
+                variable_manager=session_var_manager,
+                project_path=str(tmp_path),
+            )
+            == []
+        )
+        assert variables["task_edited_files"] == {"task-1": ["tests", "tests-other"]}
+        assert variables["session_dirty_files"] == ["tests", "tests-other"]
+
+        git("add", "tests/a.py")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "test")
+        assert await reconcile_edit_ledgers(
+            variables, SESSION_ID, variable_manager=session_var_manager, project_path=str(tmp_path)
+        ) == ["tests"]
+        assert variables["task_edited_files"] == {"task-1": ["tests-other"]}
+        assert variables["session_dirty_files"] == ["tests-other"]
 
     @pytest.mark.asyncio
     async def test_git_timeout_keeps_ledgers_and_warns_once(

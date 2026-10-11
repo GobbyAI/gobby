@@ -96,6 +96,7 @@ def _file_transfer_paths(
         [
             destination
             if source.endswith("/")
+            or posixpath.basename(source).startswith("~")
             or _contains_unexpanded_shell_reference(posixpath.basename(source))
             or any(char in posixpath.basename(source) for char in "*?[{")
             else posixpath.join(destination, posixpath.basename(source))

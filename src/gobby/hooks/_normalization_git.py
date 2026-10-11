@@ -1,5 +1,6 @@
 """Git mutation operands and repository selection for shell normalization."""
 
+from contextvars import ContextVar
 from pathlib import Path
 
 from gobby.hooks._normalization_operands import (
@@ -11,18 +12,33 @@ from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
     _looks_path_target,
     _rebase_shell_paths,
+    _strip_shell_wrappers,
 )
 from gobby.hooks.code_navigation import shell_command_name
+
+exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
+
+
+def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
+    """Fail closed after shell-level selector assignments or declarations."""
+    if not parts:
+        words = raw_parts
+    elif parts[0] in {"export", "declare", "typeset", "local", "readonly"}:
+        words = parts[1:]
+    else:
+        return False
+    return any(
+        word.split("=", 1)[0].removesuffix("+") in {"GIT_DIR", "GIT_WORK_TREE"} for word in words
+    )
 
 
 def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     """Preserve repository selectors lost when transparent wrappers are removed."""
     if not parts or shell_command_name(parts[0]) != "git":
         return parts
-    selectors: list[str] = []
-    for word in raw_parts:
-        if word == parts[0]:
-            break
+    selectors: list[str] = ["--git-dir=$GIT_DIR"] if exported_git_selector.get() else []
+    prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
+    for word in raw_parts[:prefix_length]:
         name, separator, value = word.partition("=")
         if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
             option = "--git-dir" if name == "GIT_DIR" else "--work-tree"
@@ -36,7 +52,7 @@ def classify_git_mutation(
     """Classify Git writes; explicit selectors that lack proof fail closed."""
     index = 1
     git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
-    unknown = False
+    unknown = bool(git_cwd and _contains_unexpanded_shell_reference(git_cwd))
     while index < len(parts):
         word = parts[index]
         if word in {"-C", "-c"}:
