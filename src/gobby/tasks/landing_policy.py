@@ -40,7 +40,12 @@ def _path_class(path: str) -> str:
     if path in _CUTOVER_FILES or path.startswith(_CUTOVER_PREFIXES):
         return "cutover"
     # Project workflows activate through reload_cache's project-aware DB import.
-    for prefix in (".gobby/workflows/pipelines/", ".gobby/workflows/rules/"):
+    for prefix in (
+        ".gobby/workflows/pipelines/",
+        ".gobby/workflows/rules/",
+        ".gobby/workflows/agents/",
+        ".gobby/workflows/variables/",
+    ):
         workflow_file = path.removeprefix(prefix)
         if (
             workflow_file != path

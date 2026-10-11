@@ -511,7 +511,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
         "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= "
         "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
     ) in prompt
-    assert "project pipeline sync is also required" in prompt
+    assert "project workflow sync is also required" in prompt
     assert "including when a stronger activation class is reported" in prompt
     assert "If the field is absent, report unknown." in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt

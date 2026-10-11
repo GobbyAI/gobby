@@ -1182,7 +1182,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
         "pipeline-sync",
         {".gobby/workflows/pipelines/example-lane.yaml": "name: example-lane\n"},
     )
-    task = case.reviewed(sha, "Project pipeline sync")
+    task = case.reviewed(sha, "Project workflow sync")
     if move_tip:
         case.direct({"docs/moved.md": "moved\n"})
     with patch.object(
