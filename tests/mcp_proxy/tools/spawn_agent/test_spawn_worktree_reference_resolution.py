@@ -267,6 +267,8 @@ async def test_team_lane_observer_preserves_candidate_checkout(
         parent_session_id="parent-1",
         workflow_name=None,
         workspace_path=str(candidate),
+        model=None,
+        reasoning_effort=None,
     )
     registry = _spawn_registry(mock_runner, storage, _git_manager())
     sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha"))

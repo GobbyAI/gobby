@@ -184,10 +184,12 @@ async def test_resume_refuses_missing_session() -> None:
 @pytest.mark.usefixtures("stub_srt_verifier")
 @pytest.mark.parametrize("execution_mode", [None, "interactive", "one_shot"])
 @pytest.mark.parametrize("workspace", ["none", "stored", "explicit", "explicit-missing"])
+@pytest.mark.parametrize("override", [False, True])
 async def test_resume_binds_existing_identity_and_passes_native_thread(
     tmp_path: Path,
     execution_mode: Literal["one_shot", "interactive"] | None,
     workspace: str,
+    override: bool,
 ) -> None:
     requested = tmp_path / "requested"
     requested.mkdir()
@@ -207,6 +209,8 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
         parent_session_id="old-parent",
         workflow_name="old-workflow",
         workspace_path=None if workspace == "none" else str(stored),
+        model="gpt-6.1-sol",
+        reasoning_effort="medium",
     )
     sessions = MagicMock()
     sessions.resolve_session_reference.return_value = target.id
@@ -251,6 +255,8 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
             parent_session_id="parent",
             target_project_id="project",
             resume_session_id="gobby#123",
+            model="gpt-6-sol" if override else None,
+            reasoning_effort="high" if override else None,
             execution_mode=execution_mode,
             project_path=str(requested),
             project_path_explicit=explicit,
@@ -268,6 +274,10 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
     fresh.assert_not_called()
     assert resume.call_args.kwargs["existing_session_id"] == "existing"
     assert resume.call_args.kwargs["original_run_id"] == "old-run"
+    assert resume.call_args.kwargs["model"] == ("gpt-6-sol" if override else "gpt-6.1-sol")
+    expected_effort = "high" if override else "medium"
+    assert resume.call_args.kwargs["requested_reasoning_effort"] == expected_effort
+    assert resume.call_args.kwargs["effective_reasoning_effort"] == expected_effort
     request = execute.call_args.args[0]
     assert request.provider == "codex"
     assert request.resume_session_id == "native-thread"
@@ -292,7 +302,13 @@ async def test_resume_refuses_a_stored_workspace_that_is_not_a_directory(
     workspace = tmp_path / "removed-worktree"
     if workspace_kind == "file":
         workspace.write_text("not a checkout\n")
-    target = SimpleNamespace(source="codex", workspace_path=str(workspace), agent_run_id="old-run")
+    target = SimpleNamespace(
+        source="codex",
+        workspace_path=str(workspace),
+        agent_run_id="old-run",
+        model=None,
+        reasoning_effort=None,
+    )
     runner = MagicMock()
     runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
     with (
@@ -367,6 +383,8 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name=None,
+        model=None,
+        reasoning_effort=None,
     )
     sessions = MagicMock()
     sessions.resolve_session_reference.return_value = target.id

@@ -82,7 +82,7 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
         initial_variables={"daemon_resume_marker": "true"},
         git_branch=None,
         prompt="Continue",
-        model=None,
+        model="gpt-6.1-sol",
         is_local=False,
         max_agent_depth=3,
         agent_run_id=successor_run_id,
@@ -90,10 +90,10 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
         claimed_session_id=None,
         timeout_seconds=None,
         sandbox_enabled=False,
-        requested_reasoning_effort=None,
-        effective_reasoning_effort=None,
+        requested_reasoning_effort="medium",
+        effective_reasoning_effort="medium",
         reasoning_required=False,
-        reasoning_status="not_requested",
+        reasoning_status="applied",
         reasoning_message=None,
         resume_metadata_json={
             "resumed_from_run_id": original.id,
@@ -113,6 +113,9 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
     assert successor is not None
     assert successor.status == "pending"
     assert successor.child_session_id == child.id
+    assert successor.model == "gpt-6.1-sol"
+    assert successor.requested_reasoning_effort == "medium"
+    assert successor.effective_reasoning_effort == "medium"
     refreshed = sessions.get(child.id)
     assert refreshed is not None
     assert refreshed.agent_run_id == successor_run_id

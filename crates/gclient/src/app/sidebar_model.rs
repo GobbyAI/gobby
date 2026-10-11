@@ -353,7 +353,8 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 model: entry
                     .model
                     .clone()
-                    .or_else(|| run.and_then(|(_, run)| run.model.clone())),
+                    .or_else(|| run.and_then(|(_, run)| run.model.clone()))
+                    .or_else(|| session.and_then(|(_, session)| session.model.clone())),
                 model_display_name: entry.model_display_name.clone(),
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),

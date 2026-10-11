@@ -501,6 +501,35 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
     );
 }
 
+#[test]
+fn resumed_agent_falls_back_to_session_model_and_effort() {
+    let rows = SidebarRows {
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![SessionRow {
+                id: "resumed-session".to_string(),
+                model: Some("gpt-6.1-sol".to_string()),
+                reasoning_effort: Some("medium".to_string()),
+                ..Default::default()
+            }],
+        )]),
+        runs: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![RunRow {
+                run_id: "resumed-run".to_string(),
+                ..Default::default()
+            }],
+        )]),
+        ..Default::default()
+    };
+    let mut agent = entry("run:resumed-run", Some("terminal-a"));
+    agent.session_id = Some("resumed-session".to_string());
+    agent.run_id = Some("resumed-run".to_string());
+    let model = model(&rows, &[agent], &[pane(1, "terminal-a", false, true)]);
+
+    assert_eq!(model.agents[0].model_slug(), "gpt-6.1-sol-medium");
+}
+
 /// #23049 option A: a row locks only when Gobby launched it under SRT, from
 /// the run's enforced record or a managed session's launch contract. Every
 /// other row, with or without records, is unrestricted; there is no unknown state.
