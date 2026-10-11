@@ -53,13 +53,14 @@ class ShellExecution:
 def preserves_directory(words: list[str]) -> bool:
     """Whether a segment provably leaves this shell's directory unchanged.
 
-    Only a static path runs a separate program. Any other command word may be a
-    builtin, function or alias that changes directory, and a path followed by ``()``
-    defines a function under that name.
+    Git and the boolean builtins preserve cwd, as do programs invoked by static
+    paths. Other names may be functions or aliases that change directory. A path
+    followed by ``()`` defines a function under that name.
     """
     words = _unwrap(words)
     return not words or (
-        _STATIC_PATH.fullmatch(words[0]) is not None and words[1:2] not in (["()"], ["("])
+        (words[0] in {"true", "false", "git"} or _STATIC_PATH.fullmatch(words[0]) is not None)
+        and words[1:2] not in (["()"], ["("])
     )
 
 

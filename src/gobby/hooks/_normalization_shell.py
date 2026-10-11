@@ -281,7 +281,9 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             continue
         compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
         if compound_end is not None:
-            if _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
+            if not (
+                char == "(" and not command.startswith("((", index)
+            ) and _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
                 comparison_operators |= _compound_comparison_operators(command, index, compound_end)
             else:
                 begin(index)
@@ -325,7 +327,7 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
 
 
 def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | None:
-    """Return the end of an arithmetic or ``[[`` compound word starting at ``index``.
+    """Return the end of a subshell, arithmetic or ``[[`` compound at ``index``.
 
     ``$((`` may open anywhere in a word; ``((`` and ``[[ `` only at a word start.
     Returns None when nothing opens here or the construct never closes, so the
@@ -335,6 +337,8 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
         return _balanced_parens_end(command, index + 1)
     if not word_start:
         return None
+    if command.startswith("(", index) and not command.startswith("((", index):
+        return _substitution_end(command, index + 1, False, 0) + 1
     if command.startswith("((", index):
         return _balanced_parens_end(command, index)
     if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
@@ -470,6 +474,19 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
                 quote = char
             elif quote == char:
                 quote = ""
+        elif (
+            not quote
+            and char == "#"
+            and (index == start or text[index - 1].isspace() or text[index - 1] in ";|&(")
+        ):
+            end = text.find("\n", index)
+            end = len(text) if end == -1 else end
+            if backtick:
+                closing = text.find("`", index, end)
+                end = end if closing == -1 else closing
+            line.append(text[index:end])
+            index = end
+            continue
         elif not quote and not arithmetic and char == "\n":
             tokens = scan_shell_command("".join(line)).tokens
             index = _skip_heredocs(text, tokens, index + 1)

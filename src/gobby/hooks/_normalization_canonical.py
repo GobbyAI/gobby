@@ -14,6 +14,7 @@ from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _loop_binding_variable_is_stable,
 )
+from gobby.hooks._normalization_git import classify_git_mutation, git_environment_parts
 from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
     _gate_rewritable_scripts,
@@ -23,10 +24,9 @@ from gobby.hooks._normalization_metadata import (
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _file_command_operands,
+    _file_transfer_paths,
     _find_has_mutation_predicate,
-    _git_add_positional_args_after,
     _git_grep_is_revision_scoped,
-    _git_restore_positional_args_after,
     _search_command_paths,
     _truncate_positional_paths,
 )
@@ -213,6 +213,7 @@ def _classify_shell_command(
         in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
+            directory_changed = True
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         assignment_bindings = (
@@ -361,6 +362,11 @@ def _classify_shell_segment(
         else _strip_shell_wrappers(shell_token_values(strip_input_redirections(plain_tokens)))
     )
     shell_stdin = piped_stdin or has_shell_input_redirection(tokens)
+    if plain_tokens and not plain_tokens[0].quoted and stdin_parts:
+        body = stdin_parts[0]
+        if body.startswith("(") and body.endswith(")") and not body.startswith("(("):
+            stdin_parts = ["sh", "-c", body[1:-1]]
+    stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)
 
     gcode_metadata = gcode_navigation_metadata(plain_parts)
     if gcode_metadata and not (
@@ -388,6 +394,10 @@ def _classify_shell_segment(
             stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
         )
         extra = _without_code_index_navigation(base_metadata.extra)
+        if "canonical_edit_file_paths" in extra:
+            extra["canonical_edit_file_paths"] = list(
+                dict.fromkeys([*extra["canonical_edit_file_paths"], *redirection_paths])
+            )
         if extra.get("canonical_code_navigation_action") == "read" and redirects_stdout_to_file(
             tokens
         ):
@@ -466,7 +476,7 @@ def _classify_shell_segment(
         return _ShellSegmentMetadata("execute", neutral_setup=True)
 
     return _classify_shell_segment_without_redirection(
-        plain_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
+        stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
     )
 
 
@@ -583,88 +593,10 @@ def _classify_shell_segment_without_redirection(
     if cmd == "for":
         return _classify_for_loop_header(parts, cwd)
 
-    git_subcommand_index = 1
-    git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
-    git_scope_unknown = False
     if cmd == "git":
-        while git_subcommand_index < len(parts):
-            part = parts[git_subcommand_index]
-            if part in {"-C", "-c"}:
-                if part == "-C" and git_subcommand_index + 1 < len(parts):
-                    target = parts[git_subcommand_index + 1]
-                    if target:
-                        git_cwd = _rebase_shell_paths([target], git_cwd)[0]
-                git_subcommand_index += 2
-                continue
-            if part.startswith("-"):
-                git_scope_unknown = True
-                git_subcommand_index += 1
-                continue
-            break
-    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["apply"]:
-        apply_args = parts[git_subcommand_index + 1 :]
-        if any(flag in apply_args for flag in {"--check", "--stat", "--numstat"}):
-            return _ShellSegmentMetadata("execute")
-        return _ShellSegmentMetadata("write", repo_mutation=True)
-
-    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] == ["add"]:
-        positional = _git_add_positional_args_after(parts, git_subcommand_index + 1)
-        paths = [
-            candidate
-            for candidate in positional
-            if _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
-        ]
-        return _ShellSegmentMetadata(
-            "execute",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
-            repo_mutation=True,
-        )
-
-    if cmd == "git" and parts[git_subcommand_index : git_subcommand_index + 1] in [
-        ["checkout"],
-        ["restore"],
-    ]:
-        try:
-            pathspec_index = parts.index("--", git_subcommand_index + 1)
-        except ValueError:
-            # `git restore [--staged] <pathspec...>` takes only pathspecs after
-            # its options; `git checkout <ref>` names a ref, so its scope stays
-            # unknown without `--`.
-            paths = (
-                _git_restore_positional_args_after(parts, git_subcommand_index + 1)
-                if parts[git_subcommand_index] == "restore"
-                else []
-            )
-        else:
-            paths = [
-                candidate
-                for candidate in parts[pathspec_index + 1 :]
-                if _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
-            ]
-        return _ShellSegmentMetadata(
-            "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
-            repo_mutation=True,
-        )
-
-    sequencer_recovery = any(
-        flag in parts[git_subcommand_index + 1 :] for flag in {"--quit", "--skip", "--continue"}
-    )
-    if cmd == "git" and (
-        parts[git_subcommand_index : git_subcommand_index + 1] == ["revert"]
-        or (
-            parts[git_subcommand_index : git_subcommand_index + 1] == ["cherry-pick"]
-            and sequencer_recovery
-        )
-    ):
-        if not git_scope_unknown and git_cwd and sequencer_recovery:
-            return _ShellSegmentMetadata(
-                "write",
-                paths=(git_cwd,),
-                repo_mutation=True,
-                extra={"canonical_edit_file_paths": []},
-            )
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        git_metadata = classify_git_mutation(parts, cwd, base_cwd)
+        if git_metadata is not None:
+            return git_metadata
 
     if cmd == "patch":
         if "--dry-run" in parts[1:]:
@@ -841,26 +773,12 @@ def _classify_shell_segment_without_redirection(
             repo_mutation=True,
         )
 
-    if cmd in {"cp", "install"}:
-        operands, target_directory, creates_directories = _file_command_operands(cmd, parts)
-        if not creates_directories:
-            operands = [target_directory or operands[-1]] if target_directory or operands else []
-        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
+    if cmd in {"cp", "mv", "install"}:
+        rebased_paths = tuple(_file_transfer_paths(cmd, parts, cwd, base_cwd))
         return _ShellSegmentMetadata(
             "write",
             paths=rebased_paths,
-            write_paths=rebased_paths,
-            repo_mutation=True,
-        )
-
-    if cmd == "mv":
-        operands, target_directory, _ = _file_command_operands(cmd, parts)
-        operands += [target_directory] if target_directory else []
-        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
-        return _ShellSegmentMetadata(
-            "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
+            write_paths=rebased_paths if cmd != "mv" else (),
             repo_mutation=True,
         )
 

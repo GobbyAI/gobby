@@ -6,11 +6,13 @@ its operands name filesystem targets; the segment classifier in
 """
 
 import posixpath
+from pathlib import Path
 
 from gobby.hooks._normalization_shell import (
     _SHELL_CONTROL_TOKENS,
     _contains_unexpanded_shell_reference,
     _looks_path_target,
+    _rebase_shell_paths,
 )
 
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
@@ -62,6 +64,41 @@ def _file_command_operands(cmd: str, parts: list[str]) -> tuple[list[str], str |
         if bsd_result[2]:
             return bsd_result
     return _parse_file_command_operands(cmd, parts, short_values, long_values)
+
+
+def _file_transfer_paths(
+    cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
+) -> list[str]:
+    """Name copied destinations and, for moves, the removed source paths."""
+    operands, target_directory, creates_directories = _file_command_operands(cmd, parts)
+    if creates_directories:
+        return _rebase_shell_paths(operands, cwd)
+    if target_directory is not None:
+        sources, destination = operands, target_directory
+    elif len(operands) >= 2:
+        sources, destination = operands[:-1], operands[-1]
+    else:
+        return []
+    destination = _rebase_shell_paths([destination], cwd)[0]
+    probe = Path(destination)
+    if not probe.is_absolute() and base_cwd is not None:
+        probe = base_cwd / probe
+    no_target_directory = "-T" in parts or "--no-target-directory" in parts
+    is_directory = not no_target_directory and (
+        target_directory is not None
+        or destination in {".", ".."}
+        or destination.endswith("/")
+        or (probe.is_absolute() and probe.is_dir())
+    )
+    destinations = (
+        [posixpath.join(destination, posixpath.basename(source.rstrip("/"))) for source in sources]
+        if is_directory
+        else [destination]
+    )
+    paths = [*_rebase_shell_paths(sources, cwd), *destinations] if cmd == "mv" else destinations
+    return list(
+        dict.fromkeys(path.removeprefix("./") for path in paths if _looks_path_target(path))
+    )
 
 
 def _parse_file_command_operands(
