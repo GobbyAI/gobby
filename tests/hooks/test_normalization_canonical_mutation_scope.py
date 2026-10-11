@@ -536,6 +536,47 @@ def test_literal_substitution_text_does_not_mutate(tmp_path: Path, command: str)
 
 
 @pytest.mark.parametrize(
+    "body",
+    [
+        "$(git apply change.patch)",
+        "`git apply change.patch`",
+        "'$(git apply change.patch)'",
+        '"$(git apply change.patch)"',
+    ],
+)
+def test_unquoted_heredoc_substitution_mutates(tmp_path: Path, body: str) -> None:
+    data = _invocation_metadata(f"cat <<EOF\n{body}\nEOF", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <<'EOF'\n$(git apply change.patch)\nEOF",
+        'cat <<"EOF"\n`git apply change.patch`\nEOF',
+        "cat <<EOF\n\\$(git apply change.patch)\nEOF",
+        "cat <<EOF\n\\`git apply change.patch\\`\nEOF",
+    ],
+)
+def test_literal_heredoc_substitution_does_not_mutate(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize("prefix", ["", "cd sub && "])
+def test_heredoc_substitution_preserves_resolved_scope(tmp_path: Path, prefix: str) -> None:
+    plain = _invocation_metadata(f"{prefix}cp a b", tool_cwd=tmp_path, project_path=tmp_path)
+    nested = _invocation_metadata(
+        f"{prefix}cat <<EOF\n$(cp a b)\nEOF", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert nested["canonical_repo_mutation"] is True
+    assert nested["canonical_file_paths"] == plain["canonical_file_paths"]
+    assert nested.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
     "command",
     [
         'git add file.py && git commit -m "fix"',

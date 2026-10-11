@@ -3,6 +3,25 @@
 from gobby.hooks._normalization_shell import ShellToken, _substitution_end
 
 
+def heredoc_substitution_bodies(text: str, *, depth: int) -> list[str]:
+    """Extract expansions from an unquoted heredoc, where quotes are literal."""
+    bodies: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        if (text.startswith("$(", index) and not text.startswith("$((", index)) or char == "`":
+            start = index + (1 if char == "`" else 2)
+            end = _substitution_end(text, start, char == "`", depth + 1)
+            bodies.append(text[start:end])
+            index = end + 1
+            continue
+        index += 1
+    return bodies
+
+
 def command_substitution_bodies(
     text: str, spans: list[tuple[int, int]], *, depth: int
 ) -> tuple[str, list[tuple[int, str]]]:

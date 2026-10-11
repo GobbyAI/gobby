@@ -18,6 +18,7 @@ from gobby.hooks._normalization_bindings import (
 from gobby.hooks._normalization_compound import (
     case_arm_tokens,
     command_substitution_bodies,
+    heredoc_substitution_bodies,
     process_substitution_bodies,
 )
 from gobby.hooks._normalization_env import env_directory_operands
@@ -204,6 +205,12 @@ def _classify_shell_command(
         )
         if command_substitutions:
             scan = scan_shell_command(masked_command)
+        for heredoc in scan.heredocs:
+            if heredoc.terminated and not heredoc.quoted:
+                command_substitutions.extend(
+                    (scan.spans[heredoc.opener][0], substitution)
+                    for substitution in heredoc_substitution_bodies(heredoc.text, depth=depth)
+                )
     except ValueError:
         if depth:
             return _build_canonical_tool_metadata(
