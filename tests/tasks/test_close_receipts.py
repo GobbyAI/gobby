@@ -538,6 +538,42 @@ async def test_tool_takes_author_from_calling_session(
     assert stored.author_session_id == roles["creator"]
 
 
+async def test_tool_landing_approval_batch_is_a_separate_fact(
+    temp_db: HubDatabase, task: Task, roles: dict[str, str], receipt_tool: Any
+) -> None:
+    from gobby.mcp_proxy.tools.task_commits import create_commit_registry
+
+    registry = create_commit_registry(task_manager=LocalTaskManager(temp_db))
+    schema = registry.get_schema("record_close_receipt")
+    assert schema is not None
+    assert "separate facts.batch field, not in facts.reason" in schema["description"]
+
+    with session_context_for_test(roles["creator"]):
+        rejected = await receipt_tool(
+            task_id=task.id,
+            kind=LANDING_APPROVAL,
+            commit_sha=_LANDED,
+            facts={"reason": "restart,batch"},
+        )
+        assert rejected == {
+            "error": "landing_approval reason must name a non-empty subset of "
+            "['freeze', 'overlap', 'restart']"
+        }
+        assert list_close_receipts(temp_db, task.id) == []
+
+        facts = {"reason": "restart", "batch": "landing-1"}
+        accepted = await receipt_tool(
+            task_id=task.id, kind=LANDING_APPROVAL, commit_sha=_LANDED, facts=facts
+        )
+
+    assert accepted["created"] is True
+    assert accepted["facts"] == facts
+    [stored] = list_close_receipts(temp_db, task.id)
+    assert stored.kind == LANDING_APPROVAL
+    assert stored.commit_sha == _LANDED
+    assert stored.facts == facts
+
+
 async def test_tool_refuses_claimant_unknown_commit_and_missing_session(
     temp_db: HubDatabase, task: Task, roles: dict[str, str], receipt_tool: Any
 ) -> None:
