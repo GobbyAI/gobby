@@ -698,17 +698,6 @@ async def test_spawn_rules_let_a_root_recovery_seat_resume_a_session(
     assert SEAT_NO_SPAWN in (new_spawn.reason or "")
 
 
-def test_bundled_merge_orchestrator_may_spawn_workers_and_close_reviewers(
-    temp_db: HubDatabase,
-) -> None:
-    sync_bundled_agents(temp_db)
-
-    body = resolve_agent("merge-orchestrator", temp_db)
-
-    assert body is not None
-    assert body.spawnable_agents == ["merge-worker", "task-close-reviewer"]
-
-
 def test_spawn_any_wildcard_stands_alone() -> None:
     with pytest.raises(ValueError, match="never both"):
         AgentDefinitionBody.model_validate(

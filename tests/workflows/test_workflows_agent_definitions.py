@@ -168,7 +168,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "plan-writer": ("codex", "gpt-5.6-sol", "medium"),
         "planner": ("codex", "gpt-5.6-sol", "medium"),
         "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),
-        "merge-orchestrator": ("codex", "gpt-5.6-sol", "xhigh"),
         "merge-worker": ("claude", "sonnet", "high"),
     }
 
@@ -236,7 +235,6 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
         "analyst",
         "architect",
         "developer",
-        "merge-orchestrator",
         "product-manager",
         "tech-writer",
         "trajectory-monitor",
@@ -414,32 +412,6 @@ def test_developer_route_skills_can_page_an_offloaded_task_card() -> None:
     assert "gobby-results:get_tool_result" in route_skills["allowed_mcp_tools"]
     assert "offloaded" in route_skills["status_message"]
     assert "get_tool_result" in route_skills["status_message"]
-
-
-def test_merge_orchestrator_no_work_close_waits_for_reviewer() -> None:
-    agent = _agent("merge-orchestrator")
-    execute = _step(agent, "execute")
-    guidance = agent["prompts"]["agent"]
-
-    assert 'reason="already_implemented", preview=true' in guidance
-    assert "repeat with preview=false" in guidance
-    assert "wait once on" in guidance
-    assert "reviewer_run_id" in guidance
-    assert "read the task with get_task" in guidance
-    assert {"gobby-tasks:get_task", "gobby-agents:wait_for_agent"}.issubset(
-        _allowed_mcp_tools(execute)
-    )
-
-    get_task_handlers = [
-        handler
-        for handler in execute["on_mcp_success"]
-        if handler.get("server") == "gobby-tasks" and handler.get("tool") == "get_task"
-    ]
-    assert {handler["variable"] for handler in get_task_handlers} == {
-        "execution_complete",
-        "report_complete",
-    }
-    assert all("is_closed" in str(handler.get("when")) for handler in get_task_handlers)
 
 
 @pytest.mark.parametrize("agent_name", ["tech-writer"])

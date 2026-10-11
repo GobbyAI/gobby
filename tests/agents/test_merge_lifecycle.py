@@ -132,13 +132,6 @@ def _mcp_event(
     )
 
 
-def test_merge_orchestrator_uses_stage_native_merge_result_tool() -> None:
-    tools = _allowed_mcp_tools(_agent("merge-orchestrator"))
-
-    assert "gobby-tasks-ops:record_merge_result" in tools
-    assert tools.isdisjoint(LEGACY_MERGE_TOOLS)
-
-
 def test_merge_worker_uses_stage_native_merge_result_tool() -> None:
     tools = _allowed_mcp_tools(_agent("merge-worker"))
 
@@ -168,15 +161,6 @@ def test_merge_worker_default_provider_is_reliable_for_unattended_merges() -> No
 
     assert agent["provider"] == "claude"
     assert agent["model"] == "sonnet"
-
-
-def test_merge_orchestrator_instructions_do_not_reference_removed_lifecycle_tools() -> None:
-    text = Path("src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml").read_text(
-        encoding="utf-8"
-    )
-
-    for tool in LEGACY_MERGE_TOOLS:
-        assert tool.split(":", 1)[1] not in text
 
 
 def test_merge_worker_retry_cap_tracks_conflict_ids_not_total_calls() -> None:
