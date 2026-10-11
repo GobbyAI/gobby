@@ -53,6 +53,7 @@ class WorktreeDeletionResult:
     git_deleted: bool = True
     error: str | None = None
     error_code: str | None = None
+    message: str | None = None
     uncommitted_changes: bool = False
     artifact_refs_cleared: int = 0
     event: WorktreeEvent | None = None
@@ -300,6 +301,7 @@ async def _delete_git_worktree(
             git_deleted=False,
             error=result.message,
             error_code=result.error,
+            message=result.message,
         )
     if request.surface is DeletionSurface.HTTP:
         logger.warning("Git worktree deletion failed: %s", result.message)
@@ -307,12 +309,14 @@ async def _delete_git_worktree(
             success=False,
             git_deleted=False,
             error=result.message,
+            message=result.message,
         )
     if Path(worktree.worktree_path).exists():
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,
             error=result.error or "Failed to delete git worktree",
+            message=result.message,
         )
 
     prune = getattr(git_manager, "prune_worktrees", None)
