@@ -131,6 +131,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     mutation_scope_resolved_by_loop_binding = True
     saw_unexpanded_mutation_path = False
     navigation_scope_unknown = False
+    navigation_scope_paths: list[str] = []
     loop_bindings: dict[str, tuple[str, ...]] = {}
     disqualified_loop_variables = set().union(
         *(_shell_loop_binding_disqualifications(item.shell_words) for item in metadata)
@@ -168,6 +169,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             path for path in item.paths if not _path_is_unresolved(path, item.literal_path_root)
         ]
         if item.extra and item.extra.get("canonical_code_navigation_action"):
+            for path in item.extra.get("_canonical_code_navigation_scope_paths", ()):
+                if _path_is_unresolved(path, item.literal_path_root):
+                    navigation_scope_unknown = True
+                elif path not in navigation_scope_paths:
+                    navigation_scope_paths.append(path)
             for path in item.paths:
                 if not _path_is_unresolved(path, item.literal_path_root):
                     continue
@@ -278,6 +284,10 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
     elif mutation_scope_unknown:
         extra.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", None)
+    if navigation_scope_paths:
+        extra["_canonical_code_navigation_scope_paths"] = navigation_scope_paths
+    else:
+        extra.pop("_canonical_code_navigation_scope_paths", None)
     if navigation_scope_unknown:
         extra["_canonical_code_navigation_scope_unknown"] = True
 

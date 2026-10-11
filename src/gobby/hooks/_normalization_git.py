@@ -47,6 +47,9 @@ def classify_search_segment(
     elif implicit_root and not paths and search_cwd:
         paths = [search_cwd]  # Preserve the implicit root after cd or an invocation wrapper.
     extra = search_navigation_metadata(paths)
+    if shell_stdin and not paths and not implicit_root:
+        # Stdin has no filesystem root, but scope still follows the shell's cwd.
+        extra["_canonical_code_navigation_scope_paths"] = [search_cwd or str(base_cwd or ".")]
     if cmd == "git" and _git_grep_is_revision_scoped(parts):
         extra["canonical_search_revision_scoped"] = True
     return _ShellSegmentMetadata("search", paths=tuple(paths), extra=extra)
