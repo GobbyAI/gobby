@@ -579,6 +579,33 @@ def test_heredoc_substitution_preserves_resolved_scope(tmp_path: Path, prefix: s
 @pytest.mark.parametrize(
     "command",
     [
+        "sed -i s/a/b/ f.txt && cat <<EOF\nthe ` char\nEOF",
+        "git apply p.patch && cat <<EOF\nthe ` char\nEOF",
+        "git apply p.patch && cat <<EOF\nprice $(5\nEOF",
+        "cat <<EOF\n$(git apply p.patch) then `\nEOF",
+        "cat <<EOF\n$(git apply p.patch)",
+    ],
+)
+def test_incomplete_heredoc_substitution_cannot_mask_mutations(
+    tmp_path: Path, command: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_malformed_heredoc_keeps_prior_complete_substitution(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "cat <<EOF\n$(cp a b) then `\nEOF", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_repo_mutation"] is True
+    assert "b" in data["canonical_file_paths"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         'git add file.py && git commit -m "fix"',
         'git commit -am "fix" && git push',
         'uv run ruff format file.py && git add -A && git commit -m "fix"',
