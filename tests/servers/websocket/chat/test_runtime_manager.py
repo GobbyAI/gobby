@@ -827,6 +827,7 @@ async def _collect_codex_backend_events(
     transcript_lines: list[str] | None = None,
     is_connected: bool = True,
     previous_turn_id: str | None = None,
+    disconnect_after_chunk: bool = False,
 ) -> tuple[list[Any], CodexManagedChatSession]:
     handlers: dict[str, list[Any]] = {}
 
@@ -863,7 +864,11 @@ async def _collect_codex_backend_events(
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
 
-    events = [event async for event in backend.send_message(session, "hello")]
+    events = []
+    async for event in backend.send_message(session, "hello"):
+        events.append(event)
+        if disconnect_after_chunk and isinstance(event, TextChunk):
+            client.is_connected = False
     return events, session
 
 
@@ -1724,6 +1729,106 @@ class TestCodexBackend:
 
         assert "".join(event.content for event in events if isinstance(event, TextChunk)) == (
             "Scope includes the whole answer."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("disconnect_after_chunk", [False, True])
+    async def test_completed_turn_drains_after_disconnect(
+        self, disconnect_after_chunk: bool
+    ) -> None:
+        events, session = await _collect_codex_backend_events(
+            [
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+                ("item/agentMessage/delta", {"itemId": "f1", "delta": "Whole"}),
+                ("item/agentMessage/delta", {"itemId": "f1", "delta": " answer."}),
+            ],
+            is_connected=disconnect_after_chunk,
+            disconnect_after_chunk=disconnect_after_chunk,
+        )
+
+        assert [event.content for event in events if isinstance(event, TextChunk)] == [
+            "Whole",
+            " answer.",
+        ]
+        assert isinstance(events[-1], DoneEvent)
+        assert session._turn_id is None
+
+    @pytest.mark.asyncio
+    async def test_completed_turn_ignores_queued_failure(self) -> None:
+        events, session = await _collect_codex_backend_events(
+            [
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+                ("turn/failed", {"threadId": "thread-1", "error": "late failure"}),
+                ("item/agentMessage/delta", {"itemId": "f1", "delta": "Answer."}),
+            ]
+        )
+
+        assert [event.content for event in events if isinstance(event, TextChunk)] == ["Answer."]
+        assert isinstance(events[-1], DoneEvent)
+        assert session._turn_id is None
+
+    @pytest.mark.asyncio
+    async def test_recovers_transcript_only_final_after_commentary(self, tmp_path: Path) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                ("item/agentMessage/delta", {"itemId": "c1", "delta": "Checking."}),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "id": item_id,
+                            "content": [{"type": "output_text", "text": text}],
+                        },
+                    }
+                )
+                for item_id, text in [("c1", "Checking."), ("f1", "Final answer.")]
+            ],
+        )
+
+        assert [event.content for event in events if isinstance(event, TextChunk)] == [
+            "Checking.",
+            "Final answer.",
+        ]
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("transcript_id", [None, "msg_other"])
+    @pytest.mark.parametrize(
+        "streamed_text, expected_text",
+        [("Answer.", "Answer."), ("Ans", "Answer."), ("Answer. Extra", "Answer. Extra")],
+    )
+    async def test_final_transcript_with_other_id_does_not_replay_streamed_text(
+        self, tmp_path: Path, transcript_id: str | None, streamed_text: str, expected_text: str
+    ) -> None:
+        payload: dict[str, Any] = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Answer."}],
+        }
+        if transcript_id is not None:
+            payload["id"] = transcript_id
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "itemId": "f1", "delta": streamed_text},
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[json.dumps({"type": "response_item", "payload": payload})],
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk))
+            == expected_text
         )
         assert isinstance(events[-1], DoneEvent)
 

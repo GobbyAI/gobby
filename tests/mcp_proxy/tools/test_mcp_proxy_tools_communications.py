@@ -346,6 +346,28 @@ def test_get_messages_rejects_unknown_session_without_daemon_error(
     assert not caplog.records
 
 
+@pytest.mark.parametrize("operation", ["get_channel_by_name", "list_messages"])
+def test_get_messages_logs_backend_value_error(
+    registry: Any,
+    mock_manager: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    operation: str,
+) -> None:
+    backend_error = ValueError("corrupt message storage")
+    getattr(mock_manager, operation).side_effect = backend_error
+    handler = registry.get_tool("get_messages")
+    assert handler is not None
+
+    result = handler(channel="telegram" if operation == "get_channel_by_name" else None)
+
+    assert result == {"success": False, "error": "corrupt message storage"}
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.getMessage() == "Communications tool error"
+    assert record.exc_info is not None
+    assert record.exc_info[1] is backend_error
+
+
 @pytest.fixture
 def session_reference_tools(
     worktree_project: tuple[HubDatabase, str, Path],
