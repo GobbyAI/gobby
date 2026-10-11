@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from gobby.hooks._normalization_compound import case_arm_tokens
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
+from gobby.hooks._normalization_segments import _ShellSegment
 from gobby.hooks._normalization_shell import ShellToken, _apply_cd
 
 
@@ -26,10 +27,38 @@ class ShellDirectoryState:
     unstable_loops: frozenset[int] = frozenset()
     altered_loops: set[int] = field(default_factory=set)
     loops_opened: int = 0
+    group_isolation: dict[int, bool] = field(default_factory=dict)
+    groups: list[tuple[str | None, bool, list[_Branch]] | None] = field(default_factory=list)
+    group_entry: bool = False
+
+    def prepare_groups(self, segments: list[_ShellSegment]) -> None:
+        """Identify pipeline members and function bodies before consuming braces."""
+        openings: list[tuple[int, int]] = []
+        for index, segment in enumerate(segments):
+            previous = " ".join(t.value for t in segments[index - 1].tokens) if index else ""
+            function_body = bool(
+                re.fullmatch(r"(?:function\s+[^\s()]+(?:\s*\(\s*\))?|[^\s()]+\s*\(\s*\))", previous)
+            )
+            for token in segment.tokens:
+                if token.quoted:
+                    continue
+                if token.value == "{":
+                    openings.append((index, id(token)))
+                    self.group_isolation[id(token)] = (
+                        segment.separator_before == "|" or function_body
+                    )
+                elif token.value == "}" and openings:
+                    _, opener = openings.pop()
+                    if index + 1 < len(segments) and segments[index + 1].separator_before == "|":
+                        self.group_isolation[opener] = True
+
+    def pipeline_stage(self, before: str | None, after: str | None) -> bool:
+        return (before == "|" and not self.group_entry) or after == "|"
 
     def compound_tokens(
         self, tokens: list[ShellToken], gap: str, case_depth: int, pending: bool
     ) -> tuple[list[ShellToken], int, bool]:
+        self.group_entry = False
         self.case_boundary(tokens, gap)
         tokens, case_depth, pending = case_arm_tokens(
             tokens, case_depth=case_depth, new_arm=pending or ";;" in gap or ";&" in gap
@@ -86,6 +115,24 @@ class ShellDirectoryState:
                 self._close("loop")
             elif word == "do":
                 self._enter_loop_body()
+            elif word == "!":
+                pass
+            elif word == "time":
+                tokens = tokens[1:]
+                for option in ("-p", "--"):
+                    if tokens and not tokens[0].quoted and tokens[0].value == option:
+                        tokens = tokens[1:]
+                continue
+            elif word == "{":
+                isolated = self.group_isolation.get(id(tokens[0]), False)
+                self.groups.append((self.cwd, self.changed, self.branches) if isolated else None)
+                if isolated:
+                    self.branches = []
+                self.group_entry = True
+            elif word == "}":
+                if self.groups and (entry := self.groups.pop()) is not None:
+                    self.cwd, self.changed, self.branches = entry
+                self.group_entry = False
             else:
                 break
             tokens = tokens[1:]

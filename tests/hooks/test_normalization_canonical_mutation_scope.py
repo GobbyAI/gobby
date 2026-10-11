@@ -349,6 +349,110 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
     assert not data.get("canonical_repo_mutation")
 
 
+@pytest.mark.parametrize(
+    "command, expected",
+    [
+        ("{ cd sub; touch x.py; }; touch y.py", ["sub/x.py", "sub/y.py"]),
+        ("( cd sub; touch x.py ); touch y.py", ["sub/x.py", "y.py"]),
+        ("{ cd sub; } | cat; touch y.py", ["y.py"]),
+        ("cat x | { cd sub; touch y.py; }; touch z.py", ["sub/y.py", "z.py"]),
+        ("f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("f ()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("function f\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("function f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("my-f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("function my-f\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("! cd sub; touch x.py", ["sub/x.py"]),
+        ("! { cd sub; }; touch y.py", ["sub/y.py"]),
+        ("{ :; } > out.log", ["out.log"]),
+    ],
+)
+def test_grammar_group_directory_scope(tmp_path: Path, command: str, expected: list[str]) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == expected
+
+
+@pytest.mark.parametrize("operation", ["touch x.py", "rm -rf src", "sed -i s/a/b/ x.py"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ {}; }}",
+        "! {}",
+        "if ! {}; then :; fi",
+        "time {}",
+        "time -p {}",
+        "time -- {}",
+        "time -p -- {}",
+    ],
+)
+def test_grammar_prefix_preserves_write_classification(
+    tmp_path: Path, template: str, operation: str
+) -> None:
+    wrapped = _invocation_metadata(
+        template.format(operation), tool_cwd=tmp_path, project_path=tmp_path
+    )
+    bare = _invocation_metadata(operation, tool_cwd=tmp_path, project_path=tmp_path)
+    for key in ("canonical_tool_kind", "canonical_file_paths", "canonical_repo_mutation"):
+        assert wrapped.get(key) == bare.get(key)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "! { touch x.py; }",
+        "time { touch x.py; }",
+        "time -p { touch x.py; }",
+        "if ! { touch x.py; }; then :; fi",
+        "! time { touch x.py; }",
+    ],
+)
+def test_combined_grammar_prefixes_preserve_write_classification(
+    tmp_path: Path, command: str
+) -> None:
+    grouped = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    bare = _invocation_metadata("touch x.py", tool_cwd=tmp_path, project_path=tmp_path)
+    for key in ("canonical_tool_kind", "canonical_file_paths", "canonical_repo_mutation"):
+        assert grouped.get(key) == bare.get(key)
+
+
+def test_background_grammar_group_invalidates_later_scope(tmp_path: Path) -> None:
+    _signature_fixture(tmp_path / "bin")
+    data = _invocation_metadata(
+        "{ cd sub; } & ./bin/tool", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data.get("canonical_script_execution") is True
+
+
+def test_grammar_group_preserves_enclosing_branch_metadata(tmp_path: Path) -> None:
+    grouped = _invocation_metadata(
+        "if true; then { cd sub; touch x.py; }; fi; touch y.py",
+        tool_cwd=tmp_path,
+        project_path=tmp_path,
+    )
+    bare = _invocation_metadata(
+        "if true; then cd sub; touch x.py; fi; touch y.py",
+        tool_cwd=tmp_path,
+        project_path=tmp_path,
+    )
+    assert {key: value for key, value in grouped.items() if key.startswith("canonical_")} == {
+        key: value for key, value in bare.items() if key.startswith("canonical_")
+    }
+
+
+def test_grammar_group_can_enter_project_from_foreign_cwd(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    grouped = _invocation_metadata(
+        f"{{ cd {project}; touch x.py; }}", tool_cwd=tmp_path, project_path=project
+    )
+    bare = _invocation_metadata(
+        f"cd {project}; touch x.py", tool_cwd=tmp_path, project_path=project
+    )
+    assert {key: value for key, value in grouped.items() if key.startswith("canonical_")} == {
+        key: value for key, value in bare.items() if key.startswith("canonical_")
+    }
+
+
 def _invocation_metadata(
     command: str,
     *,
