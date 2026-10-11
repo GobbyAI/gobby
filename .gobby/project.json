@@ -57,7 +57,8 @@
   },
   "sandbox": {
     "extra_write_paths": [
-      ".gobby/tmp"
+      ".gobby/tmp",
+      ".nextest"
     ]
   },
   "hooks": {
