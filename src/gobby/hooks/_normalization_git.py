@@ -8,6 +8,7 @@ from gobby.hooks._normalization_operands import (
     _git_add_positional_args_after,
     _git_grep_is_revision_scoped,
     _git_restore_positional_args_after,
+    _grep_is_recursive,
     _search_command_paths,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
@@ -34,9 +35,12 @@ def classify_search_segment(
         if len(parts) <= 1 or parts[1] != "grep":
             return _ShellSegmentMetadata("execute")
     paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), search_cwd)
-    if unknown or (not paths and (search_cwd or "").startswith(UNRESOLVED_DIRECTORY)):
+    implicit_root = cmd in {"git", "rg"} or (cmd == "grep" and _grep_is_recursive(parts))
+    if unknown or (
+        implicit_root and not paths and (search_cwd or "").startswith(UNRESOLVED_DIRECTORY)
+    ):
         paths = [UNRESOLVED_DIRECTORY]
-    elif not paths and search_cwd:
+    elif implicit_root and not paths and search_cwd:
         paths = [search_cwd]  # Preserve the implicit root after cd or an invocation wrapper.
     extra = search_navigation_metadata(paths)
     if cmd == "git" and _git_grep_is_revision_scoped(parts):

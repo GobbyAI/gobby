@@ -353,7 +353,7 @@ async def _record_and_notify(
             f"at {str(facts['landed_tip'])[:10]}; activation {facts['activation_class']}"
         )
         if facts.get("project_sync_required"):
-            content += "; project pipeline sync required"
+            content += "; project workflow sync required"
         manager = InterSessionMessageManager(db)
         unreached: list[str] = []
         for recipient in sorted(recipients):

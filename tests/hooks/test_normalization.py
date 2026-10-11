@@ -2707,6 +2707,80 @@ class TestUnexpandedShellReferencePaths:
 class TestExternalNavigationScope:
     """Navigation over CLI state homes and loop headers resolves repo scope correctly."""
 
+    @pytest.mark.parametrize(
+        ("arguments", "recursive"),
+        [
+            ("-rn P", True),
+            ("-R P", True),
+            ("--recursive P", True),
+            ("--dereference-recursive P", True),
+            ("-nreP", True),
+            ("P", False),
+            ("-nerP", False),
+            ("-er", False),
+            ("-e -r", False),
+            ("--regexp -r", False),
+            ("-f -r", False),
+            ("--file -r", False),
+            ("-m -r P", False),
+            ("-A -r P", False),
+            ("-B -r P", False),
+            ("-C -r P", False),
+            ("-d -r P", False),
+            ("-D -r P", False),
+            ("--max-count -r P", False),
+            ("-- --recursive", False),
+        ],
+    )
+    def test_grep_stdin_search_root_requires_recursive_option(
+        self, tmp_path: Path, arguments: str, recursive: bool
+    ) -> None:
+        repo = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": f"cd {outside}; grep {arguments} < f"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_paths"] == (
+            [str(outside), str(outside / "f")] if recursive else [str(outside / "f")]
+        )
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    @pytest.mark.parametrize(
+        ("operands", "suffix", "continuation", "repo_scope"),
+        [
+            ("{outside}/a.py", "", "", False),
+            ("src/a.py", "", '; cd "$X"; grep -rn P', False),
+            ("src", "/a.py", "", True),
+        ],
+    )
+    def test_navigation_loop_binding_scope_and_unknown_sibling(
+        self, tmp_path: Path, operands: str, suffix: str, continuation: str, repo_scope: bool
+    ) -> None:
+        repo = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        operands = operands.format(outside=outside)
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {
+                "command": f'for f in {operands}; do grep x "$f{suffix}"; done{continuation}'
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_code_navigation_repo_scope"] is repo_scope
+        assert operands + suffix in data["canonical_file_paths"]
+
     def test_for_loop_over_external_logs_is_not_repo_scoped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

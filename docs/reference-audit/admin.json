@@ -299,7 +299,7 @@
       "command": "gobby stop",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/cli/daemon.py",
+        "path": "src/gobby/cli/daemon_lifecycle.py",
         "symbol": "stop"
       },
       "verification": [
@@ -314,7 +314,7 @@
       "command": "gobby restart",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/cli/daemon.py",
+        "path": "src/gobby/cli/daemon_lifecycle.py",
         "symbol": "restart"
       },
       "verification": [
@@ -329,7 +329,7 @@
       "command": "gobby status",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/health.md",
       "implementation": {
-        "path": "src/gobby/cli/daemon.py",
+        "path": "src/gobby/cli/daemon_lifecycle.py",
         "symbol": "status"
       },
       "verification": [
@@ -1018,8 +1018,8 @@
       "route": "GET /api/admin/lease/status",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/servers/routes/admin/_lease.py",
-        "symbol": "register_lease_routes.lease_status"
+        "path": "crates/gdaemon/src/lease/admin_api.rs",
+        "symbol": "handle"
       },
       "verification": [
         "source-inventory",
@@ -1033,8 +1033,8 @@
       "route": "POST /api/admin/lease/promote",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/servers/routes/admin/_lease.py",
-        "symbol": "register_lease_routes.promote"
+        "path": "crates/gdaemon/src/lease/admin_api.rs",
+        "symbol": "handle"
       },
       "verification": [
         "source-inventory",
@@ -1063,8 +1063,8 @@
       "route": "POST /api/admin/lease/recover",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/servers/routes/admin/_lease.py",
-        "symbol": "register_lease_routes.recover"
+        "path": "crates/gdaemon/src/lease/admin_api.rs",
+        "symbol": "handle"
       },
       "verification": [
         "source-inventory",

@@ -23,6 +23,14 @@ pytestmark = pytest.mark.unit
     [
         ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/example.py"], True),
         ([".gobby/workflows/pipelines/example-lane.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/rules/operating-policy.yaml", "src/gobby/example.py"], True),
+        ([".gobby/workflows/rules/operating-policy.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/agents/example.yaml", "src/gobby/example.py"], True),
+        ([".gobby/workflows/variables/example.yml", "web/src/example.ts"], True),
+        ([".gobby/workflows/agents/nested/example.yaml"], False),
+        ([".gobby/workflows/variables/README.md"], False),
+        ([".gobby/workflows/rules/nested/example.yaml"], False),
+        ([".gobby/workflows/rules/README.md"], False),
         ([".gobby/workflows/pipelines/nested/example.yaml"], False),
         ([".gobby/workflows/pipelines/README.md"], False),
         (["src/gobby/install/shared/workflows/agents/example.yaml"], False),
@@ -31,6 +39,14 @@ pytestmark = pytest.mark.unit
 )
 def test_project_sync_is_independent_of_strongest_class(paths: list[str], expected: bool) -> None:
     assert requires_project_sync(iter(paths)) is expected
+
+
+@pytest.mark.parametrize("kind", ["agents", "variables"])
+@pytest.mark.parametrize("suffix", ["yaml", "yml"])
+def test_project_agents_and_variables_require_project_sync(kind: str, suffix: str) -> None:
+    path = f".gobby/workflows/{kind}/example.{suffix}"
+    assert classify_paths([path]) == "sync"
+    assert requires_project_sync(iter([path])) is True
 
 
 @pytest.mark.parametrize(
@@ -53,6 +69,13 @@ def test_project_sync_is_independent_of_strongest_class(paths: list[str], expect
         (["web/src/App.tsx"], "ui_build"),
         ([".gobby/workflows/pipelines/example-lane.yaml"], "sync"),
         ([".gobby/workflows/pipelines/example-lane.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/rules/operating-policy.yaml"], "sync"),
+        ([".gobby/workflows/rules/operating-policy.yml", "docs/x.md"], "sync"),
+        ([".gobby/workflows/rules/README.md"], "none"),
+        ([".gobby/workflows/rules/nested/example.yaml"], "none"),
+        ([".gobby/workflows/rules/operating-policy.yaml", "src/gobby/example.py"], "restart"),
+        ([".gobby/workflows/rules/operating-policy.yaml", "crates/gcore/src/lib.rs"], "cutover"),
+        ([".gobby/workflows/rules/operating-policy.yaml", "web/src/App.tsx"], "ui_build"),
         ([".gobby/workflows/pipelines/README.md"], "none"),
         ([".gobby/workflows/pipelines/nested/seat.yaml"], "none"),
         ([".gobby/workflows/pipelines/example-lane.yaml", "src/gobby/cli/main.py"], "restart"),

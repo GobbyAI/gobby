@@ -1110,6 +1110,13 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
 
 @pytest.mark.parametrize("move_tip", [False, True])
 @pytest.mark.parametrize(
+    "workflow_path",
+    [
+        ".gobby/workflows/pipelines/example-lane.yaml",
+        ".gobby/workflows/rules/operating-policy.yaml",
+    ],
+)
+@pytest.mark.parametrize(
     ("other_path", "expected_class"),
     [
         ("docs/change.md", "sync"),
@@ -1119,17 +1126,17 @@ async def test_ref_moved_before_failure_reports_landing(case: LandingCase) -> No
         ("src/gobby/install/shared/workflows/agents/example.yaml", "reload"),
     ],
 )
-async def test_pipeline_sync_landing_and_recovery(
-    case: LandingCase, move_tip: bool, other_path: str, expected_class: str
+async def test_project_workflow_sync_landing_and_recovery(
+    case: LandingCase, move_tip: bool, workflow_path: str, other_path: str, expected_class: str
 ) -> None:
     sha = case.candidate(
-        "pipeline-sync",
+        "project-workflow-sync",
         {
-            ".gobby/workflows/pipelines/example-lane.yaml": "name: example-lane\n",
+            workflow_path: "name: example\n",
             other_path: "example\n",
         },
     )
-    task = case.reviewed(sha, "Project pipeline sync")
+    task = case.reviewed(sha, "Project workflow sync")
     if expected_class in {"restart", "cutover"}:
         refused = await case.land(task, sha)
         assert refused["project_sync_required"] is True
@@ -1164,7 +1171,7 @@ async def test_pipeline_sync_landing_and_recovery(
     assert receipt.facts["project_sync_required"] is True
     manager = InterSessionMessageManager(case.db)
     [message] = manager.get_messages(case.claimant)
-    assert f"activation {expected_class}; project pipeline sync required" in message.content
+    assert f"activation {expected_class}; project workflow sync required" in message.content
 
 
 @pytest.mark.parametrize("move_tip", [False, True])
@@ -1175,7 +1182,7 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
         "pipeline-sync",
         {".gobby/workflows/pipelines/example-lane.yaml": "name: example-lane\n"},
     )
-    task = case.reviewed(sha, "Project pipeline sync")
+    task = case.reviewed(sha, "Project workflow sync")
     if move_tip:
         case.direct({"docs/moved.md": "moved\n"})
     with patch.object(

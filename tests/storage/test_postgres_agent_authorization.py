@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -302,8 +303,8 @@ def _cleanup(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> No
     )
 
 
-@pytest.fixture(scope="module")
-def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
+@contextmanager
+def _authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
     _require_isolated_hub(postgres_database_url)
     database_name = f"gobby_test_agent_auth_{uuid4().hex[:12]}"
     parameters = conninfo_to_dict(postgres_database_url)
@@ -355,6 +356,18 @@ def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationF
     finally:
         with psycopg.connect(postgres_database_url, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database_name)))
+
+
+@pytest.fixture(scope="module")
+def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
+    with _authorization_fixture(postgres_database_url) as fixture:
+        yield fixture
+
+
+@pytest.fixture
+def fresh_authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
+    with _authorization_fixture(postgres_database_url) as fixture:
+        yield fixture
 
 
 def _ids(conn: psycopg.Connection[Any], statement: str) -> set[UUID]:
@@ -1006,3 +1019,113 @@ def test_resolve_tool_session_returns_no_row_for_deleted_session(  # tdd-red win
         )
         row = _resolve_tool_session(conn, fixture.session_id)
     assert row is None
+
+
+def test_existing_reviewer_login_gains_only_live_assignment_reads(
+    fresh_authorization_fixture: AuthorizationFixture,
+) -> None:
+    """Activate the new policies after issuance, without rotating/relaunching the seat."""
+    fixture = fresh_authorization_fixture
+    developer_id, task_id = uuid4(), uuid4()
+    roots = [f"/tmp/review-worktree-{uuid4()}" for _ in range(2)]
+    migration_dir = Path(__file__).parents[2] / "crates/gcore/assets/schema/migrations"
+    with (
+        psycopg.connect(fixture.database_url, autocommit=True) as owner,
+        psycopg.connect(fixture.agent_url, autocommit=True) as agent,
+    ):
+        overlay_ids: list[UUID] = []
+        for root in roots:
+            row = owner.execute(
+                "SELECT gobby_agent_auth.code_index_project_id(%s)", (root,)
+            ).fetchone()
+            assert row is not None
+            overlay_ids.append(row[0])
+        original_run = owner.execute(
+            "SELECT agent_name, child_session_id, status FROM agent_runs WHERE id = %s",
+            (fixture.agent_run_id,),
+        ).fetchone()
+        assert original_run is not None
+        try:
+            owner.execute(
+                "UPDATE agent_runs SET agent_name = 'code-reviewer', status = 'running', "
+                "child_session_id = %s "
+                "WHERE id = %s",
+                (fixture.session_id, fixture.agent_run_id),
+            )
+            owner.execute(
+                "INSERT INTO sessions(id, external_id, machine_id, source, project_id, "
+                "workspace_path) VALUES (%s, %s, %s, 'test', %s, %s)",
+                (developer_id, str(developer_id), fixture.machine_id, fixture.project_id, roots[0]),
+            )
+            owner.execute(
+                "INSERT INTO tasks(id, project_id, title, claimed_by_session_id, validation_criteria) "
+                "VALUES (%s, %s, 'review scope fixture', %s, 'Scoped reads pass.')",
+                (task_id, fixture.project_id, developer_id),
+            )
+            for root, overlay_id in zip(roots, overlay_ids, strict=True):
+                owner.execute(
+                    "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (uuid4(), fixture.project_id, fixture.machine_id, root, root),
+                )
+                owner.execute("INSERT INTO code_indexed_projects(id) VALUES (%s)", (overlay_id,))
+            # Reproduce a pre-activation role against its original read policies.
+            owner.execute(
+                (migration_dir / "433_flatten_gcode_read_policy_disjunction.sql").read_text()
+            )
+            owner.execute(
+                "ALTER POLICY gobby_gcode_project_read ON code_communities USING "
+                "(project_id = ANY(ARRAY[gobby_agent_auth.current_project_id(), "
+                "gobby_agent_auth.current_code_overlay_project_id()]) "
+                "AND machine_id = gobby_agent_auth.current_machine_id())"
+            )
+            owner.execute(
+                "DROP FUNCTION IF EXISTS gobby_agent_auth.current_review_code_project_id()"
+            )
+            owner.execute(
+                "INSERT INTO session_tasks(session_id, task_id, action) VALUES (%s, %s, 'reviewing')",
+                (fixture.session_id, task_id),
+            )
+            visible = _ids(agent, "SELECT id FROM code_indexed_projects")
+            assert not set(overlay_ids) & visible
+            owner.execute(
+                (migration_dir / "467_assignment_derived_review_code_scope.sql").read_text()
+            )
+            visible = _ids(agent, "SELECT id FROM code_indexed_projects")
+            assert overlay_ids[0] in visible
+            assert overlay_ids[1] not in visible
+            # The same login cannot create or delete rows in its review overlay.
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                agent.execute(
+                    "INSERT INTO code_indexed_files(id, project_id, file_path, language, "
+                    "content_hash) VALUES (%s, %s, 'denied.rs', 'rust', 'denied')",
+                    (uuid4(), overlay_ids[0]),
+                )
+            assert (
+                agent.execute(
+                    "DELETE FROM code_indexed_projects WHERE id = %s", (overlay_ids[0],)
+                ).rowcount
+                == 0
+            )
+            # Assignment follows the task's current claimant workspace.
+            owner.execute(
+                "UPDATE sessions SET workspace_path = %s WHERE id = %s", (roots[1], developer_id)
+            )
+            visible = _ids(agent, "SELECT id FROM code_indexed_projects")
+            assert overlay_ids[0] not in visible
+            assert overlay_ids[1] in visible
+            owner.execute("UPDATE tasks SET closed_at = now() WHERE id = %s", (task_id,))
+            assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
+            owner.execute("UPDATE tasks SET closed_at = NULL WHERE id = %s", (task_id,))
+            owner.execute("DELETE FROM session_tasks WHERE task_id = %s", (task_id,))
+            assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
+        finally:
+            owner.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            owner.execute("DELETE FROM worktrees WHERE worktree_path = ANY(%s)", (roots,))
+            owner.execute("DELETE FROM sessions WHERE id = %s", (developer_id,))
+            owner.execute("DELETE FROM code_indexed_projects WHERE id = ANY(%s)", (overlay_ids,))
+            owner.execute(
+                "UPDATE agent_runs SET agent_name = %s, child_session_id = %s, status = %s "
+                "WHERE id = %s",
+                (*original_run, fixture.agent_run_id),
+            )

@@ -328,6 +328,16 @@ impl Context {
         Ok(())
     }
 
+    pub(crate) fn can_refresh_index(&self) -> anyhow::Result<bool> {
+        if let Some(runtime) = &self.grant_ai
+            && runtime.bundle.principal.kind.is_managed()
+        {
+            let mut conn = db::connect_readonly(&self.database_url)?;
+            return super::managed_scope::can_write(&mut conn, &self.project_id);
+        }
+        Ok(true)
+    }
+
     pub(crate) fn runtime_config_capture_degraded(&self) -> bool {
         self.runtime_config_capture_degraded
     }
