@@ -1,6 +1,6 @@
 """Executable case arms and process-substitution bodies from shell token spans."""
 
-from gobby.hooks._normalization_shell import ShellToken, _substitution_end
+from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
 
 
 def heredoc_substitution_bodies(text: str, *, depth: int) -> tuple[list[str], bool]:
@@ -82,6 +82,32 @@ def process_substitution_bodies(
         owner.append(token)
         index += 1
     return owner, bodies
+
+
+def case_pattern_process_bodies(
+    tokens: list[ShellToken],
+    kept: list[ShellToken],
+    spans: dict[int, tuple[int, int]],
+    command: str,
+) -> tuple[list[str], bool]:
+    """Extract process substitutions from parenthesized patterns removed from case arms."""
+    kept_ids = {id(token) for token in kept}
+    bodies: list[str] = []
+    for token in tokens:
+        if id(token) in kept_ids or token.quoted:
+            continue
+        start, end = spans[id(token)]
+        raw = command[start:end]
+        if not raw.startswith("(") or not raw.endswith(")"):
+            continue
+        inner = raw[1:-1]
+        try:
+            scan = scan_shell_command(inner)
+        except ValueError:
+            return bodies, True
+        inner_spans = dict(zip((id(token) for token in scan.tokens), scan.spans, strict=True))
+        bodies.extend(process_substitution_bodies(scan.tokens, inner_spans, inner)[1])
+    return bodies, False
 
 
 def case_arm_tokens(

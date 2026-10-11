@@ -144,6 +144,73 @@ def test_case_pattern_alternation_preserves_arm_directory(tmp_path: Path) -> Non
     assert data["canonical_file_paths"] == ["sub/c.py"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case $(git apply change.patch) in x) ;; esac",
+        "case x in $(git apply change.patch)) ;; esac",
+        "case `git apply change.patch` in x) ;; esac",
+        "case <(git apply change.patch) in x) ;; esac",
+        "case x in <(git apply change.patch)) ;; esac",
+        "case x in (<(git apply change.patch)) ;; esac",
+        "case x in (y|<(git apply change.patch)) ;; esac",
+        "case x in (y|>(git apply change.patch)) ;; esac",
+        "case x in ( y | <(git apply change.patch) ) ;; esac",
+        "case x in (y) true;; (<(git apply change.patch)) ;; esac",
+    ],
+)
+def test_case_subject_and_pattern_substitutions_attribute_pathless_writes(
+    tmp_path: Path, command: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_case_subject_substitution_keeps_resolved_write_scope(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "case $(cp a b) in x) git status;; esac", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["b"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case $x in a) echo hi;; esac",
+        "case x in (a) echo hi;; esac",
+        "case x in (a|b) echo hi;; esac",
+        "case x in x) diff <(cat a) <(cat b);; esac",
+    ],
+)
+def test_case_literal_subject_and_pattern_stay_non_write(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] != "write"
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(cd sub && cat <(touch p.py))",
+        "case x in x) (cd sub && cat <(touch p.py));; esac",
+    ],
+)
+def test_case_arm_subshell_keeps_process_substitution_directory(
+    tmp_path: Path, command: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["sub/p.py"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
 def test_process_substitution_keeps_literal_write_after_directory_change(tmp_path: Path) -> None:
     data = _invocation_metadata(
         "cd sub && cat <(touch p.py)", tool_cwd=tmp_path, project_path=tmp_path

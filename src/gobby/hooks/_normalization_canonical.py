@@ -16,6 +16,7 @@ from gobby.hooks._normalization_bindings import (
     _raw_shell_word_is_literal,
 )
 from gobby.hooks._normalization_compound import (
+    case_pattern_process_bodies,
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
@@ -231,12 +232,26 @@ def _classify_shell_command(
         start = spans_by_token[id(segment.tokens[0])][0]
         gap = command[previous_end:start]
         previous_end = spans_by_token[id(segment.tokens[-1])][1]
+        # Case subjects and patterns can execute substitutions before arm syntax is stripped.
+        segment_start = min(spans_by_token[id(token)][0] for token in segment.tokens)
+        segment_end = max(spans_by_token[id(token)][1] for token in segment.tokens)
+        _, process_bodies = process_substitution_bodies(segment.tokens, spans_by_token, command)
         arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
             segment.tokens, gap, case_depth, pending_case_pattern
         )
-        owner_tokens, process_bodies = process_substitution_bodies(
-            arm_tokens, spans_by_token, command
+        pattern_bodies, unreadable = case_pattern_process_bodies(
+            segment.tokens, arm_tokens, spans_by_token, command
         )
+        process_bodies.extend(pattern_bodies)
+        if unreadable:
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "write",
+                    repo_mutation=True,
+                    extra={"_canonical_repo_mutation_scope_unknown": True},
+                )
+            )
+        owner_tokens, _ = process_substitution_bodies(arm_tokens, spans_by_token, command)
         segment = replace(
             segment,
             tokens=owner_tokens,
@@ -253,8 +268,6 @@ def _classify_shell_command(
             directory.invalidate()
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
-        segment_start = min((spans_by_token[id(token)][0] for token in segment.tokens), default=0)
-        segment_end = max((spans_by_token[id(token)][1] for token in segment.tokens), default=0)
         substitution_bodies = [
             body
             for position, body in command_substitutions
