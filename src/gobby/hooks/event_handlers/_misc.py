@@ -541,6 +541,16 @@ class MiscEventHandlerMixin(EventHandlersBase):
                         decision="block",
                         reason=f"Cannot recreate branch '{worktree_name}': {cargo_error}",
                     )
+                prune_result = await git_manager.prune_worktrees()
+                if not prune_result.success:
+                    self.logger.warning(
+                        "WORKTREE_CREATE retained stale record after Git prune failure: %s",
+                        prune_result.message,
+                    )
+                    return HookResponse(
+                        decision="block",
+                        reason=f"Cannot recreate branch '{worktree_name}': {prune_result.message}",
+                    )
                 self._worktree_manager.delete(existing.id)
 
         current_branch = await git_manager.get_current_branch()

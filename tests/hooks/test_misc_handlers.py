@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -475,8 +476,14 @@ class TestWorktreeHandlers:
 
     @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged"])
     @pytest.mark.parametrize("use_local", [True, False])
+    @pytest.mark.parametrize("registered", [True, False])
     async def test_worktree_create_handles_orphan_branch(
-        self, mock_dependencies: dict[str, Any], tmp_path: Path, state: str, use_local: bool
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+        state: str,
+        use_local: bool,
+        registered: bool,
     ) -> None:
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -498,11 +505,16 @@ class TestWorktreeHandlers:
             git("commit", "--allow-empty", "-m", "unmerged task")
             git("switch", "main")
         branch_tip = git("rev-parse", "refs/heads/feature-auth")
+        missing_path = tmp_path / "missing"
+        if registered:
+            git("worktree", "add", str(missing_path), "feature-auth")
+            shutil.rmtree(missing_path)
+            assert str(missing_path) in git("worktree", "list", "--porcelain")
         git("remote", "add", "origin", str(repo))
         worktree_path = tmp_path / "recreated"
         worktree_manager = mock_dependencies["worktree_manager"]
         worktree_manager.get_by_branch.return_value = MagicMock(
-            id="wt-stale", project_id="proj-123", worktree_path=str(tmp_path / "missing")
+            id="wt-stale", project_id="proj-123", worktree_path=str(missing_path)
         )
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -537,6 +549,7 @@ class TestWorktreeHandlers:
             assert response.worktree_path == str(worktree_path)
             assert response.decision == "allow"
             assert (worktree_path / ".git").is_file()
+            assert str(missing_path) not in git("worktree", "list", "--porcelain")
             assert (
                 subprocess.run(
                     ["git", "rev-parse", "HEAD"],
@@ -643,6 +656,42 @@ class TestWorktreeHandlers:
         assert worktree_manager.get_by_branch.call_count == 1
         assert worktree_manager.delete.call_count == 0
         assert worktree_manager.create.call_count == 0
+        worktree_manager.delete.assert_not_called()
+        worktree_manager.create.assert_not_called()
+
+    async def test_worktree_create_retains_stale_record_when_git_prune_fails(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        worktree_manager = mock_dependencies["worktree_manager"]
+        worktree_manager.get_by_branch.return_value = SimpleNamespace(
+            id="wt-stale", project_id="proj-123", worktree_path=str(tmp_path / "missing")
+        )
+        git_manager = MagicMock()
+        git_manager.prune_worktrees = AsyncMock(
+            return_value=SimpleNamespace(success=False, message="prune failed")
+        )
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.cleanup_checkout_cargo_target_dir",
+                return_value=None,
+            ),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "block"
+        assert response.reason is not None and "feature-auth" in response.reason
+        assert "prune failed" in response.reason
+        assert response.worktree_path is None
+        git_manager.prune_worktrees.assert_awaited_once()
+        git_manager.create_worktree.assert_not_called()
         worktree_manager.delete.assert_not_called()
         worktree_manager.create.assert_not_called()
 
