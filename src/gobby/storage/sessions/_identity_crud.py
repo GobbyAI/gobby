@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import HubDatabase, SessionSeqMutation
 from gobby.storage.hub.read_scope import scoped_read
 from gobby.storage.session_lifecycle import session_has_retained_references
@@ -65,6 +66,8 @@ class _SessionIdentityCRUDHost(Protocol):
     ) -> dict[str, dict[str, list[int]]]: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+    def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
 
 class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
@@ -142,8 +145,18 @@ class _SessionIdentityCRUDMixin(_SessionWebChatCRUDMixin):
                         f"{'; '.join(blocking_references)}. "
                         "Release or reassign them before deleting the session."
                     )
-            cursor = self.db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
-        deleted = cursor.rowcount > 0
+            row = self.db.execute(
+                """DELETE FROM sessions WHERE id = %s
+                RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name""",
+                (session_id,),
+            ).fetchone()
+            if row is not None:
+                self._notify_status_transition(
+                    SessionStatusTransition.from_session(
+                        Session.from_row(row), status="deleted", transitioned_at=utc_now()
+                    )
+                )
+        deleted = row is not None
         if deleted:
             invalidate_session_caches(self, session_id)
             self._notify_session_change("session_deleted", session_id)

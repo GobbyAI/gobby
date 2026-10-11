@@ -370,13 +370,15 @@ async def test_registered_dm_survives_resume_and_daemon_restart(
     assert restarted.attached_session(channel.id, "dm:42") is None
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("assistant_available", [False, True])
+@pytest.mark.parametrize("hard_delete", [False, True])
 async def test_restore_releases_target_deleted_while_daemon_was_down(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     assistant_available: bool,
+    hard_delete: bool,
 ) -> None:
     """Restore reconciles offline deletion before the channel starts polling."""
     sessions = SessionManager(temp_db)
@@ -409,7 +411,11 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
     manager._channel_by_name[channel.name] = channel
     manager.attach_conversation(channel.name, "dm:42", holder.id)
     # No status listener is running while the daemon is down.
-    assert sessions.update_session_status(holder.id, "deleted")
+    if hard_delete:
+        assert sessions.delete(holder.id)
+        assert sessions.get(holder.id) is None
+    else:
+        assert sessions.update_session_status(holder.id, "deleted")
     restored = store.get_channel(channel.id)
     assert restored is not None
     restarted = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
@@ -443,6 +449,118 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deletion", ["delete", "prune"])
+@pytest.mark.parametrize("assistant_available", [False, True])
+async def test_hard_deleted_session_releases_telegram_target_after_commit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    deletion: str,
+    assistant_available: bool,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    holder = sessions.register(
+        external_id="hard-deleted-target",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Lane Developer",
+    )
+    assistant = (
+        sessions.register(
+            external_id="delete-target-assistant",
+            machine_id=None,
+            source="claude",
+            project_id=sample_project["id"],
+            title="Assistant",
+        )
+        if assistant_available
+        else None
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    if deletion == "prune":
+        sessions.update_status(holder.id, "expired")
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            (holder.id,),
+        )
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    with temp_db.transaction():
+        if deletion == "delete":
+            assert sessions.delete(holder.id)
+        else:
+            assert sessions.prune_empty_sessions() == 1
+        assert sessions.get(holder.id) is None
+        assert transitions == []
+    assert len(transitions) == 1
+    transition = transitions[0]
+    assert (transition.session_id, transition.project_id, transition.status) == (
+        holder.id,
+        holder.project_id,
+        "deleted",
+    )
+    assert transition.seq_num == holder.seq_num
+    await manager.handle_session_status_transition(transition)
+    expected = assistant.id if assistant is not None else None
+    assert manager.attached_session(channel.id, "dm:42") == expected
+    persisted = store.get_channel(channel.id)
+    assert persisted is not None
+    assert persisted.config_json["telegram_agent_targets"] == (
+        {"dm:42": expected} if assistant_available else {}
+    )
+    if assistant_available:
+        adapter.send_message.assert_not_awaited()
+    else:
+        adapter.send_message.assert_awaited_once()
+        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deletion", ["delete", "prune"])
+def test_hard_deleted_session_rollback_does_not_emit_end_event(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    deletion: str,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    holder = sessions.register(
+        external_id="rolled-back-delete",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    if deletion == "prune":
+        sessions.update_status(holder.id, "expired")
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            (holder.id,),
+        )
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    with pytest.raises(RuntimeError, match="roll back deletion"):
+        with temp_db.transaction():
+            if deletion == "delete":
+                assert sessions.delete(holder.id)
+            else:
+                assert sessions.prune_empty_sessions() == 1
+            raise RuntimeError("roll back deletion")
+    assert sessions.get(holder.id) is not None
+    assert transitions == []
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_restore_lookup_failure_still_starts_polling(
@@ -463,7 +581,8 @@ async def test_restore_lookup_failure_still_starts_polling(
     ):
         assert await manager._lifecycle.activate_channel(channel) is adapter
 
-    assert get_session.call_count == 2
+    get_session.assert_any_call(holder.id)
+    get_session.assert_any_call("other")
     start_polling.assert_called_once_with(channel.name, channel, adapter)
     assert channel.name not in manager._channel_init_errors
     assert manager._adapters[channel.name] is adapter

@@ -82,7 +82,9 @@ class _LifecycleDelegateMixin:
 
         from ._session_mapping_cache import invalidate_session_caches
 
-        pruned = _prune_empty(self.db, min_age_hours)
+        pruned = _prune_empty(
+            self.db, min_age_hours, status_notifier=self._notify_status_transition
+        )
         if pruned:
             invalidate_session_caches(self)
         return pruned

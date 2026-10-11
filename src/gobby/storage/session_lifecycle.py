@@ -452,7 +452,12 @@ def expire_empty_sessions(
     return count
 
 
-def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
+def prune_empty_sessions(
+    db: HubDatabase,
+    min_age_hours: int = 1,
+    *,
+    status_notifier: SessionStatusTransitionCallback | None = None,
+) -> int:
     """
     Hard-delete expired sessions that never received any messages.
 
@@ -486,15 +491,24 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     )
     candidate_count = row["count"] if row else 0
     reference_guards = "\n        AND ".join(_build_empty_session_prune_reference_guards(db))
-    cursor = db.execute(
-        f"""
-        DELETE FROM sessions
-        WHERE {base_where}
-        {f"AND {reference_guards}" if reference_guards else ""}
-        """,
-        (SYSTEM_SESSION_SOURCE, *params),
-    )
-    count = cursor.rowcount or 0
+    with db.transaction() as conn:
+        rows = conn.execute(
+            f"""
+            DELETE FROM sessions
+            WHERE {base_where}
+            {f"AND {reference_guards}" if reference_guards else ""}
+            RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name
+            """,
+            (SYSTEM_SESSION_SOURCE, *params),
+        ).fetchall()
+        if status_notifier is not None:
+            for row in rows:
+                status_notifier(
+                    SessionStatusTransition.from_session(
+                        Session.from_row(row), status="deleted", transitioned_at=utc_now()
+                    )
+                )
+    count = len(rows)
     skipped = max(candidate_count - count, 0)
     if count > 0:
         logger.info(

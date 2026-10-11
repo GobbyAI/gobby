@@ -186,10 +186,21 @@ class CommunicationsManager:
         for session_id in restored_session_ids:
             try:
                 session = await asyncio.to_thread(self._session_store.get, session_id)
-                if session is not None:
-                    await self.handle_session_status_transition(
-                        SessionStatusTransition.from_session(session)
+                transition = (
+                    SessionStatusTransition.from_session(session)
+                    if session is not None
+                    else SessionStatusTransition(
+                        session_id=session_id,
+                        project_id=self.store.project_id,
+                        agent_run_id=None,
+                        status="deleted",
+                        transitioned_at=utc_now(),
+                        seq_num=None,
+                        title=None,
+                        source="unknown",
                     )
+                )
+                await self.handle_session_status_transition(transition)
             except Exception:
                 logger.exception("Failed to reconcile restored Telegram target %s", session_id)
 
