@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
+import shutil
 import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -22,6 +24,143 @@ pytestmark = pytest.mark.unit
 
 SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 VERSION = "0.5.0"
+_PROVE_CATALOG_FRESHNESS = cutover_module._prove_catalog_freshness
+_NATIVE_CARGO_TARGET_DIR = os.environ.get("CARGO_TARGET_DIR")
+
+
+@pytest.fixture
+def native_cargo_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the real build target after CLI unit fixtures clear it."""
+    if _NATIVE_CARGO_TARGET_DIR:
+        monkeypatch.setenv("CARGO_TARGET_DIR", _NATIVE_CARGO_TARGET_DIR)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_catalog_proof(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ordinary unit tests replace the native boundary; its tests restore it."""
+    monkeypatch.setattr(cutover_module, "_prove_catalog_freshness", lambda _root, _candidate: None)
+
+
+def test_catalog_freshness_command_binds_exact_candidate_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = _identity(467)
+    candidate = tmp_path / "gdaemon"
+    monkeypatch.setattr(cutover_module, "probe_set_member_identity", lambda *_a: identity)
+    monkeypatch.setenv("UPDATE_GCORE_SCHEMA_MANIFEST", "1")
+    run = Mock(
+        return_value=subprocess.CompletedProcess(
+            [], 0, stdout="test result: ok. 1 passed; 0 failed; 0 ignored; 16 filtered out;"
+        )
+    )
+    monkeypatch.setattr(cutover_module, "_run", run)
+    _PROVE_CATALOG_FRESHNESS(tmp_path, candidate)
+    assert run.call_args.args[0] == [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "gobby-core",
+        "--features",
+        "postgres",
+        "--test",
+        "catalog_manifest_freshness",
+        "catalog_manifest_is_fresh_for_embedded_assets",
+        "--",
+        "--exact",
+    ]
+    assert run.call_args.kwargs["cwd"] == tmp_path
+    assert json.loads(run.call_args.kwargs["env"]["GOBBY_EXPECTED_SCHEMA_IDENTITY"]) == identity
+    assert run.call_args.kwargs["timeout"] == 600
+    assert "UPDATE_GCORE_SCHEMA_MANIFEST" not in run.call_args.kwargs["env"]
+
+
+def test_catalog_freshness_refuses_a_zero_test_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cutover_module, "probe_set_member_identity", lambda *_a: _identity(467))
+    run = Mock(
+        return_value=subprocess.CompletedProcess(
+            [], 0, stdout="test result: ok. 0 passed; 0 failed; 0 ignored;"
+        )
+    )
+    monkeypatch.setattr(cutover_module, "_run", run)
+    with pytest.raises(cutover_module.CutoverError, match="freshness test did not run") as error:
+        _PROVE_CATALOG_FRESHNESS(tmp_path, tmp_path / "gdaemon")
+    assert "refusing to promote" in str(error.value)
+    assert "GOBBY_SCHEMA_TEST_DATABASE_URL" in str(error.value)
+
+
+@pytest.mark.integration
+def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    target = Path(os.environ.get("CARGO_TARGET_DIR", str(repo / "target")))
+    candidate = target / "debug/gdaemon"
+    assert candidate.is_file(), "build the checkout's debug gdaemon before native proof"
+    _PROVE_CATALOG_FRESHNESS(repo, candidate)
+
+
+@pytest.mark.integration
+def test_stale_embedded_catalog_refuses_cutover_before_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
+) -> None:
+    """Compile a stale candidate and use real native freshness against isolated60892."""
+    repo = Path(__file__).resolve().parents[2]
+    fixture = tmp_path / "candidate-core"
+    fixture.mkdir()
+    core = repo / "crates/gcore"
+    for name in ("src", "assets"):
+        shutil.copytree(core / name, fixture / name)
+    shutil.copyfile(core / "Cargo.toml", fixture / "Cargo.toml")
+    shutil.copyfile(repo / "Cargo.lock", fixture / "Cargo.lock")
+    (fixture / "tests").mkdir()
+    shutil.copyfile(
+        core / "tests/catalog_manifest_freshness.rs",
+        fixture / "tests/catalog_manifest_freshness.rs",
+    )
+    manifest_path = fixture / "assets/schema/catalog.manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    removed = manifest["functions"].pop()
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    (fixture / "examples").mkdir()
+    (fixture / "examples/catalog_candidate_24042.rs").write_text(
+        'fn main() { println!("{}", serde_json::to_string('
+        "&gobby_core::schema::SchemaIdentityContract::embedded()).unwrap()); }\n"
+    )
+    subprocess.run(
+        [
+            "cargo",
+            "build",
+            "--offline",
+            "--features",
+            "postgres",
+            "--example",
+            "catalog_candidate_24042",
+        ],
+        cwd=fixture,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    target = Path(os.environ.get("CARGO_TARGET_DIR", str(fixture / "target")))
+    candidate = target / "debug/examples/catalog_candidate_24042"
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
+    monkeypatch.setattr(cutover_module, "_prove_catalog_freshness", _PROVE_CATALOG_FRESHNESS)
+    promotion, restart = Mock(), Mock()
+    monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
+    with pytest.raises(cutover_module.CutoverError) as error:
+        cutover_module.run_cutover(
+            fixture,
+            tmp_path / "bin",
+            restart_daemon=restart,
+            start_refusal=lambda _candidate: None,
+        )
+    assert "catalog manifest is stale" in str(error.value)
+    assert removed["name"] in str(error.value)
+    promotion.assert_not_called()
+    restart.assert_not_called()
+    assert not (tmp_path / "bin").exists()
 
 
 def _identity(version: int) -> dict[str, int | str]:

@@ -18,7 +18,12 @@ from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, probe_set_member_identity
 from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity, plan_schema
+from gobby.storage.schema_contract import (
+    SchemaContractError,
+    expected_schema_identity,
+    plan_schema,
+    verify_catalog_test_cluster,
+)
 from gobby.sync.integrity import dirty_bundled_content_refusal
 from gobby.utils.dev import worktree_daemon_refusal
 
@@ -35,10 +40,10 @@ def restart_start_refusal(
 
     ``gdaemon=None`` proves the installed set, which is what ``restart`` will start.
     A candidate path proves an unpromoted build, which is what ``cutover`` is about to
-    promote. An unreadable hub URL skips the schema plan and leaves the start unproven,
-    the same "unreadable is not a refusal" convention ``schema_apply_refusal`` follows.
-    The candidate identity check is the one place that fails closed, because an
-    unverifiable candidate must never be promoted.
+    promote. In installed mode, an unreadable hub URL skips the schema plan and leaves
+    the start unproven, following ``schema_apply_refusal``'s unreadable-URL convention.
+    Candidate mode also proves the isolated test cluster is reachable before
+    cutover runs catalog freshness, and refuses an unreadable hub URL.
     """
     from gobby.storage.schema_divergence import binary_set_apply_refusal, schema_apply_refusal
 
@@ -76,10 +81,14 @@ def restart_start_refusal(
 
     url = _hub_url(database)
     if url is None:
+        if gdaemon is not None:
+            return "Candidate catalog preflight requires a readable hub URL; refusing cutover"
         logger.debug("Restart preflight skipped the schema plan: no readable hub URL")
         return None
     try:
         plan_schema(url, gdaemon=gdaemon)
+        if gdaemon is not None:
+            verify_catalog_test_cluster(url)
     except SchemaContractError as exc:
         return str(exc)
     return None

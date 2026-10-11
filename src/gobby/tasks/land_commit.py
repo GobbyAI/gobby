@@ -29,6 +29,7 @@ from gobby.tasks.close_receipts import (
 from gobby.tasks.landing_policy import (
     ACTIVATION_CLASSES,
     classify_paths,
+    missing_schema_carriers,
     read_freeze,
     requires_project_sync,
 )
@@ -68,6 +69,7 @@ class LandingResult(TypedDict, total=False):
     message: str
     blockers: list[str]
     missing_approvals: list[str]
+    missing_schema_carriers: list[str]
     overlaps: list[Overlap]
     shared_paths: list[str]
     commit_sha: str
@@ -443,6 +445,9 @@ async def land_candidate(
                 tree = merged.stdout.split("\n", 1)[0]
                 paths = await _candidate_paths(main, tip, sha, tree)
                 shared = sorted(paths & await _paths(main, sha, tree))
+                missing_carriers = missing_schema_carriers(paths)
+                if missing_carriers:
+                    blockers.append("schema_carriers_missing")
                 activation_class = classify_paths(paths)
                 freeze = await asyncio.to_thread(read_freeze, common)
                 overlaps = await _overlaps(db, current_task, main, tip, sha, paths)
@@ -471,6 +476,7 @@ async def land_candidate(
                     "missing_approvals": missing,
                     "overlaps": overlaps,
                     "shared_paths": shared,
+                    "missing_schema_carriers": missing_carriers,
                     "blockers": blockers,
                 }
                 if blockers:

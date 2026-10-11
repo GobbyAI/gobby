@@ -77,6 +77,28 @@ def classify_paths(paths: Iterable[str]) -> str:
     )
 
 
+def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
+    """Schema assets must land with their Python identity carrier.
+
+    Catalog-neutral migrations leave the manifest unchanged. Cutover's mandatory
+    native freshness test proves the manifest against all embedded assets.
+    """
+    changed = set(paths)
+    schema_root = "crates/gcore/assets/schema/"
+    if not any(
+        path.startswith(f"{schema_root}migrations/")
+        or path in {f"{schema_root}baseline.sql", "crates/gcore/src/schema/assets.rs"}
+        for path in changed
+    ):
+        return []
+    return sorted(
+        {
+            "src/gobby/storage/schema_expected_identity.json",
+        }
+        - changed
+    )
+
+
 def requires_project_sync(paths: Iterable[str]) -> bool:
     """Report imported workflow changes independently of activation precedence."""
     return any(_path_class(path) == "sync" for path in paths)

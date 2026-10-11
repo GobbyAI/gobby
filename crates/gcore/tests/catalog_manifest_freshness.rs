@@ -375,9 +375,22 @@ fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = scratch_database()? else {
-        return Ok(());
-    };
+    let database_url = env::var("GOBBY_SCHEMA_TEST_DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!(
+            "catalog_manifest_is_fresh_for_embedded_assets requires \
+             GOBBY_SCHEMA_TEST_DATABASE_URL; catalog freshness cannot be skipped"
+        )
+    })?;
+    if let Ok(expected) = env::var("GOBBY_EXPECTED_SCHEMA_IDENTITY") {
+        let expected: serde_json::Value = serde_json::from_str(&expected)?;
+        let observed =
+            serde_json::to_value(gobby_core::schema::SchemaIdentityContract::embedded())?;
+        assert_eq!(
+            observed, expected,
+            "freshness test assets differ from cutover candidate"
+        );
+    }
+    let (_database, mut client) = ScratchDatabase::create(&database_url)?;
     SchemaRunner::new(&mut client, "public")?.apply()?;
 
     let generated = render_catalog_manifest(&catalog_manifest(&mut client, "public")?)?;

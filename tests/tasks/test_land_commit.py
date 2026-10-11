@@ -235,6 +235,51 @@ async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, relea
     assert case.git("rev-parse", "trunk") == sha
 
 
+@pytest.mark.parametrize(
+    "carriers",
+    [
+        (),
+        ("crates/gcore/assets/schema/catalog.manifest.json",),
+        ("src/gobby/storage/schema_expected_identity.json",),
+        (
+            "crates/gcore/assets/schema/catalog.manifest.json",
+            "src/gobby/storage/schema_expected_identity.json",
+        ),
+    ],
+)
+async def test_catalog_neutral_migration_landing_requires_identity_pin(
+    case: LandingCase, carriers: tuple[str, ...]
+) -> None:
+    files = {
+        "crates/gcore/assets/schema/migrations/999-test.sql": "GRANT USAGE ON SCHEMA public TO gobby_daemon_runtime;"
+    }
+    files.update(dict.fromkeys(carriers, "updated carrier"))
+    sha = case.candidate("schema-lane", files)
+    task = case.reviewed(sha)
+    record_close_receipt(
+        case.db,
+        task=task,
+        author_session_id=case.creator,
+        kind=LANDING_APPROVAL,
+        commit_sha=sha,
+        facts={"reason": "restart"},
+    )
+    result = await case.land(task, sha)
+    if "src/gobby/storage/schema_expected_identity.json" in carriers:
+        assert result["landed"] is True
+        assert case.git("rev-parse", "trunk") == sha
+    else:
+        assert result["landed"] is False
+        assert result["error"] == "schema_carriers_missing"
+        assert result["missing_schema_carriers"] == sorted(
+            {
+                "src/gobby/storage/schema_expected_identity.json",
+            }
+            - set(carriers)
+        )
+        assert case.git("rev-parse", "trunk") == case.base
+
+
 async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task()
