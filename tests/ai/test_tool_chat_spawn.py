@@ -445,6 +445,9 @@ async def test_acp_adapter_dispatches_to_grok(monkeypatch: pytest.MonkeyPatch) -
         return '{"text":"Grok narrative.","stopReason":"EndTurn"}'
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    monkeypatch.setattr(
+        spawn.GrokSpawnToolChatAdapter, "_resolve_command_path", lambda self: "grok"
+    )
 
     adapter = ACPSpawnToolChatAdapter(DaemonConfig())
     result = await adapter.chat(_request(), _grok_binding())

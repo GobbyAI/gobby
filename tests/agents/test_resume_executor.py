@@ -784,7 +784,7 @@ async def test_resume_never_replays_stored_secret_overrides(
     assert (
         'mcp_servers.gobby.env.GOBBY_MANAGED_EXECUTION_BOOTSTRAP="/fresh/grant.json"' in overrides
     )
-    assert 'mcp_servers.gobby.env_vars=["GOBBY_AGENT_API_TOKEN"]' in overrides
+    assert not any("GOBBY_AGENT_API_TOKEN" in override for override in overrides)
     for name, path in cache_env.items():
         assert f'shell_environment_policy.set.{name}="{path}"' in overrides
         assert f'mcp_servers.gobby.env.{name}="{path}"' in overrides
