@@ -5,6 +5,20 @@ const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
 const SECRET_DSN: &str = "postgresql://schema_user:do-not-leak@127.0.0.1:1/gobby";
 
 #[test]
+fn verify_connection_failure_is_retryable_and_redacted() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "verify"])
+        .env("GOBBY_DATABASE_URL", SECRET_DSN)
+        .output()?;
+    assert_eq!(output.status.code(), Some(75));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("failed to connect"));
+    assert!(!stderr.contains("do-not-leak"));
+    assert!(!stderr.contains("schema_user"));
+    Ok(())
+}
+
+#[test]
 fn schema_help_exposes_test_schema_sweep() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "--help"])

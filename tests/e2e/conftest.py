@@ -311,7 +311,11 @@ class DaemonInstance:
     def stop(self) -> None:
         """Stop the daemon and wait for its health endpoint to disappear."""
         if self.is_alive():
-            terminate_process_tree(self.pid)
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=30.0)
+            except subprocess.TimeoutExpired:
+                terminate_process_tree(self.pid)
 
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -461,7 +465,11 @@ def prepare_daemon_env(
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_dir, native_bin_name
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
-    checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
+    # Cargo's target belongs to the invoking checkout, before child identity/cache
+    # cleanup removes it. The spawned daemon still receives the cleaned environment.
+    checkout_gdaemon = select_test_gdaemon(
+        root_dir, base_env if base_env is not None else os.environ, native_bin_name("gdaemon")
+    )
     pinned_bin_dir = Path(env.get(NATIVE_BIN_DIR_ENV) or native_bin_dir())
     if home_dir is not None or (
         checkout_gdaemon is not None
@@ -503,7 +511,10 @@ def link_operator_srt(home: Path) -> None:
         try:
             verify_srt_installation()
         except (OSError, SrtRuntimeError) as exc:
-            pytest.skip(f"managed SRT {SRT_RELEASE.version} failed verification: {exc}")
+            pytest.skip(
+                f"managed SRT {SRT_RELEASE.version} failed verification: {exc}; "
+                f"cause: {exc.__cause__}"
+            )
 
 
 def find_free_port(max_retries: int = 20) -> int:
@@ -1149,6 +1160,17 @@ def daemon_instance(
     )
 
 
+def native_daemon_command(env: dict[str, str], backend_command: list[str]) -> list[str]:
+    """Launch this checkout's supervisor with an isolated Python backend."""
+    from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
+
+    binary = Path(env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gdaemon")
+    if not binary.is_file():
+        raise FileNotFoundError(f"isolated native daemon is missing: {binary}")
+    env["GOBBY_BACKEND_COMMAND"] = json.dumps(backend_command)
+    return [str(binary), "serve"]
+
+
 def spawn_daemon_instance(
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
@@ -1187,13 +1209,14 @@ def spawn_daemon_instance(
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(gobby_home)
 
-    command = [
+    backend_command = [
         sys.executable,
         str(Path(__file__).with_name("readiness_bootstrap.py")),
         runner_module,
         "--config",
         str(config_path),
     ]
+    command = native_daemon_command(env, backend_command)
 
     # Start daemon process
     with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:

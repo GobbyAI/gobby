@@ -12,10 +12,24 @@ import pytest
 
 from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 from gobby.runner import main
+from gobby.runner_init import StartRefusal
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
 from gobby.utils import spawn
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "error,code", [(StartRefusal("schema refused"), 78), (RuntimeError("transient"), 1)]
+)
+def test_main_classifies_startup_exit(error: Exception, code: int) -> None:
+    with (
+        patch("gobby.runner.run_gobby", new=MagicMock(return_value=None)),
+        patch("asyncio.run", side_effect=error),
+        pytest.raises(SystemExit) as exited,
+    ):
+        main()
+    assert exited.value.code == code
 
 
 def test_main_pops_inherited_agent_token_before_the_runner_starts(
@@ -27,13 +41,7 @@ def test_main_pops_inherited_agent_token_before_the_runner_starts(
     def record_runner_environment(**_kwargs: object) -> None:
         token_at_runner_start.append(os.environ.get(GOBBY_AGENT_API_TOKEN))
 
-    ownership = MagicMock()
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
     with (
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-        patch("gobby.runner._healthy_daemon_running", return_value=False),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.runner_pid_file.adopt_inherited_claim", return_value=ownership),
         patch("gobby.runner.run_gobby", new=record_runner_environment),
         patch("asyncio.run"),
     ):
@@ -41,7 +49,6 @@ def test_main_pops_inherited_agent_token_before_the_runner_starts(
 
     assert token_at_runner_start == [None]
     assert GOBBY_AGENT_API_TOKEN not in os.environ
-    ownership.release.assert_called_once_with()
 
 
 def test_main_pops_inherited_identity_before_the_runner_starts(
@@ -55,13 +62,7 @@ def test_main_pops_inherited_identity_before_the_runner_starts(
     def record_runner_environment(**_kwargs: object) -> None:
         identity_at_runner_start.append({name for name in IDENTITY_ENV_VARS if name in os.environ})
 
-    ownership = MagicMock()
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
     with (
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-        patch("gobby.runner._healthy_daemon_running", return_value=False),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.runner_pid_file.adopt_inherited_claim", return_value=ownership),
         patch("gobby.runner.run_gobby", new=record_runner_environment),
         patch("asyncio.run"),
     ):
@@ -69,42 +70,30 @@ def test_main_pops_inherited_identity_before_the_runner_starts(
 
     assert identity_at_runner_start == [set()]
     assert {name for name in IDENTITY_ENV_VARS if name in os.environ} == set()
-    ownership.release.assert_called_once_with()
 
 
-def test_main_pops_the_service_marker_once_admission_consumed_it(
+def test_main_pops_consumed_native_service_markers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Only the service-launched runner is admitted by the marker; its children start ordinarily."""
+    """Native admission markers must not reach backend descendants."""
     nonce_path = str(tmp_path / "gobby.pid.service-nonce")
     monkeypatch.setenv(SERVICE_LAUNCH_ENV, "1")
     monkeypatch.setenv(SERVICE_NONCE_ENV, nonce_path)
     service_env = (SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV)
-    marker_at_admission: list[dict[str, str]] = []
     marker_at_runner_start: list[set[str]] = []
-    ownership = MagicMock()
-
-    def admit(_pid_file: Path) -> MagicMock:
-        marker_at_admission.append({name: os.environ[name] for name in service_env})
-        return ownership
 
     def record_runner_environment(**_kwargs: object) -> None:
         marker_at_runner_start.append({name for name in service_env if name in os.environ})
 
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
     with (
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-        patch("gobby.runner._healthy_daemon_running", return_value=False),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.runner_pid_file.convert_or_acquire_service_claim", new=admit),
+        patch("gobby.runner_pid_file.convert_or_acquire_service_claim") as admit,
         patch("gobby.runner.run_gobby", new=record_runner_environment),
         patch("asyncio.run"),
     ):
         main()
 
-    assert marker_at_admission == [{SERVICE_LAUNCH_ENV: "1", SERVICE_NONCE_ENV: nonce_path}]
+    admit.assert_not_called()
     assert marker_at_runner_start == [set()]
-    ownership.release.assert_called_once_with()
 
 
 def test_main_seals_inherited_descriptors_before_the_runner_starts(
@@ -114,11 +103,16 @@ def test_main_seals_inherited_descriptors_before_the_runner_starts(
     for name in IDENTITY_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     read_fd, write_fd = os.pipe()
+    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    os.set_inheritable(read_fd, True)
     os.set_inheritable(write_fd, True)
     inheritable_at_runner_start: list[bool] = []
     children: list[subprocess.Popen[bytes]] = []
 
     def start_a_child(**_kwargs: object) -> None:
+        assert os.environ["GOBBY_SUPERVISOR_FD"] == str(read_fd)
+        assert not os.get_inheritable(read_fd)
+        os.fstat(read_fd)
         inheritable_at_runner_start.append(os.get_inheritable(write_fd))
         children.append(
             spawn.popen(
@@ -126,14 +120,8 @@ def test_main_seals_inherited_descriptors_before_the_runner_starts(
             )
         )
 
-    ownership = MagicMock()
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
     try:
         with (
-            patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-            patch("gobby.runner._healthy_daemon_running", return_value=False),
-            patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-            patch("gobby.runner_pid_file.adopt_inherited_claim", return_value=ownership),
             patch("gobby.runner.run_gobby", new=start_a_child),
             patch("asyncio.run"),
         ):
@@ -152,4 +140,3 @@ def test_main_seals_inherited_descriptors_before_the_runner_starts(
     assert inheritable_at_runner_start == [False]
     assert end_of_pipe == b""
     assert len(children) == 1
-    ownership.release.assert_called_once_with()

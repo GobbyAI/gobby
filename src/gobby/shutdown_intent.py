@@ -98,11 +98,16 @@ def get_shutdown_source_path(home: Path | None = None) -> Path:
 get_active_shutdown_marker_path = get_shutdown_marker_path
 
 
-def shutdown_marker_details(*, drain_terminals: bool) -> dict[str, object] | None:
+def shutdown_marker_details(
+    *, drain_terminals: bool, restart_supervisor: bool = False
+) -> dict[str, object] | None:
     """Marker ``details`` for a shutdown; ``None`` unless an opt-in was given."""
+    details: dict[str, object] = {}
     if drain_terminals:
-        return {"drain_terminals": True}
-    return None
+        details["drain_terminals"] = True
+    if restart_supervisor:
+        details["restart_scope"] = "supervisor"
+    return details or None
 
 
 def write_shutdown_intent(

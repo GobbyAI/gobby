@@ -69,11 +69,32 @@ def _exception_failure(endpoint: str, exc: Exception) -> EndpointProbeFailure:
     )
 
 
-def _http_failure(endpoint: str, status_code: int) -> EndpointProbeFailure:
+def native_runtime_refusal(response: httpx.Response) -> str | None:
+    """Describe the native owner's typed standby or startup refusal."""
+    if response.status_code != 503:
+        return None
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    backend = payload.get("backend")
+    if not isinstance(backend, dict):
+        return None
+    if backend.get("state") == "standby":
+        return "standby (another daemon holds the runtime lease)"
+    if backend.get("state") == "refused":
+        reason = backend.get("refusal")
+        return f"refused ({reason})" if isinstance(reason, str) else "refused"
+    return None
+
+
+def _http_failure(endpoint: str, response: httpx.Response) -> EndpointProbeFailure:
     return EndpointProbeFailure(
         endpoint=endpoint,
         error_class="HTTPStatusError",
-        detail=f"HTTP {status_code}",
+        detail=native_runtime_refusal(response) or f"HTTP {response.status_code}",
     )
 
 
@@ -101,7 +122,7 @@ async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> RichStatusP
                     detail=f"expected object, received {type(payload).__name__}",
                 )
             else:
-                status_failure = _http_failure(status_endpoint, response.status_code)
+                status_failure = _http_failure(status_endpoint, response)
         except Exception as exc:
             status_failure = _exception_failure(status_endpoint, exc)
 
@@ -117,7 +138,7 @@ async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> RichStatusP
                     status_failure=status_failure,
                     health_confirmed=True,
                 )
-            health_failure = _http_failure(health_endpoint, response.status_code)
+            health_failure = _http_failure(health_endpoint, response)
         except Exception as exc:
             health_failure = _exception_failure(health_endpoint, exc)
 

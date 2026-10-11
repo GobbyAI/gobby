@@ -57,15 +57,22 @@ def _event(event_type: HookEventType = HookEventType.BEFORE_TOOL) -> HookEvent:
 
 
 @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])
+@pytest.mark.parametrize("restart_scope", [None, "supervisor"])
 def test_planned_restart_marker_retains_terminal_hooks(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     event_type: HookEventType,
+    restart_scope: str | None,
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr("gobby.hooks.health_gate.RETRY_DELAYS", ())
-    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+    write_shutdown_intent(
+        "cli_restart",
+        ShutdownIntent.RESTART,
+        home=tmp_path,
+        details={"restart_scope": restart_scope} if restart_scope else None,
+    )
     logger = logging.getLogger("gobby.test.health_gate")
     caplog.set_level(logging.DEBUG, logger=logger.name)
 

@@ -1,4 +1,4 @@
-//! Local lifecycle capabilities. These are not yet wired into production ownership.
+//! Native runtime ownership and backend lifecycle capabilities.
 
 #[cfg(unix)]
 pub mod pid_file;

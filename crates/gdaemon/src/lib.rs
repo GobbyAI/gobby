@@ -6,3 +6,7 @@ pub mod lease;
 pub mod lifecycle;
 mod retention;
 pub mod serve;
+#[cfg(unix)]
+pub mod state;
+#[cfg(unix)]
+mod state_services;

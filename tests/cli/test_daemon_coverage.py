@@ -12,13 +12,12 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli._daemon_services import ServiceStartResult
-from gobby.cli.daemon import (
-    _services_start,
-    _services_stop,
+from gobby.cli.daemon import _services_start, _services_stop
+from gobby.cli.daemon_health import health
+from gobby.cli.daemon_lifecycle import (
     status,
     stop,
 )
-from gobby.cli.daemon_health import health
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
 from gobby.cli.runtime import CliRuntime
 from gobby.utils.status import EndpointProbeFailure, RichStatusProbe
@@ -215,10 +214,10 @@ class TestServicesStop:
 # ---------------------------------------------------------------------------
 class TestStopCommand:
     @patch(
-        "gobby.cli.daemon.get_service_status",
+        "gobby.cli.daemon_lifecycle.get_service_status",
         return_value={"installed": False, "running": False},
     )
-    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    @patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True)
     def test_stop_success(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
         config.daemon_port = 60887
@@ -226,22 +225,22 @@ class TestStopCommand:
         assert result.exit_code == 0
 
     @patch(
-        "gobby.cli.daemon.get_service_status",
+        "gobby.cli.daemon_lifecycle.get_service_status",
         return_value={"installed": False, "running": False},
     )
-    @patch("gobby.cli.daemon.stop_daemon_util", return_value=False)
+    @patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=False)
     def test_stop_failure(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
         result = runner.invoke(stop, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 1
 
-    @patch("gobby.cli.daemon._services_stop", return_value=True)
-    @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
+    @patch("gobby.cli.daemon_lifecycle._services_stop", return_value=True)
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=Path("/fake"))
     @patch(
-        "gobby.cli.daemon.get_service_status",
+        "gobby.cli.daemon_lifecycle.get_service_status",
         return_value={"installed": False, "running": False},
     )
-    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    @patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True)
     def test_stop_with_docker(
         self,
         _stop: MagicMock,
@@ -258,13 +257,13 @@ class TestStopCommand:
         assert mock_services.call_count == 1
         assert mock_services.call_args is not None
 
-    @patch("gobby.cli.daemon._services_stop", return_value=False)
-    @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
+    @patch("gobby.cli.daemon_lifecycle._services_stop", return_value=False)
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=Path("/fake"))
     @patch(
-        "gobby.cli.daemon.get_service_status",
+        "gobby.cli.daemon_lifecycle.get_service_status",
         return_value={"installed": False, "running": False},
     )
-    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    @patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True)
     def test_stop_with_docker_reports_container_failure(
         self,
         _stop: MagicMock,
@@ -286,9 +285,9 @@ class TestStopCommand:
 # status command
 # ---------------------------------------------------------------------------
 class TestStatusCommand:
-    @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
-    @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={"running": False})
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Not running")
     def test_status_no_pid_file(
         self,
         _fmt: MagicMock,
@@ -305,9 +304,9 @@ class TestStatusCommand:
         assert "Not running" in result.output
         _fmt.assert_called_once()
 
-    @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.daemon.get_service_status", return_value={"running": False})
-    @patch("gobby.cli.daemon.format_status_message", return_value="Not running")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={"running": False})
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Not running")
     def test_status_invalid_pid_file(
         self,
         _fmt: MagicMock,
@@ -330,14 +329,14 @@ class TestStatusCommand:
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
-    @patch("gobby.cli.daemon.asyncio.run", return_value={})
-    @patch("gobby.cli.daemon.fetch_rich_status", new_callable=MagicMock)
-    @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
-    @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
-    @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.daemon.os.kill")
-    @patch("gobby.cli.daemon.probe_daemon_lock")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.asyncio.run", return_value={})
+    @patch("gobby.cli.daemon_lifecycle.fetch_rich_status", new_callable=MagicMock)
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Running PID 123")
+    @patch("gobby.cli.daemon_lifecycle.format_uptime", return_value="1h 30m")
+    @patch("gobby.cli.daemon_lifecycle.psutil.Process")
+    @patch("gobby.cli.daemon_lifecycle.os.kill")
+    @patch("gobby.cli.daemon_lifecycle.probe_daemon_lock")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_reports_http_unavailable_when_both_probes_fail(
         self,
         mock_home: MagicMock,
@@ -402,14 +401,14 @@ class TestStatusCommand:
     @pytest.mark.parametrize("message", ["database unavailable", "x" * 500])
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch("gobby.utils.deps.collect_all_deps", side_effect=RuntimeError("database unavailable"))
-    @patch("gobby.cli.daemon.asyncio.run", return_value={})
-    @patch("gobby.cli.daemon.fetch_rich_status", new_callable=MagicMock)
-    @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
-    @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
-    @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.daemon.os.kill")
-    @patch("gobby.cli.daemon.probe_daemon_lock")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.asyncio.run", return_value={})
+    @patch("gobby.cli.daemon_lifecycle.fetch_rich_status", new_callable=MagicMock)
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Running PID 123")
+    @patch("gobby.cli.daemon_lifecycle.format_uptime", return_value="1h 30m")
+    @patch("gobby.cli.daemon_lifecycle.psutil.Process")
+    @patch("gobby.cli.daemon_lifecycle.os.kill")
+    @patch("gobby.cli.daemon_lifecycle.probe_daemon_lock")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_degrades_dependency_probe_without_losing_daemon_health(
         self,
         mock_home: MagicMock,
@@ -486,15 +485,15 @@ class TestStatusCommand:
         "gobby.utils.deps.collect_all_deps",
         return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
     )
-    @patch("gobby.cli.daemon.asyncio.run")
-    @patch("gobby.cli.daemon.fetch_rich_status", new_callable=MagicMock)
-    @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
-    @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
-    @patch("gobby.cli.daemon.psutil.Process")
-    @patch("gobby.cli.daemon.os.kill")
-    @patch("gobby.cli.daemon.probe_daemon_lock")
-    @patch("gobby.cli.daemon.get_gobby_home")
-    @patch("gobby.cli.daemon.get_port_listener_pid", return_value=None)
+    @patch("gobby.cli.daemon_lifecycle.asyncio.run")
+    @patch("gobby.cli.daemon_lifecycle.fetch_rich_status", new_callable=MagicMock)
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Running PID 123")
+    @patch("gobby.cli.daemon_lifecycle.format_uptime", return_value="1h 30m")
+    @patch("gobby.cli.daemon_lifecycle.psutil.Process")
+    @patch("gobby.cli.daemon_lifecycle.os.kill")
+    @patch("gobby.cli.daemon_lifecycle.probe_daemon_lock")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.get_port_listener_pid", return_value=None)
     def test_status_timeout_with_healthy_fallback_keeps_daemon_running(
         self,
         _listener: MagicMock,
@@ -543,9 +542,9 @@ class TestStatusCommand:
             "(rich status deadline); fallback /api/health is healthy; PID 12345"
         )
 
-    @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
-    @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.format_status_message", return_value="Stale PID")
+    @patch("gobby.cli.daemon_lifecycle.os.kill", side_effect=ProcessLookupError)
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_stale_pid(
         self,
         mock_home: MagicMock,
@@ -563,7 +562,7 @@ class TestStatusCommand:
         assert "Stale" in result.output
 
     @patch("gobby.cli.runtime.get_cli_runtime")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_reports_maintenance_without_runtime(
         self,
         mock_home: MagicMock,
@@ -585,8 +584,8 @@ class TestStatusCommand:
         mock_runtime.assert_not_called()
 
     @patch("gobby.cli.runtime.get_cli_runtime")
-    @patch("gobby.cli.daemon.probe_daemon_lock")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.probe_daemon_lock")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_reports_typed_non_daemon_states(
         self,
         mock_home: MagicMock,

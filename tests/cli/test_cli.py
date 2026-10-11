@@ -195,7 +195,8 @@ class TestCLICommands:
         """Test restart --help displays help."""
         result = runner.invoke(cli, ["restart", "--help"])
         assert result.exit_code == 0
-        assert "Restart the Gobby daemon" in result.output
+        assert "Restart the Python backend" in result.output
+        assert "--full" in result.output
 
     def test_init_help(self, runner: CliRunner) -> None:
         """Test init --help displays help."""
@@ -230,9 +231,9 @@ class TestStatusCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
-    @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
+    @patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.runtime.CliRuntime.require_config")
-    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon_lifecycle.get_gobby_home")
     def test_status_no_pid_file(
         self,
         mock_get_home: MagicMock,

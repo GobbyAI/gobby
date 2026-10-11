@@ -88,13 +88,13 @@ class TestDaemonDockerFlag:
         assert "docker_flag" not in param_names
 
     def test_stop_has_docker_flag(self) -> None:
-        from gobby.cli.daemon import stop
+        from gobby.cli.daemon_lifecycle import stop
 
         param_names = [p.name for p in stop.params]
         assert "docker_flag" in param_names
 
     def test_restart_has_docker_flag(self) -> None:
-        from gobby.cli.daemon import restart
+        from gobby.cli.daemon_lifecycle import restart
 
         param_names = [p.name for p in restart.params]
         assert "docker_flag" in param_names

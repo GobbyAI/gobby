@@ -62,7 +62,11 @@ pub fn bad_gateway(target: SocketAddr, error: impl Error) -> Response<Body> {
     json_response(StatusCode::BAD_GATEWAY, body, false)
 }
 
-fn json_response(status: StatusCode, body: serde_json::Value, retry: bool) -> Response<Body> {
+pub(crate) fn json_response(
+    status: StatusCode,
+    body: serde_json::Value,
+    retry: bool,
+) -> Response<Body> {
     let mut response = Response::new(Body::from(body.to_string()));
     *response.status_mut() = status;
     let headers = response.headers_mut();

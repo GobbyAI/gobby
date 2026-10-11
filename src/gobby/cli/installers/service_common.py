@@ -5,6 +5,7 @@ This module owns template rendering and install-context resolution used by
 the launchd, systemd, and Windows service backends.
 """
 
+import json
 import os
 import re
 import shlex
@@ -22,6 +23,7 @@ from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.paths import get_gobby_home
 from gobby.storage.config_repository import ConfigRepositoryError
+from gobby.utils.native_bin import resolve_native_bin_or_default
 
 # Template directory
 _TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "services"
@@ -43,10 +45,16 @@ _XML_TEMPLATE_ENV = Environment(autoescape=True, **_TEMPLATE_OPTIONS)
 LAUNCHD_LABEL = "com.gobby.daemon"
 LAUNCHD_PLIST_NAME = f"{LAUNCHD_LABEL}.plist"
 SYSTEMD_UNIT_NAME = "gobby-daemon.service"
-_LAUNCH_ENV_NAMES = frozenset({"GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE"})
+_LAUNCH_ENV_NAMES = frozenset(
+    {"GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE", "GOBBY_BACKEND_COMMAND"}
+)
 _SYSTEMD_ENVIRONMENT_LINE = re.compile(r"^Environment=(.*)$", re.MULTILINE)
-_PLIST_ENV_KEY = re.compile(r"<key>(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE)</key>")
-_CMD_SET_ASSIGNMENT = re.compile(r'(?im)^set\s+"?(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE)=')
+_PLIST_ENV_KEY = re.compile(
+    r"<key>(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE|GOBBY_BACKEND_COMMAND)</key>"
+)
+_CMD_SET_ASSIGNMENT = re.compile(
+    r'(?im)^set\s+"?(GOBBY_SERVICE_LAUNCH|GOBBY_SERVICE_NONCE|GOBBY_BACKEND_COMMAND)='
+)
 
 
 def _systemd_environment_keys(payload: str) -> set[str]:
@@ -76,8 +84,31 @@ def _render_template(template_name: str, **context: Any) -> str:
     env = (
         _XML_TEMPLATE_ENV if template_name.endswith(_XML_TEMPLATE_SUFFIXES) else _TEXT_TEMPLATE_ENV
     )
+    env.filters["systemd_quote"] = _systemd_quote
+    env.filters["cmd_env"] = _cmd_env
     template = env.get_template(template_name)
     return template.render(**context)
+
+
+def _systemd_quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+
+
+def _native_launch_context(exe: Path, verbose: bool) -> dict[str, str]:
+    command = [str(exe), "-m", "gobby.runner"]
+    if verbose:
+        command.append("--verbose")
+    return {
+        "gdaemon_executable": resolve_native_bin_or_default("gdaemon"),
+        "backend_command": json.dumps(command),
+    }
+
+
+def _cmd_env(value: str) -> str:
+    """Escape an unquoted SET value, including JSON's embedded quotes."""
+    return "".join(
+        "%%" if char == "%" else f"^{char}" if char in '^&|<>()"' else char for char in value
+    )
 
 
 def _is_dev_mode() -> bool:
@@ -177,6 +208,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
             dev_exe = _venv_python(cwd_project)
 
         return {
+            **_native_launch_context(dev_exe, verbose),
             "python_executable": str(dev_exe),
             "working_directory": str(project_root),
             "mode": "dev",
@@ -189,6 +221,7 @@ def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
 
     # Installed mode: working directory is $HOME
     return {
+        **_native_launch_context(exe, verbose),
         "python_executable": str(exe),
         "working_directory": home_dir,
         "mode": "installed",

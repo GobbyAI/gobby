@@ -1,276 +1,164 @@
-"""Runner construction is fenced behind the active-daemon lease."""
+"""Contained Python runners consume native authority without owning its lease."""
 
-from __future__ import annotations
-
-import asyncio
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
+import psycopg
 import pytest
 
-from gobby import runner as runner_module
-from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
-from gobby.daemon_lease_control import LeaseLoss, LeaseLossReason, StandbyLeaseControl
-from gobby.runner_pid_file import PidOwnershipResolution
-from gobby.shutdown_intent import ShutdownIntent
+from gobby.config.bootstrap import BootstrapConfig
+from gobby.runner import GobbyRunner, run_gobby
+from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.runtime_grants.lease_view import RuntimeLeaseView, current_lease
+from gobby.servers.auth_service import AuthService
+from gobby.servers.grant_auth import LiveLeaseGrantService
+from gobby.servers.http import HTTPServer
+
+pytestmark = pytest.mark.integration
 
 
-@pytest.fixture(autouse=True)
-def _isolate_daemon_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def native_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, str]]:
+    assert os.environ.get("GOBBY_TEST_PROTECT") == "1"
+    database_url = os.environ["DATABASE_URL"]
+    assert "60892/gobby_test" in database_url
+    token = str(uuid4())
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
     monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
-
-
-@dataclass
-class FakeOwnership:
-    released: int = 0
-
-    def release(self) -> None:
-        self.released += 1
-
-
-class FakeLease:
-    def __init__(self, acquired: bool, events: list[str]) -> None:
-        self.acquired = acquired
-        self.events = events
-
-    def try_acquire(self) -> bool:
-        self.events.append("acquire")
-        return self.acquired
-
-    def heartbeat(self) -> None:
-        self.events.append("heartbeat")
-
-    def release(self) -> None:
-        self.events.append("release")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("front_door_enabled", [False, True])
-async def test_standby_never_constructs_full_runner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, front_door_enabled: bool
-) -> None:
-    events: list[str] = []
-    lease = FakeLease(False, events)
-    ownership = FakeOwnership()
-    bootstrap = BootstrapConfig(
-        database_url="postgresql://test.invalid/gobby_test",
-        daemon_port=60991,
-        front_door=FrontDoorConfig(enabled=front_door_enabled),
-    )
-
-    monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
-    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-a")
-    monkeypatch.setattr("gobby.utils.local_token.read_local_api_token", lambda: "token")
     monkeypatch.setattr(
-        "gobby.storage.schema_contract.verify_schema", lambda _url: events.append("verify")
+        "gobby.config.bootstrap.load_bootstrap",
+        lambda *_args, **_kwargs: BootstrapConfig(database_url=database_url),
     )
-    monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: lease)
-
-    async def fake_probe() -> None:
-        events.append("probe")
-
-    monkeypatch.setattr(
-        "gobby.providers.version_gate.probe_and_publish_agy_support",
-        fake_probe,
-    )
-
-    class FakeFrontDoor:
-        secret = "per-boot-front-door-secret"
-
-        def start(self) -> None:
-            events.append("front-door-start")
-
-        def arm_respawn(self) -> None:
-            events.append("front-door-watch")
-
-        def stop(self) -> None:
-            events.append("front-door-stop")
-
-    front_door = FakeFrontDoor() if front_door_enabled else None
-    monkeypatch.setattr(
-        "gobby.runner_front_door.FrontDoorChild.from_bootstrap",
-        lambda *_args: front_door,
-    )
-
-    async def serve(control: StandbyLeaseControl, **_kwargs: object) -> bool:
-        expected_secret = front_door.secret if front_door is not None else None
-        assert control.front_door_secret == expected_secret
-        events.append("standby")
-        return False
-
-    monkeypatch.setattr("gobby.daemon_lease_control.serve_standby_until_promotion", serve)
-
-    class ForbiddenRunner:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            raise AssertionError("standby constructed GobbyRunner")
-
-    monkeypatch.setattr(runner_module, "GobbyRunner", ForbiddenRunner)
-
-    await runner_module.run_gobby(
-        config_path=tmp_path / "bootstrap.yaml",
-        ownership_resolution=cast(PidOwnershipResolution, ownership),
-    )
-
-    expected = ["verify"]
-    if front_door_enabled:
-        expected.extend(["front-door-start", "front-door-watch"])
-    expected.extend(["acquire", "standby"])
-    if front_door_enabled:
-        expected.append("front-door-stop")
-    expected.append("release")
-    assert events == expected
-    assert ownership.released == 1
-
-
-@pytest.mark.asyncio
-async def test_active_constructs_runner_only_after_verify_and_acquire(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    lease = FakeLease(True, events)
-    ownership = FakeOwnership()
-    bootstrap = BootstrapConfig(
-        database_url="postgresql://test.invalid/gobby_test",
-        front_door=FrontDoorConfig(enabled=False),
-    )
-
-    monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
-    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-a")
-    monkeypatch.setattr("gobby.utils.local_token.read_local_api_token", lambda: "token")
-    monkeypatch.setattr(
-        "gobby.storage.schema_contract.verify_schema", lambda _url: events.append("verify")
-    )
-    monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: lease)
-
-    async def fake_probe() -> None:
-        events.append("probe")
-
-    monkeypatch.setattr(
-        "gobby.providers.version_gate.probe_and_publish_agy_support",
-        fake_probe,
-    )
-
-    class FakeRunner:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            events.append("construct")
-            self.http_server = type("HTTP", (), {"effect_fence": None})()
-
-        @classmethod
-        async def create(cls, *_args: object, **_kwargs: object) -> FakeRunner:
-            return cls()
-
-        async def run(self, *, ownership_resolution: object) -> None:
-            events.append("run")
-
-        def request_shutdown(self) -> None:
-            events.append("shutdown")
-
-    monkeypatch.setattr(runner_module, "GobbyRunner", FakeRunner)
-
-    await runner_module.run_gobby(ownership_resolution=cast(PidOwnershipResolution, ownership))
-
-    assert events[:5] == ["verify", "acquire", "probe", "construct", "run"]
-    assert events[-1] == "release"
-    assert ownership.released == 1
-
-
-@pytest.mark.parametrize(
-    "reason",
-    ["lease_heartbeat_timeout", "lease_connection_lost"],
-)
-async def test_lease_loss_records_typed_shutdown_source_before_request(
-    reason: LeaseLossReason,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[str] = []
-    recorded: dict[str, object] = {}
-    lease = FakeLease(True, events)
-    ownership = FakeOwnership()
-    bootstrap = BootstrapConfig(
-        database_url="postgresql://test.invalid/gobby_test",
-        front_door=FrontDoorConfig(enabled=False),
-    )
-    shutdown_requested = asyncio.Event()
-
-    monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
-    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-a")
-    monkeypatch.setattr("gobby.utils.local_token.read_local_api_token", lambda: "token")
-    monkeypatch.setattr(
-        "gobby.storage.schema_contract.verify_schema", lambda _url: events.append("verify")
-    )
-    monkeypatch.setattr("gobby.daemon_lease.ActiveDaemonLease", lambda *_a, **_kw: lease)
-    monkeypatch.setattr(
-        "gobby.servers.lease_fence.drain_effect_fence",
-        lambda _fence: events.append("drain"),
-    )
-
-    async def fake_probe() -> None:
-        return None
-
-    monkeypatch.setattr(
-        "gobby.providers.version_gate.probe_and_publish_agy_support",
-        fake_probe,
-    )
-
-    async def lose_lease(*_args: object, **kwargs: object) -> None:
-        on_invalidation = cast(Callable[[], None], kwargs["on_invalidation"])
-        on_loss = cast(Callable[[LeaseLoss], None], kwargs["on_loss"])
-        on_invalidation()
-        on_loss(
-            LeaseLoss(
-                reason=reason,
-                heartbeat_elapsed_seconds=15.25,
-                heartbeat_timeout_seconds=15.0,
-                cancellation_outcome="cancel_requested",
-                worker_settled=True,
-                worker_settlement_timeout_seconds=2.0,
-                worker_settlement_elapsed_seconds=0.25,
-            )
+    monkeypatch.setattr("gobby.deployment.deployment_token", lambda: token)
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "contained-machine")
+    monkeypatch.setattr("gobby.storage.schema_contract.verify_schema", lambda _dsn: None)
+    monkeypatch.setattr("gobby.utils.break_glass.ensure_break_glass_credential", lambda _home: None)
+    monkeypatch.setattr("gobby.providers.version_gate.probe_and_publish_agy_support", AsyncMock())
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS deployment_runtime (deployment_token TEXT PRIMARY KEY, fencing_epoch BIGINT NOT NULL DEFAULT 0, grant_signing_secret TEXT NOT NULL, epoch_updated_at TIMESTAMPTZ)"
         )
+        connection.execute(
+            "INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret) VALUES (%s, %s, %s)",
+            (token, 7, "native-seeded-secret"),
+        )
+    try:
+        yield database_url, token
+    finally:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            connection.execute(
+                "DELETE FROM deployment_runtime WHERE deployment_token = %s", (token,)
+            )
 
-    monkeypatch.setattr("gobby.daemon_lease_control.monitor_active_lease", lose_lease)
 
-    def record_shutdown(
-        source: str,
-        intent: ShutdownIntent,
-        sender_pid: int | None = None,
-        *,
-        home: Path | None = None,
-        details: Mapping[str, object] | None = None,
-    ) -> None:
-        recorded.update(source=source, intent=intent, details=dict(details or {}))
-        events.append(f"record:{source}")
+def test_view_reads_seeded_row_without_acquiring(native_authority: tuple[str, str]) -> None:
+    database_url, token = native_authority
+    view = RuntimeLeaseView(database_url, machine_id="contained-machine", deployment_token=token)
+    assert not hasattr(view, "try_acquire")
+    try:
+        view.bind()
+        assert current_lease() is view
+        assert view.fencing_epoch == 7
+        assert view.grant_signing_secret == "native-seeded-secret"
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            row = connection.execute(
+                "SELECT fencing_epoch, grant_signing_secret FROM deployment_runtime WHERE deployment_token = %s",
+                (token,),
+            ).fetchone()
+        assert row == (7, "native-seeded-secret")
+    finally:
+        view.release()
+    assert current_lease() is None
+    assert view.fencing_epoch is None
+    assert view.grant_signing_secret is None
 
-    monkeypatch.setattr(runner_module, "write_shutdown_intent", record_shutdown)
 
-    class FakeRunner:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            events.append("construct")
-            self.http_server = type("HTTP", (), {"effect_fence": object()})()
+@pytest.mark.parametrize("fail_startup", [False, True])
+@pytest.mark.parametrize("supervised", [False, True])
+async def test_contained_runner_seeds_row_and_clears_view(
+    native_authority: tuple[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_startup: bool,
+    supervised: bool,
+) -> None:
+    database_url, token = native_authority
+    runner = MagicMock(spec=GobbyRunner)
+    server = MagicMock(spec=HTTPServer)
+    server.auth_service = MagicMock(spec=AuthService)
+    runner.http_server = server
+    runner.config_runtime = MagicMock()
+    runner.database = None
+    runner.managed_credential_manager = None
+    runner.secret_store = None
+    views: list[RuntimeLeaseView] = []
 
-        @classmethod
-        async def create(cls, *_args: object, **_kwargs: object) -> FakeRunner:
-            return cls()
+    async def run(*, ownership_resolution: object) -> None:
+        view = current_lease()
+        assert view is not None
+        views.append(view)
+        assert runner.daemon_lease is view
+        assert view.fencing_epoch == 7
+        assert isinstance(server.grant_service, LiveLeaseGrantService)
+        expected_pid_state = ProbeState.ABSENT if supervised else ProbeState.DAEMON
+        assert probe_daemon_lock(tmp_path / "gobby.pid").state is expected_pid_state
+        server.auth_service.bind_runtime.assert_called_once()
+        if fail_startup:
+            raise RuntimeError("injected startup failure")
 
-        async def run(self, *, ownership_resolution: object) -> None:
-            await shutdown_requested.wait()
-            events.append("run-exit")
+    runner.run = AsyncMock(side_effect=run)
+    monkeypatch.setattr(GobbyRunner, "create", AsyncMock(return_value=runner))
+    write_fd: int | None = None
+    if supervised:
+        read_fd, write_fd = os.pipe()
+        monkeypatch.setenv("GOBBY_SUPERVISOR_FD", str(read_fd))
+    try:
+        if fail_startup:
+            with pytest.raises(RuntimeError, match="injected startup failure"):
+                await run_gobby()
+        else:
+            await run_gobby()
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
+    assert current_lease() is None
+    assert len(views) == 1
+    assert not views[0].owns_live_lease()
+    assert views[0].fencing_epoch is None
+    assert views[0].grant_signing_secret is None
+    assert not (tmp_path / "gobby.pid").exists()
+    assert probe_daemon_lock(tmp_path / "gobby.pid").state is ProbeState.ABSENT
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fencing_epoch, grant_signing_secret FROM deployment_runtime WHERE deployment_token = %s",
+            (token,),
+        ).fetchone()
+    assert row == (7, "native-seeded-secret")
 
-        def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
-            events.append(f"shutdown:{intent}")
-            shutdown_requested.set()
 
-    monkeypatch.setattr(runner_module, "GobbyRunner", FakeRunner)
+async def test_create_refusal_clears_bound_view_and_contained_pid(
+    native_authority: tuple[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.runner_init import StartRefusal
 
-    await runner_module.run_gobby(ownership_resolution=cast(PidOwnershipResolution, ownership))
-
-    assert recorded["source"] == reason
-    assert recorded["intent"] is ShutdownIntent.STOP
-    assert cast(dict[str, object], recorded["details"])["cancellation_outcome"] == (
-        "cancel_requested"
+    monkeypatch.setattr(
+        GobbyRunner, "create", AsyncMock(side_effect=StartRefusal("injected refusal"))
     )
-    assert events.index("drain") < events.index(f"record:{reason}")
-    assert events.index(f"record:{reason}") < events.index("shutdown:stop")
+    with pytest.raises(StartRefusal, match="injected refusal"):
+        await run_gobby()
+    assert current_lease() is None
+    assert not (tmp_path / "gobby.pid").exists()
+    assert probe_daemon_lock(tmp_path / "gobby.pid").state is ProbeState.ABSENT
+    database_url, token = native_authority
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fencing_epoch, grant_signing_secret FROM deployment_runtime WHERE deployment_token = %s",
+            (token,),
+        ).fetchone()
+    assert row == (7, "native-seeded-secret")

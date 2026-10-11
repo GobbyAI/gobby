@@ -12,9 +12,10 @@ use anyhow::{Context, Result};
 use axum::body::Body;
 use gobby_core::bootstrap::{
     DEFAULT_BIND_HOST, DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT, FrontDoorBootstrap,
-    HubDatabaseBootstrap, RouteBackend, backend_ports, bootstrap_path,
-    read_hub_database_bootstrap_file,
+    HubDatabaseBootstrap, RouteBackend, read_hub_database_bootstrap_file,
 };
+#[cfg(unix)]
+use gobby_core::bootstrap::{backend_ports, bootstrap_path};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -24,10 +25,16 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 
-use crate::front_door::auth::{AuthState, KeyResolver, PostgresKeyResolver};
+use crate::front_door::auth::AuthState;
+#[cfg(unix)]
+use crate::front_door::auth::{KeyResolver, PostgresKeyResolver};
 use crate::front_door::health::BackendState;
-use crate::front_door::routes::{FAMILIES, RouteTable, unimplemented_families};
-use crate::front_door::{FrontDoor, FrontDoorState, tls};
+#[cfg(unix)]
+use crate::front_door::routes::unimplemented_families;
+use crate::front_door::routes::{FAMILIES, RouteTable};
+#[cfg(unix)]
+use crate::front_door::tls;
+use crate::front_door::{FrontDoor, FrontDoorState};
 
 /// How long an accepted connection may take to send its first byte and, for
 /// TLS, finish the handshake before it is dropped.
@@ -43,18 +50,20 @@ pub struct PublicListener {
 }
 
 /// Entry point for `gdaemon serve`. Builds a tokio runtime for this subcommand only.
+#[cfg(unix)]
 pub fn run() -> Result<()> {
-    let secret = std::env::var("GOBBY_FRONT_DOOR_SECRET")
-        .ok()
-        .filter(|secret| !secret.is_empty())
-        .context("GOBBY_FRONT_DOOR_SECRET must be nonempty; launch through the Python runner")?;
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use rand::RngCore;
+    let mut secret = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret);
+    let secret = URL_SAFE_NO_PAD.encode(secret);
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
     let resolver = bootstrap
         .database_url
         .as_deref()
         .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
-    let auth = Arc::new(AuthState::new(secret, resolver, path.clone())?);
+    let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
     let (backend_http, backend_ws) =
         backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
     for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
@@ -78,169 +87,73 @@ pub fn run() -> Result<()> {
         .build()
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
-        let (retention_stop, retention_shutdown) = tokio::sync::watch::channel(false);
-        let retention_task = if let Some(database_url) = &bootstrap.database_url {
-            let home = path.parent().context("bootstrap has no parent directory")?;
-            let machine_id = gobby_core::machine::read_machine_id_from_home(home)?;
-            let pool = gobby_core::postgres_pool::Pool::build(
-                database_url,
-                gobby_core::postgres_pool::PoolSettings {
-                    max_size: 2,
-                    application_name: "gobby-gdaemon-retention".to_owned(),
-                    acquire_timeout: Duration::from_secs(2),
-                },
-            )?;
-            Some(tokio::spawn(crate::retention::run(
-                pool,
-                uuid::Uuid::parse_str(&machine_id)?,
-                retention_shutdown,
-            )))
-        } else {
-            None
+        let home = path.parent().context("bootstrap has no parent directory")?;
+        let Some((state, supervisor)) =
+            crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
+        else {
+            return Ok(());
         };
-        let terminal_family =
-            if bootstrap.front_door.routes.get("terminal_ws") == Some(&RouteBackend::Native) {
-                let home = path.parent().context("bootstrap has no parent directory")?;
-                let pool = gobby_core::postgres_pool::Pool::build(
-                    bootstrap
-                        .database_url
-                        .as_deref()
-                        .context("Native terminal supervision requires database_url")?,
-                    gobby_core::postgres_pool::PoolSettings {
-                        max_size: 8,
-                        application_name: "gobby-gdaemon-terminals".to_owned(),
-                        acquire_timeout: Duration::from_secs(2),
-                    },
-                )?;
-                let machine_id = gobby_core::machine::read_machine_id_from_home(home)?;
-                let options =
-                    gobby_terminals::host::HostOptions::from_pool(&pool, home, machine_id).await?;
-                options.map(|options| {
-                    gobby_terminals::family::TerminalFamily::new(
-                        RouteBackend::Native,
-                        options,
-                        Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(pool)),
-                    )
-                })
-            } else {
-                None
-            };
-        if let Some(family) = &terminal_family
-            && let Err(error) = family.start().await
-        {
-            // Startup settles promptly; the single lifecycle retains bounded retry.
-            eprintln!("gdaemon terminal host: {error}");
+        let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
+        listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        let owner = state.clone();
+        let mut lifecycle = tokio::spawn(owner_run(
+            owner,
+            supervisor,
+            shutdown,
+            bootstrap.clone(),
+            home.to_owned(),
+        ));
+        let mut owner_result = None;
+        let result = serve_with_runtime(
+            listeners,
+            &bootstrap.front_door.routes,
+            tls.map(|loaded| loaded.config),
+            auth,
+            Some(state),
+            async {
+                tokio::select! {
+                    () = shutdown_signal() => {},
+                    finished = &mut lifecycle => { owner_result = Some(finished); },
+                }
+            },
+        )
+        .await;
+        stop.send_replace(true);
+        match owner_result {
+            Some(finished) => finished,
+            None => lifecycle.await,
         }
-        let host = bootstrap.bind_host.as_str();
-        let mut listeners = bind(host, bootstrap.daemon_port, backend_http).await?;
-        listeners.extend(bind(host, bootstrap.websocket_port, backend_ws).await?);
-        let parent_gone = watch_parent_fd()?;
-        let drain = std::sync::atomic::AtomicBool::new(false);
-        let shutdown = async {
-            match parent_gone {
-                Some(gone) => tokio::select! {
-                    () = shutdown_signal() => {}
-                    intent = gone => {
-                        drain.store(intent.unwrap_or(false), std::sync::atomic::Ordering::Release);
-                    }
-                },
-                None => shutdown_signal().await,
-            }
-        };
-        let tls = tls.map(|loaded| loaded.config);
-        let result = serve(listeners, &bootstrap.front_door.routes, tls, auth, shutdown).await;
-        retention_stop.send_replace(true);
-        if let Some(task) = retention_task {
-            task.await.context("token-event retention task failed")?;
-        }
-        if let Some(family) = &terminal_family {
-            if drain.load(std::sync::atomic::Ordering::Acquire) {
-                family
-                    .drain()
-                    .await
-                    .context("explicit terminal drain failed")?;
-            } else {
-                family.stop().await;
-            }
-        }
+        .context("runtime owner task failed")??;
         result
     })
 }
 
-/// The runner that owns this `serve` passes the read end of a liveness pipe in
-/// `GOBBY_PARENT_FD`; the receiver resolves on EOF, meaning the runner is gone by
-/// any cause, SIGKILL included. Without the variable there is no watch. The read
-/// runs on a detached thread, not the blocking pool, so a runtime drop never
-/// waits on it.
-fn watch_parent_fd() -> Result<Option<tokio::sync::oneshot::Receiver<bool>>> {
-    let Some(value) = std::env::var_os(PARENT_FD_ENV) else {
-        return Ok(None);
-    };
-    let mut pipe = inherited_pipe(&value)?;
-    let (gone, watch) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("parent-fd-watch".to_owned())
-        .spawn(move || {
-            use std::io::{ErrorKind, Read};
-            let mut buf = [0u8; 64];
-            let mut line = Vec::with_capacity(2);
-            loop {
-                match pipe.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        for byte in &buf[..count] {
-                            if *byte == b'\n' {
-                                if line == b"D" {
-                                    let _ = gone.send(true);
-                                    return;
-                                }
-                                line.clear();
-                            } else if line.len() < 2 {
-                                line.push(*byte);
-                            }
-                        }
-                    }
-                    Err(err) if err.kind() == ErrorKind::Interrupted => {}
-                    Err(_) => break,
-                }
-            }
-            let _ = gone.send(false);
-        })
-        .context("failed to start the parent pipe watch")?;
-    Ok(Some(watch))
+#[cfg(not(unix))]
+pub fn run() -> Result<()> {
+    anyhow::bail!(
+        "gdaemon serve is unsupported on Windows; launch the Python daemon with gobby start"
+    )
 }
-
-const PARENT_FD_ENV: &str = "GOBBY_PARENT_FD";
 
 #[cfg(unix)]
-fn inherited_pipe(value: &std::ffi::OsStr) -> Result<std::fs::File> {
-    use std::os::fd::FromRawFd;
-    let fd: std::os::fd::RawFd = value
-        .to_str()
-        .and_then(|v| v.parse().ok())
-        .with_context(|| format!("{PARENT_FD_ENV} must be a file descriptor number"))?;
-    // SAFETY: the owning runner passes exactly this descriptor to the child and
-    // nothing else in gdaemon opens or closes it.
-    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+async fn owner_run(
+    state: Arc<crate::state::RuntimeState>,
+    supervisor: crate::lifecycle::backend::BackendSupervisor,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+    bootstrap: HubDatabaseBootstrap,
+    home: std::path::PathBuf,
+) -> Result<()> {
+    state.run(supervisor, shutdown, bootstrap, home).await
 }
 
-#[cfg(windows)]
-fn inherited_pipe(value: &std::ffi::OsStr) -> Result<std::fs::File> {
-    use std::os::windows::io::{FromRawHandle, RawHandle};
-    let handle: usize = value
-        .to_str()
-        .and_then(|v| v.parse().ok())
-        .with_context(|| format!("{PARENT_FD_ENV} must be a handle value"))?;
-    // SAFETY: the owning runner makes exactly this handle inheritable for the
-    // child and nothing else in gdaemon opens or closes it.
-    Ok(unsafe { std::fs::File::from_raw_handle(handle as RawHandle) })
-}
-
-/// Read bootstrap (a missing file means defaults, as in Python) and refuse to serve
+/// Load front-door bootstrap; the contained corpus uses the unsupervised entry.
 /// when the front door is disabled.
 pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
     let bootstrap =
         read_hub_database_bootstrap_file(path)?.unwrap_or_else(|| HubDatabaseBootstrap {
+            mode: gobby_core::bootstrap::RunMode::Standalone,
+            hub_daemon_url: None,
             database_url: None,
             api_key: None,
             daemon_url: None,
@@ -324,6 +237,26 @@ pub async fn serve(
     auth: Arc<AuthState>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    serve_with_runtime(
+        listeners,
+        routes,
+        tls,
+        auth,
+        #[cfg(unix)]
+        None,
+        shutdown,
+    )
+    .await
+}
+
+async fn serve_with_runtime(
+    listeners: Vec<PublicListener>,
+    routes: &BTreeMap<String, RouteBackend>,
+    tls: Option<Arc<ServerConfig>>,
+    auth: Arc<AuthState>,
+    #[cfg(unix)] runtime: Option<Arc<crate::state::RuntimeState>>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
     // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
     let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
     heartbeat.start()?;
@@ -331,6 +264,11 @@ pub async fn serve(
     let mut accept_loops = JoinSet::new();
     for PublicListener { listener, backend } in listeners {
         let state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
+        #[cfg(unix)]
+        let state = FrontDoorState {
+            runtime: runtime.clone(),
+            ..state
+        };
         let table = RouteTable::new(FAMILIES, routes, &state);
         accept_loops.spawn(accept(
             listener,
@@ -420,6 +358,7 @@ where
         .await;
 }
 
+#[cfg(unix)]
 async fn shutdown_signal() {
     #[cfg(unix)]
     {

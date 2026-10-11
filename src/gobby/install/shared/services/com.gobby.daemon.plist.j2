@@ -7,12 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>{{ python_executable }}</string>
-        <string>-m</string>
-        <string>gobby.runner</string>
-{% if verbose %}
-        <string>--verbose</string>
-{% endif %}
+        <string>{{ gdaemon_executable }}</string>
+        <string>serve</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -24,6 +20,8 @@
         <string>{{ home_dir }}</string>
         <key>PATH</key>
         <string>{{ path_env }}</string>
+        <key>GOBBY_BACKEND_COMMAND</key>
+        <string>{{ backend_command }}</string>
         <key>GOBBY_SERVICE_LAUNCH</key>
         <string>1</string>
         <key>GOBBY_SERVICE_NONCE</key>

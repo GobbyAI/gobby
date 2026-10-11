@@ -9,6 +9,17 @@ use tokio::time::{sleep, timeout};
 
 const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Debug)]
+pub(crate) struct FreshLeaseOwner;
+
+impl std::fmt::Display for FreshLeaseOwner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("active-daemon lease owner is still fresh")
+    }
+}
+
+impl std::error::Error for FreshLeaseOwner {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LeaseOwner {
     pub pid: i32,
@@ -39,7 +50,7 @@ impl ActiveDaemonLease {
             }
             let seconds = stale_after.as_secs_f64();
             if owner.heartbeat_age_seconds < seconds {
-                bail!("active-daemon lease owner is still fresh");
+                return Err(anyhow!(FreshLeaseOwner));
             }
             let class_id = i64::from(keys.0 as u32);
             let object_id = i64::from(keys.1 as u32);

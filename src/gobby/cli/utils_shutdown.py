@@ -145,7 +145,9 @@ def stop_daemon(
         write_shutdown_source(
             shutdown_source,
             intent=shutdown_intent,
-            details=shutdown_marker_details(drain_terminals=drain_terminals),
+            details=shutdown_marker_details(
+                drain_terminals=drain_terminals, restart_supervisor=shutdown_intent == "restart"
+            ),
         )
 
     stop_start = time.time()
@@ -184,7 +186,7 @@ def stop_daemon(
         if not quiet:
             deps._stop_step(f"Sent shutdown signal (PID: {pid})")
 
-        max_wait = 20
+        max_wait = 30
         for _ in range(max_wait * 10):
             time.sleep(0.1)
             if not bool(deps._is_process_alive(pid)):
