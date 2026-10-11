@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import Transaction
+from gobby.storage.session_models import Session
+from gobby.utils.datetime import utc_now
 
 
 class AmbiguousSessionIdentityError(RuntimeError):
@@ -116,6 +119,7 @@ def reconcile_session_identity(
     source: str,
     project_id: str,
     session_type: str,
+    status_notifier: Callable[[SessionStatusTransition], None] | None = None,
 ) -> SessionIdentityReconciliation:
     """Collapse unambiguous legacy duplicates for one canonical identity."""
     rows = conn.execute(
@@ -167,10 +171,23 @@ def reconcile_session_identity(
         ),
         None,
     )
-    conn.execute("DELETE FROM sessions WHERE id = ANY(%s)", (list(deleted_ids),))
+    deleted_rows = conn.execute(
+        """DELETE FROM sessions WHERE id = ANY(%s)
+        RETURNING *, (SELECT name FROM projects WHERE projects.id = sessions.project_id) AS project_name""",
+        (list(deleted_ids),),
+    ).fetchall()
+    if status_notifier is not None:
+        for row in deleted_rows:
+            status_notifier(
+                SessionStatusTransition.from_session(
+                    Session.from_row(row), status="deleted", transitioned_at=utc_now()
+                )
+            )
     if attributed_machine_id is not None and canonical["machine_id"] is None:
         conn.execute(
             "UPDATE sessions SET machine_id = %s WHERE id = %s",
             (attributed_machine_id, canonical_id),
         )
-    return SessionIdentityReconciliation(canonical_id=canonical_id, deleted_ids=deleted_ids)
+    return SessionIdentityReconciliation(
+        canonical_id=canonical_id, deleted_ids=tuple(str(row["id"]) for row in deleted_rows)
+    )

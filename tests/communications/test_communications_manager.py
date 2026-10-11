@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +36,7 @@ from gobby.sessions.mailbox import MailboxSendResult
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
@@ -524,6 +525,211 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
     else:
         adapter.send_message.assert_awaited_once()
         assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+
+
+@pytest.fixture
+def _legacy_identity_index(temp_db: HubDatabase, deletion: str) -> Iterator[None]:
+    if deletion != "identity":
+        yield
+        return
+    row = temp_db.fetchone("SELECT pg_get_indexdef('idx_sessions_unique'::regclass) AS definition")
+    assert row is not None
+    definition = row["definition"]
+    try:
+        yield
+    finally:
+        # A rollback leaves the duplicate present; make its identity unique first.
+        temp_db.execute(
+            "UPDATE sessions SET external_id = id::text "
+            "WHERE external_id = 'legacy-canonical' AND message_count = 0"
+        )
+        temp_db.execute(definition)
+
+
+def _legacy_delete_target(
+    sessions: SessionManager, project_id: str, deletion: str
+) -> tuple[Session, Session]:
+    context = {"parent_pid": 4242, "parent_create_time": 1234.5}
+    canonical = sessions.register(
+        external_id="legacy-canonical",
+        machine_id=None,
+        source="claude",
+        project_id=project_id,
+        terminal_context=context,
+    )
+    holder = sessions.register(
+        external_id="legacy-holder",
+        machine_id=None,
+        source="claude",
+        project_id=project_id,
+        terminal_context=context,
+        title="Lane Developer",
+    )
+    sessions.db.execute("UPDATE sessions SET message_count = 1 WHERE id = %s", (canonical.id,))
+    if deletion == "identity":
+        # Recreate a pre-unique-index collision only in the isolated test schema.
+        with sessions.db.transaction() as conn:
+            conn.execute("DROP INDEX idx_sessions_unique")
+            conn.execute(
+                "UPDATE sessions SET external_id = %s WHERE id = %s",
+                (canonical.external_id, holder.id),
+            )
+    return canonical, holder
+
+
+def _delete_legacy_target(sessions: SessionManager, canonical: Session, deletion: str) -> None:
+    if deletion == "compact":
+        from gobby.storage.session_activity import reconcile_compact_session_activity
+
+        result = reconcile_compact_session_activity(sessions, canonical.id)
+        assert result.success
+        assert len(result.deleted_ghost_ids) == 1
+    else:
+        result_session = sessions.register(
+            external_id=canonical.external_id,
+            machine_id=None,
+            source=canonical.source,
+            project_id=canonical.project_id,
+        )
+        assert result_session.id == canonical.id
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deletion", ["compact", "identity"])
+@pytest.mark.parametrize("assistant_available", [False, True])
+async def test_legacy_delete_releases_telegram_target_after_commit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    deletion: str,
+    assistant_available: bool,
+    _legacy_identity_index: None,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    canonical, holder = _legacy_delete_target(sessions, sample_project["id"], deletion)
+    assistant = (
+        sessions.register(
+            external_id="legacy-assistant",
+            machine_id=None,
+            source="claude",
+            project_id=sample_project["id"],
+            title="Assistant",
+        )
+        if assistant_available
+        else None
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    with temp_db.transaction():
+        _delete_legacy_target(sessions, canonical, deletion)
+        assert sessions.get(holder.id) is None
+        assert transitions == []
+    deleted = [event for event in transitions if event.status == "deleted"]
+    assert len(deleted) == 1
+    assert (deleted[0].session_id, deleted[0].project_id, deleted[0].seq_num) == (
+        holder.id,
+        holder.project_id,
+        holder.seq_num,
+    )
+    for event in transitions:
+        await manager.handle_session_status_transition(event)
+    expected = assistant.id if assistant is not None else None
+    assert manager.attached_session(channel.id, "dm:42") == expected
+    persisted = store.get_channel(channel.id)
+    assert persisted is not None
+    assert persisted.config_json["telegram_agent_targets"] == (
+        {"dm:42": expected} if assistant_available else {}
+    )
+    if assistant_available:
+        adapter.send_message.assert_not_awaited()
+    else:
+        adapter.send_message.assert_awaited_once()
+        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("deletion", ["compact", "identity"])
+def test_legacy_delete_rollback_does_not_emit_end_event(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    deletion: str,
+    _legacy_identity_index: None,
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+
+    sessions = SessionManager(temp_db)
+    canonical, holder = _legacy_delete_target(sessions, sample_project["id"], deletion)
+    transitions: list[SessionStatusTransition] = []
+    sessions.register_status_transition_listener(transitions.append)
+    with pytest.raises(RuntimeError, match="roll back deletion"):
+        with temp_db.transaction():
+            _delete_legacy_target(sessions, canonical, deletion)
+            raise RuntimeError("roll back deletion")
+    assert sessions.get(holder.id) is not None
+    assert transitions == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_offline_deleted_restore_prefers_same_project_assistant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.sessions.status_events import SessionStatusTransition
+    from gobby.storage.projects import LocalProjectManager
+
+    sessions = SessionManager(temp_db)
+    same_project = sessions.register(
+        external_id="same-project-assistant",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Assistant",
+    )
+    other_project = LocalProjectManager(temp_db).create(name="Other")
+    other = sessions.register(
+        external_id="other-project-assistant",
+        machine_id=None,
+        source="claude",
+        project_id=other_project.id,
+        title="Assistant",
+    )
+    # list() returns the newer foreign Assistant first; project preference must win.
+    assert sessions.list(statuses=["active"])[0].id == other.id
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(
+        channel_type="telegram",
+        channel_id=str(uuid.uuid4()),
+        config_json={"telegram_agent_targets": {"dm:42": str(uuid.uuid4())}},
+    )
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    transitions: list[SessionStatusTransition] = []
+    original = manager.handle_session_status_transition
+
+    async def record_transition(transition: SessionStatusTransition) -> None:
+        transitions.append(transition)
+        await original(transition)
+
+    with patch.object(manager, "handle_session_status_transition", side_effect=record_transition):
+        await manager._restore_telegram_targets(channel)
+    assert len(transitions) == 1
+    assert transitions[0].project_id == sample_project["id"]
+    assert manager.attached_session(channel.id, "dm:42") == same_project.id
+    persisted = store.get_channel(channel.id)
+    assert persisted is not None
+    assert persisted.config_json["telegram_agent_targets"] == {"dm:42": same_project.id}
 
 
 @pytest.mark.integration

@@ -6,6 +6,7 @@ import json
 import uuid
 from typing import Any, ClassVar, Protocol
 
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionRecoveryByProject,
@@ -61,6 +62,8 @@ class _SessionCRUDHost(Protocol):
     def get(self, session_id: str) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+    def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
     def move_to_project(self, session_id: str, project_id: str) -> Session | None: ...
 
@@ -140,6 +143,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 source=source,
                 project_id=storage_project_id,
                 session_type=session_type,
+                status_notifier=self._notify_status_transition,
             )
             if reconciliation.deleted_ids:
                 get_logger().warning(
