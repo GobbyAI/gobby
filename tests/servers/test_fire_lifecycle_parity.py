@@ -161,6 +161,51 @@ def _make_workflow_handler_with_response(**kwargs: Any) -> MagicMock:
     return handler
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [IndexError("matcher index"), RuntimeError("matcher failed")])
+async def test_before_tool_evaluation_error_blocks(
+    host: ChatMixinHost, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    host._chat_sessions["conv-1"] = _make_session()
+    host.workflow_handler = _make_workflow_handler()
+    host.workflow_handler.evaluate.side_effect = error
+    audit = AsyncMock()
+    block_log = MagicMock()
+    monkeypatch.setattr("gobby.servers.websocket.chat._lifecycle.audit_source_block", audit)
+    monkeypatch.setattr("gobby.servers.websocket.chat._lifecycle.log_structured_block", block_log)
+
+    result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+
+    assert result is not None
+    assert result["decision"] == "block"
+    assert result["reason"] == (
+        "Workflow evaluation failed; blocking tool call for safety: "
+        f"{type(error).__name__}: {error}"
+    )
+    assert result["context_parts"] == []
+    audit.assert_awaited_once()
+    assert audit.call_args.kwargs["rule_id"] == "hook-before-tool-safety"
+    assert audit.call_args.kwargs["reason"] == result["reason"]
+    block_log.assert_called_once()
+    assert block_log.call_args.kwargs["reason"] == result["reason"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event_type", [event for event in HookEventType if event != HookEventType.BEFORE_TOOL]
+)
+async def test_other_lifecycle_evaluation_errors_keep_fail_open(
+    host: ChatMixinHost, event_type: HookEventType
+) -> None:
+    host.workflow_handler = _make_workflow_handler()
+    host.workflow_handler.evaluate.side_effect = RuntimeError("matcher failed")
+
+    result = await host._fire_lifecycle("conv-1", event_type, {})
+
+    assert result is None
+    host.workflow_handler.evaluate.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # STOP/SUBAGENT_STOP enrichment exclusion (#18343)
 # ---------------------------------------------------------------------------
@@ -595,7 +640,9 @@ class TestFireLifecycleMessagePiggyback:
             "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
         )
 
-        assert result is None
+        assert result is not None
+        assert result["decision"] == "block"
+        assert "RuntimeError: dispatch failed" in result["reason"]
         assert delivered == []
         mgr.get_undelivered_messages.assert_called_once_with(SESSION_ID)
 

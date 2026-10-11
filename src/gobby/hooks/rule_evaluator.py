@@ -148,6 +148,16 @@ class WorkflowRuleEvaluator:
             raise
         except Exception as exc:
             self.logger.exception("Workflow evaluation failed: %s", exc)
+            if event.event_type == HookEventType.BEFORE_TOOL:
+                response = HookResponse(
+                    decision="block",
+                    reason=(
+                        "Workflow evaluation failed; blocking tool call for safety: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+                self._audit_source_block(event, response, rule_id="hook-before-tool-safety")
+                return None, response
             if event.event_type in {HookEventType.STOP, HookEventType.STOP_FAILURE}:
                 response = HookResponse(
                     decision="block",
