@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 from gobby.sessions.context_usage import snapshot_from_token_usage, snapshot_from_window_metadata
 from gobby.sessions.message_stats import MessageStats
-from gobby.sessions.processor_lifecycle import ProcessorLifecycleMixin
+from gobby.sessions.processor_lifecycle import ProcessorLifecycleMixin, TurnCompletion
 from gobby.sessions.processor_stats import ProcessorStatsMixin
 from gobby.sessions.processor_transcripts import ProcessorTranscriptMixin
 from gobby.sessions.processor_types import WebSocketServer
@@ -88,6 +88,7 @@ class SessionMessageProcessor(
         self._restored_render_sessions: set[str] = set()
         self._mirror_start_offsets: dict[str, int] = {}
         self._mirror_eligible_ids: dict[str, set[str]] = {}
+        self._pending_turn_completions: dict[str, TurnCompletion] = {}
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
         self._observation_store = UnmodeledObservationStore(db)
 

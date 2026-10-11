@@ -547,7 +547,6 @@ class LocalCommunicationsStore:
 WITH messages_to_delete AS MATERIALIZED (
     SELECT id FROM comms_messages
     WHERE created_at < %s
-      AND NOT (metadata_json ? 'transcript_message_id')
       AND NOT EXISTS (
           SELECT 1
           FROM comms_attachments

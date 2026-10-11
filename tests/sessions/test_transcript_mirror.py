@@ -813,10 +813,79 @@ async def test_completed_text_sends_once_after_rollback_and_restart_replay(
     assert sent.session_id == session_id
     assert sent.metadata_json["platform_destination"] == "42"
     assert manager.store.get_message(sent.id) is not None
-    removed, paths = manager.store.delete_messages_before(TS + timedelta(days=365))
+    removed, paths = manager.store.delete_messages_before(datetime.now(UTC) - timedelta(days=30))
     assert removed == 0
     assert paths == []
     await processor(temp_db, manager)._process_parsed_batch(session_id, batch)
+    assert send.await_count == 1
+
+
+async def test_retention_prunes_old_mirror_rows_and_preserves_recent_dedupe(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = [f"delivered-{index}" for index in range(4)]
+    for index in range(3):
+        await manager.mirror_session_message(session_id, f"old-{index}", f"old reply {index}")
+    old_rows = manager.store.list_messages(session_id=session_id)
+    now = datetime.now(UTC)
+    with temp_db.transaction() as conn:
+        for row in old_rows:
+            conn.execute(
+                "UPDATE comms_messages SET created_at = %s WHERE id = %s",
+                (now - timedelta(days=31), row.id),
+            )
+    await manager.mirror_session_message(session_id, "recent", "recent reply")
+
+    cutoff = now - timedelta(days=30)
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (2, [])
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (1, [])
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (0, [])
+    assert all(manager.store.get_message(row.id) is None for row in old_rows)
+    recent = manager.store.list_messages(session_id=session_id)
+    assert len(recent) == 1
+    assert recent[0].content == "recent reply"
+    await manager.mirror_session_message(session_id, "recent", "recent reply")
+    assert send.await_count == 4
+
+
+@pytest.mark.parametrize("write_mode", ["newline", "unterminated", "split"])
+@pytest.mark.parametrize("initial_role", ["assistant", "user"])
+async def test_timed_out_completion_mirrors_final_text_on_poll_without_later_record(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    write_mode: str,
+    initial_role: str,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "late-final.jsonl"
+    transcript.write_text(native_line(initial_role, "reply", "prefix ") + "\n")
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    result = await target.complete_turn(session_id, "final reply")
+    assert not result.flushed
+    assert result.error == "final transcript text not yet present"
+    send.assert_not_awaited()
+    await target._process_all_sessions()
+    send.assert_not_awaited()
+
+    final_line = native_line("assistant", "reply", "final reply")
+    if write_mode == "split":
+        split = len(final_line) // 2
+        with transcript.open("a") as stream:
+            stream.write(final_line[:split])
+        await target._process_all_sessions()
+        send.assert_not_awaited()
+        final_line = final_line[split:]
+    with transcript.open("a") as stream:
+        stream.write(final_line + ("\n" if write_mode == "newline" else ""))
+    await target._process_all_sessions()
+    send.assert_awaited_once()
+    expected_reply = "prefix final reply" if initial_role == "assistant" else "final reply"
+    assert send.call_args.args[0].content == expected_reply
+    await target._process_all_sessions()
     assert send.await_count == 1
 
 
