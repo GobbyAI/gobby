@@ -20,7 +20,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
+from gobby.worktrees.git import (
+    BranchDivergenceUnavailableError,
+    GitOperationResult,
+    WorktreeGitManager,
+)
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 from ._event_handler_helpers import make_event
@@ -474,9 +478,10 @@ class TestNotificationHandlerEdgeCases:
 class TestWorktreeHandlers:
     """Test WORKTREE_CREATE and WORKTREE_REMOVE default behavior."""
 
-    @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged"])
+    @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged", "raced"])
     @pytest.mark.parametrize("use_local", [True, False])
     @pytest.mark.parametrize("registered", [True, False])
+    @pytest.mark.parametrize("has_record", [True, False])
     async def test_worktree_create_handles_orphan_branch(
         self,
         mock_dependencies: dict[str, Any],
@@ -484,6 +489,7 @@ class TestWorktreeHandlers:
         state: str,
         use_local: bool,
         registered: bool,
+        has_record: bool,
     ) -> None:
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -498,13 +504,14 @@ class TestWorktreeHandlers:
         git("config", "user.name", "Test User")
         git("commit", "--allow-empty", "-m", "initial")
         git("branch", "feature-auth")
-        if state in {"ancestor", "diverged"}:
+        if state in {"ancestor", "diverged", "raced"}:
             git("commit", "--allow-empty", "-m", "base advances")
         if state in {"ahead", "diverged"}:
             git("switch", "feature-auth")
             git("commit", "--allow-empty", "-m", "unmerged task")
             git("switch", "main")
         branch_tip = git("rev-parse", "refs/heads/feature-auth")
+        base_tip = git("rev-parse", "refs/heads/main")
         missing_path = tmp_path / "missing"
         if registered:
             git("worktree", "add", str(missing_path), "feature-auth")
@@ -513,14 +520,39 @@ class TestWorktreeHandlers:
         git("remote", "add", "origin", str(repo))
         worktree_path = tmp_path / "recreated"
         worktree_manager = mock_dependencies["worktree_manager"]
-        worktree_manager.get_by_branch.return_value = MagicMock(
-            id="wt-stale", project_id="proj-123", worktree_path=str(missing_path)
+        worktree_manager.get_by_branch.return_value = (
+            MagicMock(id="wt-stale", project_id="proj-123", worktree_path=str(missing_path))
+            if has_record
+            else None
         )
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
         )
         git_manager = WorktreeGitManager(repo)
+        create_worktree = git_manager.create_worktree
+
+        async def create_at_current_tip(
+            *,
+            worktree_path: str,
+            branch_name: str,
+            base_branch: str,
+            create_branch: bool,
+            use_local: bool,
+        ) -> GitOperationResult:
+            nonlocal branch_tip
+            if state == "raced":
+                git("switch", "feature-auth")
+                git("commit", "--allow-empty", "-m", "concurrent task commit")
+                branch_tip = git("rev-parse", "refs/heads/feature-auth")
+                git("switch", "main")
+            return await create_worktree(
+                worktree_path=worktree_path,
+                branch_name=branch_name,
+                base_branch=base_branch,
+                create_branch=create_branch,
+                use_local=use_local,
+            )
 
         with (
             patch(
@@ -530,6 +562,7 @@ class TestWorktreeHandlers:
             patch.object(
                 git_manager, "has_unpushed_commits", AsyncMock(return_value=(use_local, 0))
             ),
+            patch.object(git_manager, "create_worktree", side_effect=create_at_current_tip),
             patch(
                 "gobby.hooks.event_handlers._misc.generate_worktree_path",
                 return_value=str(worktree_path),
@@ -543,9 +576,12 @@ class TestWorktreeHandlers:
         ):
             response = await handlers.handle_worktree_create(event)
 
-        worktree_manager.delete.assert_called_once_with("wt-stale")
-        assert git("rev-parse", "refs/heads/feature-auth") == branch_tip
         if state in {"ancestor", "equal"}:
+            if has_record:
+                worktree_manager.delete.assert_called_once_with("wt-stale")
+            else:
+                worktree_manager.delete.assert_not_called()
+            assert git("rev-parse", "refs/heads/feature-auth") == base_tip
             assert response.worktree_path == str(worktree_path)
             assert response.decision == "allow"
             assert (worktree_path / ".git").is_file()
@@ -558,10 +594,12 @@ class TestWorktreeHandlers:
                     capture_output=True,
                     text=True,
                 ).stdout.strip()
-                == branch_tip
+                == base_tip
             )
             worktree_manager.create.assert_called_once()
         else:
+            worktree_manager.delete.assert_not_called()
+            assert git("rev-parse", "refs/heads/feature-auth") == branch_tip
             assert response.decision == "block"
             assert response.reason is not None and "feature-auth" in response.reason
             assert response.worktree_path is None
@@ -667,6 +705,11 @@ class TestWorktreeHandlers:
             id="wt-stale", project_id="proj-123", worktree_path=str(tmp_path / "missing")
         )
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+        )
         git_manager.prune_worktrees = AsyncMock(
             return_value=SimpleNamespace(success=False, message="prune failed")
         )
