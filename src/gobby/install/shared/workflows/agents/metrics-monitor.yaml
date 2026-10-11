@@ -137,6 +137,19 @@ step_workflow:
         - "gobby-skills:get_skill_file"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-workflows
+          tool: set_variable
+          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
+          action: set_variable
+          variable: orchestrator_reported
+          value: false
+        - server: gobby-workflows
+          tool: set_variable
+          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
+          action: set_variable
+          variable: log_monitor_reported
+          value: false
       transitions:
         - to: report
           when: "vars.tick_done and vars.orchestrator_session and vars.log_monitor_session"
@@ -162,7 +175,7 @@ step_workflow:
           tool: send_message
           when: >-
             tool_input.get('target') == 'session' and vars.orchestrator_session
-            and tool_input.get('target_id') == vars.orchestrator_session
+            and session_refs_equal(session_id, tool_input.get('target_id'), vars.orchestrator_session)
             and (str(tool_input.get('content') or '').startswith('Systems nominal |') or str(tool_input.get('content') or '').startswith('EVENT=ALARM'))
           action: set_variable
           variable: orchestrator_reported
@@ -171,24 +184,25 @@ step_workflow:
           tool: send_message
           when: >-
             tool_input.get('target') == 'session' and vars.log_monitor_session
-            and tool_input.get('target_id') == vars.log_monitor_session
+            and session_refs_equal(session_id, tool_input.get('target_id'), vars.log_monitor_session)
             and (str(tool_input.get('content') or '').startswith('Systems nominal |') or str(tool_input.get('content') or '').startswith('EVENT=ALARM'))
           action: set_variable
           variable: log_monitor_reported
           value: true
+        # on_transition actions are not executed by the step engine. Reset the
+        # completed window here, before report -> tick conditions are evaluated.
+        - server: gobby-agents
+          tool: send_message
+          when: "vars.orchestrator_reported and vars.log_monitor_reported"
+          action: set_variable
+          variable: tick_done
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: "vars.orchestrator_reported and vars.log_monitor_reported"
+          action: set_variable
+          variable: tick_window
+          value: null
       transitions:
         - to: tick
           when: "vars.orchestrator_reported and vars.log_monitor_reported"
-          on_transition:
-            - action: set_variable
-              variable: tick_done
-              value: false
-            - action: set_variable
-              variable: tick_window
-              value: null
-            - action: set_variable
-              variable: orchestrator_reported
-              value: false
-            - action: set_variable
-              variable: log_monitor_reported
-              value: false
