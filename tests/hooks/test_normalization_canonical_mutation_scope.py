@@ -22,6 +22,51 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("wrapper", ["sh -c", "bash -c", "zsh -c", "eval", "env sh -c"])
+def test_nested_dollar_pair_quote_write_fails_closed(tmp_path: Path, wrapper: str) -> None:
+    program = r"""echo \$\$'\\' ; git apply x.patch ; echo '\\'"""
+    command = f'{wrapper} "{program}"'
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sh <<'EOF'\necho $$'\\' ; git apply x.patch ; echo '\\'\nEOF",
+        '''sh -c "echo 'unterminated"''',
+    ],
+)
+def test_nested_shell_parse_error_write_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command,kind,paths,unknown",
+    [
+        ('sh -c "cat a.py"', "read", ["a.py"], None),
+        ('sh -c "git status"', "execute", None, None),
+        (r'''sh -c "echo \$\$'.txt'"''', "execute", None, None),
+        (r'''bash -c "echo \$'a\\n'"''', "execute", None, None),
+        ('sh -c "cp a b"', "write", ["b"], None),
+        ('''sh -c "sh -c 'git apply x.patch'"''', "write", None, True),
+    ],
+)
+def test_nested_shell_parse_controls_keep_scope(
+    tmp_path: Path, command: str, kind: str, paths: list[str] | None, unknown: bool | None
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == kind
+    assert bool(data.get("canonical_repo_mutation")) is (kind == "write")
+    assert data.get("canonical_file_paths") == paths
+    assert data.get("canonical_repo_mutation_scope_unknown") is unknown
+
+
 @pytest.mark.parametrize(
     "command",
     [
