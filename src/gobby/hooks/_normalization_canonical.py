@@ -401,6 +401,7 @@ def _classify_shell_command(
                 ),
             )
         )
+        directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))

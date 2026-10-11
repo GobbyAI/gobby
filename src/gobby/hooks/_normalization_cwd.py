@@ -5,8 +5,14 @@ from dataclasses import dataclass, field
 
 from gobby.hooks._normalization_compound import case_arm_tokens
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
-from gobby.hooks._normalization_segments import _ShellSegment
-from gobby.hooks._normalization_shell import ShellToken, _apply_cd
+from gobby.hooks._normalization_segments import _ShellSegment, _split_shell_segments
+from gobby.hooks._normalization_shell import (
+    ShellToken,
+    _apply_cd,
+    _strip_shell_wrappers,
+    scan_shell_command,
+)
+from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH
 
 
 @dataclass
@@ -28,7 +34,12 @@ class ShellDirectoryState:
     altered_loops: set[int] = field(default_factory=set)
     loops_opened: int = 0
     group_isolation: dict[int, bool] = field(default_factory=dict)
-    groups: list[tuple[str | None, bool, list[_Branch]] | None] = field(default_factory=list)
+    group_functions: dict[int, str] = field(default_factory=dict)
+    function_headers: dict[int, int] = field(default_factory=dict)
+    directory_functions: set[str] = field(default_factory=set)
+    groups: list[tuple[str | None, bool, list[_Branch], str | None] | None] = field(
+        default_factory=list
+    )
     group_entry: bool = False
 
     def prepare_groups(self, segments: list[_ShellSegment]) -> None:
@@ -36,16 +47,22 @@ class ShellDirectoryState:
         openings: list[tuple[int, int]] = []
         for index, segment in enumerate(segments):
             previous = " ".join(t.value for t in segments[index - 1].tokens) if index else ""
-            function_body = bool(
-                re.fullmatch(r"(?:function\s+[^\s()]+(?:\s*\(\s*\))?|[^\s()]+\s*\(\s*\))", previous)
-            )
-            for token in segment.tokens:
+            for position, token in enumerate(segment.tokens):
                 if token.quoted:
                     continue
                 if token.value == "{":
+                    header = " ".join(t.value for t in segment.tokens[:position]) or previous
+                    function = re.fullmatch(
+                        r"(?:function\s+([^\s()]+)(?:\s*\(\s*\))?|([^\s()]+)\s*\(\s*\))",
+                        header,
+                    )
+                    if function:
+                        self.group_functions[id(token)] = function[1] or function[2]
+                        if position:
+                            self.function_headers[id(segment.tokens[0])] = position
                     openings.append((index, id(token)))
                     self.group_isolation[id(token)] = (
-                        segment.separator_before == "|" or function_body
+                        segment.separator_before == "|" or function is not None
                     )
                 elif token.value == "}" and openings:
                     _, opener = openings.pop()
@@ -87,6 +104,8 @@ class ShellDirectoryState:
 
     def conditional_tokens(self, tokens: list[ShellToken]) -> list[ShellToken]:
         """Remove executable if/elif prefixes while restoring branch entry cwd."""
+        if tokens and (header := self.function_headers.get(id(tokens[0]))) is not None:
+            tokens = tokens[header:]
         while tokens and not tokens[0].quoted:
             word = tokens[0].value
             if word == "if":
@@ -125,13 +144,16 @@ class ShellDirectoryState:
                 continue
             elif word == "{":
                 isolated = self.group_isolation.get(id(tokens[0]), False)
-                self.groups.append((self.cwd, self.changed, self.branches) if isolated else None)
+                function = self.group_functions.get(id(tokens[0]))
+                self.groups.append(
+                    (self.cwd, self.changed, self.branches, function) if isolated else None
+                )
                 if isolated:
                     self.branches = []
                 self.group_entry = True
             elif word == "}":
                 if self.groups and (entry := self.groups.pop()) is not None:
-                    self.cwd, self.changed, self.branches = entry
+                    self.cwd, self.changed, self.branches = entry[:3]
                 self.group_entry = False
             else:
                 break
@@ -149,8 +171,36 @@ class ShellDirectoryState:
         self.mark_changed()
 
     def invalidate(self) -> None:
-        self.cwd = None
+        self.cwd = UNRESOLVED_DIRECTORY
         self.mark_changed()
+
+    def apply_opaque_change(self, parts: list[str]) -> None:
+        """Calls and eval may change cwd without a provable literal exit directory."""
+        if self._changes_directory(parts):
+            self.change(None)
+
+    def _changes_directory(self, parts: list[str], depth: int = 0) -> bool:
+        if not parts:
+            return False
+        if parts[0] in self.directory_functions:
+            return True
+        if parts[0] != "eval":
+            return False
+        if depth >= SHELL_WRAPPER_DEPTH:
+            return True
+        try:
+            segments = _split_shell_segments(scan_shell_command(" ".join(parts[1:])).tokens)
+        except ValueError:
+            return True
+        state = ShellDirectoryState(None)
+        for segment in segments:
+            tokens = state.conditional_tokens(segment.tokens)
+            command = _strip_shell_wrappers([token.value for token in tokens])
+            if command and command[0] in {"cd", "pushd", "popd"}:
+                return True
+            if self._changes_directory(command, depth + 1):
+                return True
+        return False
 
     def mark_unproven(self) -> None:
         """Keep script proof monotonic without assuming directory movement."""
@@ -159,6 +209,9 @@ class ShellDirectoryState:
     def mark_changed(self) -> None:
         """Record directory movement in every enclosing branch."""
         self.mark_unproven()
+        for entry in self.groups:
+            if entry is not None and entry[3] is not None:
+                self.directory_functions.add(entry[3])
         for branch in self.branches:
             branch.altered = True
             branch.condition_altered |= branch.in_condition

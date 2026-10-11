@@ -470,6 +470,52 @@ def test_combined_grammar_prefixes_preserve_write_classification(
         assert grouped.get(key) == bare.get(key)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd sub || exit 1; touch y.py",
+        "cd sub || exit 1; git add x.py",
+        "cd sub; false || touch x.py",
+        "cd sub; sleep 1 & touch x.py",
+        "cd sub || touch x.py",
+        "f() { cd sub; }; f; touch y.py",
+        "function f { cd sub; }\nf\ntouch y.py",
+        "function my-f() { cd sub; }; my-f; touch y.py",
+        "f()\n{ cd sub; }\nf\ntouch y.py",
+        "f() { pushd sub; }; f; touch y.py",
+        "f() { popd; }; f; touch y.py",
+        "eval 'cd sub'; touch y.py",
+        "eval cd sub; touch y.py",
+        'eval "cd sub"; touch y.py',
+        "eval pushd sub; touch y.py",
+        "eval 'pushd sub'; touch y.py",
+        "eval 'popd'; touch y.py",
+        "eval 'cd sub'; git add x.py",
+    ],
+)
+def test_indirect_directory_changes_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "f() { cd sub; }; touch y.py",
+        "f() { echo cd; }; f; touch y.py",
+        "eval 'echo cd'; touch y.py",
+        "eval 'echo pushd'; touch y.py",
+        "eval 'echo popd'; touch y.py",
+    ],
+)
+def test_nonexecuted_directory_words_preserve_scope(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == ["y.py"]
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
 def test_background_grammar_group_invalidates_later_scope(tmp_path: Path) -> None:
     _signature_fixture(tmp_path / "bin")
     data = _invocation_metadata(
