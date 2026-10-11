@@ -19,16 +19,6 @@ from gobby.utils.session_context import get_current_session_id
 logger = logging.getLogger(__name__)
 
 
-def _is_project_seq_ref(ref: str) -> bool:
-    """True for #N, a bare sequence number, and <project>#N."""
-    if ref.startswith("#"):
-        return ref[1:].isdigit()
-    project, separator, seq = ref.partition("#")
-    if separator:
-        return bool(project) and "#" not in project and seq.isdigit()
-    return ref.isdigit()
-
-
 def _is_within(path: Path, root: Path) -> bool:
     """True when resolved ``path`` lies under ``root`` once ``root`` resolves strictly."""
     try:
@@ -51,6 +41,15 @@ def create_communications_registry(
             "list_channels, get_messages, and channel management"
         ),
     )
+
+    def _resolve_session_id(session_id: str | None) -> str | None:
+        if session_id is None:
+            return None
+        if db is None:
+            raise ValueError(
+                f"Cannot resolve session '{session_id}': project storage is unavailable"
+            )
+        return resolve_session_reference(db, session_id, get_current_project_id())
 
     @registry.tool(
         description=(
@@ -95,17 +94,11 @@ def create_communications_registry(
                 if link_preview_options is not None:
                     metadata["link_preview_options"] = link_preview_options
 
-            target_session = session_id if session_id is not None else get_current_session_id()
-            if target_session is not None and _is_project_seq_ref(target_session):
-                if db is None:
-                    raise ValueError(
-                        f"Cannot resolve session '{target_session}': project storage is unavailable"
-                    )
-                target_session = resolve_session_reference(
-                    db,
-                    target_session,
-                    get_current_project_id(),
-                )
+            target_session = (
+                _resolve_session_id(session_id)
+                if session_id is not None
+                else get_current_session_id()
+            )
 
             msg = await communications_manager.send_message(
                 channel_name=channel,
@@ -116,7 +109,7 @@ def create_communications_registry(
             return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}
         except ValueError as e:
             # Invalid caller input goes back to the caller; it is not a daemon fault.
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
@@ -254,7 +247,7 @@ def create_communications_registry(
                 filename=filename,
                 content_type=resolved_content_type,
                 content=caption,
-                session_id=session_id,
+                session_id=_resolve_session_id(session_id),
                 metadata=metadata,
             )
             return {
@@ -277,6 +270,8 @@ def create_communications_registry(
             }
         except (FileNotFoundError, OSError) as e:
             return {"success": False, "error": f"Invalid attachment path: {e}"}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
@@ -319,12 +314,7 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Query message history."""
         try:
-            if session_id is not None:
-                if db is None:
-                    raise ValueError(
-                        f"Cannot resolve session '{session_id}': project storage is unavailable"
-                    )
-                session_id = resolve_session_reference(db, session_id, get_current_project_id())
+            session_id = _resolve_session_id(session_id)
             channel_id = None
             if channel:
                 ch = communications_manager.get_channel_by_name(channel)
@@ -354,7 +344,7 @@ def create_communications_registry(
                 ],
             }
         except ValueError as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
@@ -491,8 +481,12 @@ def create_communications_registry(
             if not identity:
                 return {"success": False, "error": f"Identity for '{external_user_id}' not found"}
 
-            communications_manager.update_identity_session(identity.id, session_id)
+            communications_manager.update_identity_session(
+                identity.id, _resolve_session_id(session_id)
+            )
             return {"success": True, "identity_id": identity.id}
+        except ValueError as e:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
@@ -503,6 +497,7 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """List identity mappings with optional filters."""
         try:
+            session_id = _resolve_session_id(session_id)
             channel_id = None
             if channel:
                 ch = communications_manager.get_channel_by_name(channel)
@@ -512,7 +507,7 @@ def create_communications_registry(
                     return {"success": False, "error": f"Channel '{channel}' not found"}
 
             identities = communications_manager.list_identities(channel_id=channel_id)
-            if session_id:
+            if session_id is not None:
                 identities = [i for i in identities if i.session_id == session_id]
 
             return {
@@ -528,6 +523,8 @@ def create_communications_registry(
                     for i in identities
                 ],
             }
+        except ValueError as e:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}

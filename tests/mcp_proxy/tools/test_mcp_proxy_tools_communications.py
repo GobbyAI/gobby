@@ -16,7 +16,9 @@ from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessa
 from gobby.mcp_proxy.tools.communications import create_communications_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
+from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -78,7 +80,14 @@ def mock_manager(mock_store: MagicMock) -> MagicMock:
 
 @pytest.fixture
 def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
-    return create_communications_registry(mock_manager, workspace_root=tmp_path)
+    db = MagicMock()
+
+    def prefix_rows(_query: str, params: tuple[str, ...]) -> list[dict[str, str]]:
+        # Existing manager-boundary tests use symbolic IDs for their fake sessions.
+        return [{"id": params[0].removesuffix("%")}]
+
+    db.fetchall.side_effect = prefix_rows
+    return create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
 
 
 @pytest.mark.asyncio
@@ -327,9 +336,143 @@ def test_get_messages_rejects_unknown_session_without_daemon_error(
     assert handler is not None
     result = handler(session_id="missing-session")
 
-    assert result == {"success": False, "error": "Session 'missing-session' not found"}
+    assert result == {
+        "success": False,
+        "error": "Session 'missing-session' not found",
+        "error_type": "ValueError",
+    }
     mock_manager.list_messages.assert_not_called()
     assert not caplog.records
+
+
+@pytest.fixture
+def session_reference_tools(
+    worktree_project: tuple[HubDatabase, str, Path],
+    session_manager: SessionManager,
+    mock_manager: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, dict[str, str], dict[str, dict[str, Any]]]:
+    db, project_id, root = worktree_project
+    machine_id = require_machine_id()
+    session = session_manager.register(
+        external_id="communications-first",
+        machine_id=machine_id,
+        source="codex",
+        project_id=project_id,
+    )
+    session_manager.register(
+        external_id="communications-second",
+        machine_id=machine_id,
+        source="codex",
+        project_id=project_id,
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_project_id", lambda: project_id
+    )
+    attachment_path = root / "reply.txt"
+    attachment_path.write_text("Whole reply", encoding="utf-8")
+    message = SimpleNamespace(
+        id="message-1",
+        channel_id="ch-1",
+        direction="outbound",
+        content="Whole reply",
+        created_at=datetime.now(UTC),
+        session_id=session.id,
+        status="sent",
+        platform_message_id="telegram-1",
+        error=None,
+    )
+    attachment = SimpleNamespace(
+        id="attachment-1",
+        message_id=message.id,
+        filename="reply.txt",
+        content_type="text/plain",
+        size_bytes=11,
+        platform_url=None,
+    )
+    mock_manager.send_message.return_value = message
+    mock_manager.send_attachment.return_value = (message, attachment)
+    mock_manager.list_messages.return_value = [message]
+    mock_manager.get_channel_by_name.return_value = _make_channel()
+    mock_manager.get_identity_by_external.return_value = _make_identity(session_id=session.id)
+    mock_manager.list_identities.return_value = [
+        _make_identity(session_id=session.id),
+        _make_identity(id="other-identity", session_id="other-session"),
+    ]
+    return (
+        create_communications_registry(mock_manager, db=db, workspace_root=root),
+        {"uuid": session.id, "sequence": f"#{session.seq_num}", "prefix": session.id[:8]},
+        {
+            "get_messages": {},
+            "send_message": {"channel": "telegram", "content": "Whole reply"},
+            "send_attachment": {"channel": "telegram", "file_path": str(attachment_path)},
+            "link_identity": {"channel": "telegram", "external_user_id": "ext-1"},
+            "list_identities": {},
+        },
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reference_kind", ["uuid", "sequence", "prefix"])
+@pytest.mark.parametrize(
+    "tool_name",
+    ["get_messages", "send_message", "send_attachment", "link_identity", "list_identities"],
+)
+async def test_communications_tools_resolve_session_references(
+    session_reference_tools: tuple[Any, dict[str, str], dict[str, dict[str, Any]]],
+    mock_manager: MagicMock,
+    tool_name: str,
+    reference_kind: str,
+) -> None:
+    registry, refs, arguments = session_reference_tools
+    result = registry.get_tool(tool_name)(session_id=refs[reference_kind], **arguments[tool_name])
+    if tool_name in {"send_message", "send_attachment"}:
+        result = await result
+
+    assert result["success"] is True
+    if tool_name == "get_messages":
+        assert result["messages"][0]["session_id"] == refs["uuid"]
+        assert result["messages"][0]["content"] == "Whole reply"
+        assert mock_manager.list_messages.call_args.kwargs["session_id"] == refs["uuid"]
+    elif tool_name in {"send_message", "send_attachment"}:
+        assert getattr(mock_manager, tool_name).await_args.kwargs["session_id"] == refs["uuid"]
+    elif tool_name == "link_identity":
+        mock_manager.update_identity_session.assert_called_once_with("id-1", refs["uuid"])
+    else:
+        assert [identity["id"] for identity in result["identities"]] == ["id-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reference,error_fragment",
+    [("missing-session", "not found"), ("communications-", "Ambiguous")],
+)
+@pytest.mark.parametrize(
+    "tool_name",
+    ["get_messages", "send_message", "send_attachment", "link_identity", "list_identities"],
+)
+async def test_communications_tools_reject_invalid_session_references(
+    session_reference_tools: tuple[Any, dict[str, str], dict[str, dict[str, Any]]],
+    mock_manager: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+    tool_name: str,
+    reference: str,
+    error_fragment: str,
+) -> None:
+    registry, _refs, arguments = session_reference_tools
+    result = registry.get_tool(tool_name)(session_id=reference, **arguments[tool_name])
+    if tool_name in {"send_message", "send_attachment"}:
+        result = await result
+
+    assert result["success"] is False
+    assert result["error_type"] == "ValueError"
+    assert error_fragment in result["error"]
+    mock_manager.list_messages.assert_not_called()
+    mock_manager.list_identities.assert_not_called()
+    mock_manager.send_message.assert_not_awaited()
+    mock_manager.send_attachment.assert_not_awaited()
+    mock_manager.update_identity_session.assert_not_called()
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
 
 @pytest.mark.asyncio
@@ -592,6 +735,7 @@ async def test_send_message_returns_invalid_callback_ttl_to_caller_without_error
     assert result == {
         "success": False,
         "error": "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)",
+        "error_type": "ValueError",
     }
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
