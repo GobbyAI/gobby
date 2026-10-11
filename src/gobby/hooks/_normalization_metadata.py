@@ -108,6 +108,14 @@ def _gate_rewritable_scripts(
     ]
 
 
+def _path_is_unresolved(path: str, root: str | None) -> bool:
+    if root and path == root:
+        return False
+    if root:
+        path = path.removeprefix(root.rstrip("/") + "/")
+    return _contains_unexpanded_shell_reference(path)
+
+
 def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict[str, Any]:
     active = [
         item for item in metadata if not item.neutral_setup and not item.read_only_pipeline_filter
@@ -156,7 +164,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 variable
             ):
                 loop_bindings[variable] = (value,)
-        resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
+        resolvable = [
+            path for path in item.paths if not _path_is_unresolved(path, item.literal_path_root)
+        ]
         if (
             item.extra
             and item.extra.get("canonical_code_navigation_action")
@@ -164,7 +174,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         ):
             navigation_scope_unknown = True
         unresolved_mutation_paths = (
-            [path for path in item.paths if _contains_unexpanded_shell_reference(path)]
+            [path for path in item.paths if _path_is_unresolved(path, item.literal_path_root)]
             if item.repo_mutation
             else []
         )
@@ -213,7 +223,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             ):
                 edit_paths.append(path)
         for path in item.write_paths:
-            if not _contains_unexpanded_shell_reference(path) and path not in write_paths:
+            if not _path_is_unresolved(path, item.literal_path_root) and path not in write_paths:
                 write_paths.append(path)
 
     pure_gcode_navigation = any(item.pure_gcode_navigation for item in metadata) and all(

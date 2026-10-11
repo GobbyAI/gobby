@@ -2208,11 +2208,13 @@ class TestLedgerDirtyState:
         assert variables["session_edited_files"] == ["a.py", "b.py"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("ledger_path", ["tests", "."])
     async def test_directory_ledgers_survive_dirty_children_until_commit(
         self,
         tmp_path: Path,
         session_var_manager: SessionVariableManager,
         monkeypatch: pytest.MonkeyPatch,
+        ledger_path: str,
     ) -> None:
         def git(*arguments: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
@@ -2229,7 +2231,7 @@ class TestLedgerDirtyState:
         (tmp_path / "tests-other/b.py").write_text("value = 2\n")
         session_var_manager.select_task_claim(SESSION_ID, "task-1", "#1")
         session_var_manager.record_edited_files(
-            SESSION_ID, ["tests", "tests-other"], checkout_root=str(tmp_path)
+            SESSION_ID, [ledger_path, "tests-other"], checkout_root=str(tmp_path)
         )
 
         async def local_status(
@@ -2259,16 +2261,25 @@ class TestLedgerDirtyState:
             )
             == []
         )
-        assert variables["task_edited_files"] == {"task-1": ["tests", "tests-other"]}
-        assert variables["session_dirty_files"] == ["tests", "tests-other"]
+        assert variables["task_edited_files"] == {"task-1": [ledger_path, "tests-other"]}
+        assert variables["session_dirty_files"] == [ledger_path, "tests-other"]
 
         git("add", "tests/a.py")
         git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "test")
         assert await reconcile_edit_ledgers(
             variables, SESSION_ID, variable_manager=session_var_manager, project_path=str(tmp_path)
-        ) == ["tests"]
-        assert variables["task_edited_files"] == {"task-1": ["tests-other"]}
-        assert variables["session_dirty_files"] == ["tests-other"]
+        ) == ([] if ledger_path == "." else ["tests"])
+        remaining = [ledger_path, "tests-other"] if ledger_path == "." else ["tests-other"]
+        assert variables["task_edited_files"] == {"task-1": remaining}
+        assert variables["session_dirty_files"] == remaining
+
+        git("add", "tests-other/b.py")
+        git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "rest")
+        assert await reconcile_edit_ledgers(
+            variables, SESSION_ID, variable_manager=session_var_manager, project_path=str(tmp_path)
+        ) == sorted(remaining)
+        assert not variables["task_edited_files"].get("task-1")
+        assert variables["session_dirty_files"] == []
 
     @pytest.mark.asyncio
     async def test_git_timeout_keeps_ledgers_and_warns_once(

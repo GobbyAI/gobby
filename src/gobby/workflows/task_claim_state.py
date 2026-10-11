@@ -8,6 +8,7 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 from __future__ import annotations
 
 import posixpath
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ def normalize_task_edited_path(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     path = posixpath.normpath(value.replace("\\", "/"))
-    if path in {"", "."} or path.startswith("../") or path.startswith("/"):
+    if path == "" or path == ".." or path.startswith("../") or path.startswith("/"):
         return None
     return path
 
@@ -236,6 +237,22 @@ def task_edited_file_set_for_checkout(
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
+def task_edit_path_covers(parent: str, child: str) -> bool:
+    """A root/directory ledger entry covers its descendants, with a path boundary."""
+    return parent == "." or parent == child or child.startswith(parent.rstrip("/") + "/")
+
+
+def overlapping_task_edit_paths(owned: Collection[str], requested: Collection[str]) -> set[str]:
+    return {
+        path
+        for path in owned
+        if any(
+            task_edit_path_covers(path, other) or task_edit_path_covers(other, path)
+            for other in requested
+        )
+    }
+
+
 def assert_task_edit_paths_available(
     variables: dict[str, Any],
     task_id: str | None,
@@ -254,7 +271,7 @@ def assert_task_edit_paths_available(
             if checkout_root is not None
             else task_edited_file_set(variables, other_id)
         )
-        overlap = requested & owned
+        overlap = overlapping_task_edit_paths(owned, requested)
         if commit_path_times is not None:
             starts = (
                 variables.get("task_live_edit_starts", {})

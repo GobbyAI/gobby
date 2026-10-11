@@ -32,6 +32,8 @@ from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     normalize_task_edited_path,
+    overlapping_task_edit_paths,
+    task_edit_path_covers,
     task_edited_file_set_for_checkout,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
@@ -243,6 +245,10 @@ def _nested_shell_texts(tokens: list[ShellToken]) -> list[str]:
         ):
             return values[index + 1 :]
     return [
+        token.value[1:-1]
+        for token in tokens
+        if not token.quoted and token.value.startswith("(") and token.value.endswith(")")
+    ] + [
         token.value
         for token in tokens
         if token.quoted and _COMMAND_SUBSTITUTION.search(token.value)
@@ -455,7 +461,7 @@ async def foreign_staged_commit_conflict(
                     staged_paths_by_checkout[checkout_root] = staged_paths
                 candidate_paths = staged_paths
             candidates_by_checkout.setdefault(checkout_root, set()).update(
-                path for path in candidate_paths if path in owners
+                overlapping_task_edit_paths(owners.keys(), candidate_paths)
             )
 
         # A pathspec lists clean tracked files too, so ownership alone is not a
@@ -521,7 +527,7 @@ async def foreign_dirty_edit_conflict(
             )
         except (psycopg.OperationalError, PoolTimeout) as exc:
             raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-        candidate_paths = mutation_paths & owners.keys()
+        candidate_paths = overlapping_task_edit_paths(owners.keys(), mutation_paths)
         if not candidate_paths:
             return ""
 
@@ -708,10 +714,15 @@ async def _dirty_owned_paths_releasing_clean(
     dirty_paths = await task_dirty_paths_async(candidates, checkout_root)
     if dirty_paths is None:
         return None
-    dirty = candidates & {
+    normalized_dirty = {
         normalized
         for path in dirty_paths
         if (normalized := normalize_task_edited_path(path)) is not None
+    }
+    dirty = {
+        path
+        for path in candidates
+        if any(task_edit_path_covers(path, child) for child in normalized_dirty)
     }
     clean = candidates - dirty
     if clean:
@@ -742,7 +753,15 @@ def _owned_dirty_paths(
         )
     except (psycopg.OperationalError, PoolTimeout) as exc:
         raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    return {path: owners[path] for path in paths if path in owners}
+    return {
+        path: tuple(
+            owner
+            for ledger in overlapping_task_edit_paths(owners.keys(), [path])
+            for owner in owners[ledger]
+        )
+        for path in paths
+        if overlapping_task_edit_paths(owners.keys(), [path])
+    }
 
 
 def active_owned_dirty_paths(
@@ -810,7 +829,7 @@ async def foreign_owned_dirty_paths_async(
         )
     except (psycopg.OperationalError, PoolTimeout) as exc:
         raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
-    candidates = set(owners) if paths is None else {path for path in paths if path in owners}
+    candidates = set(owners) if paths is None else overlapping_task_edit_paths(owners.keys(), paths)
     dirty_paths = await _dirty_owned_paths_releasing_clean(
         db,
         owners,
@@ -844,7 +863,11 @@ async def inspect_checkout_path_ownership_async(
             path=path,
             dirty=True,
             staged=staged,
-            owners=owners.get(path, ()),
+            owners=tuple(
+                owner
+                for ledger in overlapping_task_edit_paths(owners.keys(), [path])
+                for owner in owners[ledger]
+            ),
         )
         for path, staged in sorted(states.items())
     )

@@ -323,6 +323,53 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert "force=true" in response.reason
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ledger_path, requested", [(".", "foreign.txt"), ("sub", "sub/a.txt"), ("sub/a.txt", "sub")]
+)
+async def test_dirty_directory_owner_blocks_overlapping_edit(
+    guard_harness: GuardHarness, ledger_path: str, requested: str
+) -> None:
+    harness = guard_harness
+    manager = SessionVariableManager(harness.db)
+    manager.merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: [ledger_path]},
+            "task_edited_file_checkouts": {
+                harness.foreign_task.id: {str(harness.repo): [ledger_path]}
+            },
+        },
+    )
+    dirty_path = "foreign.txt" if ledger_path == "." else "sub/a.txt"
+    target = harness.repo / dirty_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("foreign change\n")
+    response = await harness.handler._evaluate_rules(harness.edit_event(requested))
+    assert response.decision == "block", response.reason
+    assert f"#{harness.foreign_task.seq_num}" in (response.reason or "")
+    assert manager.get_variables(harness.foreign_session.id)["task_edited_files"] == {
+        harness.foreign_task.id: [ledger_path],
+    }
+
+
+@pytest.mark.asyncio
+async def test_root_directory_owner_blocks_staged_child_commit(guard_harness: GuardHarness) -> None:
+    harness = guard_harness
+    SessionVariableManager(harness.db).merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: ["."]},
+            "task_edited_file_checkouts": {harness.foreign_task.id: {str(harness.repo): ["."]}},
+        },
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n")
+    _git(harness.repo, "add", "foreign.txt")
+    response = await harness.handler._evaluate_rules(harness.event("git commit -m test"))
+    assert response.decision == "block", response.reason
+    assert f"#{harness.foreign_task.seq_num}" in (response.reason or "")
+
+
 def test_dirty_edit_reason_lists_one_reclaim_hint_per_task() -> None:
     reason = _format_dirty_edit_reason(
         {

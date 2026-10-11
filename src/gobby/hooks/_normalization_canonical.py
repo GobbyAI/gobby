@@ -16,15 +16,20 @@ from gobby.hooks._normalization_bindings import (
     _raw_shell_word_is_literal,
 )
 from gobby.hooks._normalization_compound import (
-    case_arm_tokens,
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
 )
-from gobby.hooks._normalization_env import env_directory_operands
+from gobby.hooks._normalization_cwd import ShellDirectoryState
+from gobby.hooks._normalization_env import (
+    UNRESOLVED_DIRECTORY,
+    UNRESOLVED_WRAPPER,
+    env_directory_operands,
+)
 from gobby.hooks._normalization_git import (
     classify_git_mutation,
     exported_git_selector,
+    git_command_parts,
     git_environment_parts,
     git_selector_setup,
 )
@@ -234,12 +239,11 @@ def _classify_shell_command(
         id(token): command[start:end]
         for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
     }
-    persistent_cwd = cwd
+    directory = ShellDirectoryState(cwd)
     spans_by_token = dict(zip((id(token) for token in tokens), scan.spans, strict=True))
     case_depth = 0
     pending_case_pattern = False
     previous_end = 0
-    directory_changed = False
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
     # Only the bare assignments that open a command always run in this shell.
@@ -249,10 +253,8 @@ def _classify_shell_command(
         start = spans_by_token[id(segment.tokens[0])][0]
         gap = command[previous_end:start]
         previous_end = spans_by_token[id(segment.tokens[-1])][1]
-        arm_tokens, case_depth, pending_case_pattern = case_arm_tokens(
-            segment.tokens,
-            case_depth=case_depth,
-            new_arm=pending_case_pattern or ";;" in gap or ";&" in gap,
+        arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
+            segment.tokens, gap, case_depth, pending_case_pattern
         )
         owner_tokens, process_bodies = process_substitution_bodies(
             arm_tokens, spans_by_token, command
@@ -262,15 +264,16 @@ def _classify_shell_command(
             tokens=owner_tokens,
             separator_before=(
                 ";"
-                if consuming_case_pattern and not pending_case_pattern
+                if (consuming_case_pattern and not pending_case_pattern)
+                or (case_depth and (";;" in gap or ";&" in gap))
                 else segment.separator_before
             ),
         )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
-            persistent_cwd = None
-            directory_changed = True
+            directory.cwd = None
+            directory.changed = True
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         segment_start = min((spans_by_token[id(token)][0] for token in segment.tokens), default=0)
@@ -292,26 +295,26 @@ def _classify_shell_command(
         if git_selector_setup(raw_parts, parts):
             exported_git_selector.set(True)
         env_directories = env_directory_operands(raw_parts)
-        segment_cwd = persistent_cwd
-        if env_directories and segment_cwd is None and not directory_changed and base_cwd:
+        segment_cwd = directory.cwd
+        if env_directories and segment_cwd is None and not directory.changed and base_cwd:
             segment_cwd = str(base_cwd)
-        for directory in env_directories:
-            segment_cwd = _apply_cd(segment_cwd, directory)
+        for operand in env_directories:
+            segment_cwd = _apply_cd(segment_cwd, operand)
         if any(
             not _raw_shell_word_is_literal(word)
             for word in env_directory_operands(list(source_parts))
         ):
-            segment_cwd = "$GOBBY_UNRESOLVED_ENV_DIRECTORY"
-        segment_base = None if directory_changed or starts_elsewhere(parts) else base_cwd
+            segment_cwd = UNRESOLVED_DIRECTORY
+        segment_base = None if directory.changed or starts_elsewhere(parts) else base_cwd
         if env_directories:
             segment_base = Path(segment_cwd) if segment_cwd else None
         for body in process_bodies:
             metadata.append(
                 _classify_shell_segment_without_redirection(
                     ["sh", "-c", body],
-                    persistent_cwd,
+                    directory.cwd,
                     depth=depth,
-                    base_cwd=None if directory_changed else base_cwd,
+                    base_cwd=None if directory.changed else base_cwd,
                 )
             )
         if any(
@@ -327,15 +330,15 @@ def _classify_shell_command(
         for body in substitution_bodies:
             body_metadata = _classify_shell_segment_without_redirection(
                 ["sh", "-c", body],
-                persistent_cwd,
+                directory.cwd,
                 depth=depth,
-                base_cwd=None if directory_changed else base_cwd,
+                base_cwd=None if directory.changed else base_cwd,
             )
             if body_metadata.repo_mutation or (body_metadata.extra or {}).get(
                 "canonical_script_execution"
             ):
                 metadata.append(body_metadata)
-        directory_changed = directory_changed or not preserves_directory(parts)
+        directory.changed = directory.changed or not preserves_directory(parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
@@ -349,13 +352,13 @@ def _classify_shell_command(
             continue
 
         cd_target = _literal_cd_target(parts)
-        if cd_target is not None:
+        if parts[0].rsplit("/", 1)[-1] == "cd":
             if (
                 not env_directories
                 and not in_pipeline
                 and segment.separator_before in {None, "&&", ";", "\n"}
             ):
-                persistent_cwd = _apply_cd(persistent_cwd, cd_target)
+                directory.change(cd_target)
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -386,7 +389,7 @@ def _classify_shell_command(
                 _classify_shell_segment(
                     segment.tokens,
                     parts,
-                    persistent_cwd,
+                    directory.cwd,
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
                     base_cwd=segment_base,
@@ -394,6 +397,11 @@ def _classify_shell_command(
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
+                literal_path_root=(
+                    str(base_cwd)
+                    if base_cwd and all(_raw_shell_word_is_literal(word) for word in source_parts)
+                    else None
+                ),
             )
         )
 
@@ -655,6 +663,11 @@ def _classify_shell_segment_without_redirection(
 
     cmd = shell_command_name(parts[0])
 
+    if parts[0] == UNRESOLVED_WRAPPER:
+        return _ShellSegmentMetadata(
+            "write", repo_mutation=True, extra={"_canonical_repo_mutation_scope_unknown": True}
+        )
+
     if depth:
         unwrapped = _unwrap(parts)
         if unwrapped and _contains_unexpanded_shell_reference(unwrapped[0]):
@@ -776,8 +789,10 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"rg", "grep", "git"}:
-        if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):
-            return _ShellSegmentMetadata("execute")
+        if cmd == "git":
+            parts, cwd, _ = git_command_parts(parts, cwd, base_cwd)
+            if len(parts) <= 1 or parts[1] != "grep":
+                return _ShellSegmentMetadata("execute")
         paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), cwd)
         extra = search_navigation_metadata(paths)
         if cmd == "git" and _git_grep_is_revision_scoped(parts):

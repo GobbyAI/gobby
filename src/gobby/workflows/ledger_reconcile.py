@@ -20,6 +20,7 @@ from gobby.workflows.observer_utils import _extract_shell_command, _shell_tool_s
 from gobby.workflows.task_claim_state import (
     normalize_task_checkout_root,
     normalize_task_edited_path,
+    task_edit_path_covers,
     task_edited_file_set,
     task_edited_file_set_for_checkout,
 )
@@ -149,10 +150,7 @@ async def reconcile_edit_ledgers(
     clean = {
         candidate
         for candidate in candidates
-        if not any(
-            path == candidate or path.startswith(candidate.rstrip("/") + "/")
-            for path in normalized_dirty
-        )
+        if not any(task_edit_path_covers(candidate, path) for path in normalized_dirty)
     }
     if not clean:
         return []

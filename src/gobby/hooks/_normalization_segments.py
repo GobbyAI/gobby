@@ -48,6 +48,8 @@ class _ShellSegmentMetadata:
     assignment_bindings: tuple[tuple[str, str], ...] = ()
     shell_words: tuple[str, ...] = ()
     shell_raw_words: tuple[str, ...] = ()
+    # A trusted tool cwd is already literal; only the rebased operand expands.
+    literal_path_root: str | None = None
 
 
 def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
