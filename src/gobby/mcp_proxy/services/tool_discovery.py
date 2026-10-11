@@ -7,6 +7,7 @@ from typing import Any, cast
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.services.server_resolution import caller_project_id, resolve_server
 from gobby.mcp_proxy.services.tool_proxy_utils import safe_truncate
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -75,10 +76,12 @@ async def list_tools(
         try:
             tools_map = await service._mcp_manager.list_tools(config.id)
         except MCPError as exc:
+            error, counts = clean_untrusted_value(str(exc))
+            log_invisible_counts(counts, "external MCP discovery error")
             return {
                 "success": False,
                 "tools": [],
-                "error": str(exc),
+                "error": error,
             }
         tools_list = tools_map.get(config.name, tools_map.get(config.id, []))
         ext_brief_tools: list[dict[str, Any]] = []
@@ -177,4 +180,6 @@ async def get_tool_schema(
         tool_info = await service._mcp_manager.get_tool_info(config.id, tool_name)
         return {"success": True, "tool": cast("dict[str, Any]", tool_info)}
     except Exception as e:
-        raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {e}") from e
+        error, counts = clean_untrusted_value(str(e))
+        log_invisible_counts(counts, "external MCP schema error")
+        raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {error}") from e

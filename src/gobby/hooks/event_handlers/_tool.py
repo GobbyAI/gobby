@@ -365,7 +365,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 "tool_output", input_data.get("tool_response", input_data.get("tool_result"))
             )
             _, counts = clean_untrusted_value(
-                output, ignore_leading_bom=tool_name == "Read", ignore_ansi=tool_name == "Bash"
+                output,
+                ignore_leading_bom=tool_name == "Read",
+                ignore_ansi=tool_name == "Bash",
+                reject_invisible_keys=False,
             )
             log_invisible_counts(counts, "native tool output")
             if counts.total:

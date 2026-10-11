@@ -11,6 +11,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.skills.hubs.github_topic import (
     GitHubTopicProvider,
     TopicHubError,
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 _HUB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _LEGACY_HUB_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$")
+
+
+def _failure(message: str) -> dict[str, Any]:
+    error, counts = clean_untrusted_value(message)
+    log_invisible_counts(counts, "skill installation error")
+    return {"success": False, "error": error}
 
 
 def _parse_hub_reference(source: str) -> tuple[str, str] | None:
@@ -85,7 +92,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             try:
                 hub_reference = _parse_hub_reference(source)
             except ValueError as exc:
-                return {"success": False, "error": str(exc)}
+                return _failure(str(exc))
 
             if hub_reference is not None:
                 # Hub reference: hub_name:skill_slug
@@ -113,10 +120,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         temporary_download_path = Path(download_result.path)
 
                     if not download_result.success or not download_result.path:
-                        return {
-                            "success": False,
-                            "error": f"Failed to download from hub: {download_result.error or 'Unknown error'}",
-                        }
+                        return _failure(
+                            f"Failed to download from hub: {download_result.error or 'Unknown error'}"
+                        )
 
                     if (
                         isinstance(provider, GitHubTopicProvider)
@@ -146,10 +152,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     source_type = "hub"
 
                 except Exception as e:
-                    return {
-                        "success": False,
-                        "error": f"Failed to install from hub {hub_name}: {e}",
-                    }
+                    return _failure(f"Failed to install from hub {hub_name}: {e}")
 
             # Check if it's a GitHub URL/reference (only if not already parsed from hub)
             is_github_ref = False
@@ -199,7 +202,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     parsed_skill = await ctx.loader.load_from_github_async(source)
                     source_type = "github"
                 except SkillLoadError as e:
-                    return {"success": False, "error": f"Failed to load from GitHub: {e}"}
+                    return _failure(f"Failed to load from GitHub: {e}")
 
             # Check if it's a ZIP file
             elif parsed_skill is None and source.endswith(".zip"):
@@ -210,7 +213,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     parsed_skill = ctx.loader.load_from_zip(zip_path)
                     source_type = "zip"
                 except SkillLoadError as e:
-                    return {"success": False, "error": f"Failed to load from ZIP: {e}"}
+                    return _failure(f"Failed to load from ZIP: {e}")
 
             # Assume it's a local path
             elif parsed_skill is None:
@@ -221,7 +224,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     parsed_skill = ctx.loader.load_skill(local_path)
                     source_type = "local"
                 except SkillLoadError as e:
-                    return {"success": False, "error": f"Failed to load skill: {e}"}
+                    return _failure(f"Failed to load skill: {e}")
 
             if parsed_skill is None:
                 return {"success": False, "error": "Failed to load skill from source"}
@@ -334,7 +337,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "source_type": source_type,
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return _failure(str(e))
         finally:
             if temporary_download_path is not None:
                 await asyncio.to_thread(

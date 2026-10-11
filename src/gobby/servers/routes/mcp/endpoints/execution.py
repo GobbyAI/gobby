@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_resolution import resolve_server
@@ -20,6 +21,7 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
     mcp_wrapper_protocol_mismatch_result,
 )
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
@@ -321,29 +323,25 @@ async def list_mcp_tools(
         try:
             session = await mcp_manager.ensure_connected(resolved.id)
         except KeyError as e:
+            error, counts = clean_untrusted_value(str(e))
+            log_invisible_counts(counts, "external MCP discovery error")
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+            result = {"success": False, "error": error, "response_time_ms": response_time_ms}
             return result
         except Exception as e:
+            error, counts = clean_untrusted_value(str(e))
+            log_invisible_counts(counts, "external MCP discovery error")
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
                 "success": False,
-                "error": f"MCP server '{server_name}' connection failed: {e}",
+                "error": f"MCP server '{server_name}' connection failed: {error}",
                 "response_time_ms": response_time_ms,
             }
             return result
 
         # List tools using MCP SDK
         try:
-            tools_result = await session.list_tools()
-            tools = []
-            for tool in tools_result.tools:
-                tool_dict: dict[str, Any] = {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                }
-                tools.append(tool_dict)
+            tools = await list_tools_from_session(session)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -372,16 +370,18 @@ async def list_mcp_tools(
             return result
 
         except Exception as e:
+            error, counts = clean_untrusted_value(str(e))
+            log_invisible_counts(counts, "external MCP discovery error")
             logger.exception(
                 "Failed to list tools from %s: %s",
                 server_name,
-                e,
+                error,
                 extra={"server": server_name},
             )
             response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
                 "success": False,
-                "error": f"Failed to list tools: {e}",
+                "error": f"Failed to list tools: {error}",
                 "response_time_ms": response_time_ms,
             }
             return result

@@ -59,9 +59,13 @@ def strip_invisible_unicode(text: str) -> tuple[str, InvisibleCounts]:
 
 
 def clean_untrusted_value(
-    value: Any, *, ignore_leading_bom: bool = False, ignore_ansi: bool = False
+    value: Any,
+    *,
+    ignore_leading_bom: bool = False,
+    ignore_ansi: bool = False,
+    reject_invisible_keys: bool = True,
 ) -> tuple[Any, InvisibleCounts]:
-    """Clean text leaves, preserving keys/binary; inspection may ignore display annotations."""
+    """Clean text leaves; reject hidden keys without renaming or merging them."""
     if isinstance(value, str):
         if ignore_leading_bom:
             value = value.removeprefix("\ufeff")
@@ -73,8 +77,17 @@ def clean_untrusted_value(
         items = value.items() if isinstance(value, dict) else enumerate(value)
         cleaned: dict[Any, Any] = {}
         for key, item in items:
+            if isinstance(value, dict) and isinstance(key, str):
+                _, key_counts = strip_invisible_unicode(key)
+                counts.add(key_counts)
+                if key_counts.total and reject_invisible_keys:
+                    log_invisible_counts(key_counts, "untrusted dictionary key")
+                    raise ValueError("Untrusted dictionary key contains invisible Unicode")
             cleaned[key], item_counts = clean_untrusted_value(
-                item, ignore_leading_bom=ignore_leading_bom, ignore_ansi=ignore_ansi
+                item,
+                ignore_leading_bom=ignore_leading_bom,
+                ignore_ansi=ignore_ansi,
+                reject_invisible_keys=reject_invisible_keys,
             )
             counts.add(item_counts)
         if isinstance(value, dict):

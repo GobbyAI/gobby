@@ -367,9 +367,22 @@ class SkillLoader:
     @staticmethod
     def clean_untrusted_skill(skill: ParsedSkill) -> None:
         """Clean imported repository text before storing it as agent instructions."""
+        paths = [file.path for file in skill.loaded_files or []]
+        paths.extend(skill.scripts or [])
+        paths.extend(skill.references or [])
+        paths.extend(skill.assets or [])
+        for path in paths:
+            _, path_counts = strip_invisible_unicode(path)
+            if path_counts.total:
+                log_invisible_counts(path_counts, "external skill path")
+                raise SkillLoadError("Imported file path contains invisible Unicode")
         skill.content, counts = strip_invisible_unicode(skill.content)
         skill.description, description_counts = strip_invisible_unicode(skill.description)
         counts.add(description_counts)
+        (skill.license, skill.allowed_tools), field_counts = clean_untrusted_value(
+            (skill.license, skill.allowed_tools)
+        )
+        counts.add(field_counts)
         if skill.compatibility is not None:
             skill.compatibility, compatibility_counts = strip_invisible_unicode(skill.compatibility)
             counts.add(compatibility_counts)
