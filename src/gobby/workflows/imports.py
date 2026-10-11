@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from stat import S_ISREG
+from stat import S_ISDIR, S_ISREG
 from typing import Any
 
 import yaml
@@ -333,6 +333,12 @@ def _iter_kind_yaml(root: Path) -> tuple[list[Path], list[str]]:
     """Collect YAML files and entry errors under per-kind workflow subdirectories."""
     paths: list[Path] = []
     errors: list[str] = []
+    try:
+        root_mode = root.stat().st_mode
+    except FileNotFoundError:
+        return paths, errors
+    if not S_ISDIR(root_mode):
+        raise NotADirectoryError(f"Workflow root is not a directory: {root}")
     for kind in _KIND_SUBDIRS:
         kind_dir = root / kind
         try:

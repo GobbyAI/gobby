@@ -238,7 +238,15 @@ def test_entry_stat_errors_allow_sibling_sync_without_retirement(
 
 
 @pytest.mark.parametrize(
-    "failure", ["invalid", "unreadable", "unreadable-entry", "missing-checkout", "empty-checkout"]
+    "failure",
+    [
+        "invalid",
+        "unreadable",
+        "unreadable-entry",
+        "file-root",
+        "missing-checkout",
+        "empty-checkout",
+    ],
 )
 def test_incomplete_project_scan_does_not_retire_rows(
     temp_db: HubDatabase,
@@ -281,6 +289,10 @@ def test_incomplete_project_scan_does_not_retire_rows(
             return original_stat(entry, follow_symlinks=follow_symlinks)
 
         monkeypatch.setattr(Path, "stat", fail_stat)
+    elif failure == "file-root":
+        root = path.parent.parent
+        shutil.rmtree(root)
+        root.write_text("not a workflow directory")
     elif failure == "missing-checkout":
         project_path.rename(tmp_path / "unavailable")
     else:
@@ -289,7 +301,10 @@ def test_incomplete_project_scan_does_not_retire_rows(
     result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
 
     assert result["orphaned"] == 0
-    assert bool(result["errors"]) is (failure in {"invalid", "unreadable", "unreadable-entry"})
+    assert bool(result["errors"]) is (failure not in {"missing-checkout", "empty-checkout"})
+    if failure == "file-root":
+        assert len(result["errors"]) == 1
+        assert str(path.parent.parent) in result["errors"][0]
     assert manager.get(row.id).deleted_at is None
 
 
