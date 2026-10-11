@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -17,6 +18,44 @@ from gobby.worktrees.executor import WorktreeDeleteExecutor
 from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force", [False, True])
+async def test_read_only_directory_preserves_registration_until_retry(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+    force: bool,
+) -> None:
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    path = Path(worktree.worktree_path)
+    nested = path / "vendor" / "read-only"
+    nested.mkdir(parents=True)
+    (nested / "payload").write_text("fixture", encoding="utf-8")
+    nested.chmod(0o500)
+    try:
+        assert not os.access(nested, os.W_OK)
+        refused = await registry.call(
+            "delete_worktree",
+            {"worktree_id": worktree.id, "force": force, "merged_into": "0.5.0"},
+        )
+        assert refused["success"] is False
+        assert refused["error_code"] == "worktree_not_removable"
+        assert str(path) in _git(repo, "worktree", "list", "--porcelain")
+        assert (path / ".git").is_file()
+        storage.delete.assert_not_called()
+    finally:
+        nested.chmod(0o700)
+
+    removed = await registry.call(
+        "delete_worktree",
+        {"worktree_id": worktree.id, "force": True, "merged_into": "0.5.0"},
+    )
+    assert removed["success"] is True
+    assert not path.exists()
+    assert str(path) not in _git(repo, "worktree", "list", "--porcelain")
+    storage.delete.assert_called_once_with(worktree.id)
 
 
 def _git(repo: Path, *args: str) -> str:
