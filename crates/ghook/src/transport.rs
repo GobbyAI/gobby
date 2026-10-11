@@ -22,6 +22,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const POST_TIMEOUT: Duration = Duration::from_secs(30);
+const PERMISSION_REQUEST_POST_TIMEOUT: Duration = Duration::from_secs(115);
+
+fn post_timeout(hook_type: &str) -> Duration {
+    match hook_type {
+        "permission-request" | "PermissionRequest" => PERMISSION_REQUEST_POST_TIMEOUT,
+        _ => POST_TIMEOUT,
+    }
+}
 const HOOKS_ENDPOINT: &str = "/api/hooks/execute";
 const ENVELOPE_ID_HEADER: &str = "X-Gobby-Envelope-Id";
 
@@ -242,7 +250,7 @@ pub fn post_and_cleanup(
 ) -> DeliveryReport {
     let endpoint = format!("{daemon_url}{HOOKS_ENDPOINT}");
     let mut req = ureq::post(&endpoint)
-        .timeout(POST_TIMEOUT)
+        .timeout(post_timeout(&envelope.hook_type))
         .set("Content-Type", "application/json");
     for (k, v) in &envelope.headers {
         if !k.eq_ignore_ascii_case(AUTHORIZATION_HEADER) {
@@ -421,6 +429,26 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use tempfile::tempdir;
+
+    #[test]
+    fn permission_request_timeout_outlasts_telegram_hold() {
+        let source = include_str!("../../../src/gobby/communications/telegram_questions.py");
+        let hold: u64 = source
+            .lines()
+            .find_map(|line| line.strip_prefix("QUESTION_TIMEOUT_SECONDS = "))
+            .expect("Telegram hold constant")
+            .parse()
+            .expect("Telegram hold seconds");
+        for hook in ["permission-request", "PermissionRequest"] {
+            let timeout = post_timeout(hook).as_secs();
+            assert!(timeout > hold, "hook client must outlast the answer window");
+            assert!(
+                timeout < 120,
+                "hook client must finish before the provider deadline"
+            );
+        }
+        assert_eq!(post_timeout("post-tool-use"), Duration::from_secs(30));
+    }
 
     fn with_transport_test_env<R>(home: &std::path::Path, closure: impl FnOnce() -> R) -> R {
         temp_env::with_vars(

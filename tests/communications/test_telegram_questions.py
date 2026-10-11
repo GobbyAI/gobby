@@ -16,7 +16,9 @@ from gobby.communications.models import ChannelConfig, CommsMessage
 from gobby.communications.telegram_questions import QUESTION_ACTION, TelegramQuestionController
 from gobby.servers.pending_interactions import PendingInteractionManager
 from gobby.servers.routes.mcp.hook_hold_open import _maybe_hold_open
+from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.utils.datetime import utc_now
 
 pytestmark = pytest.mark.unit
@@ -295,6 +297,48 @@ async def test_all_questions_must_be_answered(harness: QuestionHarness) -> None:
     task = await harness.start({"questions": [TOOL_INPUT["questions"][0], second]})
     assert await harness.controller.handle("telegram", harness.callback(0))
     assert not task.done()
+    assert await harness.controller.handle("telegram", harness.callback(1, question=1))
+    answer = await asyncio.wait_for(task, timeout=2)
+    assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
+        "Which framework?": "React",
+        "Which second framework?": "Vue",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["telegram", "terminal"])
+async def test_answer_clears_lifecycle_wait(
+    harness: QuestionHarness, hub_db: HubDatabase, source: str
+) -> None:
+    lifecycle = TurnLifecycleReducer(SessionManager(hub_db))
+    task = await harness.start()
+    assert len(lifecycle.get(SESSION_ID).waits) == 1
+    if source == "telegram":
+        assert await harness.controller.handle("telegram", harness.callback(0))
+    else:
+        await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
+    await asyncio.wait_for(task, timeout=2)
+    assert lifecycle.get(SESSION_ID).waits == ()
+
+
+@pytest.mark.asyncio
+async def test_button_after_other_leaves_unrelated_text_for_session(
+    harness: QuestionHarness,
+) -> None:
+    second = {**TOOL_INPUT["questions"][0], "question": "Which second framework?"}
+    task = await harness.start({"questions": [TOOL_INPUT["questions"][0], second]})
+    assert await harness.controller.handle("telegram", harness.callback("other"))
+    assert await harness.controller.handle("telegram", harness.callback(0))
+    text = CommsMessage(
+        id="unrelated",
+        channel_id="telegram",
+        direction="inbound",
+        content="New message",
+        created_at=utc_now(),
+        session_id=SESSION_ID,
+        metadata_json={"chat_id": "42"},
+    )
+    assert not await harness.controller.handle("telegram", text)
     assert await harness.controller.handle("telegram", harness.callback(1, question=1))
     answer = await asyncio.wait_for(task, timeout=2)
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {

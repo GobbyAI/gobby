@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from gobby.servers.pending_interactions import PendingInteractionManager
 
 QUESTION_ACTION = "ask_user_question"
+QUESTION_TIMEOUT_SECONDS = 110
 logger = logging.getLogger(__name__)
 
 
@@ -67,8 +68,8 @@ class TelegramQuestionController:
             provider="claude",
             payload=tool_input,
             tool_name="AskUserQuestion",
-            # The installed PermissionRequest command hook has a 120s deadline.
-            timeout_seconds=110,
+            # ghook waits 115s; the provider's command hook deadline is 120s.
+            timeout_seconds=QUESTION_TIMEOUT_SECONDS,
         )
         prompt = _QuestionPrompt(session_id, tool_call_id, interaction_id, pending, questions)
         self._prompts[interaction_id] = prompt
@@ -81,7 +82,7 @@ class TelegramQuestionController:
                 metadata: dict[str, Any] = {
                     "inline_keyboard": keyboard,
                     "callback_action": QUESTION_ACTION,
-                    "callback_ttl_seconds": 110,
+                    "callback_ttl_seconds": QUESTION_TIMEOUT_SECONDS,
                     "pending_question_id": interaction_id,
                     "platform_destination": chat_id,
                 }
@@ -97,12 +98,12 @@ class TelegramQuestionController:
                     raise RuntimeError(f"Question delivery failed: {sent.status}")
                 prompt.deliveries.append((channel.name, sent))
             result = await pending.wait(interaction_id)
-            if result.get("decision") != "telegram":
-                if result.get("decision") == "terminal":
+            response = result.get("response") or {}
+            if result.get("decision") != "answer" or response.get("source") != "telegram":
+                if response.get("source") == "terminal":
                     resolution = "This question is resolved in the terminal."
                 return None
             resolution = "This question is resolved."
-            response = result.get("response") or {}
             return {
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
@@ -131,7 +132,9 @@ class TelegramQuestionController:
             )
             if prompt.session_id == session_id and matches:
                 async with prompt.lock:
-                    await prompt.pending.resolve(prompt.interaction_id, "terminal")
+                    await prompt.pending.resolve(
+                        prompt.interaction_id, "answer", {"source": "terminal"}
+                    )
 
     async def handle(self, channel_name: str, message: CommsMessage) -> bool:
         """Consume authenticated callbacks and typed Other replies to our question messages."""
@@ -246,9 +249,13 @@ class TelegramQuestionController:
                 prompt.answers[key] = label
             else:
                 return True
+            if prompt.other == question_index:
+                prompt.other = None
             if len(prompt.answers) == len(prompt.questions):
                 accepted = await prompt.pending.resolve(
-                    prompt.interaction_id, "telegram", {"answers": prompt.answers}
+                    prompt.interaction_id,
+                    "answer",
+                    {"source": "telegram", "answers": prompt.answers},
                 )
                 text = "Answered." if accepted else "This question is already resolved."
             else:

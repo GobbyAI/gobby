@@ -531,9 +531,12 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 normalized_hold_open_type = _normalize_hold_open_hook_type(hook_type)
                 # A completed terminal answer settles even if an after-tool rule blocks.
                 if session_header and normalized_hold_open_type == "PostToolUse":
-                    await hook_hold_open._maybe_hold_open(
-                        request, session_header, "PostToolUse", payload, source, server=server
-                    )
+                    try:
+                        await hook_hold_open._maybe_hold_open(
+                            request, session_header, "PostToolUse", payload, source, server=server
+                        )
+                    except Exception:
+                        logger.exception("Failed to settle terminal question after PostToolUse")
 
                 # Rule and adapter denials are final. Never let web-chat approval,
                 # auto-approval, or browser interaction overwrite them.
