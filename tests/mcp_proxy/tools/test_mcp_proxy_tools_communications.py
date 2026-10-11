@@ -346,6 +346,33 @@ def test_get_messages_rejects_unknown_session_without_daemon_error(
     assert not caplog.records
 
 
+@pytest.mark.parametrize(
+    "backend_error", [RuntimeError("session storage offline"), OSError("session storage offline")]
+)
+def test_get_messages_handles_and_logs_resolver_backend_failure(
+    mock_manager: MagicMock,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    backend_error: Exception,
+) -> None:
+    db = MagicMock()
+    db.fetchall.side_effect = backend_error
+    registry = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+    handler = registry.get_tool("get_messages")
+    assert handler is not None
+
+    result = handler(session_id="missing-session", channel="telegram")
+
+    assert result == {"success": False, "error": "session storage offline"}
+    mock_manager.list_messages.assert_not_called()
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert "get_messages" in record.getMessage()
+    assert "missing-session" in record.getMessage()
+    assert record.exc_info is not None
+    assert record.exc_info[1] is backend_error
+
+
 @pytest.mark.parametrize("operation", ["get_channel_by_name", "list_messages"])
 def test_get_messages_logs_backend_value_error(
     registry: Any,

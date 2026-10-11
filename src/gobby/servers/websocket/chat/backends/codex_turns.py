@@ -400,6 +400,8 @@ async def stream_codex_turn(
         if not isinstance(usage, dict):
             usage = {}
         transcript_records = await session._get_transcript_records_since(transcript_offset)
+        # Replayed tools describe earlier activity; preserve the live reply's identity.
+        last_streamed_item_id = last_text_item_id
         transcript_assistant_text: list[str] = []
         final_record: ParsedMessage | None = None
         for record in transcript_records:
@@ -418,17 +420,17 @@ async def stream_codex_turn(
             final_record is not None
             and saw_text_output
             and isinstance(final_record.message_id, str)
-            and (final_record.message_id == last_text_item_id or not unkeyed_delta_text)
+            and (final_record.message_id == last_streamed_item_id or not unkeyed_delta_text)
             and isinstance(final_record.content, str)
         ):
             recovery_item_id = final_record.message_id
-            if recovery_item_id not in streamed_text_by_item and last_text_item_id is not None:
-                last_streamed_text = streamed_text_by_item.get(last_text_item_id, "")
+            if recovery_item_id not in streamed_text_by_item and last_streamed_item_id is not None:
+                last_streamed_text = streamed_text_by_item.get(last_streamed_item_id, "")
                 if last_streamed_text and (
                     final_record.content.startswith(last_streamed_text)
                     or last_streamed_text.startswith(final_record.content)
                 ):
-                    recovery_item_id = last_text_item_id
+                    recovery_item_id = last_streamed_item_id
             recovered = _recover_item_text(recovery_item_id, final_record.content)
             if recovered is not None:
                 yield recovered
