@@ -1222,30 +1222,47 @@ async def test_stacked_recovery_reports_only_candidates_project_sync(
     assert await case.land(task, sha) == recovered
 
 
-async def test_receipt_pending_recovery_preserves_original_lander(case: LandingCase) -> None:
+@pytest.mark.parametrize("move_tip", [False, True], ids=["ff", "merge"])
+@pytest.mark.parametrize(
+    "recover_as_original", [False, True], ids=["other-recovers", "self-recovers"]
+)
+async def test_receipt_pending_recovery_preserves_original_lander(
+    case: LandingCase, move_tip: bool, recover_as_original: bool
+) -> None:
     sha = case.candidate("pending-lander", {"docs/lander.md": "original lander\n"})
     task = case.reviewed(sha)
     case.approve(task, sha, case.delegator)
+    if move_tip:
+        case.direct({"docs/moved.md": "disjoint writer\n"})
     with patch.object(
         land_commit, "record_close_receipt", side_effect=IndeterminateCommitError("unobserved")
     ):
         first = await case.land(task, sha)
+        own_pending = await case.land(task, sha)
         pending = await case.land(task, sha, case.delegator)
-    recovered = await case.land(task, sha, case.delegator)
+    recovery_caller = case.reviewer if recover_as_original else case.delegator
+    recovered = await case.land(task, sha, recovery_caller)
     replay = await case.land(task, sha)
 
     assert first["receipt_pending"] is True
     assert first["already_landed"] is False
+    assert own_pending["receipt_pending"] is True
+    assert own_pending["already_landed"] is True
+    assert own_pending["landed_by_session_id"] == case.reviewer
+    assert own_pending["retest_required"] is move_tip
     assert pending["receipt_pending"] is True
     assert pending["already_landed"] is True
     assert pending["landed_by_session_id"] == case.reviewer
     assert recovered["already_landed"] is True
     assert recovered["landed_by_session_id"] == case.reviewer
+    assert recovered["retest_required"] is move_tip
     assert replay["landed_by_session_id"] == case.reviewer
+    assert replay["already_landed"] is True
+    assert replay["retest_required"] is move_tip
     assert replay["receipt_id"] == recovered["receipt_id"]
     [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
     assert receipt.facts["landed_by_session_id"] == case.reviewer
-    assert case.git("rev-parse", "trunk") == sha
+    assert case.git("rev-parse", "trunk") == first["landed_tip"]
 
 
 async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCase) -> None:

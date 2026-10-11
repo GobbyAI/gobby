@@ -485,16 +485,20 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`retest_required`" in prompt
     assert "EVENT=LAND_PENDING TASK=#NNNNN" in prompt
     assert "until a `receipt_id` returns" in prompt
-    assert "When `already_landed: true` and a `receipt_id` returns" in prompt
+    assert "When `already_landed: true`, a `receipt_id` returns" in prompt
+    assert "`landed_by_session_id` differs from your current session ID" in prompt
     assert (
         "EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
     ) in prompt
     assert "original `receipt_id` and original `landed_by_session_id`" in prompt
-    assert "Never send your own `EVENT=LANDED` for a replayed receipt." in prompt
-    assert "Once a non-replay response carries a `receipt_id`" in prompt
+    assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
+    assert "`landed_by_session_id` equals your current session ID" in prompt
+    assert "recovery or replay of your own landing; perform the required retest" in prompt
     status = str(verdict.status_message)
     assert "send EVENT=ALREADY_LANDED" in status
     assert "otherwise send EVENT=LANDED" in status
+    assert "landed_by_session_id differs from your current session ID" in status
+    assert "full field set and required retest" in status
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
     assert (
@@ -653,6 +657,10 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
     for event in ("EVENT=LANDED", "EVENT=LAND_PENDING", "EVENT=LAND_BLOCKED"):
         assert event in prompt
     assert "Relay each of those lines to the Orchestrator" in prompt
+    assert "Relay `EVENT=ALREADY_LANDED` to the Orchestrator" in prompt
+    assert "original `RECEIPT` and `LANDED_BY_SESSION_ID`" in prompt
+    assert "It neither releases nor holds the close" in prompt
+    assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
     assert "`EVENT=LANDED` line that carries a `RECEIPT` value" in prompt
     assert "git merge-base --is-ancestor <LANDED_TIP> <BRANCH>" in prompt
     assert "`MODE=merge` landing must carry `RETEST=PASS`" in prompt
