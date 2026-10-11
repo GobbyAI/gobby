@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.plans.parser import parse_plan
+from gobby.plans.parser import ArtifactKind, parse_plan
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import _agent_selection_fields
@@ -75,7 +75,11 @@ def test_plan_12725_compiles_clean(
         assert task["validation"].startswith(entry.validation_criteria), section_id
         section = section_by_id[section_id]
         for item in section.acceptance_items:
-            assert f"{item.artifact_kind.value}: `{item.artifact_ref}`" in task["validation"], (
+            if item.artifact_kind is ArtifactKind.behavior:
+                artifact = f'behavior: "{item.artifact_ref.replace("`", "")}"'
+            else:
+                artifact = f"{item.artifact_kind.value}: `{item.artifact_ref}`"
+            assert artifact in task["validation"], (
                 section_id,
                 item.item_id,
             )

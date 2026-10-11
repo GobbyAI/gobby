@@ -226,6 +226,35 @@ class TestWorktreeGitManagerRunGit:
 class TestWorktreeGitManagerCreateWorktree:
     """Tests for WorktreeGitManager.create_worktree method."""
 
+    async def test_remote_base_ignores_same_named_tag(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git("init", "-b", "main")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test User")
+        git("commit", "--allow-empty", "-m", "initial")
+        git("tag", "origin/main")
+        git("commit", "--allow-empty", "-m", "remote base advances")
+        base_tip = git("rev-parse", "refs/heads/main")
+        git("remote", "add", "origin", str(repo))
+        path = tmp_path / "created"
+
+        result = await WorktreeGitManager(repo).create_worktree(path, "feature", "main")
+
+        assert result.success, result.message
+        assert (
+            subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=path, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            == base_tip
+        )
+
     @pytest.fixture
     def manager(self, tmp_path):
         """Create manager with temp directory."""
@@ -300,12 +329,18 @@ class TestWorktreeGitManagerCreateWorktree:
     async def test_create_handles_git_failure(self, mock_run, manager, tmp_path) -> None:
         """Create handles git command failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
-        # First call is fetch (succeeds), second call is worktree add (fails)
+        # Fetch and exact remote ref lookup succeed; worktree add fails.
         mock_run.side_effect = [
             subprocess.CompletedProcess(
                 args=["fetch"],
                 returncode=0,
                 stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["show-ref"],
+                returncode=0,
+                stdout="a" * 40,
                 stderr="",
             ),
             subprocess.CompletedProcess(

@@ -19,6 +19,7 @@ from gobby.plans.manifest_emitter import (
     section_dependency_refs,
 )
 from gobby.plans.parser import (
+    ArtifactKind,
     Kind,
     ManifestEntry,
     PlanDocument,
@@ -251,10 +252,13 @@ def _build_contract_entry_work_task(
 
 def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) -> str:
     lines = [entry.validation_criteria.strip()]
-    artifact_lines = [
-        f"- {item.item_id}: {item.artifact_kind.value}: `{item.artifact_ref}`"
-        for item in section.acceptance_items
-    ]
+    artifact_lines = []
+    for item in section.acceptance_items:
+        if item.artifact_kind is ArtifactKind.behavior:
+            artifact = f'behavior: "{item.artifact_ref.replace("`", "")}"'
+        else:
+            artifact = f"{item.artifact_kind.value}: `{item.artifact_ref}`"
+        artifact_lines.append(f"- {item.item_id}: {artifact}")
     if artifact_lines:
         lines.append("Acceptance artifacts:")
         lines.extend(artifact_lines)

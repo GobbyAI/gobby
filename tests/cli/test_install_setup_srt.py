@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,33 @@ from gobby.agents import srt_runtime
 from gobby.agents.srt_runtime import SrtInstallation, SrtRuntimeError
 from gobby.cli import install_setup_srt
 from gobby.utils.dependency_requirements import SRT_RELEASE, DependencyStatus
+
+
+@pytest.fixture
+def runtime_cleanup_checked(tmp_path: Path) -> Iterator[None]:
+    yield
+    # Even a --basetemp inside .gobby/tmp must retain no immutable fixture tree.
+    assert not (tmp_path / "tools").exists()
+    assert not (tmp_path / "outside").exists()
+
+
+def test_verified_install_retry_cleans_immutable_fixture(
+    runtime_cleanup_checked: None, installed_runtime: Path, tmp_path: Path
+) -> None:
+    assert installed_runtime.is_relative_to(tmp_path)
+    backup = installed_runtime.with_name(f".{installed_runtime.name}.previous")
+    backup.mkdir()
+    (backup / "payload").write_text("old", encoding="utf-8")
+    srt_runtime.make_srt_installation_immutable(backup)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o500)
+
+    result = install_setup_srt.install_srt_runtime()
+
+    assert result.installed is False
+    assert not backup.exists()
+    assert installed_runtime.stat().st_mode & 0o777 == 0o555
+    assert outside.stat().st_mode & 0o777 == 0o500
 
 
 class FakeDownloadResponse:
@@ -276,7 +304,7 @@ def _write_runtime_tree(root: Path, marker: str) -> None:
 
 
 @pytest.fixture
-def installed_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def installed_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     target = tmp_path / "tools" / "srt" / SRT_RELEASE.version
     _write_runtime_tree(target, "old")
     monkeypatch.setattr(install_setup_srt, "srt_install_root", lambda: target)
@@ -293,7 +321,12 @@ def installed_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             error=None,
         ),
     )
-    return target
+    try:
+        yield target
+    finally:
+        # tmp_path may be rooted inside a checkout by an explicit --basetemp.
+        # Clean all owned fixture paths, including read-only symlink targets.
+        install_setup_srt._cleanup_install_tree(tmp_path)
 
 
 def test_promote_replaces_immutable_runtime(installed_runtime: Path) -> None:

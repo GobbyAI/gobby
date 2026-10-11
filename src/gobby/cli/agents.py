@@ -250,7 +250,7 @@ def spawn_agent_cmd(
         response = httpx.post(
             f"{daemon_url}/api/mcp/gobby-agents/tools/spawn_agent",
             json=arguments,
-            headers=daemon_auth_headers(),
+            headers=daemon_auth_headers() | {"X-Gobby-CLI-Internal": "1"},
             timeout=30.0,
         )
         response.raise_for_status()

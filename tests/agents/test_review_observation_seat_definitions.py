@@ -485,6 +485,25 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`retest_required`" in prompt
     assert "EVENT=LAND_PENDING TASK=#NNNNN" in prompt
     assert "until a `receipt_id` returns" in prompt
+    assert "When `already_landed: true`, a `receipt_id` returns" in prompt
+    assert "`landed_by_session_id` names another session" in prompt
+    assert "neither your current session ID nor `unknown`" in prompt
+    assert (
+        "EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
+    ) in prompt
+    assert "original `receipt_id` and original `landed_by_session_id`" in prompt
+    assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
+    assert "`landed_by_session_id` equals your current session ID" in prompt
+    assert "equals your current session ID or is `unknown`, send" in prompt
+    assert "Report an unknown lander as unknown." not in prompt
+    assert "recovery or replay of your own landing; perform the required retest" in prompt
+    status = str(verdict.status_message)
+    assert "send EVENT=ALREADY_LANDED" in status
+    assert "otherwise send EVENT=LANDED" in status
+    assert "landed_by_session_id names another session" in status
+    assert "current session ID nor unknown" in status
+    assert "your own landing or an unknown lander" in status
+    assert "full field set and required retest" in status
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
     assert (
@@ -507,12 +526,27 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     [
         ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=BOUNCE NOTE=HIGH", True),
         ("EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=PASS", True),
+        ("EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1 LANDED_BY_SESSION_ID=original", True),
         ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
         ("EVENT=LAND_PENDING TASK=#42 SHA=abc NOTE=receipt_pending", False),
         ("EVENT=LAND_BLOCKED TASK=#42 SHA=abc NOTE=merge_conflict", False),
         ("EVENT=LANDED TASK=#43 SHA=abc RECEIPT=r1", False),
+        ("EVENT=ALREADY_LANDED TASK=#43 SHA=abc RECEIPT=r1", False),
+        ("Prose EVENT=ALREADY_LANDED TASK=#42 SHA=abc RECEIPT=r1", False),
+        ("EVENT=LAND_PENDING TASK=#42 NOTE=EVENT=ALREADY_LANDED", False),
     ],
-    ids=["bounce", "landed", "land-verdict", "land-pending", "land-blocked", "other-task"],
+    ids=[
+        "bounce",
+        "landed",
+        "already-landed",
+        "land-verdict",
+        "land-pending",
+        "land-blocked",
+        "other-task",
+        "replay-other-task",
+        "replay-prose",
+        "replay-note",
+    ],
 )
 def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
     content: str, resets: bool
@@ -625,9 +659,20 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
 
     assert body.step_workflow is None
     assert "Merge Manager" not in prompt
-    for event in ("EVENT=LANDED", "EVENT=LAND_PENDING", "EVENT=LAND_BLOCKED"):
+    event_list = prompt.split("reports ", 1)[1].split(" to you;", 1)[0]
+    for event in (
+        "EVENT=LANDED",
+        "EVENT=ALREADY_LANDED",
+        "EVENT=LAND_PENDING",
+        "EVENT=LAND_BLOCKED",
+    ):
         assert event in prompt
+        assert event in event_list
     assert "Relay each of those lines to the Orchestrator" in prompt
+    assert "Relay `EVENT=ALREADY_LANDED` to the Orchestrator" in prompt
+    assert "original `RECEIPT` and `LANDED_BY_SESSION_ID`" in prompt
+    assert "It neither releases nor holds the close" in prompt
+    assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
     assert "`EVENT=LANDED` line that carries a `RECEIPT` value" in prompt
     assert "git merge-base --is-ancestor <LANDED_TIP> <BRANCH>" in prompt
     assert "`MODE=merge` landing must carry `RETEST=PASS`" in prompt

@@ -63,6 +63,7 @@ DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
         ClaudeDecisionStyle.NONE,
         ClaudeDecisionStyle.IGNORE_BLOCK,
         ClaudeDecisionStyle.DISPLAY_CONTENT,
+        ClaudeDecisionStyle.WORKTREE_CREATE,
     }
 )
 
@@ -441,7 +442,13 @@ class ClaudeCodeAdapter(BaseAdapter):
             if response.watch_paths is not None:
                 ensure_hook_specific_output()["watchPaths"] = response.watch_paths
         elif decision_style == ClaudeDecisionStyle.WORKTREE_CREATE:
-            if response.worktree_path:
+            if is_denied:
+                # Preserve the refusal for Gobby's transport. Claude rejects
+                # creation when no worktreePath is returned; do not stop the agent.
+                result["decision"] = "block"
+                if normalized_reason:
+                    result["reason"] = normalized_reason
+            elif response.worktree_path:
                 ensure_hook_specific_output()["worktreePath"] = response.worktree_path
         elif decision_style == ClaudeDecisionStyle.ELICITATION:
             elicitation_action = response.elicitation_action

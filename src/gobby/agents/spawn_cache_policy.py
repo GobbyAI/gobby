@@ -26,6 +26,15 @@ PATH_ENV_VAR = "PATH"
 _ARCHIVIST_DIGEST_WRITE_PATH = (
     "~/Desktop/gobby-digest-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md"
 )
+# Claude Code 2.1.296 stages atomic writes through .tmp.<process.pid>.<randomBytes(6).hex>.
+# SRT has no glob repetition: enumerate PID widths, keeping each suffix character bounded.
+_ARCHIVIST_DIGEST_WRITE_PATHS = (
+    _ARCHIVIST_DIGEST_WRITE_PATH,
+    *(
+        f"{_ARCHIVIST_DIGEST_WRITE_PATH}.tmp.{('[0-9]' * width)}.{('[0-9a-f]' * 12)}"
+        for width in range(1, 11)
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -146,8 +155,10 @@ def sandbox_config_for_spawn(
     apply_spawn_cache_policy(env_vars)
     _apply_sandbox_cache_policy(env_vars)
     extra_write_paths = list(sandbox_config.extra_write_paths)
-    if agent_name == "archivist" and _ARCHIVIST_DIGEST_WRITE_PATH not in extra_write_paths:
-        extra_write_paths.append(_ARCHIVIST_DIGEST_WRITE_PATH)
+    if agent_name == "archivist":
+        for path in _ARCHIVIST_DIGEST_WRITE_PATHS:
+            if path not in extra_write_paths:
+                extra_write_paths.append(path)
     for path in [*project_write_paths, *sandbox_write_paths(env_vars)]:
         if path and path not in extra_write_paths:
             extra_write_paths.append(path)

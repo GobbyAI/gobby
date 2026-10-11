@@ -243,7 +243,10 @@ pub(crate) fn action_from_success_response(
                     stderr_message: None,
                 },
                 None => worktree_create_failure(
-                    "daemon response has no hookSpecificOutput.worktreePath",
+                    map.and_then(|m| m.get("reason"))
+                        .and_then(Value::as_str)
+                        .filter(|reason| !reason.is_empty())
+                        .unwrap_or("daemon response has no hookSpecificOutput.worktreePath"),
                 ),
             });
         }
@@ -520,12 +523,27 @@ mod tests {
 
     #[test]
     fn action_from_success_claude_worktree_create_without_path_fails() {
-        for body in [r#"{"continue":true}"#, ""] {
+        for body in [r#"{"continue":true}"#, r#"{"reason":""}"#, ""] {
             let action = action_from_success_response("claude", "worktree-create", body).unwrap();
             assert_eq!(action.exit_code, 1);
             assert!(action.stdout_json.is_none());
             assert!(action.stderr_message.is_some());
         }
+    }
+
+    #[test]
+    fn action_from_success_claude_worktree_create_preserves_refusal_reason() {
+        let body =
+            r#"{"continue":true,"decision":"block","reason":"Cannot reuse unmerged branch"}"#;
+        let action = action_from_success_response("claude", "worktree-create", body).unwrap();
+        assert_eq!(action.exit_code, 1);
+        assert!(action.stdout_json.is_none());
+        assert!(
+            action
+                .stderr_message
+                .unwrap()
+                .contains("Cannot reuse unmerged branch")
+        );
     }
 
     #[test]

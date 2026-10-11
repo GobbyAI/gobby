@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess  # nosec B404 # subprocess.TimeoutExpired re-raised from runner
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NoReturn
 
 from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
 from gobby.worktrees.git._models import GitOperationResult, WorktreeInfo
@@ -139,7 +140,7 @@ async def create_worktree(
                     timeout=60,
                 )
             else:
-                # Create worktree with new branch based on origin (original behavior)
+                # Fetch and resolve the exact remote branch, avoiding tag ambiguity.
                 # First, fetch to ensure we have latest refs
                 fetch_result = await runner._run_git(["fetch", "origin", base_branch], timeout=60)
                 if fetch_result.returncode != 0:
@@ -149,7 +150,16 @@ async def create_worktree(
                         error=fetch_result.stderr,
                     )
 
-                # Create worktree with new branch
+                base_name = base_branch.removeprefix("refs/heads/")
+                base_ref = f"refs/remotes/origin/{base_name}"
+                verify_result = await runner._run_git(
+                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
+                )
+                if verify_result.returncode != 0:
+                    error = f"Remote base branch '{base_ref}' could not be resolved"
+                    return GitOperationResult(success=False, message=error, error=error)
+
+                # Create worktree with new branch from the captured commit.
                 result = await runner._run_git(
                     [
                         "worktree",
@@ -157,7 +167,7 @@ async def create_worktree(
                         "-b",
                         branch_name,
                         str(worktree_path),
-                        f"origin/{base_branch}",
+                        verify_result.stdout.strip(),
                     ],
                     timeout=60,
                 )
@@ -331,6 +341,26 @@ async def _refuse_unmerged_branch_deletion(
     )
 
 
+def _check_worktree_removable(worktree_path: Path) -> None:
+    """Refuse known permission failures before Git drops the admin entry."""
+    if not worktree_path.exists():
+        return
+
+    def raise_walk_error(error: OSError) -> NoReturn:
+        raise error
+
+    # Files need no write permission to be unlinked, but every real directory
+    # does. Never follow directory symlinks into trees outside this worktree.
+    for directory in (worktree_path.parent, worktree_path):
+        if not os.access(directory, os.W_OK | os.X_OK):
+            raise PermissionError(f"Directory is not writable/searchable: {directory}")
+    for root, _directories, _files in os.walk(
+        worktree_path, followlinks=False, onerror=raise_walk_error
+    ):
+        if not os.access(root, os.W_OK | os.X_OK):
+            raise PermissionError(f"Directory is not writable/searchable: {root}")
+
+
 async def delete_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
@@ -394,6 +424,17 @@ async def delete_worktree(
             )
             if refusal is not None:
                 return refusal
+
+        # Git can discard registration even when directory deletion fails.
+        # Refuse predictable permission failures first, including with force.
+        try:
+            await asyncio.to_thread(_check_worktree_removable, worktree_path)
+        except OSError as exc:
+            return GitOperationResult(
+                success=False,
+                message=f"Worktree remains registered; cannot remove it: {exc}",
+                error="worktree_not_removable",
+            )
 
         # Remove worktree
         args = ["worktree", "remove"]
