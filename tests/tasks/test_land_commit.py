@@ -1212,12 +1212,17 @@ async def test_stacked_recovery_reports_only_candidates_project_sync(
         "merge",
         "--ff-only",
         stacked,
-        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={stacked} mode=ff class=restart"},
+        env={
+            "GIT_REFLOG_ACTION": (
+                f"gobby-land candidate={stacked} mode=ff class=restart lander={case.delegator}"
+            )
+        },
     )
 
     recovered = await case.land(task, sha)
     assert recovered["provenance"] == "reflog"
     assert recovered["project_sync_required"] is pipeline_in_candidate
+    assert recovered["landed_by_session_id"] == "unknown"
     assert recovered["activation_class"] == ("sync" if pipeline_in_candidate else "none")
     assert await case.land(task, sha) == recovered
 

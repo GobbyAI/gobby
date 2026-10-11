@@ -260,7 +260,8 @@ async def _recover_landing(
                 "activation_class": activation_class,
                 "retest_required": action["mode"] == "merge",
                 "provenance": "reflog",
-                "landed_by_session_id": action["lander"] or "unknown",
+                "landed_by_session_id": (action["lander"] if action["candidate"] == sha else None)
+                or "unknown",
             }
             if action["mode"] == "merge":
                 facts["merge_commit"] = entry.new

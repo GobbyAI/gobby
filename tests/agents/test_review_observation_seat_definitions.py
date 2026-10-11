@@ -486,18 +486,23 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "EVENT=LAND_PENDING TASK=#NNNNN" in prompt
     assert "until a `receipt_id` returns" in prompt
     assert "When `already_landed: true`, a `receipt_id` returns" in prompt
-    assert "`landed_by_session_id` differs from your current session ID" in prompt
+    assert "`landed_by_session_id` names another session" in prompt
+    assert "neither your current session ID nor `unknown`" in prompt
     assert (
         "EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
     ) in prompt
     assert "original `receipt_id` and original `landed_by_session_id`" in prompt
     assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
     assert "`landed_by_session_id` equals your current session ID" in prompt
+    assert "equals your current session ID or is `unknown`, send" in prompt
+    assert "Report an unknown lander as unknown." not in prompt
     assert "recovery or replay of your own landing; perform the required retest" in prompt
     status = str(verdict.status_message)
     assert "send EVENT=ALREADY_LANDED" in status
     assert "otherwise send EVENT=LANDED" in status
-    assert "landed_by_session_id differs from your current session ID" in status
+    assert "landed_by_session_id names another session" in status
+    assert "current session ID nor unknown" in status
+    assert "your own landing or an unknown lander" in status
     assert "full field set and required retest" in status
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
@@ -654,8 +659,15 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
 
     assert body.step_workflow is None
     assert "Merge Manager" not in prompt
-    for event in ("EVENT=LANDED", "EVENT=LAND_PENDING", "EVENT=LAND_BLOCKED"):
+    event_list = prompt.split("reports ", 1)[1].split(" to you;", 1)[0]
+    for event in (
+        "EVENT=LANDED",
+        "EVENT=ALREADY_LANDED",
+        "EVENT=LAND_PENDING",
+        "EVENT=LAND_BLOCKED",
+    ):
         assert event in prompt
+        assert event in event_list
     assert "Relay each of those lines to the Orchestrator" in prompt
     assert "Relay `EVENT=ALREADY_LANDED` to the Orchestrator" in prompt
     assert "original `RECEIPT` and `LANDED_BY_SESSION_ID`" in prompt
