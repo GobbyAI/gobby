@@ -15,7 +15,11 @@ from gobby.hooks._normalization_bindings import (
     _loop_binding_variable_is_stable,
     _raw_shell_word_is_literal,
 )
-from gobby.hooks._normalization_compound import case_arm_tokens, process_substitution_bodies
+from gobby.hooks._normalization_compound import (
+    case_arm_tokens,
+    command_substitution_bodies,
+    process_substitution_bodies,
+)
 from gobby.hooks._normalization_env import env_directory_operands
 from gobby.hooks._normalization_git import (
     classify_git_mutation,
@@ -195,6 +199,11 @@ def _classify_shell_command(
 ) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
+        masked_command, command_substitutions = command_substitution_bodies(
+            command, scan.spans, depth=depth
+        )
+        if command_substitutions:
+            scan = scan_shell_command(masked_command)
     except ValueError:
         if depth:
             return _build_canonical_tool_metadata(
@@ -250,6 +259,13 @@ def _classify_shell_command(
             directory_changed = True
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
+        segment_start = min((spans_by_token[id(token)][0] for token in segment.tokens), default=0)
+        segment_end = max((spans_by_token[id(token)][1] for token in segment.tokens), default=0)
+        substitution_bodies = [
+            body
+            for position, body in command_substitutions
+            if segment_start <= position < segment_end
+        ]
         assignment_bindings = (
             _literal_assignment_bindings(tuple(raw_parts), source_parts)
             if leading_assignments
@@ -284,6 +300,17 @@ def _classify_shell_command(
                     base_cwd=None if directory_changed else base_cwd,
                 )
             )
+        for body in substitution_bodies:
+            body_metadata = _classify_shell_segment_without_redirection(
+                ["sh", "-c", body],
+                persistent_cwd,
+                depth=depth,
+                base_cwd=None if directory_changed else base_cwd,
+            )
+            if body_metadata.repo_mutation or (body_metadata.extra or {}).get(
+                "canonical_script_execution"
+            ):
+                metadata.append(body_metadata)
         directory_changed = directory_changed or not preserves_directory(parts)
         if not parts:
             metadata.append(
@@ -459,6 +486,9 @@ def _classify_shell_segment(
             stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
         )
         extra = _without_code_index_navigation(base_metadata.extra)
+        if base_metadata.repo_mutation and not base_metadata.paths:
+            # A redirect names its own destination, never the opaque base write's.
+            extra["_canonical_repo_mutation_scope_unknown"] = True
         if "canonical_edit_file_paths" in extra:
             extra["canonical_edit_file_paths"] = list(
                 dict.fromkeys([*extra["canonical_edit_file_paths"], *redirection_paths])
@@ -494,6 +524,7 @@ def _classify_shell_segment(
             ),
             extra=extra,
             repo_mutation=True,
+            unverified_write_scope=base_metadata.unverified_write_scope,
         )
 
     if input_paths:
