@@ -80,11 +80,12 @@ def apply_path_scope_metadata(
 
     if metadata.get("canonical_code_navigation_action"):
         scope_unknown = bool(metadata.pop("_canonical_code_navigation_scope_unknown", False))
+        scope_paths = metadata.pop("_canonical_code_navigation_scope_paths", [])
         metadata["canonical_code_navigation_repo_scope"] = (
             False
             if scope_unknown
             else code_navigation_may_touch_project(
-                paths,
+                [*paths, *scope_paths],
                 cwd=cwd,
                 project_root=project_root,
             )

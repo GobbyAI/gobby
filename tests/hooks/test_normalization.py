@@ -3357,3 +3357,85 @@ def test_input_updates_land_on_the_field_the_cli_sent(
     raw: dict[str, Any], updates: dict[str, Any], expected: dict[str, Any]
 ) -> None:
     assert provider_native_input_updates(raw, updates) == expected
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ("-nd recurse P", ["."]),
+        ("-rd skip P", []),
+        ("-nA 3 P a.py", ["a.py"]),
+        ("-r -d skip P", []),
+        ("-d skip -r P", ["."]),
+        ("-r --directories=skip P", []),
+        ("--directories=skip -R P", ["."]),
+        ("-ndskip -r P", ["."]),
+    ],
+)
+def test_grep_cluster_operands_and_recursion_precedence(
+    tmp_path: Path, arguments: str, expected: list[str]
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"cd {outside}; grep {arguments} < f"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_file_paths"] == [
+        *(str(outside / path) for path in expected),
+        str(outside / "f"),
+    ]
+    assert data["canonical_code_navigation_repo_scope"] is False
+
+
+@pytest.mark.parametrize("search", ["rg P", "grep P", "grep -d skip P"])
+@pytest.mark.parametrize("directory", ["outside", "repo"])
+@pytest.mark.parametrize("sibling", ["", "; rg P explicit.py"])
+def test_stdin_only_search_keeps_shell_directory_scope(
+    tmp_path: Path, search: str, directory: str, sibling: str
+) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / directory
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"cd {target}; {search} <<< 'text'{sibling}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "search"
+    assert data.get("canonical_file_paths", []) == (
+        [str(target / "explicit.py")] if sibling else []
+    )
+    assert data["canonical_code_navigation_repo_scope"] is (directory == "repo")
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        "cd {repo}; rg P <<< text; cd {outside}; grep P <<< text",
+        "cd {outside}; grep P <<< text; cd {repo}; rg P <<< text",
+        "rg P explicit.py; cd {outside}; grep P <<< text",
+    ],
+)
+def test_stdin_only_search_scope_preserves_in_repo_siblings(tmp_path: Path, commands: str) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": commands.format(repo=repo, outside=outside)},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_code_navigation_repo_scope"] is True

@@ -306,6 +306,11 @@ def _shell_positional_args_after(
         if not after_options and part.startswith("--") and "=" in part:
             continue
         if not after_options and part.startswith("-") and part != "-":
+            if not part.startswith("--"):
+                for index, option in enumerate(part[1:], start=1):
+                    if f"-{option}" in option_args:
+                        skip_next = index == len(part) - 1
+                        break
             continue
         positional.append(part)
     return positional
@@ -377,16 +382,17 @@ def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
 
 def _grep_is_recursive(parts: list[str]) -> bool:
     """Recognize recursion flags without treating option operands as flags."""
+    recursive = False
     arguments = iter(parts[1:])
     for part in arguments:
         if part == "--":
             break
         if part in {"--recursive", "--dereference-recursive"}:
-            return True
+            recursive = True
+            continue
         if part == "--directories" or part.startswith("--directories="):
             directories = part.split("=", 1)[1] if "=" in part else next(arguments, None)
-            if directories == "recurse":
-                return True
+            recursive = directories == "recurse"
             continue
         if part.startswith("--"):
             if part in {
@@ -411,13 +417,13 @@ def _grep_is_recursive(parts: list[str]) -> bool:
             continue
         for index, option in enumerate(part[1:], start=1):
             if option in "rR":
-                return True
+                recursive = True
             if option in "efmABCdD":
                 argument = part[index + 1 :] or next(arguments, None)
-                if option == "d" and argument == "recurse":
-                    return True
+                if option == "d":
+                    recursive = argument == "recurse"
                 break
-    return False
+    return recursive
 
 
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
