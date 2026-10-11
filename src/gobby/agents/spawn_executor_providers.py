@@ -122,29 +122,43 @@ async def _prepare_provider_sandbox(
             and request.session_manager is not None
             and request.machine_id is not None
         ):
-            from gobby.storage.project_checkouts import require_root
+            from gobby.storage.project_checkouts import (
+                CheckoutNotFoundError,
+                CheckoutSentinelRejectedError,
+                MissingMachineContextError,
+                require_root,
+            )
             from gobby.utils.project_context import get_project_sandbox_config
 
-            main_root = Path(
-                await asyncio.to_thread(
+            try:
+                main_path = await asyncio.to_thread(
                     require_root,
                     request.session_manager._storage.db,
                     request.project_id,
                     request.machine_id,
                 )
-            ).resolve()
-            main_config = await asyncio.to_thread(get_project_sandbox_config, main_root)
-            # Reviewers run from the candidate worktree but may validate the
-            # main manifest. Admit only its explicitly declared nextest store.
-            nextest_store = str(main_root / ".nextest")
-            if (
-                main_config is not None
-                and nextest_store in main_config.extra_write_paths
-                and nextest_store not in sandbox_config.extra_write_paths
+            except (
+                CheckoutNotFoundError,
+                CheckoutSentinelRejectedError,
+                MissingMachineContextError,
             ):
-                sandbox_config = sandbox_config.model_copy(
-                    update={"extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]}
-                )
+                logger.debug("No primary checkout for optional nextest store grant", exc_info=True)
+            else:
+                main_root = Path(main_path).resolve()
+                main_config = await asyncio.to_thread(get_project_sandbox_config, main_root)
+                # Sandboxed seats may validate the main manifest from a lane.
+                # Admit only the main checkout's explicitly declared nextest store.
+                nextest_store = str(main_root / ".nextest")
+                if (
+                    main_config is not None
+                    and nextest_store in main_config.extra_write_paths
+                    and nextest_store not in sandbox_config.extra_write_paths
+                ):
+                    sandbox_config = sandbox_config.model_copy(
+                        update={
+                            "extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]
+                        }
+                    )
         config = _sandbox_config_for_spawn(
             sandbox_config,
             env,

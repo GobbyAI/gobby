@@ -18,6 +18,11 @@ from gobby.agents.spawn_executor_providers import (
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError, render_srt_settings
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    MissingMachineContextError,
+)
 from tests.agents.prepared_spawn import prepared_spawn
 
 
@@ -43,10 +48,22 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
     return request, spawn_context, run_manager
 
 
-@pytest.mark.parametrize("declared_store", [True, False])
+@pytest.mark.parametrize(
+    ("declared_store", "lookup_error"),
+    [
+        (True, None),
+        (False, None),
+        (True, CheckoutNotFoundError),
+        (True, CheckoutSentinelRejectedError),
+        (True, MissingMachineContextError),
+    ],
+)
 @pytest.mark.asyncio
 async def test_close_reviewer_policy_grants_only_declared_main_nextest_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared_store: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declared_store: bool,
+    lookup_error: type[ValueError] | None,
 ) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -68,7 +85,10 @@ async def test_close_reviewer_policy_grants_only_declared_main_nextest_store(
     request.cwd = str(lane)
     request.agent_name = "task-close-reviewer"
     request.resume_metadata_json = {}
-    lookup = MagicMock(return_value=str(main))
+    lookup = MagicMock(
+        return_value=str(main),
+        side_effect=lookup_error("Primary checkout unavailable") if lookup_error else None,
+    )
     monkeypatch.setattr("gobby.storage.project_checkouts.require_root", lookup)
     captured_writes: list[str] = []
 
@@ -85,12 +105,13 @@ async def test_close_reviewer_policy_grants_only_declared_main_nextest_store(
 
     assert isinstance(result, SandboxLaunch)
     lookup.assert_called_once_with(manager._storage.db, "project", "machine")
-    assert (str(main / ".nextest") in captured_writes) is declared_store
+    expected_store = declared_store and lookup_error is None
+    assert (str(main / ".nextest") in captured_writes) is expected_store
     assert str(main) not in captured_writes
     assert str(main / ".gobby/tmp") not in captured_writes
     assert str(lane / ".nextest") in captured_writes
     persisted = SandboxConfig.model_validate(request.resume_metadata_json["sandbox_config"])
-    assert (str(main / ".nextest") in persisted.extra_write_paths) is declared_store
+    assert (str(main / ".nextest") in persisted.extra_write_paths) is expected_store
 
 
 @pytest.mark.asyncio
