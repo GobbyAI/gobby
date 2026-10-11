@@ -67,14 +67,7 @@ class SeatRun:
         )
         AgentDefinitionManager(db).create(
             name=name,
-            definition_json=json.dumps(
-                {
-                    "name": name,
-                    "variables": workflow["variables"],
-                    "steps": workflow["steps"],
-                    "exit_condition": workflow.get("exit_condition"),
-                }
-            ),
+            definition_json=json.dumps(agent),
             enabled=True,
         )
         self.instances.save(
@@ -241,7 +234,7 @@ async def _code_reviewer(run: SeatRun) -> None:
         await run.set_flag("candidate_task", task)
         await run.set_flag("candidate_received", True)
         assert run.step == "review"
-        assert not await run.admits(*WAIT)
+        assert await run.admits(*WAIT)
 
         await run.set_flag("verdict_ready", True)
         assert run.step == "verdict"

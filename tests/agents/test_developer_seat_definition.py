@@ -131,6 +131,7 @@ def test_developer_reaches_implement_only_through_both_skill_gates() -> None:
         "gobby:references/development/obligations.md",
         "restraint",
         "gobby:references/tasks/overview.md",
+        "code-review",
     ]
     assert _transitions(steps["load_skills"]) == {
         "claim": "all(skill_loaded(skill) for skill in vars.required_skills)"

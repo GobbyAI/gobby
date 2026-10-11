@@ -7,9 +7,11 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+from tests.workflows.test_seat_step_loops import SeatRun
 
 ROOT = Path(__file__).resolve().parents[2]
 PIPELINES = ROOT / "src/gobby/install/shared/workflows/pipelines"
@@ -19,6 +21,36 @@ ROLE_NAMES = {
     "researcher": "researcher",
     "lane-manager": "lane manager",
 }
+
+
+@pytest.mark.parametrize(
+    ("seat", "ready_step"), [("developer", "claim"), ("code-reviewer", "await")]
+)
+async def test_team_lane_requires_code_review_before_seat_work(
+    temp_db: HubDatabase, seat: str, ready_step: str
+) -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
+    )
+    step = next(step for step in definition.steps if step.id == seat)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    run = SeatRun(temp_db, step.mcp.arguments["agent"])
+    assert run.step == "load_skills"
+
+    # Every other bootstrap load must leave review/implementation unavailable.
+    await run.load(*(entry for entry in run.vars["required_skills"] if entry != "code-review"))
+    assert run.step == "load_skills"
+    assert not await run.admits("gobby-tasks", "record_close_receipt")
+
+    await run.load("code-review")
+    assert run.step == ready_step
+    assert "code-review" in run.session_vars["loaded_skills"]
+    if seat == "code-reviewer":
+        await run.set_flag("candidate_task", "#101")
+        await run.set_flag("candidate_received", True)
+        assert run.step == "review"
+        await run.set_flag("verdict_ready", True)
+        assert await run.admits("gobby-tasks", "record_close_receipt")
 
 
 def _render_context(definition: PipelineDefinition, inputs: dict[str, Any]) -> dict[str, Any]:

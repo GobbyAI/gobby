@@ -65,6 +65,7 @@ step_workflow:
       - gobby:references/development/obligations.md
       - restraint
       - gobby:references/tasks/overview.md
+      - code-review
     required_skills_loaded: false
     additional_skills: []
     # Runtime-owned completion rights survive the next task's claim and reset.
@@ -91,6 +92,7 @@ step_workflow:
         1. get_skill_file(name="gobby", path="references/development/obligations.md") on gobby-skills
         2. get_skill(name="restraint") on gobby-skills
         3. get_skill_file(name="gobby", path="references/tasks/overview.md") on gobby-skills
+        4. get_skill(name="code-review") on gobby-skills
         Use the Gobby MCP proxy tools in this step. Use get_skill for plain names and get_skill_file for exact references:
         call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
         call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>});
