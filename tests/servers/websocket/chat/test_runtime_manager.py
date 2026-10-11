@@ -1498,14 +1498,28 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
-    async def test_send_message_recovers_zero_delta_text_around_tool_call(self) -> None:
+    @pytest.mark.parametrize("unkeyed_commentary", [False, True])
+    async def test_send_message_recovers_zero_delta_text_around_tool_call(
+        self, unkeyed_commentary: bool
+    ) -> None:
         tool_item = {
             "id": "tool-1",
             "type": "mcpToolCall",
             "mcpToolCall": {"server": "gobby-tasks", "tool": "list_tasks", "arguments": "{}"},
         }
-        events, _session = await _collect_codex_backend_events(
+        commentary_deltas = (
             [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "delta": "I'll check the logs."},
+                )
+            ]
+            if unkeyed_commentary
+            else []
+        )
+        events, _session = await _collect_codex_backend_events(
+            commentary_deltas
+            + [
                 (
                     "item/completed",
                     {

@@ -120,7 +120,7 @@ async def stream_codex_turn(
     completion_params: dict[str, Any] = {}
     saw_text_output = False
     streamed_text_by_item: dict[str, str] = {}
-    unkeyed_delta_seen = False
+    unkeyed_delta_text = ""
     last_text_item_id: str | None = None
     tool_calls_count = 0
     started_tool_call_ids: set[str] = set()
@@ -135,7 +135,11 @@ async def stream_codex_turn(
 
     def _recover_item_text(item_id: str, content: str) -> TextChunk | None:
         nonlocal saw_text_output, last_text_item_id
-        if item_id not in streamed_text_by_item and unkeyed_delta_seen:
+        if (
+            item_id not in streamed_text_by_item
+            and unkeyed_delta_text
+            and content in unkeyed_delta_text
+        ):
             return None
         streamed_text = streamed_text_by_item.get(item_id, "")
         if not content.startswith(streamed_text):
@@ -288,7 +292,7 @@ async def stream_codex_turn(
                             streamed_text_by_item.get(item_id, "") + delta
                         )
                     else:
-                        unkeyed_delta_seen = True
+                        unkeyed_delta_text += delta
                     yield TextChunk(content=delta)
                 continue
 
