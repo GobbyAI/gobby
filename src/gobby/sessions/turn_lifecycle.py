@@ -567,6 +567,12 @@ class TurnLifecycleReducer:
                 and evidence.source == "claude"
                 and evidence.provider_turn_key is not None
                 and current.started_at
+                # Matching resumed work cannot adopt another turn. Stop still
+                # observes newer queued prompts to fence a delayed old-key end.
+                and not (
+                    accept_resolving_provider_key
+                    and evidence.provider_turn_key == current.provider_turn_key
+                )
             ):
                 try:
                     queued = ClaudeTranscriptCursor.at_eof(

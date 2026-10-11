@@ -248,6 +248,8 @@ class ComposerLedger:
         The queued prompt was submitted before the interrupt. Consume only a
         flagged submit before that boundary; later input and unsubmitted edits on
         either side remain drafts. An unknown or newer interrupt stays blocked.
+        Interrupt time is daemon receipt time: a delayed host event received
+        after transcript consumption fails safe until the next submit.
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
