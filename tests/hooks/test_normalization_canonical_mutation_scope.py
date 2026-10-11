@@ -12,6 +12,7 @@ from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
     _set_canonical_tool_metadata,
 )
+from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
@@ -737,7 +738,9 @@ def test_ansi_c_quote_substitution_text_stays_read_only(tmp_path: Path) -> None:
 @pytest.mark.parametrize("parser", ["scan_shell_command", "command_substitution_bodies"])
 def test_shell_parser_failure_fails_closed(tmp_path: Path, parser: str) -> None:
     with patch(f"gobby.hooks._normalization_canonical.{parser}", side_effect=ValueError("invalid")):
-        data = _classify_shell_command("echo safe", cwd=str(tmp_path), depth=0, base_cwd=tmp_path)
+        data = _classify_shell_command(
+            "echo safe", directory=ShellDirectoryState(str(tmp_path)), depth=0, base_cwd=tmp_path
+        )
     assert data == {
         "canonical_tool_kind": "write",
         "canonical_tool_confidence": "low",

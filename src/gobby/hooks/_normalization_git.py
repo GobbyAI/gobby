@@ -6,19 +6,42 @@ from pathlib import Path
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
 from gobby.hooks._normalization_operands import (
     _git_add_positional_args_after,
+    _git_grep_is_revision_scoped,
     _git_restore_positional_args_after,
+    _search_command_paths,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
 from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
     _looks_path_target,
+    _rebase_navigation_shell_paths,
     _rebase_shell_paths,
     _strip_shell_wrappers,
     scan_shell_command,
 )
-from gobby.hooks.code_navigation import shell_command_name
+from gobby.hooks.code_navigation import search_navigation_metadata, shell_command_name
 
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
+
+
+def classify_search_segment(
+    cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
+) -> _ShellSegmentMetadata:
+    """Classify rg/grep/git grep, naming an implicit search root the shell did not prove."""
+    search_cwd, unknown = cwd, False
+    if cmd == "git":
+        parts, search_cwd, unknown = git_command_parts(parts, cwd, base_cwd)
+        if len(parts) <= 1 or parts[1] != "grep":
+            return _ShellSegmentMetadata("execute")
+    paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), search_cwd)
+    if unknown or (not paths and (search_cwd or "").startswith(UNRESOLVED_DIRECTORY)):
+        paths = [UNRESOLVED_DIRECTORY]
+    elif not paths and search_cwd and search_cwd != (cwd or (str(base_cwd) if base_cwd else None)):
+        paths = [search_cwd]  # git -C moved the implicit search root
+    extra = search_navigation_metadata(paths)
+    if cmd == "git" and _git_grep_is_revision_scoped(parts):
+        extra["canonical_search_revision_scoped"] = True
+    return _ShellSegmentMetadata("search", paths=tuple(paths), extra=extra)
 
 
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:

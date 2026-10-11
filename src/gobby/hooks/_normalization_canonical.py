@@ -29,8 +29,8 @@ from gobby.hooks._normalization_env import (
 )
 from gobby.hooks._normalization_git import (
     classify_git_mutation,
+    classify_search_segment,
     exported_git_selector,
-    git_command_parts,
     git_environment_parts,
     git_selector_setup,
 )
@@ -45,7 +45,6 @@ from gobby.hooks._normalization_operands import (
     _file_command_operands,
     _file_transfer_paths,
     _find_has_mutation_predicate,
-    _git_grep_is_revision_scoped,
     _search_command_paths,
     _truncate_positional_paths,
 )
@@ -171,8 +170,19 @@ def _normalize_shell_tool_metadata(
     """
     selectors = exported_git_selector.set(exported_git_selector.get() if depth else False)
     budget = _script_reads_left.set(SCRIPT_READ_BUDGET) if not depth else None
+    entry = (exported_git_selector.get(), _script_reads_left.get())
+    unstable: frozenset[int] = frozenset()
     try:
-        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
+        while True:
+            directory = ShellDirectoryState(cwd, unstable_loops=unstable)
+            result = _classify_shell_command(
+                command, directory=directory, depth=depth, base_cwd=base_cwd
+            )
+            if directory.altered_loops <= unstable:
+                return result
+            unstable |= directory.altered_loops
+            exported_git_selector.set(entry[0])
+            _script_reads_left.set(entry[1])
     finally:
         if budget is not None:
             _script_reads_left.reset(budget)
@@ -180,7 +190,7 @@ def _normalize_shell_tool_metadata(
 
 
 def _classify_shell_command(
-    command: str, *, cwd: str | None, depth: int, base_cwd: Path | None
+    command: str, *, directory: ShellDirectoryState, depth: int, base_cwd: Path | None
 ) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
@@ -218,7 +228,6 @@ def _classify_shell_command(
         id(token): command[start:end]
         for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
     }
-    directory = ShellDirectoryState(cwd)
     spans_by_token = dict(zip((id(token) for token in tokens), scan.spans, strict=True))
     case_depth = 0
     pending_case_pattern = False
@@ -343,7 +352,7 @@ def _classify_shell_command(
             continue
 
         cd_target = _literal_cd_target(parts)
-        if parts[0].rsplit("/", 1)[-1] == "cd":
+        if parts[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd"}:
             if (
                 not env_directories
                 and not in_pipeline
@@ -780,19 +789,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"rg", "grep", "git"}:
-        if cmd == "git":
-            parts, cwd, _ = git_command_parts(parts, cwd, base_cwd)
-            if len(parts) <= 1 or parts[1] != "grep":
-                return _ShellSegmentMetadata("execute")
-        paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), cwd)
-        extra = search_navigation_metadata(paths)
-        if cmd == "git" and _git_grep_is_revision_scoped(parts):
-            extra["canonical_search_revision_scoped"] = True
-        return _ShellSegmentMetadata(
-            "search",
-            paths=tuple(paths),
-            extra=extra,
-        )
+        return classify_search_segment(cmd, parts, cwd, base_cwd)
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
         positional = _shell_positional_args(parts)
