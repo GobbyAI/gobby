@@ -686,7 +686,9 @@ async def test_landing_records_target_when_observed_tip_advances(case: LandingCa
         result = await original_run(args, cwd=cwd, timeout=timeout, env=env, input_text=input_text)
         if tuple(args[:2]) == ("merge", "--ff-only"):
             assert env is not None and env["GOBBY_LAND_COMMIT"] == "1"
-            assert env["GIT_REFLOG_ACTION"] == f"gobby-land candidate={sha} mode=ff class=none"
+            assert env["GIT_REFLOG_ACTION"] == (
+                f"gobby-land candidate={sha} mode=ff class=none lander={case.reviewer}"
+            )
             case.git("merge", "--ff-only", ahead)
         return result
 
@@ -1210,14 +1212,62 @@ async def test_stacked_recovery_reports_only_candidates_project_sync(
         "merge",
         "--ff-only",
         stacked,
-        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={stacked} mode=ff class=restart"},
+        env={
+            "GIT_REFLOG_ACTION": (
+                f"gobby-land candidate={stacked} mode=ff class=restart lander={case.delegator}"
+            )
+        },
     )
 
     recovered = await case.land(task, sha)
     assert recovered["provenance"] == "reflog"
     assert recovered["project_sync_required"] is pipeline_in_candidate
+    assert recovered["landed_by_session_id"] == "unknown"
     assert recovered["activation_class"] == ("sync" if pipeline_in_candidate else "none")
     assert await case.land(task, sha) == recovered
+
+
+@pytest.mark.parametrize("move_tip", [False, True], ids=["ff", "merge"])
+@pytest.mark.parametrize(
+    "recover_as_original", [False, True], ids=["other-recovers", "self-recovers"]
+)
+async def test_receipt_pending_recovery_preserves_original_lander(
+    case: LandingCase, move_tip: bool, recover_as_original: bool
+) -> None:
+    sha = case.candidate("pending-lander", {"docs/lander.md": "original lander\n"})
+    task = case.reviewed(sha)
+    case.approve(task, sha, case.delegator)
+    if move_tip:
+        case.direct({"docs/moved.md": "disjoint writer\n"})
+    with patch.object(
+        land_commit, "record_close_receipt", side_effect=IndeterminateCommitError("unobserved")
+    ):
+        first = await case.land(task, sha)
+        own_pending = await case.land(task, sha)
+        pending = await case.land(task, sha, case.delegator)
+    recovery_caller = case.reviewer if recover_as_original else case.delegator
+    recovered = await case.land(task, sha, recovery_caller)
+    replay = await case.land(task, sha)
+
+    assert first["receipt_pending"] is True
+    assert first["already_landed"] is False
+    assert own_pending["receipt_pending"] is True
+    assert own_pending["already_landed"] is True
+    assert own_pending["landed_by_session_id"] == case.reviewer
+    assert own_pending["retest_required"] is move_tip
+    assert pending["receipt_pending"] is True
+    assert pending["already_landed"] is True
+    assert pending["landed_by_session_id"] == case.reviewer
+    assert recovered["already_landed"] is True
+    assert recovered["landed_by_session_id"] == case.reviewer
+    assert recovered["retest_required"] is move_tip
+    assert replay["landed_by_session_id"] == case.reviewer
+    assert replay["already_landed"] is True
+    assert replay["retest_required"] is move_tip
+    assert replay["receipt_id"] == recovered["receipt_id"]
+    [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
+    assert receipt.facts["landed_by_session_id"] == case.reviewer
+    assert case.git("rev-parse", "trunk") == first["landed_tip"]
 
 
 async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCase) -> None:
