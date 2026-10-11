@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
+from gobby.storage.tasks._automation import sweep_stale_claims
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.engine.core import RuleEngine
 
@@ -195,3 +196,73 @@ async def test_pending_terminal_denials_are_isolated_by_session(
     second_storage.fail.assert_not_called()
     assert "session-one" not in engine._pending_terminal_denials
     assert "session-two" in engine._pending_terminal_denials
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_status", ["active", "paused"])
+async def test_restart_denials_preserve_interactive_seat_and_task_claim(
+    hub_db: Any,
+    sample_project: dict[str, Any],
+    session_status: str,
+) -> None:
+    engine, run_manager, mutex_manager, task_id, run_id, _, instance = _terminal_denial_setup(
+        hub_db, str(sample_project["id"])
+    )
+    run_manager.merge_resume_metadata(
+        run_id, {"execution_mode": "interactive", "cwd": "/worktrees/standing-seat"}
+    )
+    task_manager = LocalTaskManager(hub_db)
+    task_manager.claim_task(task_id, SESSION_ID)
+    sessions = SessionManager(hub_db)
+    sessions.update_status(SESSION_ID, session_status)
+    step = WorkflowStep(name="submit")
+
+    # The daemon reloads the same run and step counters before draining queued hooks.
+    for _ in range(2):
+        engine._record_enforcement_denial(
+            session_id=SESSION_ID,
+            rule="step-native-tool-allowlist",
+            target="tool:bash",
+            reason="Bash is blocked in submit",
+            step=step,
+            instance=instance,
+        )
+    restarted_engine = RuleEngine(hub_db, runner=engine._runner)
+    restarted_engine.instance_manager = engine.instance_manager
+    for _ in range(3):
+        reason = restarted_engine._record_enforcement_denial(
+            session_id=SESSION_ID,
+            rule="step-native-tool-allowlist",
+            target="tool:bash",
+            reason="Bash is blocked in submit",
+            step=step,
+            instance=instance,
+        )
+        with (
+            patch(
+                "gobby.agents.kill.kill_agent",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agent_cancellation.reap_srt_runner_process_tree",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await restarted_engine._flush_pending_terminal_denial(SESSION_ID)
+        assert reason == "Bash is blocked in submit"
+
+    surviving_run = run_manager.get(run_id)
+    assert surviving_run is not None
+    assert surviving_run.status == "running"
+    assert surviving_run.child_session_id == SESSION_ID
+    assert surviving_run.resume_metadata_json == {
+        "execution_mode": "interactive",
+        "cwd": "/worktrees/standing-seat",
+    }
+    surviving_session = sessions.get(SESSION_ID)
+    assert surviving_session is not None
+    assert surviving_session.status == session_status
+    assert mutex_manager.get_mutex(task_id) is not None
+    assert sweep_stale_claims(hub_db, project_id=str(sample_project["id"])) == 0
+    assert task_manager.get_task(task_id).claimed_by_session_id == SESSION_ID

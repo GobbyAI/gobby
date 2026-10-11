@@ -270,7 +270,7 @@ class EnforcementCheckMixin:
         step: WorkflowStep | None = None,
         instance: AgentStepInstance | None = None,
     ) -> str:
-        """Persist a run/instance/step/rule/target denial and terminalize on the third."""
+        """Persist denials; terminalize autonomous runs on the third identical denial."""
         active_run = self._active_agent_run(session_id)
         if active_run is None:
             return reason
@@ -305,7 +305,9 @@ class EnforcementCheckMixin:
         }
         self.instance_manager.save(instance)
 
-        if count < _TERMINAL_DENIAL_COUNT:
+        # Interactive seats outlive a task or turn, including downtime hook replay.
+        # Keep blocking the capability without ending their session or releasing claims.
+        if count < _TERMINAL_DENIAL_COUNT or getattr(run, "is_interactive", False) is True:
             return reason
 
         terminal_error = (
