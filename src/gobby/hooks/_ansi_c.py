@@ -102,4 +102,28 @@ def decode_ansi_c_escape(
     return text[index : index + 2], index + 2
 
 
-__all__ = ["SHELL_DIALECTS", "ShellDialect", "decode_ansi_c_escape"]
+def opens_ansi_c_quote(text: str, index: int) -> bool:
+    """Return whether the unquoted ``$'`` at ``index`` opens an ANSI-C quote.
+
+    bash lexes ``$$`` as one parameter, so ``$$'`` opens a plain quote there,
+    while zsh opens an ANSI-C quote. Both close at the same quote unless a
+    backslash precedes it; that case raises ValueError so callers fail closed.
+    """
+    if not text.startswith("$'", index):
+        return False
+    start = index
+    while start and text[start - 1] == "$":
+        start -= 1
+    escapes = start
+    while escapes and text[escapes - 1] == "\\":
+        escapes -= 1
+    dollars = index - start + 1 - (start - escapes) % 2
+    if dollars % 2:
+        return True
+    close = text.find("'", index + 2)
+    if dollars and "\\" in text[index + 2 : None if close < 0 else close]:
+        raise ValueError("bash and zsh disagree on a quote after $$")
+    return False
+
+
+__all__ = ["SHELL_DIALECTS", "ShellDialect", "decode_ansi_c_escape", "opens_ansi_c_quote"]

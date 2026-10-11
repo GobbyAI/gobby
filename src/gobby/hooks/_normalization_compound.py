@@ -1,5 +1,6 @@
 """Executable case arms and process-substitution bodies from shell token spans."""
 
+from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
 
 
@@ -40,7 +41,7 @@ def command_substitution_bodies(
             if char == "\\" and quote != "'":
                 index += 2
                 continue
-            if not quote and text.startswith("$'", index):
+            if not quote and opens_ansi_c_quote(text, index):
                 quote = "$'"
                 index += 2
                 continue

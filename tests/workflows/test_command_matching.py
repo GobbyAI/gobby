@@ -23,6 +23,72 @@ from gobby.workflows.engine.command_matching import (
 
 pytestmark = pytest.mark.unit
 
+GEM_PUSH = r"(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gem\s+push\b"
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $$'\\' ; gem push x ; echo '\\'",
+        "echo $(echo $$'\\') ; gem push x ; echo ')'\\'",
+        "echo $$'\\'' ; gem push x ; echo \\'",
+    ],
+)
+def test_dollar_pair_quote_commands_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("command", ["echo $$'.txt'", "echo 'a ; gem push x'"])
+def test_dollar_pair_quote_literal_does_not_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in x) gem push x;; esac",
+        "case x in (x) gem push x;; esac",
+        "case x in y) true;; x) gem push x;; esac",
+        "case x in y|x) gem push x;; esac",
+        "case x in\nx) gem push x;;\nesac",
+        "case x in x) case y in y) gem push x;; esac;; esac",
+    ],
+)
+def test_case_arm_commands_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in 'gem push x') true;; esac",
+        'case x in "gem push x") true;; esac',
+        "echo 'x) gem push x'",
+        "case x in x) echo hi;; esac",
+    ],
+)
+def test_case_pattern_literals_do_not_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then gem push x; fi",
+        "while true; do gem push x; done",
+        "{ gem push x; }",
+        "true && gem push x",
+    ],
+)
+def test_compound_commands_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
 PROSE_BODY = "Run `git commit` in the shared checkout, never `git push --force`."
 COMMIT_PATTERN = r"(^|(?<=[;&|(`\n]))\s*git\s+commit\b"
 PYTEST_PATTERN = r"(^|(?<=[;&|(`\n]))\s*(?:uv\s+run\s+)?pytest\b"
