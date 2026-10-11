@@ -65,7 +65,7 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
 
 
 def _bundled_agent_expression_function_names(
-    expression_kind: Literal["condition", "value"],
+    expression_kind: Literal["condition", "transition", "value"],
 ) -> set[str]:
     names: set[str] = set()
     for path in sorted(AGENTS_DIR.glob("*.yaml")):
@@ -74,10 +74,12 @@ def _bundled_agent_expression_function_names(
             [workflow.get("exit_condition")] if expression_kind == "condition" else []
         )
         for step in workflow.get("steps") or []:
-            if expression_kind == "condition":
+            if expression_kind == "transition":
                 expressions.extend(
                     transition.get("when") for transition in step.get("transitions") or []
                 )
+            if expression_kind == "transition":
+                continue
             for handler_key in ("on_mcp_before", "on_mcp_success", "on_mcp_error"):
                 for handler in step.get(handler_key) or []:
                     expressions.append(
@@ -99,9 +101,9 @@ def _bundled_agent_expression_function_names(
     return names
 
 
-@pytest.mark.parametrize("expression_kind", ["condition", "value"])
+@pytest.mark.parametrize("expression_kind", ["condition", "transition", "value"])
 def test_agent_workflow_allowlist_covers_bundled_expression_functions(
-    expression_kind: Literal["condition", "value"],
+    expression_kind: Literal["condition", "transition", "value"],
 ) -> None:
     context: dict[str, Any] = {"vars": {}}
     allowed_funcs = build_agent_workflow_allowed_funcs(context)
