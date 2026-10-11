@@ -43,6 +43,7 @@ from gobby.communications.telegram_decisions import (
 )
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
+from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.decision_answers import DecisionAnswerStore
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.utils.datetime import utc_now
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
     from gobby.ai.vision import VisionExtractService
     from gobby.communications.telegram_actions import TelegramActionController
     from gobby.config.communications import CommunicationsConfig
-    from gobby.sessions.status_events import SessionStatusTransition
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
     from gobby.storage.sessions import SessionManager
@@ -164,25 +164,31 @@ class CommunicationsManager:
         except Exception:
             logger.exception("Failed to recover undelivered decision answers")
 
-    def _restore_telegram_targets(self, channel: ChannelConfig | None = None) -> None:
-        """Recover private-chat target selections from channel configuration."""
+    async def _restore_telegram_targets(self, channel: ChannelConfig) -> None:
+        """Recover saved targets and reconcile status changes missed while offline."""
+        if channel.channel_type != "telegram":
+            return
+        targets = channel.config_json.get("telegram_agent_targets")
+        if not isinstance(targets, dict):
+            return
+        restored_session_ids: set[str] = set()
         with self._attachment_lock:
-            channels = [channel] if channel is not None else self._channel_by_name.values()
-            for channel in channels:
-                if channel.channel_type != "telegram":
+            for conversation_id, session_id in targets.items():
+                if not isinstance(conversation_id, str) or not isinstance(session_id, str):
                     continue
-                targets = channel.config_json.get("telegram_agent_targets")
-                if not isinstance(targets, dict):
+                kind, _, address = conversation_id.partition(":")
+                if kind not in {"dm", "topic"} or not address:
                     continue
-                for conversation_id, session_id in targets.items():
-                    if not isinstance(conversation_id, str) or not isinstance(session_id, str):
-                        continue
-                    kind, _, address = conversation_id.partition(":")
-                    if kind not in {"dm", "topic"} or not address:
-                        continue
-                    key = (channel.id, conversation_id)
-                    self._conversation_attachments[key] = session_id
-                    self._managed_telegram_targets.add(key)
+                key = (channel.id, conversation_id)
+                self._conversation_attachments[key] = session_id
+                self._managed_telegram_targets.add(key)
+                restored_session_ids.add(session_id)
+        for session_id in restored_session_ids:
+            session = await asyncio.to_thread(self._session_store.get, session_id)
+            if session is not None:
+                await self.handle_session_status_transition(
+                    SessionStatusTransition.from_session(session)
+                )
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""

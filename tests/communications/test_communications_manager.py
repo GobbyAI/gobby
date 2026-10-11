@@ -366,11 +366,83 @@ async def test_registered_dm_survives_resume_and_daemon_restart(
     assert restored.config_json["telegram_agent_targets"] == {}
     restarted = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     restarted._channel_by_name[channel.name] = restored
-    restarted._restore_telegram_targets()
+    await restarted._restore_telegram_targets(restored)
     assert restarted.attached_session(channel.id, "dm:42") is None
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("assistant_available", [False, True])
+async def test_restore_releases_target_deleted_while_daemon_was_down(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    assistant_available: bool,
+) -> None:
+    """Restore reconciles offline deletion before the channel starts polling."""
+    sessions = SessionManager(temp_db)
+    holder = sessions.register(
+        external_id="offline-deleted-target",
+        machine_id=None,
+        source="claude",
+        project_id=sample_project["id"],
+        title="Lane Developer",
+    )
+    assistant = (
+        sessions.register(
+            external_id="restore-assistant",
+            machine_id=None,
+            source="claude",
+            project_id=sample_project["id"],
+            title="Assistant",
+        )
+        if assistant_available
+        else None
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(
+        channel_type="telegram",
+        channel_id=str(uuid.uuid4()),
+        config_json={"allow_from": ["42"]},
+    )
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    manager.attach_conversation(channel.name, "dm:42", holder.id)
+    # No status listener is running while the daemon is down.
+    assert sessions.update_session_status(holder.id, "deleted")
+    restored = store.get_channel(channel.id)
+    assert restored is not None
+    restarted = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    adapter = make_adapter(channel_type="telegram")
+    expected = assistant.id if assistant is not None else None
+
+    def check_target_before_polling(*args: object) -> None:
+        assert restarted._conversation_attachments.get((channel.id, "dm:42")) == expected
+
+    with (
+        patch.object(restarted._lifecycle, "init_adapter", AsyncMock(return_value=adapter)),
+        patch.object(
+            restarted._lifecycle,
+            "_start_polling_if_needed",
+            side_effect=check_target_before_polling,
+        ) as start_polling,
+    ):
+        await restarted._lifecycle.activate_channel(restored)
+
+    start_polling.assert_called_once()
+    assert restarted.attached_session(channel.id, "dm:42") == expected
+    persisted = store.get_channel(channel.id)
+    assert persisted is not None
+    assert persisted.config_json["telegram_agent_targets"] == (
+        {"dm:42": expected} if assistant_available else {}
+    )
+    if assistant_available:
+        adapter.send_message.assert_not_awaited()
+    else:
+        adapter.send_message.assert_awaited_once()
+        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+
+
 @pytest.mark.asyncio
 async def test_resume_during_fallback_does_not_clear_target_or_send_notice(
     operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
