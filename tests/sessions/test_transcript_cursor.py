@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -167,6 +169,30 @@ CODEX_STARTED_RECORD = _codex_event("task_started")
 CODEX_COMPLETED_RECORD = _codex_event("task_complete")
 CODEX_ABORTED_RECORD = _codex_event("turn_aborted")
 CODEX_TOKEN_RECORD = _codex_event("token_count")
+
+
+@pytest.mark.parametrize("escaped_key", [False, True])
+def test_queued_prompt_prefilters_non_candidate_json(tmp_path: Path, escaped_key: bool) -> None:
+    timestamp = datetime(2026, 10, 10, tzinfo=UTC)
+    typed = _claude_row({"type": "user", "promptSource": "typed"})
+    queued = _claude_row(
+        {
+            "type": "user",
+            "promptSource": "queued",
+            "promptId": "queued",
+            "timestamp": timestamp.isoformat(),
+        }
+    )
+    if escaped_key:
+        queued = queued.replace(b"promptSource", b"prompt\\u0053ource")
+    assistant = _claude_row({"type": "assistant", "message": {"content": "output"}})
+    tool_result = _claude_row({"type": "user", "promptId": "queued", "message": {}})
+    transcript = tmp_path / "queued.jsonl"
+    transcript.write_bytes(typed + queued + assistant + tool_result)
+    cursor = ClaudeTranscriptCursor.at_eof(transcript)
+    with patch("gobby.sessions.transcript_cursor.json.loads", wraps=json.loads) as parse:
+        assert cursor.latest_queued_prompt() == ("queued", timestamp)
+    assert [call.args[0] for call in parse.call_args_list] == [typed.strip(), queued.strip()]
 
 
 def _append_bytes(path: Path, content: bytes) -> None:

@@ -139,8 +139,14 @@ class TranscriptTailCursor:
             if isinstance(record, dict):
                 yield record
 
-    def tail_records(self, *, max_bytes: int = _TURN_STATE_TAIL_BYTES) -> list[dict[str, Any]]:
-        """Return the complete JSON object records within the last ``max_bytes`` of the file."""
+    def tail_records(
+        self, *, max_bytes: int = _TURN_STATE_TAIL_BYTES, required_key: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return complete JSON object records within the last ``max_bytes``.
+
+        ``required_key`` skips decoding lines without its marker; callers still
+        validate the parsed key because content can contain the same marker.
+        """
         try:
             with self.path.open("rb") as stream:
                 stream.seek(0, os.SEEK_END)
@@ -156,7 +162,11 @@ class TranscriptTailCursor:
             if not separator:
                 return []
         records: list[dict[str, Any]] = []
+        marker = required_key.encode("utf-8") if required_key is not None else None
         for line in tail.splitlines():
+            # Escaped JSON keys need decoding; other absent keys can skip parsing.
+            if marker is not None and marker not in line and b"\\u" not in line:
+                continue
             try:
                 record = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):
@@ -306,7 +316,9 @@ class ClaudeTranscriptCursor(TranscriptTailCursor):
         Only the user row with promptSource=queued proves consumption. File order
         is authoritative because assistant timestamps can precede their writes.
         """
-        for record in reversed(self.tail_records(max_bytes=256 * 1024)):
+        for record in reversed(
+            self.tail_records(max_bytes=256 * 1024, required_key="promptSource")
+        ):
             if record.get("type") != "user" or "promptSource" not in record:
                 continue
             if record.get("promptSource") != "queued":

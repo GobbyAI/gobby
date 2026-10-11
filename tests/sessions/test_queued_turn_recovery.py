@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_types import HookSessionManager
 from gobby.runner_init.wake_activity import probe_terminal_activity
+from gobby.sessions.transcript_cursor import ClaudeTranscriptCursor
 from gobby.sessions.turn_lifecycle import TurnDisposition, TurnEvidence, TurnLifecycleReducer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -137,6 +138,38 @@ def test_keyless_evidence_keeps_existing_lifecycle_semantics(
     assert stored.provider_turn_key == "original-prompt"
     assert stored.generation == 1
     assert not result.queued_prompt_adopted
+
+
+@pytest.mark.parametrize("event_type", [HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL])
+def test_matching_tool_key_skips_transcript_read(
+    queued_seat: QueuedSeat, event_type: HookEventType
+) -> None:
+    seat = queued_seat
+    handlers = EventHandlers(session_manager=cast(HookSessionManager, seat.sessions))
+    event = HookEvent(
+        event_type=event_type,
+        session_id="queued-turn",
+        source=SessionSource.CLAUDE,
+        timestamp=seat.queued_at + timedelta(seconds=1),
+        data={"tool_name": "Read", "tool_input": {}},
+        provider_turn_key="original-prompt",
+        metadata={"_platform_session_id": seat.session_id},
+    )
+    with patch(
+        "gobby.sessions.turn_lifecycle.ClaudeTranscriptCursor.at_eof",
+        wraps=ClaudeTranscriptCursor.at_eof,
+    ) as observation:
+        response = (
+            handlers.handle_before_tool(event)
+            if event_type == HookEventType.BEFORE_TOOL
+            else handlers.handle_after_tool(event)
+        )
+        observation.assert_not_called()
+    assert response.decision == "allow"
+    stored = seat.lifecycle.get(seat.session_id)
+    assert stored.provider_turn_key == "original-prompt" and stored.generation == 1
+    session = seat.sessions.get(seat.session_id)
+    assert session is not None and session.status == "active"
 
 
 def test_queued_prompt_tool_event_persists_adopted_generation(queued_seat: QueuedSeat) -> None:
