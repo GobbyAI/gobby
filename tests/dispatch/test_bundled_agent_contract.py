@@ -91,13 +91,13 @@ def _all_agent_yaml_files() -> list[Path]:
     return sorted(path for path in AGENTS_DIR.rglob("*.yaml") if path.is_file())
 
 
-def test_bundled_agent_mcp_references_match_registered_tool_inventory(
+async def test_bundled_agent_mcp_references_match_registered_tool_inventory(
     temp_db: Any,
     sample_project: dict[str, Any],
 ) -> None:
     inventory = _tool_inventory(temp_db, sample_project)
+    native_tools = await _native_tool_inventory()
     missing: list[str] = []
-    handler_not_allowed: list[str] = []
     malformed_allowed_tools: list[str] = []
 
     for path in _agent_yaml_files():
@@ -107,22 +107,95 @@ def test_bundled_agent_mcp_references_match_registered_tool_inventory(
             step_name = step.get("name", "<unnamed>")
             if "allowed_tools" in step and not _valid_allowed_tools(step.get("allowed_tools")):
                 malformed_allowed_tools.append(f"{path.name}:{step_name}:allowed_tools")
-            allowed = step.get("allowed_mcp_tools")
-            allowed_set = set(allowed) if isinstance(allowed, list) else None
             for field_name in ("allowed_mcp_tools", "blocked_mcp_tools"):
                 for ref in _mcp_tool_refs(step.get(field_name)):
                     if not _tool_ref_exists(ref, inventory):
                         missing.append(f"{path.name}:{step_name}:{field_name}:{ref}")
+            # Completion handlers observe events; they do not invoke their
+            # matched tools. A late completion can arrive in a different step.
             for field_name in ("on_mcp_success", "on_mcp_error"):
                 for ref in _handler_refs(step.get(field_name)):
-                    if not _tool_ref_exists(ref, inventory):
+                    if ref == "gobby-workflows:set_variable":
+                        # The step engine normalizes the top-level setter to
+                        # this handler key; it is not an internal registry tool.
+                        exists = "set_variable" in native_tools
+                    else:
+                        exists = _tool_ref_exists(ref, inventory)
+                    if not exists:
                         missing.append(f"{path.name}:{step_name}:{field_name}:{ref}")
-                    if allowed_set is not None and not _handler_ref_allowed(ref, allowed_set):
-                        handler_not_allowed.append(f"{path.name}:{step_name}:{field_name}:{ref}")
 
     assert missing == []
-    assert handler_not_allowed == []
     assert malformed_allowed_tools == []
+
+
+async def _native_tool_inventory() -> set[str]:
+    from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+
+    handler = GobbyDaemonTools(
+        mcp_manager=MagicMock(),
+        daemon_port=0,
+        websocket_port=0,
+        start_time=0.0,
+        internal_manager=None,
+        db=None,
+    )
+    return {tool.name for tool in await create_mcp_server(handler).list_tools()}
+
+
+@pytest.mark.parametrize(
+    ("server", "tool", "exposed", "valid"),
+    [
+        ("gobby-workflows", "unknown_workflow_tool", True, False),
+        ("gobby-workflows", "set_variable", False, False),
+        ("gobby-workflows", "set_variable", True, True),
+        ("gobby-tasks", "escalate_task", True, True),
+    ],
+)
+async def test_handler_inventory_requires_exposed_tools_without_invocation_permission(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server: str,
+    tool: str,
+    exposed: bool,
+    valid: bool,
+) -> None:
+    path = tmp_path / "agent.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "step_workflow": {
+                    "steps": [
+                        {
+                            "name": "tick",
+                            "allowed_tools": [],
+                            "allowed_mcp_tools": [],
+                            "on_mcp_success": [{"server": server, "tool": tool}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(f"{__name__}._agent_yaml_files", lambda: [path])
+
+    # Even the supported alias fails when the real top-level setter is absent.
+    async def no_native_tools() -> set[str]:
+        return set()
+
+    if not exposed:
+        monkeypatch.setattr(f"{__name__}._native_tool_inventory", no_native_tools)
+    if valid:
+        await test_bundled_agent_mcp_references_match_registered_tool_inventory(
+            temp_db, sample_project
+        )
+    else:
+        with pytest.raises(AssertionError, match=f"{server}:{tool}"):
+            await test_bundled_agent_mcp_references_match_registered_tool_inventory(
+                temp_db, sample_project
+            )
 
 
 def test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools() -> None:
@@ -231,11 +304,6 @@ def _handler_refs(value: object) -> list[str]:
         if isinstance(server, str) and isinstance(tool, str):
             refs.append(f"{server}:{tool}")
     return refs
-
-
-def _handler_ref_allowed(ref: str, allowed_tools: set[str]) -> bool:
-    server, _tool = ref.split(":", 1)
-    return ref in allowed_tools or f"{server}:*" in allowed_tools
 
 
 def _tool_ref_exists(ref: str, inventory: dict[str, set[str]]) -> bool:
