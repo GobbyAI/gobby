@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import secrets
 import threading
 from collections.abc import Callable, Mapping
@@ -290,17 +289,13 @@ class AuthService:
             rejection = self._legacy_rejection(request)
             if rejection is not None:
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
-            if (
-                os.name == "nt"
-                and admission_required(
-                    str(request.scope.get("method", "GET")), request_path(request)
-                )
-                and not (
-                    self._lease_live is not None
-                    and self._lease_live()
-                    and self._effect_fence is not None
-                    and self._effect_fence.serving
-                )
+            if admission_required(
+                str(request.scope.get("method", "GET")), request_path(request)
+            ) and not (
+                self._lease_live is not None
+                and self._lease_live()
+                and self._effect_fence is not None
+                and self._effect_fence.serving
             ):
                 return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
             identity = self.verified_front_door_identity(request)
@@ -348,15 +343,11 @@ class AuthService:
             )
             if isinstance(presented, AuthDecision):
                 return presented
-        if (
-            os.name == "nt"
-            and grant_route.effectful
-            and not (
-                self._lease_live is not None
-                and self._lease_live()
-                and self._effect_fence is not None
-                and self._effect_fence.serving
-            )
+        if grant_route.effectful and not (
+            self._lease_live is not None
+            and self._lease_live()
+            and self._effect_fence is not None
+            and self._effect_fence.serving
         ):
             return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
         return AuthDecision(

@@ -614,7 +614,7 @@ def test_restart_proceeds_when_the_hub_merely_owes_a_migration(
 
     assert result.exit_code == 1, result.output
     assert "Refusing to restart" not in result.output
-    assert stopped == ["stop"]
+    assert stopped == ["restart"]
 
 
 def test_restart_proceeds_when_the_installed_identity_is_unreadable(
@@ -629,7 +629,7 @@ def test_restart_proceeds_when_the_installed_identity_is_unreadable(
 
     assert result.exit_code == 1, result.output
     assert "Refusing to restart" not in result.output
-    assert stopped == ["stop"]
+    assert stopped == ["restart"]
 
 
 def test_schema_apply_refusal_is_silent_without_a_readable_hub(
