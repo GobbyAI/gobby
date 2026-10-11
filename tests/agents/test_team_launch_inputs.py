@@ -356,6 +356,41 @@ def test_native_manager_pane_supplies_workspace_without_named_tab(lane_env: Lane
     assert (values["workspace"], values["lane_pane"]) == (lane_env.workspace, lane_env.pane)
 
 
+@pytest.mark.parametrize("context_binding", ["missing", "stale-terminal", "other-seat"])
+def test_bound_manager_pane_wins_among_lane_seats(lane_env: LaneEnv, context_binding: str) -> None:
+    workspaces = WorkspaceManager(lane_env.db)
+    other_pane = str(uuid4())
+    workspaces.add_pane(other_pane, beside=lane_env.pane, axis="horizontal")
+    bound_terminal = str(uuid4())
+    TerminalManager(lane_env.db).create_pending(
+        terminal_id=bound_terminal,
+        project_id=lane_env.project,
+        backend="native",
+        ownership="gobby",
+        spawn_key=bound_terminal,
+        machine_id=AGENT_TEST_MACHINE_ID,
+        session_id=lane_env.manager,
+    )
+    workspaces.set_pane_terminal(lane_env.pane, bound_terminal, owns_terminal=True)
+    context: dict[str, str | None] = {
+        "pane_ref": "",
+        "gobby_pane_ref": "",
+        "gobby_terminal_id": None,
+    }
+    if context_binding == "stale-terminal":
+        context["gobby_terminal_id"] = lane_env.terminal
+    elif context_binding == "other-seat":
+        context["pane_ref"] = other_pane
+    SessionManager(lane_env.db).update(lane_env.manager, terminal_context=context)
+
+    values = resolve(lane_env, lane_columns=205, lane_rows=59)
+
+    manager = SessionManager(lane_env.db).get(lane_env.manager)
+    assert manager is not None
+    assert values["report_to"] == manager.ref
+    assert (values["workspace"], values["lane_pane"]) == (lane_env.workspace, lane_env.pane)
+
+
 def test_stale_manager_pane_falls_back_to_unique_lane_tab(lane_env: LaneEnv) -> None:
     SessionManager(lane_env.db).update(
         lane_env.manager, terminal_context={"pane_ref": str(uuid4())}

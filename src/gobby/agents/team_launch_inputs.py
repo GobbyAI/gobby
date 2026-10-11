@@ -12,6 +12,7 @@ from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
+from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspace_layout import (
     MIN_PANE_COLUMNS,
     MIN_PANE_ROWS,
@@ -93,8 +94,11 @@ def _manager(
 
 
 def _manager_pane(workspaces: WorkspaceManager, manager: Session) -> WorkspaceTarget | None:
+    """Resolve the manager's bound terminal before terminal-context hints."""
     context = manager.terminal_context or {}
-    pane_ref = context.get("gobby_pane_ref") or context.get("pane_ref")
+    bound_terminal = TerminalManager(workspaces.db).get_live_for_session(manager.id)
+    pane = workspaces.get_pane_for_terminal(bound_terminal.id) if bound_terminal else None
+    pane_ref = pane.id if pane else context.get("gobby_pane_ref") or context.get("pane_ref")
     if not pane_ref:
         terminal = context.get("gobby_terminal_id")
         pane = workspaces.get_pane_for_terminal(terminal) if isinstance(terminal, str) else None
