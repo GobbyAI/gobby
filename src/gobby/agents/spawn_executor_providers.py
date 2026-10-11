@@ -191,6 +191,11 @@ async def _prepare_provider_sandbox(
             phase_timings_ms=request.phase_timings_ms,
             allow_run_unix_sockets=True,
             prewarm_pre_commit_store=request.prewarm_pre_commit_store,
+            claude_reviewer_auto_approve=(
+                request.auto_approve
+                if provider == "claude" and request.agent_name == "task-close-reviewer"
+                else None
+            ),
         )
     except (OSError, ValueError, SrtRuntimeError) as exc:
         exception_name = type(exc).__name__

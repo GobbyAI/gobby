@@ -8,9 +8,11 @@ import tomllib
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
+import pytest
+
 from gobby.agents import trust
 from gobby.agents.trust import (
-    _encode_claude_project_path,
+    encode_claude_project_path,
     pre_approve_directory,
     seed_gobby_home_trust,
 )
@@ -19,32 +21,31 @@ from gobby.agents.trust import (
 class TestEncodePath:
     def test_basic_path(self) -> None:
         assert (
-            _encode_claude_project_path("/Users/josh/Projects/gobby")
-            == "-Users-josh-Projects-gobby"
+            encode_claude_project_path("/Users/josh/Projects/gobby") == "-Users-josh-Projects-gobby"
         )
 
     def test_clone_path(self) -> None:
         assert (
-            _encode_claude_project_path("/private/tmp/gobby-clones/9990-2048-game")
+            encode_claude_project_path("/private/tmp/gobby-clones/9990-2048-game")
             == "-private-tmp-gobby-clones-9990-2048-game"
         )
 
     def test_worktree_path(self) -> None:
         assert (
-            _encode_claude_project_path("/private/tmp/gobby-worktrees/gobby-task-9395")
+            encode_claude_project_path("/private/tmp/gobby-worktrees/gobby-task-9395")
             == "-private-tmp-gobby-worktrees-gobby-task-9395"
         )
 
     def test_hidden_directory_dots_replaced_with_dashes(self) -> None:
         """Dots must become dashes to match Claude Code's actual encoding."""
         assert (
-            _encode_claude_project_path("/Users/josh/.gobby/clones/epic-9915")
+            encode_claude_project_path("/Users/josh/.gobby/clones/epic-9915")
             == "-Users-josh--gobby-clones-epic-9915"
         )
 
     def test_windows_style_path(self) -> None:
         assert (
-            _encode_claude_project_path(r"C:\Users\josh\.gobby\clones\task")
+            encode_claude_project_path(r"C:\Users\josh\.gobby\clones\task")
             == "C--Users-josh--gobby-clones-task"
         )
 
@@ -92,7 +93,7 @@ class TestPreApproveClaude:
             result = seed_gobby_home_trust("claude", gobby_home=gobby_home)
 
         assert result["success"] is True
-        expected = tmp_path / ".claude" / "projects" / _encode_claude_project_path(gobby_home)
+        expected = tmp_path / ".claude" / "projects" / encode_claude_project_path(gobby_home)
         assert expected.is_dir()
 
 
@@ -244,7 +245,9 @@ class TestCodexTrust:
 
 
 class TestDroidNoop:
-    def test_droid_is_noop_with_debug_log(self, tmp_path: Path, caplog) -> None:
+    def test_droid_is_noop_with_debug_log(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Droid uses --auto for spawned-agent permissions, so no trust file is written."""
         clone_dir = "/private/tmp/gobby-clones/test-task"
 

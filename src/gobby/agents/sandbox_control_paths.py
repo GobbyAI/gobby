@@ -24,19 +24,21 @@ GROK_CONTROL_FILES = (
     "bin",
 )
 
+CLAUDE_CONTROL_FILES = (
+    "settings.json",
+    "settings.local.json",
+    "agents",
+    "skills",
+    "commands",
+    "plugins/cache",
+    "plugins/marketplaces",
+    "plugins/synced",
+    "plugins/installed_plugins.json",
+    "plugins/known_marketplaces.json",
+)
+
 _PROVIDER_CONTROLS: dict[str, tuple[str, ...]] = {
-    ".claude": (
-        "settings.json",
-        "settings.local.json",
-        "agents",
-        "skills",
-        "commands",
-        "plugins/cache",
-        "plugins/marketplaces",
-        "plugins/synced",
-        "plugins/installed_plugins.json",
-        "plugins/known_marketplaces.json",
-    ),
+    ".claude": CLAUDE_CONTROL_FILES,
     ".codex": ("hooks.json", "config.toml", "rules", "plugins/cache"),
     ".factory": (
         "hooks.json",

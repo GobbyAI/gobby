@@ -1,5 +1,6 @@
 import json
 import logging
+import subprocess
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents import spawn_executor_codex
+from gobby.agents.claude_sandbox_home import prepare_claude_reviewer_home
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
@@ -56,8 +58,9 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
 )
 @pytest.mark.asyncio
 async def test_claude_srt_close_reviewer_disables_housekeeping(
-    monkeypatch: pytest.MonkeyPatch, agent_name: str, backend: str, enforced: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent_name: str, backend: str, enforced: bool
 ) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
     request, _, _ = _sandbox_request()
     request = replace(
         request,
@@ -67,6 +70,7 @@ async def test_claude_srt_close_reviewer_disables_housekeeping(
         extra_env={
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "",
             "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "0",
+            "XDG_CACHE_HOME": str(tmp_path / "run-cache"),
         },
     )
     launch = SandboxLaunch(backend=backend, enforced=enforced)
@@ -94,6 +98,324 @@ async def test_claude_srt_close_reviewer_disables_housekeeping(
     )
     assert record_launch.call_args.kwargs["env"] == plan.env
     assert plan.launch is launch
+
+
+@pytest.mark.parametrize("configured_home", [False, True])
+@pytest.mark.parametrize("secure_storage", [None, "", "/explicit-auth-home"])
+def test_claude_reviewer_state_preserves_auth_and_hooks_without_copying_account_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured_home: bool,
+    secure_storage: str | None,
+) -> None:
+    home = tmp_path / "host-home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    host_config = home / ("alternate" if configured_home else ".claude")
+    host_config.mkdir(parents=True)
+    settings = host_config / "settings.json"
+    settings.write_text('{"hooks": {"Stop": []}}', encoding="utf-8")
+    settings.chmod(0o400)
+    credentials = host_config / ".credentials.json"
+    credentials.write_text("host-only-credential-sentinel", encoding="utf-8")
+    host_global = home / ".claude.json"
+    host_global.write_text('{"host_only": true}', encoding="utf-8")
+    cache = tmp_path / "run" / "cache" / "xdg-cache-home"
+    env = {"XDG_CACHE_HOME": str(cache)}
+    if configured_home:
+        env["CLAUDE_CONFIG_DIR"] = str(host_config)
+    if secure_storage is not None:
+        env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = secure_storage
+    request, _, _ = _sandbox_request()
+    request = replace(request, cwd="/workspace", auto_approve=True)
+
+    result = prepare_claude_reviewer_home(cache, env, workspace=request.cwd, auto_approve=True)
+    env.update(result.environment)
+
+    expected_auth = secure_storage
+    if expected_auth is None:
+        expected_auth = str(host_config) if configured_home else ""
+    assert env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == expected_auth
+    config = Path(env["CLAUDE_CONFIG_DIR"])
+    assert config == cache / "claude"
+    assert Path(env["XDG_STATE_HOME"]).is_relative_to(cache)
+    assert not (config / "settings.json").is_symlink()
+    assert str(config / "settings.json") in result.protected_write_paths
+    assert (config / "settings.json").read_text(encoding="utf-8") == settings.read_text(
+        encoding="utf-8"
+    )
+    assert json.loads((config / ".claude.json").read_text(encoding="utf-8")) == {
+        "hasCompletedOnboarding": True,
+        "bypassPermissionsModeAccepted": True,
+    }
+    assert (config / "projects" / "-workspace").is_dir()
+    assert (config / "projects" / "-workspace").resolve() == (
+        home / ".claude" / "projects" / "-workspace"
+    )
+    assert (config / ".claude.json").stat().st_mode & 0o777 == 0o600
+    assert not (config / ".credentials.json").exists()
+    assert credentials.read_text(encoding="utf-8") == "host-only-credential-sentinel"
+    assert host_global.read_text(encoding="utf-8") == '{"host_only": true}'
+
+
+@pytest.mark.parametrize("configured_home", [False, True])
+def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured_home: bool
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    host_config = home / ".claude"
+    host_config.mkdir(parents=True)
+    env: dict[str, str] = {}
+    if configured_home:
+        env["CLAUDE_CONFIG_DIR"] = str(host_config)
+    global_config = host_config / ".claude.json" if configured_home else home / ".claude.json"
+    user_server = {"command": "gobby", "env": {"DUMMY_TOKEN": "fixture-only"}}
+    project_server = {"command": "gobby", "args": ["mcp-server", "--project", "/workspace"]}
+    global_config.write_text(
+        json.dumps(
+            {
+                "oauthAccount": {"dummy": "must-not-copy"},
+                "mcpServers": {"gobby": user_server},
+                "projects": {
+                    "/workspace": {"mcpServers": {"gobby": project_server}, "other": "drop"},
+                    "/other": {"mcpServers": {"foreign": user_server}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    other_project = host_config / "projects" / "-other"
+    other_project.mkdir(parents=True)
+    cache = tmp_path / "cache"
+
+    result = prepare_claude_reviewer_home(cache, env, workspace="/workspace", auto_approve=True)
+
+    private = Path(result.environment["CLAUDE_CONFIG_DIR"])
+    seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
+    assert seed == {
+        "hasCompletedOnboarding": True,
+        "bypassPermissionsModeAccepted": True,
+        "mcpServers": {"gobby": user_server},
+        "projects": {"/workspace": {"mcpServers": {"gobby": project_server}}},
+    }
+    assert not (private / "projects" / "-other").exists()
+    transcript = private / "projects" / "-workspace" / "review.jsonl"
+    transcript.write_text("review evidence", encoding="utf-8")
+    assert (host_config / "projects" / "-workspace" / "review.jsonl").read_text(
+        encoding="utf-8"
+    ) == "review evidence"
+    assert (private / ".claude.json").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_claude_reviewer_spawn_preserves_user_mcp_without_workspace_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    server = {"command": "gobby", "args": ["mcp-server"]}
+    (home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"gobby": server}}), encoding="utf-8"
+    )
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        cwd=str(workspace),
+        provider="claude",
+        agent_name="task-close-reviewer",
+        session_manager=MagicMock(),
+    )
+
+    async def prepare(**kwargs: object) -> SandboxLaunch:
+        assert kwargs["claude_reviewer_auto_approve"] is request.auto_approve
+        state = prepare_claude_reviewer_home(
+            tmp_path / "cache", {}, workspace=request.cwd, auto_approve=request.auto_approve
+        )
+        return SandboxLaunch(backend="srt", enforced=True, provider_env=state.environment)
+
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", prepare)
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_actual_sandbox_enforcement", MagicMock()
+    )
+    record = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", record
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+
+    plan = await prepare_claude_spawn(request)
+
+    assert isinstance(plan, ProviderSpawnPlan)
+    assert "--mcp-config" not in plan.command
+    private = Path(plan.env["CLAUDE_CONFIG_DIR"])
+    assert json.loads((private / ".claude.json").read_text(encoding="utf-8"))["mcpServers"] == {
+        "gobby": server
+    }
+    assert record.call_args.kwargs["env"]["CLAUDE_CONFIG_DIR"] == str(private)
+
+
+@pytest.mark.parametrize("configured_home", [False, True])
+def test_claude_reviewer_user_headers_helper_keeps_original_config_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured_home: bool
+) -> None:
+    home = tmp_path / "host's home"
+    host = home / ("alternate config" if configured_home else ".claude")
+    host.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for directory, value in ((host, "user-fixture"), (workspace, "local-fixture")):
+        (directory / "headers.json").write_text(json.dumps({"X-Fixture": value}), encoding="utf-8")
+        script = directory / "headers.sh"
+        script.write_text("#!/bin/sh\ncat headers.json\n", encoding="utf-8")
+        script.chmod(0o700)
+    env = {"CLAUDE_CONFIG_DIR": str(host)} if configured_home else {}
+    global_config = host / ".claude.json" if configured_home else home / ".claude.json"
+    helper = {"type": "http", "url": "https://fixture.invalid", "headersHelper": "./headers.sh"}
+    global_config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"user": helper, "empty": {"headersHelper": ""}},
+                "projects": {str(workspace): {"mcpServers": {"local": helper}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = prepare_claude_reviewer_home(
+        tmp_path / "cache", env, workspace=str(workspace), auto_approve=True
+    )
+
+    private = Path(state.environment["CLAUDE_CONFIG_DIR"])
+    seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
+    user_command = seed["mcpServers"]["user"]["headersHelper"]
+    local_command = seed["projects"][str(workspace)]["mcpServers"]["local"]["headersHelper"]
+    assert local_command == "./headers.sh"
+    assert seed["mcpServers"]["empty"]["headersHelper"] == ""
+    for command, cwd, value in (
+        (user_command, private, "user-fixture"),
+        (local_command, workspace, "local-fixture"),
+    ):
+        result = subprocess.run(
+            ["/bin/sh", "-c", command],
+            cwd=cwd,
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        assert json.loads(result.stdout) == {"X-Fixture": value}
+
+
+@pytest.mark.parametrize("linked_path", ["settings", "global", "projects", "transcript"])
+def test_claude_reviewer_state_rejects_host_redirections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, linked_path: str
+) -> None:
+    home = tmp_path / "home"
+    host = home / ".claude"
+    host.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    sentinel = foreign / "sentinel.json"
+    sentinel.write_text("{}", encoding="utf-8")
+    if linked_path == "settings":
+        (host / "settings.json").symlink_to(sentinel)
+    elif linked_path == "global":
+        (home / ".claude.json").symlink_to(sentinel)
+    elif linked_path == "projects":
+        (host / "projects").symlink_to(foreign, target_is_directory=True)
+    else:
+        (host / "projects").mkdir()
+        (host / "projects" / "-workspace").symlink_to(foreign, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="Claude"):
+        prepare_claude_reviewer_home(
+            tmp_path / "cache", {}, workspace="/workspace", auto_approve=True
+        )
+
+    assert list(foreign.iterdir()) == [sentinel]
+    assert sentinel.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.asyncio
+async def test_claude_reviewer_bad_state_fails_run_at_startup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    (home / ".claude.json").write_text("invalid-json", encoding="utf-8")
+    request, context, run_manager = _sandbox_request()
+    request = replace(request, provider="claude", agent_name="task-close-reviewer")
+
+    async def prepare(**kwargs: object) -> SandboxLaunch:
+        assert kwargs["claude_reviewer_auto_approve"] is request.auto_approve
+        prepare_claude_reviewer_home(
+            tmp_path / "cache", {}, workspace=request.cwd, auto_approve=request.auto_approve
+        )
+        raise AssertionError("invalid config must fail before a launch exists")
+
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", prepare)
+    result = await _prepare_provider_sandbox(request, context, "claude", {})
+
+    assert isinstance(result, SpawnResult)
+    assert result.success is False
+    assert result.error is not None and "JSONDecodeError" in result.error
+    run_manager.fail.assert_called_once_with(context.agent_run_id, result.error)
+
+
+def test_claude_reviewer_state_refuses_redirected_config_before_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
+    cache = tmp_path / "run-cache"
+    cache.mkdir()
+    foreign = tmp_path / "foreign-state"
+    foreign.mkdir()
+    protected = foreign / ".claude.json"
+    protected.write_text("unchanged", encoding="utf-8")
+    (cache / "claude").symlink_to(foreign, target_is_directory=True)
+    request, _, _ = _sandbox_request()
+    env = {"XDG_CACHE_HOME": str(cache)}
+
+    with pytest.raises(FileExistsError):
+        prepare_claude_reviewer_home(cache, env, workspace=request.cwd, auto_approve=True)
+
+    assert protected.read_text(encoding="utf-8") == "unchanged"
+    assert "CLAUDE_CONFIG_DIR" not in env
+
+
+def test_claude_reviewer_state_does_not_seed_unapproved_workspace_trust(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
+    request, _, _ = _sandbox_request()
+    request = replace(request, auto_approve=False)
+    env = {"XDG_CACHE_HOME": str(tmp_path / "run-cache")}
+
+    result = prepare_claude_reviewer_home(
+        Path(env["XDG_CACHE_HOME"]), env, workspace=request.cwd, auto_approve=False
+    )
+    env.update(result.environment)
+
+    config = Path(env["CLAUDE_CONFIG_DIR"])
+    assert not (config / "projects").exists()
+    assert (
+        json.loads((config / ".claude.json").read_text(encoding="utf-8"))[
+            "bypassPermissionsModeAccepted"
+        ]
+        is False
+    )
 
 
 @pytest.mark.parametrize(

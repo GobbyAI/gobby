@@ -31,6 +31,16 @@ def test_terminal_env_passthrough_returns_cli_and_universal_values() -> None:
     }
 
 
+@pytest.mark.parametrize("namespace", ["", "/alternate-auth-home"])
+def test_claude_secure_storage_namespace_survives_terminal_passthrough(namespace: str) -> None:
+    source = {"CLAUDE_SECURESTORAGE_CONFIG_DIR": namespace, "ANTHROPIC_API_KEY": ""}
+
+    assert terminal_env_passthrough("claude", source=source) == {
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR": namespace
+    }
+    assert terminal_env_passthrough("codex", source=source) == {}
+
+
 def test_terminal_env_passthrough_filters_empty_values() -> None:
     source = {
         "HOME": "",

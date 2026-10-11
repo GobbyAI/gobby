@@ -40,6 +40,7 @@ CLI_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
             "CLAUDE_CODE_USE_BEDROCK",
             "CLAUDE_CODE_USE_VERTEX",
             "CLAUDE_CODE_USE_FOUNDRY",
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR",
             "AWS_PROFILE",
             "AWS_REGION",
             "AWS_DEFAULT_REGION",
@@ -110,13 +111,18 @@ def terminal_env_passthrough(
     *,
     source: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Return allowlisted env vars present and non-empty in source."""
+    """Forward allowlisted values, including Claude's explicit default auth namespace."""
     env = source or os.environ
     normalized_cli = cli.lower()
     allowed = set(UNIVERSAL_ALLOWLIST)
     allowed.update(CLI_ENV_ALLOWLIST.get(normalized_cli, frozenset()))
 
-    return {key: value for key in allowed if (value := env.get(key))}
+    return {
+        key: value
+        for key in allowed
+        if (value := env.get(key)) is not None
+        and (value or key == "CLAUDE_SECURESTORAGE_CONFIG_DIR")
+    }
 
 
 def split_credential_env(env: Mapping[str, str]) -> tuple[dict[str, str], dict[str, str]]:
