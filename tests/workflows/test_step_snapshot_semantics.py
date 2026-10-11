@@ -726,7 +726,7 @@ def test_enforcement_write_paths_hold_one_critical_section() -> None:
         def __init__(self) -> None:
             self.db = MagicMock()
             self.instance_manager = MagicMock()
-            self.instance_manager.get_for_session.return_value = None
+            self.instance_manager.get_active_for_session.return_value = None
 
     engine = _Engine()
     event = MagicMock()
