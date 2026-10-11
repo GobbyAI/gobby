@@ -131,6 +131,34 @@ GEM_PUSH = r"(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gem\s+push\b
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
+    "command,expected",
+    [
+        pytest.param('gem push x ; echo "\\', True, id="simple-match"),
+        pytest.param('gem push x\necho "\\', True, id="newline-match"),
+        pytest.param("sh <<'EOF'\ngem push x\necho \"\\\nEOF", True, id="sh-heredoc-match"),
+        pytest.param("bash <<'EOF'\ngem push x\necho \"\\\nEOF", True, id="bash-heredoc-match"),
+        pytest.param("bash -c 'gem push x\necho \"\\'", True, id="bash-c-match"),
+        pytest.param('echo "literal\\', False, id="simple-control"),
+        pytest.param(
+            "gem push x ; cat <<'EOF'\n\"\nEOF\necho \\",
+            True,
+            id="quoted-heredoc-match",
+        ),
+        pytest.param(
+            "cat <<'EOF'\n\"\nEOF\necho \\",
+            False,
+            id="quoted-heredoc-control",
+        ),
+    ],
+)
+def test_unterminated_double_quote_trailing_backslash(
+    command: str, expected: bool, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is expected
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
     "command",
     [
         "echo $$'\\' ; gem push x ; echo '\\'",
