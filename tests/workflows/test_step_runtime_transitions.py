@@ -176,6 +176,7 @@ def _after_mcp_tool(
     tool: str,
     *,
     arguments: dict[str, Any] | None = None,
+    output: dict[str, Any] | None = None,
 ) -> HookEvent:
     tool_input: dict[str, Any] = {"server_name": server, "tool_name": tool}
     if arguments is not None:
@@ -188,7 +189,7 @@ def _after_mcp_tool(
         data={
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": tool_input,
-            "tool_output": {"success": True},
+            "tool_output": output if output is not None else {"success": True},
         },
         metadata={},
     )
@@ -247,6 +248,162 @@ def _before_mcp_set_variable(name: str, value: object) -> HookEvent:
         },
         metadata={},
     )
+
+
+@pytest.mark.parametrize("task_ref", ["old-task", "#101"])
+async def test_bundled_handoff_resets_before_next_task(db: HubDatabase, task_ref: str) -> None:
+    workflow = _bundled_developer_workflow()
+    stale = {
+        **workflow["variables"],
+        "task_claimed": True,
+        "assigned_task_id": "old-task",
+        "assigned_task_ref": "#101",
+        "implementation_complete": True,
+        "candidate_sent": True,
+        "skills_routed": True,
+        "additional_skills_loaded": True,
+        "additional_skills": ["python"],
+    }
+    manager = _setup_workflow(db, current_step="submit", variables=stale, workflow=workflow)
+    engine = RuleEngine(db)
+    await engine._process_step_after_tool(
+        _after_mcp_tool("gobby-tasks", "escalate_task", arguments={"task_id": task_ref}),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "claim"
+    for flag in (
+        "task_claimed",
+        "implementation_complete",
+        "candidate_sent",
+        "skills_routed",
+        "additional_skills_loaded",
+        "bounced",
+    ):
+        assert instance.variables[flag] is False
+    assert instance.variables["assigned_task_id"] is None
+    assert instance.variables["assigned_task_ref"] is None
+
+    await engine._process_step_after_tool(
+        _after_mcp_tool(
+            "gobby-tasks",
+            "claim_task",
+            arguments={"task_id": "new-task"},
+            output={"success": True, "result": {"task_id": "new-task"}},
+        ),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "route_skills"
+    await engine._process_step_after_tool(
+        _after_mcp_tool(
+            "gobby-tasks",
+            "get_task",
+            arguments={"task_id": "new-task"},
+            output={"success": True, "result": {"id": "new-task", "ref": "#102"}},
+        ),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.variables.update(skills_routed=True, additional_skills=[])
+    manager.save(instance)
+    await engine._process_step_after_tool(
+        _after_set_variable("skills_routed", True),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "implement"
+    assert instance.variables["implementation_complete"] is False
+    await engine._process_step_after_tool(
+        _after_mcp_tool("gobby-tasks", "link_commit", arguments={"task_id": "new-task"}),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "submit"
+
+
+@pytest.mark.parametrize(
+    ("task_ref", "success"),
+    [("foreign-task", True), ("old-task", False)],
+)
+async def test_bundled_unsuccessful_handoff_keeps_binding(
+    db: HubDatabase,
+    task_ref: str,
+    success: bool,
+) -> None:
+    workflow = _bundled_developer_workflow()
+    variables = {
+        **workflow["variables"],
+        "task_claimed": True,
+        "assigned_task_id": "old-task",
+        "assigned_task_ref": "#101",
+        "implementation_complete": True,
+        "candidate_sent": True,
+    }
+    manager = _setup_workflow(db, current_step="submit", variables=variables, workflow=workflow)
+    await RuleEngine(db)._process_step_after_tool(
+        _after_mcp_tool(
+            "gobby-tasks",
+            "escalate_task",
+            arguments={"task_id": task_ref},
+            output={"success": success},
+        ),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "submit"
+    assert instance.variables == variables
+
+
+async def test_bundled_claim_discards_stale_completion(db: HubDatabase) -> None:
+    workflow = _bundled_developer_workflow()
+    variables = {
+        **workflow["variables"],
+        "assigned_task_ref": "#101",
+        "implementation_complete": True,
+        "candidate_sent": True,
+        "skills_routed": True,
+        "additional_skills_loaded": True,
+        "additional_skills": ["python"],
+        "bounced": True,
+    }
+    manager = _setup_workflow(db, variables=variables, workflow=workflow)
+    await RuleEngine(db)._process_step_after_tool(
+        _after_mcp_tool(
+            "gobby-tasks",
+            "claim_task",
+            arguments={"task_id": "new-task"},
+            output={"success": True, "result": {"task_id": "new-task"}},
+        ),
+        SESSION_ID,
+        {},
+    )
+    instance = manager.get_for_session(SESSION_ID)
+    assert instance is not None
+    assert instance.current_step == "route_skills"
+    assert instance.variables["assigned_task_id"] == "new-task"
+    assert instance.variables["assigned_task_ref"] is None
+    assert instance.variables["additional_skills"] == []
+    for flag in (
+        "implementation_complete",
+        "candidate_sent",
+        "skills_routed",
+        "additional_skills_loaded",
+        "bounced",
+    ):
+        assert instance.variables[flag] is False
 
 
 @pytest.mark.asyncio

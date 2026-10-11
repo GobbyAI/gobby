@@ -158,6 +158,41 @@ step_workflow:
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
+          variable: implementation_complete
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: additional_skills
+          value: []
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
           variable: task_claimed
           value: true
         - server: gobby-tasks
@@ -297,6 +332,8 @@ step_workflow:
         call gobby-agents:wait_for_agent once with its reviewer_run_id and
         yield; after the verdict arrives, read the task with
         get_task(task_id=assigned_task_id). A closed task returns you to claim.
+        When the Orchestrator directs a hand-off of the assigned task, a
+        successful escalate_task also resets task state and returns you to claim.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
         task open, call the top-level set_variable(name="bounced", value=true,
         scope="step") to return to implement.
@@ -323,6 +360,56 @@ step_workflow:
             or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
           reason: "Hand off only the assigned task from submit."
       on_mcp_success:
+        # A directed hand-off ends this task's loop just like a close. Match
+        # the assigned task first, then clear its binding last.
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *own_task
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: &task_handed_off "not vars.get('task_claimed')"
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: bounced
+          value: false
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
         - server: gobby-agents
           tool: send_message
           when: >-

@@ -143,13 +143,14 @@ def test_developer_reaches_implement_only_through_both_skill_gates() -> None:
     assert "gobby-tasks:close_task" in steps["implement"]["blocked_mcp_tools"]
 
 
-def test_developer_close_handlers_reset_every_per_task_flag() -> None:
+@pytest.mark.parametrize("tool", ["close_task", "escalate_task"])
+def test_developer_release_handlers_reset_every_per_task_flag(tool: str) -> None:
     workflow = _raw("developer")["step_workflow"]
     submit = _steps()["submit"]
     close_handlers = [
         handler
         for handler in submit["on_mcp_success"]
-        if (handler["server"], handler["tool"]) == ("gobby-tasks", "close_task")
+        if (handler["server"], handler["tool"]) == ("gobby-tasks", tool)
     ]
 
     assert [handler["variable"] for handler in close_handlers] == list(PER_TASK_FLAGS)

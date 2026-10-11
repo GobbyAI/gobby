@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 import yaml
@@ -64,18 +64,25 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
     return set(value)
 
 
-def _bundled_agent_expression_function_names() -> set[str]:
+def _bundled_agent_expression_function_names(
+    expression_kind: Literal["condition", "value"],
+) -> set[str]:
     names: set[str] = set()
     for path in sorted(AGENTS_DIR.glob("*.yaml")):
         workflow = _load_yaml(path).get("step_workflow") or {}
-        expressions: list[Any] = [workflow.get("exit_condition")]
+        expressions: list[Any] = (
+            [workflow.get("exit_condition")] if expression_kind == "condition" else []
+        )
         for step in workflow.get("steps") or []:
-            expressions.extend(
-                transition.get("when") for transition in step.get("transitions") or []
-            )
+            if expression_kind == "condition":
+                expressions.extend(
+                    transition.get("when") for transition in step.get("transitions") or []
+                )
             for handler_key in ("on_mcp_before", "on_mcp_success", "on_mcp_error"):
                 for handler in step.get(handler_key) or []:
-                    expressions.extend((handler.get("when"), handler.get("value")))
+                    expressions.append(
+                        handler.get("when" if expression_kind == "condition" else "value")
+                    )
 
         for expression in expressions:
             if not isinstance(expression, str):
@@ -92,10 +99,15 @@ def _bundled_agent_expression_function_names() -> set[str]:
     return names
 
 
-def test_agent_workflow_allowlist_covers_bundled_expression_functions() -> None:
+@pytest.mark.parametrize("expression_kind", ["condition", "value"])
+def test_agent_workflow_allowlist_covers_bundled_expression_functions(
+    expression_kind: Literal["condition", "value"],
+) -> None:
     context: dict[str, Any] = {"vars": {}}
     allowed_funcs = build_agent_workflow_allowed_funcs(context)
-    expression_function_names = _bundled_agent_expression_function_names()
+    if expression_kind == "condition":
+        allowed_funcs.update(build_condition_helpers(context=context))
+    expression_function_names = _bundled_agent_expression_function_names(expression_kind)
 
     assert expression_function_names
     assert expression_function_names <= set(allowed_funcs)
