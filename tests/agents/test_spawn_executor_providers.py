@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 import subprocess
 import tomllib
 from dataclasses import replace
@@ -21,6 +22,7 @@ from gobby.agents.spawn_executor_providers import (
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError, render_srt_settings
+from gobby.sessions.transcript_paths import TranscriptCallerContext, find_transcript_on_disk
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,
@@ -157,9 +159,16 @@ def test_claude_reviewer_state_preserves_auth_and_hooks_without_copying_account_
     assert host_global.read_text(encoding="utf-8") == '{"host_only": true}'
 
 
+@pytest.mark.parametrize(
+    "workspace,encoded", [("/workspace", "-workspace"), ("/my_workspace dir", "-my-workspace-dir")]
+)
 @pytest.mark.parametrize("configured_home", [False, True])
 def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured_home: bool
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured_home: bool,
+    workspace: str,
+    encoded: str,
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
@@ -177,7 +186,7 @@ def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
                 "oauthAccount": {"dummy": "must-not-copy"},
                 "mcpServers": {"gobby": user_server},
                 "projects": {
-                    "/workspace": {"mcpServers": {"gobby": project_server}, "other": "drop"},
+                    workspace: {"mcpServers": {"gobby": project_server}, "other": "drop"},
                     "/other": {"mcpServers": {"foreign": user_server}},
                 },
             }
@@ -188,7 +197,7 @@ def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
     other_project.mkdir(parents=True)
     cache = tmp_path / "cache"
 
-    result = prepare_claude_reviewer_home(cache, env, workspace="/workspace", auto_approve=True)
+    result = prepare_claude_reviewer_home(cache, env, workspace=workspace, auto_approve=True)
 
     private = Path(result.environment["CLAUDE_CONFIG_DIR"])
     seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
@@ -196,15 +205,26 @@ def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": True,
         "mcpServers": {"gobby": user_server},
-        "projects": {"/workspace": {"mcpServers": {"gobby": project_server}}},
+        "projects": {workspace: {"mcpServers": {"gobby": project_server}}},
     }
     assert not (private / "projects" / "-other").exists()
-    transcript = private / "projects" / "-workspace" / "review.jsonl"
+    transcript = private / "projects" / encoded / "review.jsonl"
     transcript.write_text("review evidence", encoding="utf-8")
-    assert (host_config / "projects" / "-workspace" / "review.jsonl").read_text(
+    assert (host_config / "projects" / encoded / "review.jsonl").read_text(
         encoding="utf-8"
     ) == "review evidence"
     assert (private / ".claude.json").stat().st_mode & 0o777 == 0o600
+    shutil.rmtree(cache)
+    contexts: tuple[TranscriptCallerContext, ...] = ("hook", "recovery")
+    for caller_context in contexts:
+        assert find_transcript_on_disk(
+            "claude",
+            "review",
+            owner_machine_id="local",
+            local_machine_id="local",
+            cwd=workspace,
+            caller_context=caller_context,
+        ) == str(host_config / "projects" / encoded / "review.jsonl")
 
 
 @pytest.mark.asyncio

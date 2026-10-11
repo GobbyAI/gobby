@@ -101,14 +101,13 @@ class TrustSeedResult:
 def encode_claude_project_path(directory: PathValue) -> str:
     """Encode a directory path into Claude's project directory name.
 
-    Claude Code replaces path separators and dots with dashes. Gobby also
-    normalizes Windows drive colons and backslashes so seeded trust is
-    deterministic across platforms.
+    Claude Code replaces every character outside ASCII letters and digits
+    with a dash, including separators, punctuation, spaces, and Unicode.
 
     Example: /Users/josh/.gobby/clones/foo -> -Users-josh--gobby-clones-foo
     """
     path = os.fspath(directory)
-    return path.replace("/", "-").replace("\\", "-").replace(":", "-").replace(".", "-")
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
 def pre_approve_directory(cli: str, directory: PathValue) -> None:
