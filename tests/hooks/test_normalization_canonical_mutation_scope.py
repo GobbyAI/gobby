@@ -485,6 +485,76 @@ def test_resolved_sibling_paths_cannot_mask_pathless_mutation(
 @pytest.mark.parametrize(
     "command",
     [
+        "git apply change.patch > /tmp/log",
+        "python3 -c \"import os; os.remove(os.environ['F'])\" > log.txt",
+    ],
+)
+def test_redirect_cannot_resolve_a_pathless_write(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_redirect_preserves_resolved_write_scope(tmp_path: Path) -> None:
+    data = _invocation_metadata("cp a b > /tmp/log", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["b", "/tmp/log"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command", ["git apply change.patch", "cp a b", "git apply change.patch && cp a b"]
+)
+@pytest.mark.parametrize(
+    "wrapper", ["({})", "echo $({})", 'echo "$({})"', "echo `{}`", 'echo "$(echo $({}))"']
+)
+def test_nested_write_matches_unwrapped_scope(tmp_path: Path, command: str, wrapper: str) -> None:
+    plain = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    nested = _invocation_metadata(wrapper.format(command), tool_cwd=tmp_path, project_path=tmp_path)
+    assert nested["canonical_repo_mutation"] is True
+    assert nested["canonical_tool_kind"] == "write"
+    assert nested.get("canonical_file_paths", []) == plain.get("canonical_file_paths", [])
+    assert nested.get("canonical_repo_mutation_scope_unknown") == plain.get(
+        "canonical_repo_mutation_scope_unknown"
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '$(git apply change.patch)'",
+        "echo $'$(git apply change.patch)'",
+        'echo "\\$(git apply change.patch)"',
+        "echo '`cp a b`'",
+    ],
+)
+def test_literal_substitution_text_does_not_mutate(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git add file.py && git commit -m "fix"',
+        'git commit -am "fix" && git push',
+        'uv run ruff format file.py && git add -A && git commit -m "fix"',
+        "git switch -c fix",
+        "git stash push",
+        "git rebase --continue",
+        "git merge --continue",
+    ],
+)
+def test_sequencer_commands_keep_resolved_scope(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "cd bin && ./tool",
         "cd sub || exit 1; ./bin/tool",
         "false || cd sub; ./bin/tool",

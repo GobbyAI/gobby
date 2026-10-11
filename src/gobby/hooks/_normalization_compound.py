@@ -1,6 +1,44 @@
 """Executable case arms and process-substitution bodies from shell token spans."""
 
-from gobby.hooks._normalization_shell import ShellToken
+from gobby.hooks._normalization_shell import ShellToken, _substitution_end
+
+
+def command_substitution_bodies(
+    text: str, spans: list[tuple[int, int]], *, depth: int
+) -> tuple[str, list[tuple[int, str]]]:
+    """Separate executed bodies before their operators can split the owner."""
+    masked = list(text)
+    bodies: list[tuple[int, str]] = []
+    covered_until = 0
+    for word_start, word_end in spans:
+        quote = ""
+        index = max(word_start, covered_until)
+        while index < word_end:
+            char = text[index]
+            if char == "\\" and quote != "'":
+                index += 2
+                continue
+            if not quote and text.startswith("$'", index):
+                quote = "'"
+                index += 2
+                continue
+            if quote != "'" and (
+                (text.startswith("$(", index) and not text.startswith("$((", index)) or char == "`"
+            ):
+                start = index + (1 if char == "`" else 2)
+                end = _substitution_end(text, start, char == "`", depth + 1)
+                bodies.append((index, text[start:end]))
+                masked[start:end] = " " * (end - start)
+                index = end + 1
+                continue
+            if char in "\"'":
+                if not quote:
+                    quote = char
+                elif quote == char:
+                    quote = ""
+            index += 1
+        covered_until = max(covered_until, index)
+    return "".join(masked), bodies
 
 
 def process_substitution_bodies(
