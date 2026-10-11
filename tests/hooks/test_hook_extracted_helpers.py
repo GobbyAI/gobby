@@ -385,16 +385,20 @@ class TestBroadcastScheduling:
         mock_threadsafe.side_effect = close_coro
         broadcaster.broadcast_event = MagicMock(side_effect=broadcast_event)
         loop = MagicMock()
+        event = _event()
+        response = HookResponse(decision="allow")
 
         schedule_hook_broadcast(
             broadcaster,
-            _event(),
-            HookResponse(decision="allow"),
+            event,
+            response,
             loop,
             MagicMock(),
         )
 
-        assert mock_threadsafe.call_args.args[0].cr_frame is None
+        broadcaster.broadcast_event.assert_called_once()
+        assert broadcaster.broadcast_event.call_args.args[0] is event
+        assert broadcaster.broadcast_event.call_args.args[1] is response
         assert loop is mock_threadsafe.call_args.args[1]
         mock_get_loop.assert_called_once()
         mock_threadsafe.assert_called_once()
