@@ -75,7 +75,7 @@ async def list_tools(
     if config is not None:
         try:
             tools_map = await service._mcp_manager.list_tools(config.id)
-        except MCPError as exc:
+        except (MCPError, ValueError) as exc:
             error, counts = clean_untrusted_value(str(exc))
             log_invisible_counts(counts, "external MCP discovery error")
             return {

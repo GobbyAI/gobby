@@ -12,6 +12,7 @@ from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_DIM, SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -76,8 +77,10 @@ async def test_semantic_responses_clean_legacy_vector_descriptions(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["manager", "proxy"])
 async def test_hidden_schema_key_rejection_does_not_reconnect(
     monkeypatch: pytest.MonkeyPatch,
+    surface: str,
 ) -> None:
     config = MCPServerConfig(
         name="external", project_id="test-project", transport="http", url="https://example.test"
@@ -99,8 +102,16 @@ async def test_hidden_schema_key_rejection_does_not_reconnect(
     monkeypatch.setattr(manager, "get_client_session", AsyncMock(return_value=session))
     monkeypatch.setattr(manager, "ensure_connected", reconnect)
 
-    with pytest.raises(ValueError, match="Untrusted dictionary key"):
-        await manager.list_tools(config.id)
+    if surface == "manager":
+        with pytest.raises(ValueError, match="Untrusted dictionary key"):
+            await manager.list_tools(config.id)
+    else:
+        proxy = ToolProxyService(mcp_manager=manager, internal_manager=InternalRegistryManager())
+        result = await proxy.list_tools("external", project_id="test-project")
+        assert result["success"] is False
+        assert result["tools"] == []
+        assert "Untrusted dictionary key" in result["error"]
+        assert all(char not in result["error"] for char in HIDDEN)
 
     reconnect.assert_not_awaited()
     session.list_tools.assert_awaited_once()
