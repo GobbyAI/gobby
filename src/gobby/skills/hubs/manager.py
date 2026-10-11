@@ -11,6 +11,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.skills.hubs.base import HubProvider
 
 if TYPE_CHECKING:
@@ -312,8 +313,10 @@ class HubManager:
                 hub_results = await provider.search(query, limit=limit)
                 return [r.to_dict() for r in hub_results]
             except Exception as e:
-                logger.error("Error searching hub %s: %s", hub_name, e)
-                hub_errors[hub_name] = str(e)
+                error, counts = clean_untrusted_value(str(e))
+                log_invisible_counts(counts, "external skill hub error")
+                logger.error("Error searching hub %s: %s", hub_name, error)
+                hub_errors[hub_name] = error
                 return []
 
         # Execute all searches in parallel

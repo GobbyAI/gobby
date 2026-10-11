@@ -11,6 +11,7 @@ from mcp import ClientSession
 from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief, visible_configs
 from gobby.mcp_proxy.connection_cleanup import describe_exception, discard_connection
 from gobby.mcp_proxy.models import MCPError
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 
 
 class _ToolInventoryManager(Protocol):
@@ -60,7 +61,9 @@ async def list_tools(
         for config in visible_configs(manager, project_id):
             cached = manager._tool_schema_cache.get(config.id)
             if cached is not None:
-                results[config.name] = cached
+                cleaned = [_clean_tool_metadata(tool) for tool in cached]
+                await asyncio.to_thread(manager.cache_discovered_tools, config.id, cleaned)
+                results[config.name] = cleaned
                 continue
             try:
                 results[config.name] = await manager._list_tools_for_server(config.id)
@@ -100,7 +103,8 @@ async def list_tools_for_server(
         session = await manager.get_client_session(server_id)
         tool_list = await manager._list_tools_from_session(session)
     except Exception as initial_error:
-        error_message = describe_exception(initial_error)
+        error_message, counts = clean_untrusted_value(describe_exception(initial_error))
+        log_invisible_counts(counts, "external MCP discovery error")
         logger.warning("Failed to list tools for %s: %s", label, error_message)
         if server_id in manager.health:
             manager.health[server_id].record_failure(error_message)
@@ -135,12 +139,15 @@ async def retry_list_tools_after_failure(
         session = await manager.ensure_connected(server_id)
         tool_list = await manager._list_tools_from_session(session)
     except Exception as retry_error:
-        retry_message = describe_exception(retry_error)
+        retry_message, counts = clean_untrusted_value(describe_exception(retry_error))
+        log_invisible_counts(counts, "external MCP discovery error")
+        initial_message, counts = clean_untrusted_value(describe_exception(initial_error))
+        log_invisible_counts(counts, "external MCP discovery error")
         if server_id in manager.health:
             manager.health[server_id].record_failure(retry_message)
         raise MCPError(
             f"Failed to list tools for server '{label}': "
-            f"initial listing failed: {describe_exception(initial_error)}; "
+            f"initial listing failed: {initial_message}; "
             f"reconnect retry failed: {retry_message}"
         ) from retry_error
 
@@ -153,7 +160,7 @@ async def retry_list_tools_after_failure(
 async def list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
     """Convert MCP SDK list_tools result to response dictionaries."""
     tools = await session.list_tools()
-    return [
+    inventory = [
         {
             "name": tool.name,
             "description": tool.description or "",
@@ -161,6 +168,17 @@ async def list_tools_from_session(session: ClientSession) -> list[dict[str, Any]
         }
         for tool in tools.tools
     ]
+    return [_clean_tool_metadata(tool) for tool in inventory]
+
+
+def _clean_tool_metadata(tool: dict[str, Any]) -> dict[str, Any]:
+    """Clean external text without altering the executable tool identifier."""
+    cleaned = dict(tool)
+    for field in ("description", "inputSchema"):
+        if field in cleaned:
+            cleaned[field], counts = clean_untrusted_value(cleaned[field])
+            log_invisible_counts(counts, "external MCP discovery")
+    return cleaned
 
 
 def cache_discovered_tools(
@@ -169,6 +187,7 @@ def cache_discovered_tools(
     tools: list[dict[str, Any]],
 ) -> None:
     """Cache discovered full tool schemas and update config summaries."""
+    tools = [_clean_tool_metadata(tool) for tool in tools]
     if (
         manager._tool_schema_cache.get(server_id) == tools
         and server_id not in manager._tool_cache_dirty
@@ -228,7 +247,7 @@ async def get_tool_info(
                 result["description"] = tool["description"]
             if "inputSchema" in tool:
                 result["inputSchema"] = _validated_input_schema(tool["inputSchema"])
-            return result
+            return _clean_tool_metadata(result)
 
     config = manager._configs.get(server_id)
     label = config.name if config is not None else server_id
