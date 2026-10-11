@@ -166,7 +166,13 @@ def test_assistant_routes_and_edits_tasks_only_when_the_operator_asks() -> None:
     assert "Decisions needed:" in prompt
     assert "Restart the daemon or the terminal client only on the operator's go" in prompt
     assert "`gobby-tasks:update_task` only when the operator asks" in prompt
-    assert "Reply once, on the channel the operator last used" in prompt
+    assert "While attached to a Telegram conversation, type replies normally." in prompt
+    assert "The daemon mirrors completed assistant text automatically." in prompt
+    assert "Do not explicitly send the same reply to Telegram or narrate a send." in prompt
+    assert (
+        "When unattached, reply once on the channel the operator last used, "
+        "and keep replying there until input arrives on another channel."
+    ) in prompt
     assert "assistant-write-scope" in prompt
     assert "Recover stalled sessions" in prompt
     assert "Report each recovery to the Orchestrator" in prompt
