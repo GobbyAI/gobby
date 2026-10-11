@@ -150,11 +150,21 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
 
 def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
     """Return diagnostics for named tests that omit a path or symbol."""
-    return tuple(
+    references = extract_artifact_references(criteria, "test")
+    findings = [
         f"{reference}: malformed test reference; expected path::test_symbol"
-        for reference in extract_artifact_references(criteria, "test")
+        for reference in references
         if parse_test_reference(reference) is None
-    )
+    ]
+    inert_spans = [match.span() for match in re.finditer(r"`[^`\n]*`", criteria)]
+    inert_spans.extend(match.span("quote") for match in _ILLUSTRATIVE_QUOTE_RE.finditer(criteria))
+    for match in re.finditer(r"\btest:[ \t]*`([^`\n]+)`", criteria, re.IGNORECASE):
+        if any(start <= match.start() < end for start, end in inert_spans):
+            continue
+        reference = match.group(1).strip().rstrip(".")
+        if reference not in references:
+            findings.append(f"{reference}: unrecognized test reference; use 'test:' at line start")
+    return tuple(dict.fromkeys(findings))
 
 
 async def evaluate_acceptance_artifacts_async(
@@ -467,6 +477,9 @@ def _mask_code(code: str, path: str) -> str:
         text = match.group(0)
         if text.startswith(("//", "/*")):
             return " "
+        if text.startswith("`") and "${" in text:
+            # Interpolated templates depend on runtime values, unlike plain literals.
+            return tokens.setdefault(text, f"dynamic_template_{len(tokens)}")
         return tokens.setdefault(text, f'"s{len(tokens)}"')
 
     return literal_re.sub(replace, code)
@@ -589,7 +602,71 @@ def _test_body_findings(test: AcceptanceTest) -> list[str]:
     suffix = Path(test.path).suffix.casefold()
     if suffix == ".py":
         return _python_test_findings(test)
+    if suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
+        return _javascript_test_findings(test)
     return _text_test_findings(test)
+
+
+_JS_ASSERTION_RE = re.compile(r"(?<![\w.$])(?P<name>expect|assert(?:\.[A-Za-z_$][\w$]*)*)\s*\(")
+_JS_MATCHER_RE = re.compile(r"\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*[A-Za-z_$][\w$]*\s*\(")
+_JS_CONSTANT_RE = re.compile(
+    r'(?:true|false|null|undefined|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|"s\d+")'
+)
+_JS_REGEX_LITERAL_RE = re.compile(
+    r"(?P<prefix>(?:^|[=(,:;!&|?{}>]|\breturn)\s*)/(?![/*])"
+    r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*",
+    re.MULTILINE,
+)
+
+
+def _parenthesized_arguments(code: str, opening: int) -> tuple[str, int] | None:
+    """Read a call from masked code, allowing nested calls and multiline arguments."""
+    depth = 0
+    for index in range(opening, len(code)):
+        if code[index] == "(":
+            depth += 1
+        elif code[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return code[opening + 1 : index].strip().rstrip(",").strip(), index + 1
+    return None
+
+
+def _javascript_test_findings(test: AcceptanceTest) -> list[str]:
+    has_assertion = False
+    has_placebo = False
+    for source in (test.body, *test.helpers):
+        code = _mask_code(source, test.path)
+        code = _JS_REGEX_LITERAL_RE.sub(r"\g<prefix>regex_literal", code)
+        for match in _JS_ASSERTION_RE.finditer(code):
+            if re.search(r"\bfunction\s*\*?\s*$", code[: match.start()]):
+                continue
+            call = _parenthesized_arguments(code, match.end() - 1)
+            if call is None:
+                continue
+            actual, end = call
+            if not actual:
+                continue
+            if match.group("name") == "expect":
+                matcher = _JS_MATCHER_RE.match(code, end)
+                if matcher is None:
+                    continue
+                expectation = _parenthesized_arguments(code, matcher.end() - 1)
+                if expectation is None:
+                    continue
+                expected, _ = expectation
+                has_placebo |= bool(_JS_CONSTANT_RE.fullmatch(actual)) and (
+                    not expected or bool(_JS_CONSTANT_RE.fullmatch(expected))
+                )
+            else:
+                has_placebo |= bool(_JS_CONSTANT_RE.fullmatch(actual))
+            has_assertion = True
+    findings = []
+    if has_placebo:
+        findings.append(f"{test.reference}: contains a constant, stub, or placebo assertion")
+    if not has_assertion:
+        findings.append(f"{test.reference}: contains no executable assertion or panic expectation")
+    return findings
 
 
 def _python_test_findings(test: AcceptanceTest) -> list[str]:
