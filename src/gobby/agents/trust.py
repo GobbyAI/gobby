@@ -98,7 +98,7 @@ class TrustSeedResult:
         }
 
 
-def _encode_claude_project_path(directory: PathValue) -> str:
+def encode_claude_project_path(directory: PathValue) -> str:
     """Encode a directory path into Claude's project directory name.
 
     Claude Code replaces path separators and dots with dashes. Gobby also
@@ -215,7 +215,7 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
     """
     directory_text = os.fspath(directory)
     claude_home = Path.home() / ".claude" / "projects"
-    encoded = _encode_claude_project_path(directory_text)
+    encoded = encode_claude_project_path(directory_text)
     project_dir = claude_home / encoded
 
     if project_dir.exists():

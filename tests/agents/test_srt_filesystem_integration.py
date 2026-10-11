@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -14,6 +15,7 @@ from typing import Literal
 
 import pytest
 
+from gobby.agents.claude_sandbox_home import prepare_claude_reviewer_home
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_resolvers import merge_claude_settings
 from gobby.agents.srt_runtime import render_srt_settings
@@ -163,3 +165,82 @@ async def test_supported_backend_blocks_sensitive_path_traversal_and_later_launc
     assert runner.read_bytes() == original_runner
     later_launch = _run_srt(node, runner, settings, workspace, "exit 0", socket_root)
     assert later_launch.returncode == 0, later_launch.stderr
+
+
+@pytest.mark.asyncio
+async def test_claude_reviewer_private_controls_deny_replacement_and_keep_runtime_writable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Exercise installed SRT against dummy settings and current-workspace transcripts."""
+    home = tmp_path / "home"
+    host = home / ".claude"
+    host.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    settings_source = host / "settings.json"
+    settings_source.write_text('{"env": {"DUMMY_TOKEN": "fixture-only"}}', encoding="utf-8")
+    (home / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"gobby": {"command": "gobby"}}}), encoding="utf-8"
+    )
+    cache = tmp_path / "own-run-cache"
+    private_home = prepare_claude_reviewer_home(
+        cache, {}, workspace=str(workspace), auto_approve=True
+    )
+    private = Path(private_home.environment["CLAUDE_CONFIG_DIR"])
+    paths = await compute_sandbox_paths(
+        SandboxConfig(
+            enabled=True,
+            backend="srt",
+            allow_network=False,
+            extra_write_paths=[str(cache)],
+            extra_deny_write_paths=list(private_home.protected_write_paths),
+        ),
+        str(workspace),
+        provider="claude",
+        env={"PATH": ""},
+    )
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required")
+    socket_root = _nested_runner_socket_root()
+    runtime = install_srt_runtime().path
+    request.addfinalizer(lambda: _make_runtime_removable(runtime))
+    policy = workspace / "settings.json"
+    policy.write_text(json.dumps(render_srt_settings(paths)), encoding="utf-8")
+    violations = policy.with_name("violations.jsonl")
+    violations.touch()
+    runner = runtime / "runner.mjs"
+    denied_commands = [
+        ("host-settings", f"printf hacked > {shlex.quote(str(settings_source))}"),
+        ("private-settings", f"printf hacked > {shlex.quote(str(private / 'settings.json'))}"),
+        (
+            "replace-settings",
+            f"rm -f {shlex.quote(str(private / 'settings.json'))} && "
+            f"ln -s {shlex.quote(str(settings_source))} {shlex.quote(str(private / 'settings.json'))}",
+        ),
+    ]
+    for control in ("agents", "skills", "commands", "plugins/cache", "plugins/synced"):
+        denied_commands.append((control, f"mkdir -p {shlex.quote(str(private / control))}"))
+    for label, command in denied_commands:
+        result = _run_srt(node, runner, policy, workspace, command, socket_root)
+        print(f"EXPECTED_DENIAL {label} exit={result.returncode}")
+        assert result.returncode != 0, (label, result.stdout, result.stderr)
+    assert settings_source.read_text(encoding="utf-8") == '{"env": {"DUMMY_TOKEN": "fixture-only"}}'
+    assert (private / "settings.json").read_bytes() == settings_source.read_bytes()
+    state = Path(private_home.environment["XDG_STATE_HOME"]) / "claude" / "locks"
+    transcript = next((private / "projects").iterdir()) / "review.jsonl"
+    command = (
+        f"mkdir -p {shlex.quote(str(state))} && "
+        f"printf updated > {shlex.quote(str(private / '.claude.json'))} && "
+        f"touch {shlex.quote(str(state / '2.1.296.lock'))} && "
+        f"printf evidence > {shlex.quote(str(transcript))}"
+    )
+    result = _run_srt(node, runner, policy, workspace, command, socket_root)
+    print(f"MUTABLE_STATE exit={result.returncode} PROOF={policy} VIOLATIONS={violations}")
+    assert result.returncode == 0, result.stderr
+    assert (state / "2.1.296.lock").is_file()
+    assert (private / ".claude.json").read_text(encoding="utf-8") == "updated"
+    assert transcript.resolve().read_text(encoding="utf-8") == "evidence"

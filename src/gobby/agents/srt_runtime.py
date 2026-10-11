@@ -639,6 +639,7 @@ async def prepare_sandbox_launch(
     allow_run_unix_sockets: bool = False,
     phase_timings_ms: MutableMapping[str, float] | None = None,
     prewarm_pre_commit_store: bool = True,
+    claude_reviewer_auto_approve: bool | None = None,
 ) -> SandboxLaunch:
     """Resolve and preflight the explicit backend without any fallback."""
     from gobby.agents.sandbox import compute_sandbox_paths
@@ -710,6 +711,23 @@ async def prepare_sandbox_launch(
         run_environment["GROK_AUTH_PATH"] = str(grok_home.home / "auth.json")
         home_writes = grok_home.runtime_write_paths
         home_denies = grok_home.protected_write_paths
+    claude_environment: dict[str, str] = {}
+    if (
+        config.backend == "srt"
+        and provider == "claude"
+        and claude_reviewer_auto_approve is not None
+    ):
+        from gobby.agents.claude_sandbox_home import prepare_claude_reviewer_home
+
+        claude_home = await asyncio.to_thread(
+            prepare_claude_reviewer_home,
+            Path(run_environment["XDG_CACHE_HOME"]),
+            env,
+            workspace=workspace_path,
+            auto_approve=claude_reviewer_auto_approve,
+        )
+        claude_environment = claude_home.environment
+        home_denies = claude_home.protected_write_paths
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file and Path(prompt_file).is_file():
         run_prompt = run_paths.assets / "prompt.md"
@@ -749,6 +767,8 @@ async def prepare_sandbox_launch(
         )
     finally:
         finish_spawn_phase(phase_timings_ms, "compute_sandbox_paths", compute_paths_started)
+    # Policy retains original host controls; only the launch gets the private home.
+    run_environment.update(claude_environment)
     # Every live sandboxed run holds these grants, so one can swap a link in while
     # this policy renders; refuse unless each grant is still the cache path itself.
     for cache_path in (run_paths.cargo_home, run_paths.cargo_target):

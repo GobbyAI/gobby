@@ -497,13 +497,15 @@ async def test_network_capabilities_are_preserved_without_a_provider(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    ("provider", "temp_env_name", "platform_name"),
+    ("provider", "temp_env_name", "platform_name", "reviewer_auto_approve"),
     [
-        ("claude", "CLAUDE_CODE_TMPDIR", "darwin"),
-        ("claude", "CLAUDE_CODE_TMPDIR", "linux"),
-        ("codex", "TMPDIR", "darwin"),
-        ("codex", "TMPDIR", "linux"),
-        ("grok", "TMPDIR", "darwin"),
+        ("claude", "CLAUDE_CODE_TMPDIR", "darwin", None),
+        ("claude", "CLAUDE_CODE_TMPDIR", "linux", None),
+        ("codex", "TMPDIR", "darwin", None),
+        ("codex", "TMPDIR", "linux", None),
+        ("grok", "TMPDIR", "darwin", None),
+        ("claude", "CLAUDE_CODE_TMPDIR", "darwin", True),
+        ("claude", "CLAUDE_CODE_TMPDIR", "linux", False),
     ],
 )
 @pytest.mark.asyncio
@@ -515,6 +517,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     temp_env_name: str,
     platform_name: str,
     allow_run_sockets: bool,
+    reviewer_auto_approve: bool | None,
 ) -> None:
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform=platform_name))
@@ -527,6 +530,14 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     monkeypatch.setattr(Path, "home", lambda: home)
     runtime = tmp_path / "runtime"
     workspace.mkdir()
+    host_config = home / ".claude"
+    host_config.mkdir()
+    (host_config / "settings.json").write_text('{"hooks": {"Stop": []}}', encoding="utf-8")
+    host_global = home / ".claude.json"
+    host_global.write_text(
+        json.dumps({"mcpServers": {"gobby": {"command": "gobby", "args": ["mcp-server"]}}}),
+        encoding="utf-8",
+    )
     untrusted_mcp_root.mkdir()
     (workspace / ".mcp.json").write_text(
         json.dumps(
@@ -541,6 +552,8 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         ),
         encoding="utf-8",
     )
+    if reviewer_auto_approve is not None:
+        (workspace / ".mcp.json").unlink()
     runtime.mkdir()
     node = runtime / "node"
     runner = runtime / "runner.mjs"
@@ -617,6 +630,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         api_base=None,
         env=spawn_env,
         allow_run_unix_sockets=allow_run_sockets,
+        claude_reviewer_auto_approve=reviewer_auto_approve,
     )
 
     policy_path = Path(launch.policy_path or "")
@@ -662,6 +676,30 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert preflight_cwd == str(workspace)
     assert preflight_env == {**spawn_env, **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if reviewer_auto_approve is not None:
+        private = Path(launch.provider_env["CLAUDE_CONFIG_DIR"])
+        seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
+        assert seed["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        assert launch.provider_env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == ""
+        denies = policy["filesystem"]["denyWrite"]
+        assert str(host_global) not in policy["filesystem"]["allowWrite"]
+        assert str(home) not in policy["filesystem"]["allowWrite"]
+        for control in (
+            "settings.json",
+            "settings.local.json",
+            "agents",
+            "skills",
+            "commands",
+            "plugins/cache",
+            "plugins/marketplaces",
+            "plugins/synced",
+            "plugins/installed_plugins.json",
+            "plugins/known_marketplaces.json",
+        ):
+            assert str(private / control) in denies
+        assert str(private / ".claude.json") not in denies
+        assert str(private / "state") not in denies
+        assert str(host_config / "settings.json") in denies
     socket_grants = policy["network"]["allowUnixSockets"]
     assert str((workspace / "operator.sock").resolve()) in socket_grants
     assert (str(temp_path.resolve()) in socket_grants) == (
