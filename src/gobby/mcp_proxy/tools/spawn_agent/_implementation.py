@@ -172,6 +172,11 @@ async def spawn_agent_impl(
                 and not (project_path and project_path_explicit)
                 and resume_target.workspace_path
             ):
+                if not await asyncio.to_thread(Path(resume_target.workspace_path).is_dir):
+                    return {
+                        "success": False,
+                        "error": f"Stored resume workspace is not a directory: {resume_target.workspace_path}",
+                    }
                 project_path = resume_target.workspace_path
                 checkout_mode = "none"
     try:

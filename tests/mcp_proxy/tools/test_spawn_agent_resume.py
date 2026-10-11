@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.isolation import IsolationContext
+from gobby.agents.isolation import NoneIsolationHandler
 from gobby.agents.spawn import PreparedSpawn
 from gobby.mcp_proxy.tools.spawn_agent import _factory as factory
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
@@ -183,9 +183,20 @@ async def test_resume_refuses_missing_session() -> None:
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("stub_srt_verifier")
 @pytest.mark.parametrize("execution_mode", [None, "interactive", "one_shot"])
+@pytest.mark.parametrize("workspace", ["none", "stored", "explicit", "explicit-missing"])
 async def test_resume_binds_existing_identity_and_passes_native_thread(
+    tmp_path: Path,
     execution_mode: Literal["one_shot", "interactive"] | None,
+    workspace: str,
 ) -> None:
+    requested = tmp_path / "requested"
+    requested.mkdir()
+    stored = tmp_path / "stored"
+    if workspace in {"stored", "explicit"}:
+        stored.mkdir()
+        (stored / "in-flight.txt").write_text("preserve this work\n")
+    explicit = workspace.startswith("explicit")
+    expected_path = stored if workspace == "stored" else requested
     target = SimpleNamespace(
         id="existing",
         project_id="project",
@@ -195,7 +206,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name="old-workflow",
-        workspace_path=None,
+        workspace_path=None if workspace == "none" else str(stored),
     )
     sessions = MagicMock()
     sessions.resolve_session_reference.return_value = target.id
@@ -206,9 +217,7 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
     runner.run_storage.get.return_value = SimpleNamespace(
         status="expired", worktree_id=None, clone_id=None
     )
-    handler = MagicMock()
-    handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/workspace"))
-    handler.build_context_prompt.return_value = "Continue"
+    handler = NoneIsolationHandler()
     prepared = PreparedSpawn(
         session_id="existing",
         agent_run_id="new-run",
@@ -222,13 +231,13 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
         patch.object(
             implementation,
             "get_project_context",
-            return_value={
+            side_effect=lambda path: {
                 "id": "project",
-                "project_path": "/workspace",
+                "project_path": str(path),
             },
         ),
         patch.object(implementation, "get_machine_id", return_value="machine"),
-        patch.object(implementation, "get_isolation_handler", return_value=handler),
+        patch.object(implementation, "get_isolation_handler", return_value=handler) as isolation,
         patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared) as resume,
         patch.object(implementation, "prepare_terminal_spawn", return_value=prepared) as fresh,
         patch.object(implementation, "execute_spawn", AsyncMock()) as execute,
@@ -243,8 +252,8 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
             target_project_id="project",
             resume_session_id="gobby#123",
             execution_mode=execution_mode,
-            project_path="/workspace",
-            project_path_explicit=False,
+            project_path=str(requested),
+            project_path_explicit=explicit,
             reserved_run_id="new-run",
             agent_body=make_agent_definition(
                 name="developer",
@@ -262,11 +271,57 @@ async def test_resume_binds_existing_identity_and_passes_native_thread(
     request = execute.call_args.args[0]
     assert request.provider == "codex"
     assert request.resume_session_id == "native-thread"
-    assert request.cwd == "/workspace"
+    assert request.cwd == str(expected_path)
+    assert isolation.call_args.args[0] == "none"
+    assert target.workspace_path == (None if workspace == "none" else str(stored))
+    if workspace in {"stored", "explicit"}:
+        assert (stored / "in-flight.txt").read_text() == "preserve this work\n"
+    else:
+        assert not stored.exists()
     expected_mode = execution_mode or "interactive"
     assert resume.call_args.kwargs["resume_metadata_json"]["execution_mode"] == expected_mode
     assert resume.call_args.kwargs["initial_variables"]["execution_mode"] == expected_mode
     persist.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_kind", ["missing", "file"])
+async def test_resume_refuses_a_stored_workspace_that_is_not_a_directory(
+    tmp_path: Path, workspace_kind: str
+) -> None:
+    workspace = tmp_path / "removed-worktree"
+    if workspace_kind == "file":
+        workspace.write_text("not a checkout\n")
+    target = SimpleNamespace(source="codex", workspace_path=str(workspace), agent_run_id="old-run")
+    runner = MagicMock()
+    runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
+    with (
+        patch.object(implementation, "resolve_resume_target", return_value=target),
+        patch.object(
+            implementation, "authorize_write_grant", side_effect=ValueError("past resume preflight")
+        ) as authorize,
+        patch.object(implementation, "prepare_terminal_spawn") as fresh,
+        patch("gobby.agents.spawn.prepare_terminal_resume") as resume_prepare,
+        patch.object(implementation, "execute_spawn", AsyncMock()) as execute,
+    ):
+        result = await spawn_agent_impl(
+            prompt="Continue",
+            runner=runner,
+            session_manager=MagicMock(),
+            target_project_id="project",
+            parent_session_id="parent",
+            resume_session_id="gobby#123",
+        )
+    assert result["success"] is False
+    assert result["error"] == f"Stored resume workspace is not a directory: {workspace}"
+    authorize.assert_not_called()
+    fresh.assert_not_called()
+    resume_prepare.assert_not_called()
+    execute.assert_not_awaited()
+    if workspace_kind == "file":
+        assert workspace.read_text() == "not a checkout\n"
+    else:
+        assert not workspace.exists()
 
 
 def _git(cwd: Path, *args: str) -> str:
