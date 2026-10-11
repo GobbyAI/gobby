@@ -692,6 +692,90 @@ class TestSessionManagerPruning:
         assert nonempty_after.status == "expired"
         assert paused_after.status == "paused"
 
+    def test_prune_empty_sessions_notifies_each_deleted_row_after_commit(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        sessions = [
+            session_manager.register(
+                external_id=f"prune-notification-{index}",
+                machine_id=LOCAL_MACHINE_ID,
+                source="claude",
+                project_id=sample_project["id"],
+            )
+            for index in range(3)
+        ]
+        for session in sessions[:2]:
+            session_manager.update_status(session.id, "expired")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE project_id = %s",
+            (sample_project["id"],),
+        )
+        from gobby.storage.sessions._session_mapping_cache import _put_session_mapping
+
+        for session in sessions[:2]:
+            _put_session_mapping(
+                session_manager,
+                external_id=session.external_id,
+                source=session.source,
+                session_id=session.id,
+                project_id=session.project_id,
+                session_type=session.session_type,
+            )
+        assert {session.id for session in sessions[:2]}.issubset(
+            session_manager._session_mapping.values()
+        )
+        observed: list[tuple[str, str, bool, bool]] = []
+
+        def capture(event: str, session_id: str) -> None:
+            observed.append(
+                (
+                    event,
+                    session_id,
+                    session_manager.get(session_id) is None,
+                    session_id not in session_manager._session_mapping.values(),
+                )
+            )
+
+        session_manager.register_session_change_listener(capture)
+        with session_manager.db.transaction():
+            assert session_manager.prune_empty_sessions(min_age_hours=1) == 2
+            assert observed == []
+        assert sorted(observed) == sorted(
+            ("session_deleted", session.id, True, True) for session in sessions[:2]
+        )
+        assert session_manager.get(sessions[2].id) is not None
+        assert session_manager.prune_empty_sessions(min_age_hours=1) == 0
+        assert len(observed) == 2
+
+    def test_prune_empty_sessions_rollback_emits_no_deletion(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        session = session_manager.register(
+            external_id="prune-notification-rollback",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.update_status(session.id, "expired")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = %s",
+            (session.id,),
+        )
+        observed: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: observed.append((event, session_id))
+        )
+        with pytest.raises(RuntimeError, match="abort prune"):
+            with session_manager.db.transaction():
+                assert session_manager.prune_empty_sessions(min_age_hours=1) == 1
+                raise RuntimeError("abort prune")
+        assert observed == []
+        assert session_manager.get(session.id) is not None
+
     def test_prune_empty_sessions_preserves_transcript_backed_session(
         self,
         session_manager: SessionManager,
