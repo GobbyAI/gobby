@@ -1472,6 +1472,52 @@ class TestCodexBackend:
         assert done.context_window == 258_400
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("answer_length", [700, 9000])
+    @pytest.mark.parametrize("complete_delta", [False, True])
+    async def test_send_message_recovers_missing_delta_tail(
+        self, tmp_path: Path, answer_length: int, complete_delta: bool
+    ) -> None:
+        prefix = (
+            "\n\n#23907 is implemented and live, but remains open on one operator decision.\n\n"
+            "- Landed commits: `69bb3777db`, `1cd919a209`, `5c925a48e1`; "
+            "01:04 CT cutover completed and live checks pass.\n"
+            "- Validation passed except criterion 1: the case-insensitive “crew” sweep "
+            "matches “screw” in vendored `libghostty`.\n- Required action:"
+        )
+        answer = prefix + " exclude `crates/gterminal/vendor/`.\n" + "x" * answer_length
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": "thread-1",
+                        "itemId": "answer-1",
+                        "delta": answer if complete_delta else prefix,
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[
+                json.dumps(
+                    {
+                        "timestamp": "2026-10-10T14:08:47.459Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "id": "answer-1",
+                            "content": [{"type": "output_text", "text": answer}],
+                        },
+                    }
+                )
+            ],
+        )
+
+        assert "".join(event.content for event in events if isinstance(event, TextChunk)) == answer
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
     async def test_send_message_recovers_tool_and_usage_from_codex_transcript(
         self,
         tmp_path: Path,

@@ -118,6 +118,7 @@ async def stream_codex_turn(
     event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
     turn_completed = asyncio.Event()
     saw_text_output = False
+    streamed_text_by_item: dict[str, str] = {}
     tool_calls_count = 0
     started_tool_call_ids: set[str] = set()
     completed_tool_call_ids: set[str] = set()
@@ -254,6 +255,11 @@ async def stream_codex_turn(
                 delta = _extract_codex_delta(params)
                 if delta:
                     saw_text_output = True
+                    item_id = params.get("itemId")
+                    if isinstance(item_id, str):
+                        streamed_text_by_item[item_id] = (
+                            streamed_text_by_item.get(item_id, "") + delta
+                        )
                     yield TextChunk(content=delta)
                 continue
 
@@ -357,6 +363,12 @@ async def stream_codex_turn(
                         and record.content.strip()
                     ):
                         transcript_assistant_text.append(record.content.strip())
+                        streamed_text = streamed_text_by_item.get(record.message_id or "")
+                        if streamed_text is not None and record.content.startswith(streamed_text):
+                            missing_text = record.content[len(streamed_text) :]
+                            if missing_text:
+                                yield TextChunk(content=missing_text)
+                                streamed_text_by_item[record.message_id or ""] = record.content
 
                 normalized_usage = prefer_codex_usage(
                     normalize_codex_usage(usage),
