@@ -18,6 +18,7 @@ from gobby.hooks._normalization_bindings import (
 from gobby.hooks._normalization_compound import (
     case_arm_tokens,
     command_substitution_bodies,
+    heredoc_substitution_bodies,
     process_substitution_bodies,
 )
 from gobby.hooks._normalization_env import env_directory_operands
@@ -204,6 +205,14 @@ def _classify_shell_command(
         )
         if command_substitutions:
             scan = scan_shell_command(masked_command)
+        unresolved_heredoc_positions: set[int] = set()
+        for heredoc in scan.heredocs:
+            if not heredoc.quoted:
+                bodies, unresolved = heredoc_substitution_bodies(heredoc.text, depth=depth)
+                position = scan.spans[heredoc.opener][0]
+                command_substitutions.extend((position, substitution) for substitution in bodies)
+                if unresolved:
+                    unresolved_heredoc_positions.add(position)
     except ValueError:
         if depth:
             return _build_canonical_tool_metadata(
@@ -298,6 +307,16 @@ def _classify_shell_command(
                     persistent_cwd,
                     depth=depth,
                     base_cwd=None if directory_changed else base_cwd,
+                )
+            )
+        if any(
+            segment_start <= position < segment_end for position in unresolved_heredoc_positions
+        ):
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "write",
+                    repo_mutation=True,
+                    extra={"_canonical_repo_mutation_scope_unknown": True},
                 )
             )
         for body in substitution_bodies:
