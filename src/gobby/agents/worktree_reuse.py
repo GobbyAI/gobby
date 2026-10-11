@@ -76,8 +76,17 @@ async def capture_worktree_base_commit_sha(
     base_branch: str,
     use_local: bool,
 ) -> str:
-    base_ref = base_branch if use_local else f"origin/{base_branch}"
-    result = await _run_git(git_manager, ["merge-base", base_ref, "HEAD"], cwd=Path(worktree_path))
+    local_ref = (
+        base_branch if base_branch.startswith("refs/heads/") else f"refs/heads/{base_branch}"
+    )
+    branch_name = local_ref.removeprefix("refs/heads/")
+    base_ref = local_ref if use_local else f"refs/remotes/origin/{branch_name}"
+    resolved = await _run_git(git_manager, ["show-ref", "--verify", "--hash", base_ref])
+    if resolved.returncode != 0:
+        raise RuntimeError(f"Failed to resolve base branch {base_ref}: {_detail(resolved)}")
+    result = await _run_git(
+        git_manager, ["merge-base", resolved.stdout.strip(), "HEAD"], cwd=Path(worktree_path)
+    )
     if result.returncode != 0:
         detail = _detail(result)
         raise RuntimeError(f"Failed to capture base_commit_sha from {base_ref}: {detail}")
@@ -134,7 +143,7 @@ async def _sync_reused_worktree_to_base(
     await _ensure_clean_worktree(git_manager, path)
 
     ancestor = await _run_git(
-        git_manager, ["merge-base", "--is-ancestor", base_ref, "HEAD"], cwd=path
+        git_manager, ["merge-base", "--is-ancestor", base_sha, "HEAD"], cwd=path
     )
     if ancestor.returncode == 0:
         return ReusedWorktreeSyncResult("already_current", base_ref, base_sha)
@@ -143,7 +152,7 @@ async def _sync_reused_worktree_to_base(
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
 
     try:
-        result = await _run_git(git_manager, ["rebase", base_ref], cwd=path, timeout=120)
+        result = await _run_git(git_manager, ["rebase", base_sha], cwd=path, timeout=120)
     except subprocess.TimeoutExpired as exc:
         abort_detail = await _abort_rebase(git_manager, path)
         message = f"Timed out rebasing reused worktree onto {base_ref}: {exc}{abort_detail}"
@@ -166,17 +175,21 @@ async def _sync_reused_worktree_to_base(
 
 
 async def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
-    local = await _run_git(git_manager, ["rev-parse", "--verify", f"{base_branch}^{{commit}}"])
+    local_ref = (
+        base_branch if base_branch.startswith("refs/heads/") else f"refs/heads/{base_branch}"
+    )
+    branch_name = local_ref.removeprefix("refs/heads/")
+    local = await _run_git(git_manager, ["show-ref", "--verify", "--hash", local_ref])
     if local.returncode == 0:
-        return base_branch, local.stdout.strip()
+        return local_ref, local.stdout.strip()
 
-    fetch = await _run_git(git_manager, ["fetch", "origin", base_branch], timeout=60)
+    fetch = await _run_git(git_manager, ["fetch", "origin", branch_name], timeout=60)
     if fetch.returncode != 0:
         detail = _detail(fetch) or _detail(local)
         raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
 
-    remote_ref = f"origin/{base_branch}"
-    remote = await _run_git(git_manager, ["rev-parse", "--verify", f"{remote_ref}^{{commit}}"])
+    remote_ref = f"refs/remotes/origin/{branch_name}"
+    remote = await _run_git(git_manager, ["show-ref", "--verify", "--hash", remote_ref])
     if remote.returncode != 0:
         detail = _detail(remote)
         raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
