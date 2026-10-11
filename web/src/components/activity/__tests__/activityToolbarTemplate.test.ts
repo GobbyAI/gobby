@@ -47,7 +47,6 @@ describe("activity toolbar template (#20044)", () => {
     for (const tab of [
       "TracesTab.tsx",
       "AgentsTab.tsx",
-      "StagesTab.tsx",
       "PipelinesTab.tsx",
       "TasksTab.tsx",
     ]) {

@@ -132,33 +132,6 @@ describe("TasksTab", () => {
     expect(selectedRow()).toHaveAttribute("aria-selected", "true");
   });
 
-  it("checks all stage filters by default and narrows by deselection", async () => {
-    render(<TasksTab projectId="proj-1" />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Review approved task")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Development")).toBeChecked();
-      expect(screen.getByLabelText("Operator Review")).toBeChecked();
-    });
-
-    mockFetch.fn.mockClear();
-    fireEvent.click(screen.getByLabelText("Development"));
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-
-    await waitFor(() => {
-      const taskRequest = taskListRequestUrls().find((url) =>
-        url.includes("stage=operator_review"),
-      );
-      expect(taskRequest).toBeTruthy();
-      expect(taskRequest).not.toContain("stage=development");
-    });
-  });
-
   it("surfaces create task API errors in the task alert banner", async () => {
     const consoleError = vi
       .spyOn(console, "error")
@@ -204,17 +177,6 @@ describe("TasksTab", () => {
       review_round_count: 1,
     };
     const plainReadyStage = stagePayload("ready");
-    mockFetch.mockJsonResponse("/api/stages/registry", {
-      stages: [
-        {
-          name: "development",
-          display_label: "Development",
-          category: "implementation",
-          review_policy: "required",
-          position_hint: 10,
-        },
-      ],
-    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [
         {
@@ -702,17 +664,6 @@ describe("TasksTab", () => {
       project_id: "proj-1",
     };
 
-    mockFetch.mockJsonResponse("/api/stages/registry", {
-      stages: [
-        {
-          name: "development",
-          display_label: "Development",
-          category: "implementation",
-          review_policy: "required",
-          position_hint: 10,
-        },
-      ],
-    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?.*parent_task_id=/, {
       tasks: [],
     });

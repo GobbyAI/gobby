@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  currentStage,
-  resolveAdvanceAction,
-  type StageStateView,
-} from "../stageActions";
+import { currentStage, type StageStateView } from "../stageActions";
 import { getCanonicalStageName } from "../taskState";
 import {
   extractTaskPayload,
@@ -188,9 +184,6 @@ describe("normalizeStageRow review_policy fallback", () => {
     const stage = normalizeStageRow({ name: "development" });
 
     expect(stage.review_policy).toBe("required");
-    expect(resolveAdvanceAction("in_progress", stage.review_policy)).toBe(
-      "submit_for_review",
-    );
   });
 
   it("defaults an invalid review policy to required", () => {

@@ -10,10 +10,7 @@ import type { GobbyTask } from "../../types/tasks";
 import type { RawTaskPayload } from "../../lib/taskNormalization";
 import {
   claimTaskForSession,
-  postBuildControl,
   postTaskLifecycleAction,
-  startBuild,
-  startQuickBuild,
 } from "./TasksTabActions";
 import type { GobbyTaskDetail } from "./TasksTabDetailPanel";
 import {
@@ -26,7 +23,6 @@ import { getBaseUrl } from "./TasksTabData";
 interface UseTasksTabMenuActionsProps {
   applyRawTaskUpdate: (taskId: string, rawTask: RawTaskPayload | null) => void;
   chatSessionId?: string | null;
-  fetchTasks: () => void;
   setActionError: Dispatch<SetStateAction<string | null>>;
   taskDetail: GobbyTaskDetail | null;
 }
@@ -34,7 +30,6 @@ interface UseTasksTabMenuActionsProps {
 export function useTasksTabMenuActions({
   applyRawTaskUpdate,
   chatSessionId,
-  fetchTasks,
   setActionError,
   taskDetail,
 }: UseTasksTabMenuActionsProps) {
@@ -53,7 +48,6 @@ export function useTasksTabMenuActions({
       action: TaskMenuAction,
       operation: () => Promise<RawTaskPayload | null>,
       errorPrefix: string,
-      refetchAfter = false,
     ) => {
       closeTaskMenu();
       setActiveTaskAction({ taskId: task.id, action });
@@ -61,7 +55,6 @@ export function useTasksTabMenuActions({
       try {
         const rawTask = await operation();
         if (rawTask !== null) applyRawTaskUpdate(task.id, rawTask);
-        if (refetchAfter) fetchTasks();
       } catch (error) {
         setActionError(
           error instanceof Error
@@ -72,7 +65,7 @@ export function useTasksTabMenuActions({
         setActiveTaskAction(null);
       }
     },
-    [applyRawTaskUpdate, closeTaskMenu, fetchTasks, setActionError],
+    [applyRawTaskUpdate, closeTaskMenu, setActionError],
   );
 
   useEffect(() => {
@@ -109,66 +102,6 @@ export function useTasksTabMenuActions({
       "Failed to assign task to main chat",
     );
   }, [chatSessionId, runMenuAction, taskMenu]);
-
-  const handleBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "build",
-      async () => {
-        await startBuild(getBaseUrl(), task);
-        return null;
-      },
-      "Failed to start build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleBuildQuick = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "buildQuick",
-      async () => {
-        await startQuickBuild(getBaseUrl(), task);
-        return null;
-      },
-      "Failed to start quick build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleStopBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "stopBuild",
-      async () => {
-        await postBuildControl(getBaseUrl(), "stop", task);
-        return null;
-      },
-      "Failed to stop build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleResumeBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "resumeBuild",
-      async () => {
-        await postBuildControl(getBaseUrl(), "resume", task);
-        return null;
-      },
-      "Failed to resume build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
 
   const handleReleaseClaim = useCallback(() => {
     if (!taskMenu?.task) return;
@@ -241,8 +174,6 @@ export function useTasksTabMenuActions({
     closeDialogTask,
     closeTaskMenu,
     handleAssignToMainChat,
-    handleBuild,
-    handleBuildQuick,
     handleCloseTask,
     handleDetailClaim,
     handleDetailRelease,
@@ -250,8 +181,6 @@ export function useTasksTabMenuActions({
     handleOpenCloseTaskDialog,
     handleReleaseClaim,
     handleReopenTask,
-    handleResumeBuild,
-    handleStopBuild,
     setCloseDialogTask,
     taskMenu,
   };
