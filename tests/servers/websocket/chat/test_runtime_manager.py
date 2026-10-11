@@ -1770,6 +1770,59 @@ class TestCodexBackend:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("streamed_text", ["Answer.", "Ans", "Answer. Extra"])
+    async def test_live_tool_boundary_preserves_final_text_deduplication(
+        self, tmp_path: Path, streamed_text: str
+    ) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "itemId": "live-final", "delta": streamed_text},
+                ),
+                (
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "live-tool",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "get_task",
+                                "arguments": "{}",
+                            },
+                        },
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "id": "transcript-final",
+                            "content": [{"type": "output_text", "text": "Answer."}],
+                        },
+                    }
+                )
+            ],
+        )
+
+        expected_text = "Answer. Extra" if streamed_text == "Answer. Extra" else "Answer."
+        assert "".join(event.content for event in events if isinstance(event, TextChunk)) == (
+            expected_text
+        )
+        assert [event.tool_call_id for event in events if isinstance(event, ToolCallEvent)] == [
+            "live-tool"
+        ]
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("streamed_text", ["Answer.", "Ans", "Answer. Extra"])
     async def test_transcript_tool_replay_preserves_final_text_deduplication(
         self, tmp_path: Path, streamed_text: str
     ) -> None:

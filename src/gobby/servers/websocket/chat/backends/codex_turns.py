@@ -165,13 +165,12 @@ async def stream_codex_turn(
             latest_transcript_context_window = context_window
 
     def _start_tool_event(tool_event_data: dict[str, Any]) -> ToolCallEvent | None:
-        nonlocal tool_calls_count, last_text_item_id
+        nonlocal tool_calls_count
         tool_call_id = str(tool_event_data["tool_call_id"])
         if not tool_call_id or tool_call_id in started_tool_call_ids:
             return None
         started_tool_call_ids.add(tool_call_id)
         tool_calls_count += 1
-        last_text_item_id = None
         return ToolCallEvent(
             tool_call_id=tool_call_id,
             tool_name=str(tool_event_data["tool_name"]),
