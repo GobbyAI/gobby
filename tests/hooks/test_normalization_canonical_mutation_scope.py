@@ -359,7 +359,11 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
         ("f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
         ("f ()\n{ cd sub; }\ntouch y.py", ["y.py"]),
         ("function f\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("function f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("my-f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
+        ("function my-f\n{ cd sub; }\ntouch y.py", ["y.py"]),
         ("! cd sub; touch x.py", ["sub/x.py"]),
+        ("! { cd sub; }; touch y.py", ["sub/y.py"]),
         ("{ :; } > out.log", ["out.log"]),
     ],
 )
@@ -390,6 +394,25 @@ def test_grammar_prefix_preserves_write_classification(
     bare = _invocation_metadata(operation, tool_cwd=tmp_path, project_path=tmp_path)
     for key in ("canonical_tool_kind", "canonical_file_paths", "canonical_repo_mutation"):
         assert wrapped.get(key) == bare.get(key)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "! { touch x.py; }",
+        "time { touch x.py; }",
+        "time -p { touch x.py; }",
+        "if ! { touch x.py; }; then :; fi",
+        "! time { touch x.py; }",
+    ],
+)
+def test_combined_grammar_prefixes_preserve_write_classification(
+    tmp_path: Path, command: str
+) -> None:
+    grouped = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    bare = _invocation_metadata("touch x.py", tool_cwd=tmp_path, project_path=tmp_path)
+    for key in ("canonical_tool_kind", "canonical_file_paths", "canonical_repo_mutation"):
+        assert grouped.get(key) == bare.get(key)
 
 
 def test_background_grammar_group_invalidates_later_scope(tmp_path: Path) -> None:

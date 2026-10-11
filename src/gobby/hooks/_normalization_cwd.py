@@ -36,7 +36,9 @@ class ShellDirectoryState:
         openings: list[tuple[int, int]] = []
         for index, segment in enumerate(segments):
             previous = " ".join(t.value for t in segments[index - 1].tokens) if index else ""
-            function_body = bool(re.fullmatch(r"(?:function\s+\w+|\w+\s*\(\s*\))", previous))
+            function_body = bool(
+                re.fullmatch(r"(?:function\s+[^\s()]+(?:\s*\(\s*\))?|[^\s()]+\s*\(\s*\))", previous)
+            )
             for token in segment.tokens:
                 if token.quoted:
                     continue
@@ -113,6 +115,14 @@ class ShellDirectoryState:
                 self._close("loop")
             elif word == "do":
                 self._enter_loop_body()
+            elif word == "!":
+                pass
+            elif word == "time":
+                tokens = tokens[1:]
+                for option in ("-p", "--"):
+                    if tokens and not tokens[0].quoted and tokens[0].value == option:
+                        tokens = tokens[1:]
+                continue
             elif word == "{":
                 isolated = self.group_isolation.get(id(tokens[0]), False)
                 self.groups.append((self.cwd, self.changed, self.branches) if isolated else None)

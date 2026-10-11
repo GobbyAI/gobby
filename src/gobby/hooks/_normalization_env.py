@@ -105,15 +105,8 @@ def _utility_command(parts: list[str]) -> list[str]:
 
 
 def _prefix(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
-    if parts and (_ASSIGNMENT.match(parts[0]) or parts[0] in {"do", "then", "else", "!"}):
+    if parts and (_ASSIGNMENT.match(parts[0]) or parts[0] in {"do", "then", "else"}):
         return parts[1:], ()
-    if parts[:1] == ["time"]:
-        index = 1
-        if parts[index : index + 1] == ["-p"]:
-            index += 1
-        if parts[index : index + 1] == ["--"]:
-            index += 1
-        return parts[index:], ()
     if parts[:1] == ["command"]:
         index = 1
         while index < len(parts) and parts[index] in {"-p", "--"}:
