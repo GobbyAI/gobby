@@ -27,7 +27,7 @@ _INLINE_CRITERION_LINE_RE = re.compile(
     re.MULTILINE,
 )
 _INLINE_ARTIFACT_REF_RE = re.compile(
-    r"\b(?P<kind>test|file):"
+    r"(?<![\w-])(?P<kind>test|file):"
     r"(?:[ \t]*`(?P<quoted>[^`]+)`|[ \t]+(?P<bare>[^\s,;]+))",
     re.IGNORECASE,
 )
@@ -122,6 +122,7 @@ def _trim_bare_reference(value: str) -> str:
 
 def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     """Extract stable, deduplicated test or file references from criteria."""
+    criteria = _mask_fenced_criteria(criteria)
     references: list[str] = []
     matches = [(match.start(), match) for match in _ARTIFACT_REF_RE.finditer(criteria)]
     for criterion in _INLINE_CRITERION_LINE_RE.finditer(criteria):
@@ -148,8 +149,26 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     return tuple(references)
 
 
+def _mask_fenced_criteria(criteria: str) -> str:
+    """Keep fenced examples inert, including an unfinished fence."""
+    fence = ""
+    lines: list[str] = []
+    for line in criteria.splitlines(keepends=True):
+        marker = re.match(r"^[ \t]*(`{3,}|~{3,})([^\n]*)", line)
+        masked = bool(fence or marker)
+        if marker:
+            delimiter, rest = marker.groups()
+            if not fence:
+                fence = delimiter
+            elif delimiter[0] == fence[0] and len(delimiter) >= len(fence) and not rest.strip():
+                fence = ""
+        lines.append(re.sub(r"[^\n]", " ", line) if masked else line)
+    return "".join(lines)
+
+
 def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
     """Return diagnostics for named tests that omit a path or symbol."""
+    criteria = _mask_fenced_criteria(criteria)
     references = extract_artifact_references(criteria, "test")
     findings = [
         f"{reference}: malformed test reference; expected path::test_symbol"
@@ -158,7 +177,7 @@ def malformed_test_reference_findings(criteria: str) -> tuple[str, ...]:
     ]
     inert_spans = [match.span() for match in re.finditer(r"`[^`\n]*`", criteria)]
     inert_spans.extend(match.span("quote") for match in _ILLUSTRATIVE_QUOTE_RE.finditer(criteria))
-    for match in re.finditer(r"\btest:[ \t]*`([^`\n]+)`", criteria, re.IGNORECASE):
+    for match in re.finditer(r"(?<![\w-])test:[ \t]*`([^`\n]+)`", criteria, re.IGNORECASE):
         if any(start <= match.start() < end for start, end in inert_spans):
             continue
         reference = match.group(1).strip().rstrip(".")
@@ -631,16 +650,21 @@ def _test_body_findings(test: AcceptanceTest) -> list[str]:
     return _text_test_findings(test)
 
 
-_JS_ASSERTION_RE = re.compile(r"(?<![\w.$])(?P<name>expect|assert(?:\.[A-Za-z_$][\w$]*)*)\s*\(")
+_JS_ASSERTION_RE = re.compile(
+    r"(?<![\w.$])(?P<name>expect(?:\.soft)?|t\.is|assert(?:\.[A-Za-z_$][\w$]*)*)\s*\("
+)
 _JS_MATCHER_RE = re.compile(r"\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*[A-Za-z_$][\w$]*\s*\(")
 _JS_CONSTANT_RE = re.compile(
     r'(?:true|false|null|undefined|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|"s\d+")'
+)
+_JS_CONSTANT_ARGUMENTS_RE = re.compile(
+    rf"{_JS_CONSTANT_RE.pattern}(?:\s*,\s*{_JS_CONSTANT_RE.pattern})*"
 )
 _JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _JS_LITERAL_RE = re.compile(
     r"(?P<prefix>(?:^|[=(,:;!&|?{}>\[+*%~^-]|"
     r"\b(?:return|throw|case|yield|void|typeof|delete|in|instanceof|await))\s*)/(?![/*>])"
-    r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*|" + _TEXT_LITERAL_PATTERN,
+    r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n\[])++/[a-z]*|" + _TEXT_LITERAL_PATTERN,
     re.MULTILINE | re.DOTALL,
 )
 
@@ -672,7 +696,7 @@ def _javascript_test_findings(test: AcceptanceTest) -> list[str]:
             actual, end = call
             if not actual:
                 continue
-            if match.group("name") == "expect":
+            if match.group("name") in {"expect", "expect.soft"}:
                 matcher = _JS_MATCHER_RE.match(code, end)
                 if matcher is None:
                     continue
@@ -684,7 +708,7 @@ def _javascript_test_findings(test: AcceptanceTest) -> list[str]:
                     not expected or bool(_JS_CONSTANT_RE.fullmatch(expected))
                 )
             else:
-                has_placebo |= bool(_JS_CONSTANT_RE.fullmatch(actual))
+                has_placebo |= bool(_JS_CONSTANT_ARGUMENTS_RE.fullmatch(actual))
             has_assertion = True
     findings = []
     if has_placebo:
