@@ -16,6 +16,8 @@ class _ManagerState(Protocol):
 
     def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
 
 class _LifecycleDelegateMixin:
     def expire_stale_sessions(self: _ManagerState, timeout_hours: int = 24) -> int:
@@ -82,9 +84,15 @@ class _LifecycleDelegateMixin:
 
         from ._session_mapping_cache import invalidate_session_caches
 
-        pruned = _prune_empty(
-            self.db, min_age_hours, status_notifier=self._notify_status_transition
-        )
+        deleted_ids: list[str] = []
+
+        def notify_deleted(transition: SessionStatusTransition) -> None:
+            deleted_ids.append(transition.session_id)
+            self._notify_status_transition(transition)
+
+        pruned = _prune_empty(self.db, min_age_hours, status_notifier=notify_deleted)
         if pruned:
             invalidate_session_caches(self)
+            for session_id in deleted_ids:
+                self._notify_session_change("session_deleted", session_id)
         return pruned
