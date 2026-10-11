@@ -10,12 +10,38 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.constants import IDENTITY_ENV_VARS
+from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 from gobby.runner import main
 from gobby.runner_pid_file import SERVICE_LAUNCH_ENV, SERVICE_NONCE_ENV
 from gobby.utils import spawn
 
 pytestmark = pytest.mark.unit
+
+
+def test_main_pops_inherited_agent_token_before_the_runner_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(GOBBY_AGENT_API_TOKEN, "dummy-inherited-token")
+    token_at_runner_start: list[str | None] = []
+
+    def record_runner_environment(**_kwargs: object) -> None:
+        token_at_runner_start.append(os.environ.get(GOBBY_AGENT_API_TOKEN))
+
+    ownership = MagicMock()
+    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
+    with (
+        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
+        patch("gobby.runner._healthy_daemon_running", return_value=False),
+        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
+        patch("gobby.runner_pid_file.adopt_inherited_claim", return_value=ownership),
+        patch("gobby.runner.run_gobby", new=record_runner_environment),
+        patch("asyncio.run"),
+    ):
+        main()
+
+    assert token_at_runner_start == [None]
+    assert GOBBY_AGENT_API_TOKEN not in os.environ
+    ownership.release.assert_called_once_with()
 
 
 def test_main_pops_inherited_identity_before_the_runner_starts(

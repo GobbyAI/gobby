@@ -649,9 +649,9 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # A daemon started from a pane inherits that pane's identity; every
     # os.environ copy below would hand it to agent terminals, web shells,
     # tmux servers, and the gterm host.
-    from gobby.agents.constants import IDENTITY_ENV_VARS
+    from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 
-    for name in IDENTITY_ENV_VARS:
+    for name in (*IDENTITY_ENV_VARS, GOBBY_AGENT_API_TOKEN):
         os.environ.pop(name, None)
 
     # Must precede any torch import (torch is lazy, voice-only): PyTorch's
