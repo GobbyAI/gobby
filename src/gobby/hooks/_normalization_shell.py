@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c_quote
-from gobby.hooks._normalization_env import strip_shell_wrappers
+from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY, strip_shell_wrappers
 from gobby.hooks._normalization_paths import _append_unique_path
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -852,10 +852,17 @@ def _literal_cd_target(parts: list[str]) -> str | None:
     return None if any(char in target for char in "$`*?[]{};") else target
 
 
+def _join_cwd(cwd: str, path: str) -> str:
+    joined = posixpath.normpath(posixpath.join(cwd, path))
+    if cwd.startswith(UNRESOLVED_DIRECTORY) and not joined.startswith(UNRESOLVED_DIRECTORY):
+        return UNRESOLVED_DIRECTORY
+    return joined
+
+
 def _rebase_shell_path(path: str, cwd: str | None) -> str:
     if not cwd or path.startswith(("/", "~")) or "://" in path:
         return path
-    return posixpath.normpath(posixpath.join(cwd, path))
+    return _join_cwd(cwd, path)
 
 
 def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
@@ -881,7 +888,7 @@ def _apply_cd(cwd: str | None, target: str) -> str:
         return posixpath.normpath(target)
     if not cwd:
         return posixpath.normpath(target)
-    return posixpath.normpath(posixpath.join(cwd, target))
+    return _join_cwd(cwd, target)
 
 
 def _shell_positional_args(parts: list[str]) -> list[str]:

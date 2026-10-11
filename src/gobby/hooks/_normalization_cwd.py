@@ -15,6 +15,7 @@ class _Branch:
     altered: bool = False
     in_condition: bool = False
     condition_altered: bool = False
+    loop: int | None = None
 
 
 @dataclass
@@ -22,6 +23,9 @@ class ShellDirectoryState:
     cwd: str | None
     changed: bool = False
     branches: list[_Branch] = field(default_factory=list)
+    unstable_loops: frozenset[int] = frozenset()
+    altered_loops: set[int] = field(default_factory=set)
+    loops_opened: int = 0
 
     def compound_tokens(
         self, tokens: list[ShellToken], gap: str, case_depth: int, pending: bool
@@ -73,17 +77,24 @@ class ShellDirectoryState:
                     branch.cwd = self.cwd
                     branch.in_condition = False
             elif word in {"for", "while", "until"}:
-                self.branches.append(_Branch("loop", self.cwd))
+                self.branches.append(_Branch("loop", self.cwd, loop=self.loops_opened))
+                self.loops_opened += 1
                 if word == "for":
                     break  # Keep the header for loop binding attribution.
+                self._enter_loop_body()
             elif word == "done":
                 self._close("loop")
             elif word == "do":
-                pass
+                self._enter_loop_body()
             else:
                 break
             tokens = tokens[1:]
         return tokens
+
+    def _enter_loop_body(self) -> None:
+        if self.branches and self.branches[-1].kind == "loop":
+            if self.branches[-1].loop in self.unstable_loops:
+                self.cwd = UNRESOLVED_DIRECTORY
 
     def change(self, target: str | None) -> None:
         self.cwd = _apply_cd(self.cwd, target) if target is not None else UNRESOLVED_DIRECTORY
@@ -112,4 +123,6 @@ class ShellDirectoryState:
     def _close(self, kind: str) -> None:
         if self.branches and self.branches[-1].kind == kind:
             branch = self.branches.pop()
+            if branch.altered and branch.loop is not None:
+                self.altered_loops.add(branch.loop)
             self.cwd = UNRESOLVED_DIRECTORY if branch.altered else branch.cwd

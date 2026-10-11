@@ -20,6 +20,25 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
     return data
 
 
+@pytest.mark.parametrize("command", ["git -C /tmp/x grep -n P", 'cd "$X"; grep -rn P'])
+def test_implicit_search_root_reports_foreign_or_unknown_scope(
+    tmp_path: Path, command: str
+) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_code_navigation_repo_scope"] is False
+
+
+@pytest.mark.parametrize(
+    "command", ["git -C sub grep -n P", "git grep -n P", "grep -rn P", "cd sub; grep -rn P"]
+)
+def test_resolved_implicit_search_root_keeps_repo_scope(tmp_path: Path, command: str) -> None:
+    (tmp_path / "sub").mkdir()
+    data = _metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_code_navigation_repo_scope"] is True
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -56,6 +75,87 @@ def test_loop_directory_join_does_not_assume_an_iteration(tmp_path: Path, comman
     data = _metadata(command, tmp_path)
     assert data["canonical_repo_mutation_scope_unknown"] is True
     assert not data.get("canonical_file_paths")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for d in a b; do touch x.py; cd sub; done",
+        "while true; do touch x.py; cd sub; done",
+        "until false; do touch x.py; cd sub; done",
+        "for d in a b; do cd sub; touch x.py; done",
+        "while cd sub; do touch x.py; done",
+        "while touch x.py; do cd sub; done",
+        "for d in a b; do touch x.py; pushd sub; done",
+        "for d in a b; do if true; then touch x.py; fi; cd sub; done",
+        "for d in a; do for e in b; do touch x.py; done; cd sub; done",
+        "for d in a b; do git add x.py; cd sub; done",
+        'for f in a.py b.py; do sed -i s/x/y/ "$f"; cd sub; done',
+        "for d in a b\ndo\ntouch x.py\ncd sub\ndone",
+        "for d in a b; do echo $d; done | while read d; do touch x.py; cd sub; done",
+        "for d in a b; do touch x.py; cd ROOT/sub; done",
+    ],
+)
+def test_directory_changing_loop_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(command.replace("ROOT", str(tmp_path)), tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert not any(path.endswith(".py") for path in data.get("canonical_file_paths", []))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pushd sub; touch z.py",
+        "popd; touch z.py",
+        'cd "$X"; cd ..; touch z.py',
+        'cd "$X"; cd sub; cd ../..; touch z.py',
+        'cd "$X"; cd ../sub; touch z.py',
+        'cd "$X"; touch ../z.py',
+        "for d in a; do cd sub; done; cd ..; touch z.py",
+    ],
+)
+def test_unresolved_directory_navigation_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert not any(path.endswith(".py") for path in data.get("canonical_file_paths", []))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git -C "$X" grep -n P',
+        "git --git-dir=/tmp/x grep -n P",
+        "git --work-tree /tmp/x grep -n P -- src/",
+        'cd "$X"; git grep -n P',
+    ],
+)
+def test_unproven_git_selector_grep_reports_unknown_scope(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_code_navigation_repo_scope"] is False
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("for d in a b; do touch x.py; done", ["x.py"]),
+        ("cd sub; for d in a b; do touch x.py; done", ["sub/x.py"]),
+        ("for d in a b; do (cd sub; touch y.py); touch x.py; done", ["sub/y.py", "x.py"]),
+        ("for d in a b; do touch x.py; (cd sub); done", ["x.py"]),
+        ("for d in a b; do bash -c 'touch x.py; cd sub'; done", ["x.py"]),
+        ("for d in a b; do cd ROOT/sub; touch x.py; done", ["ROOT/sub/x.py"]),
+        ("for f in $(touch h.py) a; do cd sub; done", ["h.py"]),
+        ("cd sub; cd ..; touch z.py", ["z.py"]),
+    ],
+)
+def test_loop_directory_controls_keep_exact_paths(
+    tmp_path: Path, command: str, expected: list[str]
+) -> None:
+    data = _metadata(command.replace("ROOT", str(tmp_path)), tmp_path)
+    assert data["canonical_file_paths"] == [
+        path.replace("ROOT", str(tmp_path)) for path in expected
+    ]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
 @pytest.mark.parametrize(
