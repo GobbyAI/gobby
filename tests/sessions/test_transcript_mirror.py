@@ -543,8 +543,8 @@ async def test_stop_releases_completion_waiting_for_final_text(
 @pytest.mark.parametrize(
     "prefix,suffix",
     [
-        ("Before tool.\n\n", "After tool."),
-        ("Echo.\n\n", "Echo.\n\n"),
+        ("Before tool.", "After tool."),
+        ("Echo.", "Echo."),
     ],
 )
 async def test_text_tool_text_waits_for_whole_turn_completion(
@@ -610,7 +610,7 @@ async def test_text_tool_text_waits_for_whole_turn_completion(
     send.assert_awaited_once()
     rows = manager.store.list_messages(session_id=session_id)
     assert len(rows) == 1
-    assert rows[0].content == prefix + suffix
+    assert rows[0].content == prefix + "\n\n" + suffix
     assert rows[0].status == "sent"
     assert send.call_args.args[0].content == rows[0].content
 
