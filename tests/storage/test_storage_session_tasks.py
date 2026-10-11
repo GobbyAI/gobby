@@ -156,3 +156,27 @@ def test_worked_on_task_is_the_latest_worked_on_link_or_the_named_one(
     assert named is not None and named.id == older.id
     assert session_task_manager.get_worked_on_task(session_id, mentioned.id) is None
     assert session_task_manager.get_worked_on_task(session_id, "#123") is None
+
+
+def test_review_assignment_replaces_only_the_previous_review_link(
+    session_task_manager: SessionTaskManager,
+    task_manager: LocalTaskManager,
+    sample_project: dict[str, Any],
+    sample_session: Session,
+) -> None:
+    first, second = (
+        task_manager.create_task(
+            project_id=sample_project["id"], title=title, validation_criteria="Scoped reads pass."
+        )
+        for title in ("First review", "Second review")
+    )
+    session_task_manager.link_task(sample_session.id, first.id, "mentioned")
+    session_task_manager.link_task(sample_session.id, first.id, "reviewing")
+    session_task_manager.link_task(sample_session.id, second.id, "reviewing")
+    session_task_manager.link_task(sample_session.id, second.id, "reviewing")
+
+    links = session_task_manager.get_session_tasks(sample_session.id)
+    reviewing = [link["task"].id for link in links if link["action"] == "reviewing"]
+    mentioned = [link["task"].id for link in links if link["action"] == "mentioned"]
+    assert reviewing == [second.id]
+    assert mentioned == [first.id]
