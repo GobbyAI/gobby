@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.utils.session_context import cli_internal_request
 from gobby.workflows.block_audit import audit_source_block
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ def build_before_tool_event(
     _hook_manager, _session_manager, _session, source, metadata, cwd, project_id = (
         service._resolve_tool_event_context(effective_session_id)
     )
+    metadata["_cli_internal_request"] = cli_internal_request.get()
 
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -82,6 +84,7 @@ def build_after_tool_event(
     ):
         return None
     metadata["_mcp_proxy_direct_after_tool"] = True
+    metadata["_cli_internal_request"] = cli_internal_request.get()
 
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,

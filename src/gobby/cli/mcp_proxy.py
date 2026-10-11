@@ -110,7 +110,11 @@ def call_mcp_api(
     """Call MCP API endpoint and handle errors."""
     try:
         response = client.call_http_api(
-            endpoint, method=method, json_data=json_data, timeout=timeout
+            endpoint,
+            method=method,
+            json_data=json_data,
+            timeout=timeout,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
         if response.status_code == 200:
             return cast(dict[str, Any], response.json())

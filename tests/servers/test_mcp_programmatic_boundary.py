@@ -133,6 +133,7 @@ def boundary(
         name="boundary-schema-gate",
         definition_json={
             "event": "before_tool",
+            "group": "progressive-discovery",
             "when": "tool_input.get('server_name') == 'gobby-boundary' and 'gobby-boundary:echo' not in variables.get('unlocked_tools', [])",
             "effects": [{"type": "block", "reason": "Fetch the echo schema first"}],
         },
@@ -345,6 +346,45 @@ def test_unmarked_agent_call_obeys_workflow_rules(boundary: Boundary, route: str
     state = boundary.variables.get_variables(boundary.session_id)
     assert state["saw_before_tool"] is True
     assert state["saw_after_tool"] is True
+
+
+@pytest.mark.parametrize("boundary", ["agent"], indirect=True)
+@pytest.mark.parametrize("route", ["/api/mcp/tools/call", f"/api/mcp/{SERVER}/tools/echo"])
+def test_cli_internal_agent_call_skips_only_discovery(boundary: Boundary, route: str) -> None:
+    boundary.headers["X-Gobby-CLI-Internal"] = "1"
+    allowed = boundary.call(route, {"value": "hello"})
+    assert allowed["success"] is True
+    assert allowed["result"] == {"value": "hello", "session_id": boundary.session_id}
+    state = boundary.variables.get_variables(boundary.session_id)
+    assert "unlocked_tools" not in state
+    assert state["saw_before_tool"] is True
+    assert state["saw_after_tool"] is True
+
+    message_route = (
+        "/api/mcp/tools/call"
+        if route == "/api/mcp/tools/call"
+        else "/api/mcp/gobby-agents/tools/send_message"
+    )
+    body: dict[str, Any] = {"content": "must remain blocked"}
+    if message_route == "/api/mcp/tools/call":
+        body = {"server_name": "gobby-agents", "tool_name": "send_message", "arguments": body}
+    response = boundary.client.post(message_route, json=body, headers=boundary.headers)
+    assert response.status_code == 200
+    blocked = response.json()
+    assert blocked["success"] is False
+    assert blocked["error_code"] == "TOOL_BLOCKED"
+    assert "Messaging blocked by workflow" in blocked["error"]
+    assert boundary.message_calls == []
+
+    del boundary.headers["X-Gobby-CLI-Internal"]
+    blocked_direct = boundary.call(route, {"value": "direct"})
+    assert blocked_direct["success"] is False
+    assert "Fetch the echo schema" in blocked_direct["error"]
+
+    boundary.headers["X-Gobby-CLI-Internal"] = "1"
+    blocked_wrapper = boundary.call(route, {"value": "wrapper"}, bridge=True)
+    assert blocked_wrapper["success"] is False
+    assert "boundary-schema-gate" in blocked_wrapper["error"]
 
 
 @pytest.mark.parametrize("boundary", ["agent"], indirect=True)

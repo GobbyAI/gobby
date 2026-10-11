@@ -31,7 +31,7 @@ from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
 from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.project_context import reset_project_context, set_project_context
-from gobby.utils.session_context import get_request_principal
+from gobby.utils.session_context import cli_internal_request, get_request_principal
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -668,6 +668,10 @@ async def call_mcp_tool(
         # get_session and other lookup tools use it as their own parameter.
         # request_context._set_context_for_request reads it non-destructively via .get().
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
+        cli_token = cli_internal_request.set(
+            request.headers.get("X-Gobby-CLI-Internal") == "1"
+            and not is_mcp_wrapper_request(request)
+        )
         try:
             enforce_workflow = await _enforce_workflow_for_request(request, server)
             timeout = _mcp_call_timeout(server)
@@ -748,6 +752,7 @@ async def call_mcp_tool(
                 )
                 raise HTTPException(status_code=500, detail="Internal server error") from e
         finally:
+            cli_internal_request.reset(cli_token)
             request_context._reset_context(ctx_token)
 
     except HTTPException:
@@ -799,6 +804,10 @@ async def mcp_proxy(
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
+        cli_token = cli_internal_request.set(
+            request.headers.get("X-Gobby-CLI-Internal") == "1"
+            and not is_mcp_wrapper_request(request)
+        )
         try:
             enforce_workflow = await _enforce_workflow_for_request(request, server)
             timeout = _mcp_call_timeout(server)
@@ -890,6 +899,7 @@ async def mcp_proxy(
                 raise HTTPException(status_code=500, detail="Internal server error") from e
 
         finally:
+            cli_internal_request.reset(cli_token)
             request_context._reset_context(ctx_token)
 
     except HTTPException:

@@ -41,7 +41,7 @@ def test_sessions_terminate_forwards_root_session_reference(
             "http://daemon.test/api/mcp/gobby-sessions/tools/terminate_terminal",
             {
                 "json": {"reference": "root-session"},
-                "headers": {"Authorization": "Bearer test"},
+                "headers": {"Authorization": "Bearer test", "X-Gobby-CLI-Internal": "1"},
                 "timeout": 30.0,
             },
         )

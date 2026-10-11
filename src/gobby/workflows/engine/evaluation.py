@@ -571,6 +571,13 @@ class EvaluationMixin:
         for row, body in rules:
             if bridge.cancelled.is_set():
                 raise asyncio.CancelledError
+            if (
+                evaluation.event.metadata.get("_cli_internal_request") is True
+                and evaluation.event.event_type
+                in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL)
+                and body.group == "progressive-discovery"
+            ):
+                continue
             # Match the prior per-rule snapshot without rebuilding helpers or project state.
             current_keys = set(evaluation.variables) - protected_keys
             for key in flattened_keys - current_keys:
