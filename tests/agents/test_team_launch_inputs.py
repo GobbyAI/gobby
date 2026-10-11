@@ -357,7 +357,10 @@ def test_native_manager_pane_supplies_workspace_without_named_tab(lane_env: Lane
 
 
 @pytest.mark.parametrize("context_binding", ["missing", "stale-terminal", "other-seat"])
-def test_bound_manager_pane_wins_among_lane_seats(lane_env: LaneEnv, context_binding: str) -> None:
+@pytest.mark.parametrize("newer_unplaced", [False, True])
+def test_bound_manager_pane_wins_among_lane_seats(
+    lane_env: LaneEnv, context_binding: str, newer_unplaced: bool
+) -> None:
     workspaces = WorkspaceManager(lane_env.db)
     other_pane = str(uuid4())
     workspaces.add_pane(other_pane, beside=lane_env.pane, axis="horizontal")
@@ -372,6 +375,20 @@ def test_bound_manager_pane_wins_among_lane_seats(lane_env: LaneEnv, context_bin
         session_id=lane_env.manager,
     )
     workspaces.set_pane_terminal(lane_env.pane, bound_terminal, owns_terminal=True)
+    if newer_unplaced:
+        terminal_id = str(uuid4())
+        terminals = TerminalManager(lane_env.db)
+        terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=lane_env.project,
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+            machine_id=AGENT_TEST_MACHINE_ID,
+            session_id=lane_env.manager,
+        )
+        newest = terminals.get_live_for_session(lane_env.manager)
+        assert newest is not None and newest.id == terminal_id
     context: dict[str, str | None] = {
         "pane_ref": "",
         "gobby_pane_ref": "",
@@ -389,6 +406,95 @@ def test_bound_manager_pane_wins_among_lane_seats(lane_env: LaneEnv, context_bin
     assert manager is not None
     assert values["report_to"] == manager.ref
     assert (values["workspace"], values["lane_pane"]) == (lane_env.workspace, lane_env.pane)
+
+
+def unplaced_manager_tabs(lane_env: LaneEnv, count: int) -> tuple[str, list[str]]:
+    workspaces = WorkspaceManager(lane_env.db)
+    for tab in workspaces.list_tabs(lane_env.workspace):
+        workspaces.close_tab(tab.id)
+    tree = LocalWorktreeManager(lane_env.db).create(
+        lane_env.project, "lane-3-runbooks", str(lane_env.root)
+    )
+    SessionManager(lane_env.db).update(
+        lane_env.manager,
+        workspace_path=str(lane_env.root),
+        terminal_context={"pane_ref": "", "gobby_pane_ref": "", "gobby_terminal_id": None},
+    )
+    terminal_id = str(uuid4())
+    TerminalManager(lane_env.db).create_pending(
+        terminal_id=terminal_id,
+        project_id=lane_env.project,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        machine_id=AGENT_TEST_MACHINE_ID,
+        session_id=lane_env.manager,
+    )
+    tabs = []
+    for _ in range(count):
+        pane = str(uuid4())
+        tab = workspaces.create_tab(
+            lane_env.workspace,
+            pane_id=pane,
+            project_id=lane_env.project,
+            worktree_id=tree.id,
+            title="Lane 3 - Runbooks",
+        ).tabs[0]
+        tabs.append(tab.id)
+        for _ in range(7):
+            workspaces.add_pane(str(uuid4()), beside=pane, axis="horizontal")
+        workspaces.set_focus_hints(
+            lane_env.workspace,
+            project_id=lane_env.project,
+            tab_id=tab.id,
+            pane_id=pane,
+        )
+    return tree.id, tabs
+
+
+@pytest.mark.parametrize("explicit_workspace", [False, True])
+def test_unplaced_manager_uses_lane_worktree_tab_focus(
+    lane_env: LaneEnv, explicit_workspace: bool
+) -> None:
+    _, tabs = unplaced_manager_tabs(lane_env, 1)
+    workspaces = WorkspaceManager(lane_env.db)
+    tab = workspaces.list_tabs(lane_env.workspace)[0]
+    assert tab.id == tabs[0]
+    panes = workspaces.list_panes(lane_env.workspace)
+    assert len(panes) == 8
+    focused = panes[-1].id
+    workspaces.set_focus_hints(
+        lane_env.workspace,
+        project_id=lane_env.project,
+        tab_id=tab.id,
+        pane_id=focused,
+    )
+
+    values = resolve(
+        lane_env,
+        lane_columns=205,
+        lane_rows=59,
+        **({"workspace": lane_env.workspace} if explicit_workspace else {}),
+    )
+
+    assert values["lane_pane"] == focused
+    assert values["workspace"] == lane_env.workspace
+    assert values["worktree"] == lane_env.worktree
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_unplaced_manager_requires_one_lane_worktree_tab(lane_env: LaneEnv, count: int) -> None:
+    tree_id, _ = unplaced_manager_tabs(lane_env, count)
+    manager = SessionManager(lane_env.db).get(lane_env.manager)
+    assert manager is not None
+
+    with pytest.raises(RunbookSeatRefusal) as failure:
+        resolve(lane_env, lane_columns=205, lane_rows=59)
+
+    message = str(failure.value)
+    assert manager.ref in message
+    assert tree_id in message
+    assert f"candidate count: {count}" in message
 
 
 def test_stale_manager_pane_falls_back_to_unique_lane_tab(lane_env: LaneEnv) -> None:
