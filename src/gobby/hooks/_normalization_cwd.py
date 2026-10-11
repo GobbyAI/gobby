@@ -32,6 +32,8 @@ class ShellDirectoryState:
     cwd: str | None
     changed: bool = False
     list_changed: bool = False
+    list_conditional: bool = False
+    in_conditional: bool = False
     list_frames: list[list[bool]] = field(default_factory=list)
     list_ops: list[bool | None] = field(default_factory=list)
     branches: list[_Branch] = field(default_factory=list)
@@ -42,7 +44,7 @@ class ShellDirectoryState:
     group_functions: dict[int, str] = field(default_factory=dict)
     function_headers: dict[int, int] = field(default_factory=dict)
     directory_functions: set[str] = field(default_factory=set)
-    groups: list[tuple[str | None, bool, list[_Branch], str | None, bool]] = field(
+    groups: list[tuple[str | None, bool, list[_Branch], str | None, bool, bool]] = field(
         default_factory=list
     )
     group_entry: bool = False
@@ -108,6 +110,12 @@ class ShellDirectoryState:
     def pipeline_stage(self, before: str | None, after: str | None) -> bool:
         return (before == "|" and not self.group_entry) or after == "|"
 
+    def end_list(self, before: str | None) -> None:
+        """A cd that ran only after another command leaves cwd unknown once its list ends."""
+        if before not in {"&&", "||", "|"} and self.list_conditional:
+            self.invalidate()
+            self.list_conditional = False
+
     def sequence_separator(self, before: str | None, *, terminates: bool = False) -> None:
         """Invalidate uncertain cwd only for changes in the current and-or list."""
         if before in {None, ";", "\n"}:
@@ -115,6 +123,8 @@ class ShellDirectoryState:
         elif before in {"||", "&"}:
             if self.list_changed and not (before == "||" and terminates):
                 self.invalidate()
+            if before == "||" and terminates and not self.in_conditional:
+                self.list_conditional = False
             if before == "&":
                 self.list_changed = False
         elif before not in {"&&", "|"}:
@@ -122,11 +132,13 @@ class ShellDirectoryState:
         for isolated in self.list_ops:
             if isolated is None:
                 if self.list_frames:
-                    parent, within, frame_isolated = self.list_frames.pop()
+                    parent, within, frame_isolated, conditional = self.list_frames.pop()
                     self.list_changed = parent or (within and not frame_isolated)
+                    self.in_conditional = conditional
             else:
-                self.list_frames.append([self.list_changed, False, isolated])
+                self.list_frames.append([self.list_changed, False, isolated, self.in_conditional])
                 self.list_changed = False
+                self.in_conditional |= before in {"&&", "||"}
         self.list_ops.clear()
 
     def compound_tokens(
@@ -223,7 +235,16 @@ class ShellDirectoryState:
             elif word == "{":
                 isolated = self.group_isolation.get(id(tokens[0]), False)
                 function = self.group_functions.get(id(tokens[0]))
-                self.groups.append((self.cwd, self.changed, self.branches, function, isolated))
+                self.groups.append(
+                    (
+                        self.cwd,
+                        self.changed,
+                        self.branches,
+                        function,
+                        isolated,
+                        self.list_conditional,
+                    )
+                )
                 if isolated:
                     self.branches = []
                 self.group_entry = True
@@ -235,6 +256,7 @@ class ShellDirectoryState:
                     self.group_closed = True
                     if entry[4]:
                         self.cwd, self.changed, self.branches = entry[:3]
+                        self.list_conditional = entry[5]
                 self.group_entry = False
                 self.list_ops.append(None)
             else:
