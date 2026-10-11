@@ -1474,6 +1474,79 @@ class TestCodexBackend:
         assert done.context_window == 258_400
 
     @pytest.mark.asyncio
+    async def test_send_message_does_not_repeat_unkeyed_delta_on_item_completion(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "delta": "Final answer."},
+                ),
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"id": "f1", "type": "agentMessage", "text": "Final answer."},
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ]
+        )
+
+        assert "".join(event.content for event in events if isinstance(event, TextChunk)) == (
+            "Final answer."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_send_message_recovers_zero_delta_text_around_tool_call(self) -> None:
+        tool_item = {
+            "id": "tool-1",
+            "type": "mcpToolCall",
+            "mcpToolCall": {"server": "gobby-tasks", "tool": "list_tasks", "arguments": "{}"},
+        }
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "id": "c1",
+                            "type": "agentMessage",
+                            "text": "I'll check the logs.",
+                        },
+                    },
+                ),
+                ("item/started", {"threadId": "thread-1", "item": tool_item}),
+                (
+                    "item/completed",
+                    {"threadId": "thread-1", "item": {**tool_item, "result": {"tasks": []}}},
+                ),
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"id": "f1", "type": "agentMessage", "text": "Final answer."},
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ]
+        )
+
+        tool_index = next(i for i, event in enumerate(events) if isinstance(event, ToolCallEvent))
+        assert (
+            "".join(event.content for event in events[:tool_index] if isinstance(event, TextChunk))
+            == "I'll check the logs."
+        )
+        assert (
+            "".join(
+                event.content for event in events[tool_index + 1 :] if isinstance(event, TextChunk)
+            )
+            == "Final answer."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("answer_length", [700, 9000])
     @pytest.mark.parametrize("complete_delta", [False, True])
     async def test_send_message_recovers_missing_delta_tail(
