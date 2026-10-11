@@ -82,6 +82,10 @@ class TokenBucketRateLimiter:
         expiry = now + duration_seconds
         self._backoffs[channel_id] = max(self._backoffs.get(channel_id, 0), expiry)
 
+    def backoff_remaining(self, channel_id: str) -> float:
+        """Read remaining channel backoff seconds without changing limiter state."""
+        return max(0.0, self._backoffs.get(channel_id, 0.0) - time.monotonic())
+
     def _get_or_create_bucket(self, channel_id: str) -> _Bucket:
         """Get an existing bucket or create a new one with default settings."""
         if channel_id not in self._buckets:

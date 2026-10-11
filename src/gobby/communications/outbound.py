@@ -19,6 +19,7 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsMessage,
 )
+from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.communications.telegram_callbacks import bounded_callback_ttl
 from gobby.utils.datetime import utc_now
 
@@ -338,6 +339,8 @@ class OutboundCommunications:
                 delay = 10.0 * 2 ** (message.metadata_json["transcript_delivery_attempt"] - 1)
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
                     delay = max(delay, adapter.retry_after_delay(e.response) or 0)
+                elif isinstance(e, RateLimitWaitExceeded):
+                    delay = max(delay, manager._rate_limiter.backoff_remaining(message.channel_id))
                 message.metadata_json["transcript_retry_at"] = utc_now().timestamp() + delay
             logger.exception(
                 "Failed to send message %s to %r: %s: %s",

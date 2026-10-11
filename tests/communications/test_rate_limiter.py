@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import pytest
 
 from gobby.communications.rate_limiter import RateLimitWaitExceeded, TokenBucketRateLimiter
+
+
+def test_backoff_remaining_is_read_only_and_clamps_expired_channels() -> None:
+    limiter = TokenBucketRateLimiter()
+    with patch("gobby.communications.rate_limiter.time") as clock:
+        clock.monotonic.return_value = 100.0
+        limiter.set_backoff("channel", 30.0)
+        backoffs = dict(limiter._backoffs)
+        assert limiter.backoff_remaining("unknown") == 0.0
+        assert limiter.backoff_remaining("channel") == 30.0
+        clock.monotonic.return_value = 120.0
+        assert limiter.backoff_remaining("channel") == 10.0
+        clock.monotonic.return_value = 131.0
+        assert limiter.backoff_remaining("channel") == 0.0
+        assert limiter._backoffs == backoffs
 
 
 @pytest.mark.asyncio

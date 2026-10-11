@@ -13,6 +13,7 @@ import pytest
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig
+from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_window import WindowResult
@@ -107,6 +108,44 @@ async def test_telegram_flood_control_delays_transport_and_durable_retry(
         await manager.retry_transcript_deliveries(session_id)
     rows = manager.store.list_messages(session_id=session_id)
     assert len(requests) == attempts + 1 and rows[0].status == "sent"
+
+
+@pytest.mark.parametrize("backoff_seconds", [90, 1000])
+async def test_channel_backoff_defers_transcript_retry_until_expiry(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], datetime],
+    backoff_seconds: int,
+) -> None:
+    manager, session_id, send = attached
+    channel_id = manager._channel_by_name["mirror-test"].id
+    now = retry_clock(0).timestamp()
+    with patch("gobby.communications.rate_limiter.time") as clock:
+        clock.monotonic.return_value = 100.0
+        manager._rate_limiter.set_backoff(channel_id, backoff_seconds)
+        with pytest.raises(RateLimitWaitExceeded, match="Rate limit wait exceeded"):
+            await manager._rate_limiter.wait_if_needed(channel_id)
+        with pytest.raises(RuntimeError, match="Rate limit wait exceeded"):
+            await manager.mirror_session_message(session_id, "backoff", "reply")
+        send.assert_not_awaited()
+        pending = manager.store.list_messages(session_id=session_id)[0]
+        assert pending.status == "failed"
+        assert pending.metadata_json["transcript_delivery_attempt"] == 1
+        assert pending.metadata_json["transcript_retry_at"] >= now + backoff_seconds
+
+        retry_clock(backoff_seconds - 1)
+        clock.monotonic.return_value = 100.0 + backoff_seconds - 1
+        await manager.retry_transcript_deliveries(session_id)
+        send.assert_not_awaited()
+        pending = manager.store.list_messages(session_id=session_id)[0]
+        assert pending.metadata_json["transcript_delivery_attempt"] == 1
+
+        retry_clock(1)
+        clock.monotonic.return_value = 100.0 + backoff_seconds
+        await manager.retry_transcript_deliveries(session_id)
+        send.assert_awaited_once()
+        delivered = manager.store.list_messages(session_id=session_id)[0]
+        assert delivered.status == "sent"
+        assert delivered.metadata_json["transcript_delivery_attempt"] == 2
 
 
 async def test_detach_cancels_retries_before_same_dm_reattachment(
