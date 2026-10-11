@@ -10,7 +10,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -73,6 +73,35 @@ class TestBundledBlockReasonFraming:
             '{{ skill_fetch_directive("python") }}'
         )
         assert skill_fetch_directive("python").startswith("Load and fully read the skill")
+
+
+@pytest.mark.parametrize("hook_type", ["worktree-create", "WorktreeCreate"])
+@pytest.mark.parametrize("decision", ["deny", "block"])
+def test_worktree_refusal_does_not_stop_session(
+    hook_type: str, decision: Literal["deny", "block"]
+) -> None:
+    response = HookResponse(
+        decision=decision, reason="Cannot reuse unmerged branch", worktree_path="/tmp/unsafe"
+    )
+    result = ClaudeCodeAdapter().translate_from_hook_response(response, hook_type=hook_type)
+
+    assert result.get("continue") is not False
+    assert "stopReason" not in result
+    assert result["decision"] == "block"
+    assert result["reason"] == "Cannot reuse unmerged branch"
+    assert "worktreePath" not in result.get("hookSpecificOutput", {})
+
+
+def test_worktree_success_returns_path() -> None:
+    result = ClaudeCodeAdapter().translate_from_hook_response(
+        HookResponse(worktree_path="/tmp/created"), hook_type="worktree-create"
+    )
+
+    assert result["hookSpecificOutput"] == {
+        "hookEventName": "WorktreeCreate",
+        "worktreePath": "/tmp/created",
+    }
+    assert "decision" not in result
 
 
 def test_deny_reason_not_compacted() -> None:

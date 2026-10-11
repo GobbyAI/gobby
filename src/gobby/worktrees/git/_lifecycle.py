@@ -139,7 +139,7 @@ async def create_worktree(
                     timeout=60,
                 )
             else:
-                # Create worktree with new branch based on origin (original behavior)
+                # Fetch and resolve the exact remote branch, avoiding tag ambiguity.
                 # First, fetch to ensure we have latest refs
                 fetch_result = await runner._run_git(["fetch", "origin", base_branch], timeout=60)
                 if fetch_result.returncode != 0:
@@ -149,7 +149,16 @@ async def create_worktree(
                         error=fetch_result.stderr,
                     )
 
-                # Create worktree with new branch
+                base_name = base_branch.removeprefix("refs/heads/")
+                base_ref = f"refs/remotes/origin/{base_name}"
+                verify_result = await runner._run_git(
+                    ["show-ref", "--verify", "--hash", base_ref], timeout=5
+                )
+                if verify_result.returncode != 0:
+                    error = f"Remote base branch '{base_ref}' could not be resolved"
+                    return GitOperationResult(success=False, message=error, error=error)
+
+                # Create worktree with new branch from the captured commit.
                 result = await runner._run_git(
                     [
                         "worktree",
@@ -157,7 +166,7 @@ async def create_worktree(
                         "-b",
                         branch_name,
                         str(worktree_path),
-                        f"origin/{base_branch}",
+                        verify_result.stdout.strip(),
                     ],
                     timeout=60,
                 )

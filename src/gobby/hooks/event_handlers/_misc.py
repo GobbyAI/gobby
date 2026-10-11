@@ -516,6 +516,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             self.logger.warning("WORKTREE_CREATE project resolution failed: %s", error)
             return HookResponse(decision="allow")
 
+        existing = None
         if self._worktree_manager and project_id:
             existing = self._worktree_manager.get_by_branch(project_id, worktree_name)
             if existing and Path(existing.worktree_path).exists():
@@ -541,17 +542,6 @@ class MiscEventHandlerMixin(EventHandlersBase):
                         decision="block",
                         reason=f"Cannot recreate branch '{worktree_name}': {cargo_error}",
                     )
-                prune_result = await git_manager.prune_worktrees()
-                if not prune_result.success:
-                    self.logger.warning(
-                        "WORKTREE_CREATE retained stale record after Git prune failure: %s",
-                        prune_result.message,
-                    )
-                    return HookResponse(
-                        decision="block",
-                        reason=f"Cannot recreate branch '{worktree_name}': {prune_result.message}",
-                    )
-                self._worktree_manager.delete(existing.id)
 
         current_branch = await git_manager.get_current_branch()
         base_branch = current_branch or await git_manager.get_default_branch()
@@ -613,6 +603,13 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 decision="block", reason=f"Cannot create branch '{worktree_name}': {e}"
             )
 
+        if existing or not create_branch:
+            prune_result = await git_manager.prune_worktrees()
+            if not prune_result.success:
+                return HookResponse(
+                    decision="block",
+                    reason=f"Cannot recreate branch '{worktree_name}': {prune_result.message}",
+                )
         worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
         result = await git_manager.create_worktree(
             worktree_path=worktree_path,
@@ -628,8 +625,31 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 reason=f"Cannot create branch '{worktree_name}': {result.message}",
             )
 
+        if not create_branch:
+            captured_base = base_tip.stdout.strip()
+            advanced = await git_manager.run_git_command(
+                ["merge", "--ff-only", captured_base], cwd=worktree_path, timeout=60
+            )
+            head = await git_manager.run_git_command(
+                ["rev-parse", "--verify", "HEAD"], cwd=worktree_path, timeout=5
+            )
+            if (
+                advanced.returncode != 0
+                or head.returncode != 0
+                or head.stdout.strip() != captured_base
+            ):
+                cleanup = await git_manager.delete_worktree(worktree_path)
+                detail = advanced.stderr.strip() or "branch changed after the ancestry check"
+                if not cleanup.success:
+                    detail += f"; retained worktree '{worktree_path}': {cleanup.message}"
+                return HookResponse(
+                    decision="block", reason=f"Cannot advance branch '{worktree_name}': {detail}"
+                )
+
         if self._worktree_manager and project_id:
             try:
+                if existing:
+                    self._worktree_manager.delete(existing.id)
                 self._worktree_manager.create(
                     project_id=project_id,
                     branch_name=worktree_name,
