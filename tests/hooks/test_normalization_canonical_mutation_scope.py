@@ -2542,3 +2542,27 @@ def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: 
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("case x in x) cd sub;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub;;& d) touch e.py;; esac", "sub/e.py"),
+        ("cd sub & touch x.py", "x.py"),
+    ],
+)
+def test_case_fallthrough_cd_is_not_a_background_job(
+    tmp_path: Path, command: str, expected: str
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(tmp_path),
+        "project_path": str(tmp_path),
+        "tool_input": {"command": command},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_file_paths"] == [expected]
+    assert data["canonical_repo_mutation"] is True
