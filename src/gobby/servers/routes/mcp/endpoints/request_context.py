@@ -300,11 +300,18 @@ async def _set_context_for_request(
         and terminal_context is not None
         and server.session_manager is not None
     ):
-        await server.run_db(
-            server.session_manager.backfill_terminal_context,
-            tokens.resolved_session_id,
-            terminal_context,
-        )
+        try:
+            await server.run_db(
+                server.session_manager.backfill_terminal_context,
+                tokens.resolved_session_id,
+                terminal_context,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to backfill wrapper terminal context for session %s: %s",
+                tokens.resolved_session_id,
+                exc,
+            )
     try:
         await _bind_agent_run_context(server, request, tokens, db=db, arguments=arguments)
         _seed_request_principal(server, request, tokens)

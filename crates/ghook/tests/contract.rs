@@ -630,7 +630,7 @@ fn lifecycle_hook_preserves_provider_context_and_replaces_untrusted_run_id() -> 
 }
 
 #[test]
-fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
+fn tool_hook_enqueues_terminal_context_sender_identity() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let daemon_url = closed_local_url()?;
@@ -650,7 +650,13 @@ fn tool_hook_does_not_enqueue_terminal_context() -> TestResult {
 
     assert!(output.status.success());
     let envelope = read_single_inbox_envelope(gobby_home.path())?;
-    assert!(envelope["input_data"].get("terminal_context").is_none());
+    let context = &envelope["input_data"]["terminal_context"];
+    assert_eq!(context["parent_pid"], std::process::id());
+    assert_eq!(context.as_object().unwrap().len(), 2);
+    assert_eq!(
+        context["gobby_agent_run_id"],
+        "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"
+    );
     assert_eq!(
         envelope["headers"]["X-Gobby-Agent-Run-Id"],
         "3fbc517c-9e1c-4ea3-9a2f-f21b2035c764"

@@ -256,9 +256,16 @@ class TestSetContextForRequest:
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None
 
-    async def test_wrapper_session_header_backfills_terminal_context(self) -> None:
+    @pytest.mark.parametrize("fail_backfill", [False, True])
+    async def test_wrapper_session_header_backfills_terminal_context(
+        self, fail_backfill: bool
+    ) -> None:
         """An explicit wrapper session receives the wrapper's current terminal identity."""
         server = _make_server()
+        if fail_backfill:
+            server.session_manager.backfill_terminal_context.side_effect = RuntimeError(
+                "terminal metadata unavailable"
+            )
         terminal_context = {
             "parent_pid": 4242,
             "tmux_pane": "%142",

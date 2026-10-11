@@ -92,7 +92,8 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
         Some(c) => {
             let critical = c.critical_hooks.contains(hook_type);
             let terminal_context_enabled = crate::terminal_context::enabled_for_hook(hook_type);
-            let preview = terminal_context_enabled.then(crate::terminal_context::capture);
+            let preview = terminal_context_enabled
+                .then(|| crate::terminal_context::capture_for_hook(hook_type));
             (
                 Some(c.source.to_string()),
                 critical,
@@ -158,12 +159,17 @@ mod tests {
     }
 
     #[test]
-    fn codex_pre_tool_use_noncritical_without_terminal_context() {
+    fn codex_pre_tool_use_noncritical_with_terminal_context() {
         let d = diagnose("codex", "PreToolUse");
         assert!(d.cli_recognized);
         assert!(!d.critical);
-        assert!(!d.terminal_context_enabled);
-        assert!(d.terminal_context_preview.is_none());
+        assert!(d.terminal_context_enabled);
+        assert!(
+            d.terminal_context_preview.unwrap()["parent_pid"]
+                .as_i64()
+                .unwrap()
+                > 0
+        );
     }
 
     #[test]
@@ -230,12 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn grok_pre_tool_use_is_recognized_noncritical_without_terminal_context() {
+    fn grok_pre_tool_use_is_recognized_noncritical_with_terminal_context() {
         let d = diagnose("grok", "pre_tool_use");
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("grok"));
         assert!(!d.critical);
-        assert!(!d.terminal_context_enabled);
+        assert!(d.terminal_context_enabled);
     }
 
     fn compile_v2_schema() -> jsonschema::JSONSchema {
