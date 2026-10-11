@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
+
 
 @dataclass
 class DownloadResult:
@@ -34,6 +36,10 @@ class DownloadResult:
     error: str | None = None
     is_temp: bool = False
     provenance: dict[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        (self.error, self.version), counts = clean_untrusted_value([self.error, self.version])
+        log_invisible_counts(counts, "skill hub metadata")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
@@ -69,6 +75,12 @@ class HubSkillInfo:
     version: str | None = None
     score: float | None = None
 
+    def __post_init__(self) -> None:
+        (self.slug, self.display_name, self.description, self.version), counts = (
+            clean_untrusted_value([self.slug, self.display_name, self.description, self.version])
+        )
+        log_invisible_counts(counts, "skill hub metadata")
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -95,6 +107,13 @@ class HubSkillDetails(HubSkillInfo):
 
     latest_version: str | None = None
     versions: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        (self.latest_version, self.versions), counts = clean_untrusted_value(
+            [self.latest_version, self.versions]
+        )
+        log_invisible_counts(counts, "skill hub metadata")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""

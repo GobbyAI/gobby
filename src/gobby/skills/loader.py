@@ -441,6 +441,7 @@ class SkillLoader:
                 for skill in skills:
                     skill.source_type = "zip"
                     skill.source_path = f"zip:{zip_path}"
+                    self.clean_untrusted_skill(skill)
                 return skills
             else:
                 # Load single skill
@@ -451,4 +452,5 @@ class SkillLoader:
                 )
                 skill.source_type = "zip"
                 skill.source_path = f"zip:{zip_path}"
+                self.clean_untrusted_skill(skill)
                 return skill

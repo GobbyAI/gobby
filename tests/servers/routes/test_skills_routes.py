@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +30,27 @@ from tests.fixtures.isolated_checkout import (
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+def test_zip_import_route_publishes_clean_content(
+    client: TestClient, skill_manager: MagicMock, skill_checkout: IsolatedCheckoutProject
+) -> None:
+    archive = Path(skill_checkout.root_path) / "sample.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr(
+            "sample/SKILL.md",
+            "---\nname: sample\ndescription: help\u202e\U000e0061\n---\nbody\u202e\U000e0061\n",
+        )
+        bundle.writestr("sample/references/guide.md", "reference\u202e\U000e0061")
+    response = client.post(
+        "/api/skills/import", json={"source": "sample.zip", "project_id": skill_checkout.project.id}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["imported"] == 1
+    publication = skill_manager.create_skill_with_files.call_args.kwargs
+    assert publication["description"] == "help"
+    assert publication["content"] == "body"
+    assert publication["files"][0].content == "reference"
 
 
 def test_hub_route_stores_clean_instructions_and_references(
