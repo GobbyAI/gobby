@@ -140,13 +140,13 @@ step_workflow:
       on_mcp_success:
         - server: gobby-workflows
           tool: set_variable
-          when: "tool_input.get('name') == 'tick_done' and tool_input.get('value') == true and tool_input.get('scope') == 'step'"
+          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
           action: set_variable
           variable: orchestrator_reported
           value: false
         - server: gobby-workflows
           tool: set_variable
-          when: "tool_input.get('name') == 'tick_done' and tool_input.get('value') == true and tool_input.get('scope') == 'step'"
+          when: "tool_input.get('name') == 'tick_done' and tool_input.get('scope') == 'step'"
           action: set_variable
           variable: log_monitor_reported
           value: false

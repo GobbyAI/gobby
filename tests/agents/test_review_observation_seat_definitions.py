@@ -236,6 +236,7 @@ def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> No
 )
 @pytest.mark.parametrize("stored_form", ["uuid", "qualified", "local"])
 @pytest.mark.parametrize("succeeded", [True, False])
+@pytest.mark.parametrize("tick_done_value", [True, "true"])
 async def test_metrics_monitor_report_requires_both_live_recipients(
     temp_db: PostgresHubDatabase,
     sample_project: dict[str, Any],
@@ -244,6 +245,7 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
     expected: set[str],
     stored_form: str,
     succeeded: bool,
+    tick_done_value: bool | str,
 ) -> None:
     sessions = SessionManager(temp_db)
     caller, orchestrator, log_monitor, other = (
@@ -329,7 +331,7 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         assert instance.variables["tick_window"] is None
 
         # The native setter persists step state before its AFTER_TOOL hook.
-        instance.variables.update(tick_done=True, tick_window="next-window")
+        instance.variables.update(tick_done=tick_done_value, tick_window="next-window")
         manager.save(instance)
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
@@ -338,7 +340,7 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
             timestamp=datetime.now(UTC),
             data={
                 "tool_name": "mcp__gobby__set_variable",
-                "tool_input": {"name": "tick_done", "value": True, "scope": "step"},
+                "tool_input": {"name": "tick_done", "value": tick_done_value, "scope": "step"},
                 "tool_output": {"success": True},
             },
             metadata={},
