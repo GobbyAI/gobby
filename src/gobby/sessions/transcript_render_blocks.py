@@ -220,7 +220,13 @@ def _process_message_block(
 
     # Content Deduplication
     try:
-        content_key = (msg.content_type, msg.content, msg.tool_use_id, msg.tool_name)
+        content_key = (
+            msg.message_id,
+            msg.content_type,
+            msg.content,
+            msg.tool_use_id,
+            msg.tool_name,
+        )
         content_hash = hash(content_key)
         if content_hash in state.seen_content:
             return

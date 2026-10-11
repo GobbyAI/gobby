@@ -96,6 +96,7 @@ class SessionMessageProcessor(
         self._stats_hydration_skipped: set[str] = set()
 
         self._running = False
+        self._stopped = False
         self._task: asyncio.Task[None] | None = None
         self._owner_loop: asyncio.AbstractEventLoop | None = None
 

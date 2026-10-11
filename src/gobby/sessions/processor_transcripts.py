@@ -135,7 +135,7 @@ class ProcessorTranscriptMixin:
         lock = self._processing_locks.setdefault(session_id, asyncio.Lock())
         try:
             async with lock:
-                if self._active_sessions.get(session_id) != transcript_path:
+                if self._stopped or self._active_sessions.get(session_id) != transcript_path:
                     return True
                 return await self._process_session_unlocked(
                     session_id,

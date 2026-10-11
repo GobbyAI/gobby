@@ -159,14 +159,6 @@ def render_incremental(
             is_new_turn = True
         elif state.current_message.role != role:
             is_new_turn = True
-        elif (
-            role == "assistant"
-            and msg.message_id
-            and state.current_message.id != f"{session_id or 'no-session'}-{role}-{msg.message_id}"
-        ):
-            # Distinct native assistant responses are complete even when a CLI
-            # automatically continues without inserting a user record.
-            is_new_turn = True
         elif role in ["user", "system"]:
             is_new_turn = True
 
