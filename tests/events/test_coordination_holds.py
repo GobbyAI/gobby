@@ -5,19 +5,27 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from tests.agents.test_lifecycle_monitor import _make_progress_stagnation_monitor, _pane_text
 from tests.events.test_coordination_waits import CoordinationHarness, connection_for
@@ -164,6 +172,85 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
     unheld = await engine.evaluate(event, session_id=harness.waiter, variables=variables)
     assert unheld.decision == "block"
     assert "Epic tree not complete" in (unheld.reason or "")
+
+
+@pytest.mark.parametrize("ending", ["reply", "reply_expiry"])
+async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
+    harness: CoordinationHarness, ending: str
+) -> None:
+    sync_bundled_rules(harness.db, get_bundled_rules_path())
+    external_id = str(uuid.uuid4())
+    harness.db.execute(
+        "UPDATE sessions SET external_id = %s WHERE id = %s", (external_id, harness.waiter)
+    )
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=SessionManager(harness.db),
+        db=harness.db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(harness.waiter):
+        registered = await registry.call(
+            "wait_for_coordination", {"owner_session": harness.owner, "reply": True}
+        )
+    assert registered["outcome"] == "waiting"
+    assert registered["notification_registered"] is True
+    definition: dict[str, Any] = {
+        "name": "coordination-seat",
+        "prompts": {"agent": "Wait for the lane manager."},
+        "workflows": {"rule_selectors": {"include": ["require-step-completion"]}},
+    }
+    workflow: dict[str, Any] = {
+        "variables": {},
+        "steps": [{"name": "submit", "allowed_tools": "all"}],
+    }
+    row = AgentDefinitionManager(harness.db).upsert_with_steps(
+        "coordination-seat", definition, workflow
+    )
+    body = AgentDefinitionBody.model_validate({**definition, "step_workflow": workflow})
+    AgentStepInstanceManager(harness.db).save(
+        build_step_instance(
+            body,
+            session_id=harness.waiter,
+            step_workflow_id=row.step_workflow_id,
+            current_step="submit",
+        )
+    )
+    variables: dict[str, Any] = {
+        "_agent_type": "coordination-seat",
+        "is_spawned_agent": True,
+        "step_workflow_complete": False,
+        "_memory_initial_stop_checked": True,
+    }
+    state = SessionVariableManager(harness.db)
+    state.merge_variables(harness.waiter, variables)
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id=external_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_native_hook_type": "Stop", "_platform_session_id": harness.waiter},
+    )
+    handler = WorkflowHookHandler(
+        rule_engine=RuleEngine(harness.db), session_manager=SessionManager(harness.db)
+    )
+    held = await handler.evaluate_async(event)
+    assert held.decision == "allow"
+    assert state.get_variables(harness.waiter)["stop_attempts"] == 0
+    if ending == "reply_expiry":
+        harness.db.execute(
+            "UPDATE coordination_waits SET expires_at = clock_timestamp() WHERE id = %s",
+            (registered["wait_id"],),
+        )
+        assert harness.row(registered["wait_id"])["outcome"] == "waiting"
+    else:
+        end_hold(harness, registered["wait_id"], ending)
+        assert harness.row(registered["wait_id"])["outcome"] == "replied"
+    assert harness.row(registered["wait_id"])["delivered_at"] is None
+    unheld = await handler.evaluate_async(event)
+    assert unheld.decision == "block"
+    assert "[require-step-completion]" in (unheld.reason or "")
 
 
 async def test_failed_hold_lookup_does_not_disable_watchdog(harness: CoordinationHarness) -> None:
