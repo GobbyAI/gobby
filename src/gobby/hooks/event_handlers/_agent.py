@@ -627,6 +627,15 @@ class AgentEventHandlerMixin(EventHandlersBase):
         loop = self._event_loop
         if not isinstance(session_id, str) or not processor or not loop or not loop.is_running():
             return
+        communications = processor.communications_manager
+        websocket = processor.websocket_server
+        has_telegram = (
+            communications is not None
+            and communications.has_transcript_mirror_attachment(session_id)
+        )
+        has_voice = websocket is not None and websocket._is_voice_mode(session_id)
+        if not has_telegram and not has_voice:
+            return
         expected = event.data.get("last_assistant_message")
         future = asyncio.run_coroutine_threadsafe(
             processor.complete_turn(session_id, expected if isinstance(expected, str) else None),
