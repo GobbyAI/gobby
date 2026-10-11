@@ -15,6 +15,7 @@ from gobby.communications.telegram_callbacks import (
     telegram_callback_message,
 )
 from gobby.communications.telegram_stickers import telegram_sticker_attachments
+from gobby.prompts.rendering import log_invisible_counts, strip_invisible_unicode
 
 
 def _mentions_telegram_bot(
@@ -316,6 +317,14 @@ def parse_telegram_update(
     conversation_type = (
         raw_conversation_type if isinstance(raw_conversation_type, str) else "unknown"
     )
+    # Direct operator messages are trusted; forwarded content and group messages are not.
+    if conversation_type != "private" or msg_data.get("forward_origin"):
+        text, text_counts = strip_invisible_unicode(text)
+        caption, caption_counts = strip_invisible_unicode(caption)
+        text_counts.add(caption_counts)
+        log_invisible_counts(text_counts, "Telegram untrusted inbound")
+        if not text and attachment is None and sticker is None:
+            return []
     raw_msg_id = msg_data.get("message_id")
     message_id = str(raw_msg_id) if raw_msg_id is not None else ""
     platform_thread_id = _message_thread_id(msg_data)

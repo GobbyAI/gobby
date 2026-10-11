@@ -5,13 +5,18 @@ import logging
 import os
 import random
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import httpx
 
 from gobby.config.app import DaemonConfig
 from gobby.prompts import PromptLoader
+from gobby.prompts.rendering import (
+    clean_untrusted_value,
+    log_invisible_counts,
+    strip_invisible_unicode,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
@@ -354,7 +359,9 @@ class MCPServerImporter:
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError(f"GitHub API returned non-object response for {path}")
-        return data
+        cleaned, counts = clean_untrusted_value(data)
+        log_invisible_counts(counts, "GitHub metadata")
+        return cast(dict[str, Any], cleaned)
 
     async def _fetch_github_readme(
         self,
@@ -367,7 +374,9 @@ class MCPServerImporter:
             f"{GITHUB_API_BASE}/repos/{owner}/{repo}/readme",
             base_headers=GITHUB_RAW_HEADERS,
         )
-        return response.text
+        cleaned, counts = strip_invisible_unicode(response.text)
+        log_invisible_counts(counts, "GitHub README")
+        return cleaned
 
     async def _fetch_github_response(
         self,

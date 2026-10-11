@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from gobby.prompts.rendering import log_invisible_counts, strip_invisible_unicode
 from gobby.skills.limits import HUB_STREAM_CHUNK_BYTES
 
 
@@ -34,6 +35,8 @@ async def read_limited_utf8(
         content.extend(chunk)
 
     try:
-        return content.decode("utf-8")
+        cleaned, counts = strip_invisible_unicode(content.decode("utf-8"))
+        log_invisible_counts(counts, "skill hub web content")
+        return cleaned
     except UnicodeDecodeError as e:
         raise SkillContentError(f"{label} is not valid UTF-8") from e

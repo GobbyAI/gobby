@@ -10,9 +10,15 @@ This module provides the SkillLoader class for loading skills from:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
+from gobby.prompts.rendering import (
+    clean_untrusted_value,
+    log_invisible_counts,
+    strip_invisible_unicode,
+)
 from gobby.skills._loader_files import _classify_file, load_skill_files, scan_subdirectory
 from gobby.skills._loader_github import (
     DEFAULT_CACHE_DIR,
@@ -159,6 +165,9 @@ class SkillLoader:
         # Set source tracking
         skill.source_path = str(skill_file)
         skill.source_type = self._default_source_type
+
+        if skill.source_type in ("github", "hub"):
+            self.clean_untrusted_skill(skill)
 
         return skill
 
@@ -337,6 +346,7 @@ class SkillLoader:
             # Load all skills from the repo
             skills = self.load_directory(skill_path, validate=validate)
             for skill in skills:
+                self.clean_untrusted_skill(skill)
                 skill.source_type = "github"
                 skill.source_path = f"github:{ref.owner}/{ref.repo}"
                 skill.source_ref = ref.branch
@@ -351,7 +361,28 @@ class SkillLoader:
             skill.source_type = "github"
             skill.source_path = f"github:{ref.owner}/{ref.repo}"
             skill.source_ref = ref.branch
+            self.clean_untrusted_skill(skill)
             return skill
+
+    @staticmethod
+    def clean_untrusted_skill(skill: ParsedSkill) -> None:
+        """Clean imported repository text before storing it as agent instructions."""
+        skill.content, counts = strip_invisible_unicode(skill.content)
+        skill.description, description_counts = strip_invisible_unicode(skill.description)
+        counts.add(description_counts)
+        if skill.compatibility is not None:
+            skill.compatibility, compatibility_counts = strip_invisible_unicode(skill.compatibility)
+            counts.add(compatibility_counts)
+        skill.metadata, metadata_counts = clean_untrusted_value(skill.metadata)
+        counts.add(metadata_counts)
+        for file in skill.loaded_files or []:
+            file.content, file_counts = strip_invisible_unicode(file.content)
+            if file_counts.total:
+                encoded = file.content.encode("utf-8")
+                file.content_hash = hashlib.sha256(encoded).hexdigest()
+                file.size_bytes = len(encoded)
+            counts.add(file_counts)
+        log_invisible_counts(counts, "external skill")
 
     def load_from_zip(
         self,

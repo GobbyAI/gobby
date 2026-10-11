@@ -177,6 +177,7 @@ class SkillUpdater:
                     if _github_parsed is not None
                     else self._fetch_from_github(skill, cache_dir)
                 )
+                self._loader.clean_untrusted_skill(parsed)
             elif skill.source_type in ("local", "filesystem"):
                 parsed = self._fetch_from_local(skill)
             else:

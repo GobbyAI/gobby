@@ -246,6 +246,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     "hub_provenance": download_provenance,
                 }
 
+            if source_type in ("github", "hub"):
+                ctx.loader.clean_untrusted_skill(parsed_skill)
+
             # Scan the skill's full text surface (SKILL.md + references/,
             # scripts/, assets) for safety before persisting
             from gobby.skills.scanner import is_external_source, scan_parsed_skill

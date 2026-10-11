@@ -2,7 +2,10 @@
 
 from typing import Any
 
+from mcp.types import ReadResourceResult
+
 from gobby.mcp_proxy.services.server_resolution import caller_project_id, resolve_server
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 
 
 async def read_resource(
@@ -21,7 +24,17 @@ async def read_resource(
             "success": False,
             "error": f"Server '{server_name}' not found in project scope {project_id}",
         }
-    return await service._mcp_manager.read_resource(config.id, uri)
+    result = await service._mcp_manager.read_resource(config.id, uri)
+    payload = result.model_dump(mode="json") if isinstance(result, ReadResourceResult) else result
+    cleaned, counts = clean_untrusted_value(payload)
+    log_invisible_counts(counts, "third-party MCP resource")
+    if not counts.total:
+        return result
+    return (
+        ReadResourceResult.model_validate(cleaned)
+        if isinstance(result, ReadResourceResult)
+        else cleaned
+    )
 
 
 __all__ = ["read_resource"]
