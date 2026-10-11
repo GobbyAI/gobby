@@ -22,6 +22,61 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("wrapper", ["sh -c", "bash -c", "zsh -c", "eval", "env sh -c"])
+def test_nested_dollar_pair_quote_write_fails_closed(tmp_path: Path, wrapper: str) -> None:
+    program = r"""echo \$\$'\\' ; git apply x.patch ; echo '\\'"""
+    command = f'{wrapper} "{program}"'
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_nested_shell_parse_error_write_fails_closed(tmp_path: Path) -> None:
+    command = '''sh -c "echo 'unterminated"'''
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["echo $$'\\' ; git apply x.patch ; echo '\\'", "git apply x.patch"],
+)
+def test_nested_shell_parse_heredoc_controls_keep_script_execution(
+    tmp_path: Path, body: str
+) -> None:
+    data = _invocation_metadata(
+        f"sh <<'EOF'\n{body}\nEOF", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_script_execution"] is True
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command,kind,paths,unknown",
+    [
+        ('sh -c "cat a.py"', "read", ["a.py"], None),
+        ('sh -c "git status"', "execute", None, None),
+        (r'''sh -c "echo \$\$'.txt'"''', "execute", None, None),
+        (r'''bash -c "echo \$'a\\n'"''', "execute", None, None),
+        ('sh -c "cp a b"', "write", ["b"], None),
+        ('''sh -c "sh -c 'git apply x.patch'"''', "write", None, True),
+    ],
+)
+def test_nested_shell_parse_controls_keep_scope(
+    tmp_path: Path, command: str, kind: str, paths: list[str] | None, unknown: bool | None
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == kind
+    assert bool(data.get("canonical_repo_mutation")) is (kind == "write")
+    assert data.get("canonical_file_paths") == paths
+    assert data.get("canonical_repo_mutation_scope_unknown") is unknown
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -982,7 +1037,6 @@ def test_nested_shell_string_uses_parent_cwd_without_changing_it(tmp_path: Path)
     [
         'sh -c "$PROGRAM"',
         "sh -c 'exec \"$PROGRAM\"'",
-        "bash -c 'touch /project/owned.py\nprintf \"'",
         # Redirecting a navigation read's output must not drop the opaque program.
         "bash -c 'cat /project/source.py; /project/missing.sh' > /tmp/scratchpad/out.txt",
     ],
@@ -991,6 +1045,14 @@ def test_unresolved_shell_program_requires_a_claim(tmp_path: Path, command: str)
     data = _shell_write_metadata(command, tmp_path)
 
     assert data.get("canonical_script_execution") is True
+
+
+def test_malformed_nested_shell_program_fails_closed(tmp_path: Path) -> None:
+    data = _shell_write_metadata("bash -c 'touch /project/owned.py\nprintf \"'", tmp_path)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def _script(path: Path, body: str | bytes) -> Path:

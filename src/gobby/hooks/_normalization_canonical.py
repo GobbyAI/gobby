@@ -208,10 +208,6 @@ def _classify_shell_command(
                 if unresolved:
                     unresolved_heredoc_positions.add(position)
     except ValueError:
-        if depth:
-            return _build_canonical_tool_metadata(
-                "execute", confidence="low", extra={"canonical_script_execution": True}
-            )
         return _build_canonical_tool_metadata(
             "write",
             repo_mutation=True,
