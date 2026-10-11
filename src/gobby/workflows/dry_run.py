@@ -349,7 +349,7 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                 _check_condition(
                     handler["when"],
                     "on_mcp_handler",
-                    {"vars", "tool_input", "tool_output"},
+                    {"vars", "session_id", "tool_input", "tool_output"},
                     result,
                     step=step.name,
                 )

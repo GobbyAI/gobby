@@ -340,6 +340,7 @@ class EnforcementCompletionMixin:
                         # over session-wide observer/handoff state with
                         # colliding names (e.g. task_claimed).
                         "vars": {**variables, **instance.variables},
+                        "session_id": session_id,
                         "tool_input": tool_input,
                         "tool_output": tool_output,
                     },

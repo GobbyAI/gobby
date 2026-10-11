@@ -11,6 +11,7 @@ protocol.
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -19,13 +20,21 @@ import yaml
 from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.sandbox_policy import allowed_domains
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import get_machine_id
+from gobby.workflows.condition_helpers_sessions import session_refs_equal
 from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
+from gobby.workflows.dry_run import evaluate_agent_definition
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
     build_agent_workflow_allowed_funcs,
 )
+from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
@@ -206,7 +215,9 @@ def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> No
     prompt = _prompt("metrics-monitor")
     assert "reply=true, timeout=600" in prompt
     assert "Never run ps or read process environments" in prompt
-    assert body.description is not None and "RSS sustained above 4 GB" in " ".join(body.description.split())
+    assert body.description is not None and "RSS sustained above 4 GB" in " ".join(
+        body.description.split()
+    )
     assert "45 seconds" in prompt
     assert "uptime decrease" in prompt
     assert "Reset the watch baseline after a restart" in prompt
@@ -217,37 +228,166 @@ def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> No
     [
         ("gobby#10", "Systems nominal | RSS 200", {"orchestrator_reported"}),
         ("gobby#11", "EVENT=ALARM | uptime decreased", {"log_monitor_reported"}),
-        ("gobby#12", "Systems nominal", set()),
+        ("gobby#12", "Systems nominal | RSS 200", set()),
         ("gobby#10", "checking", set()),
         ("gobby#10", "Please report Systems nominal | with evidence", set()),
         ("gobby#11", "Please explain EVENT=ALARM", set()),
     ],
 )
-def test_metrics_monitor_report_requires_both_live_recipients(
-    target: str, content: str, expected: set[str]
+@pytest.mark.parametrize("stored_form", ["uuid", "qualified", "local"])
+@pytest.mark.parametrize("succeeded", [True, False])
+async def test_metrics_monitor_report_requires_both_live_recipients(
+    temp_db: PostgresHubDatabase,
+    sample_project: dict[str, Any],
+    target: str,
+    content: str,
+    expected: set[str],
+    stored_form: str,
+    succeeded: bool,
 ) -> None:
-    report = _steps("metrics-monitor")["report"]
+    sessions = SessionManager(temp_db)
+    caller, orchestrator, log_monitor, other = (
+        sessions.register(
+            external_id=f"metrics-report-{name}",
+            machine_id=get_machine_id(),
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        for name in ("caller", "orchestrator", "log-monitor", "other")
+    )
+    recipients = {"gobby#10": orchestrator, "gobby#11": log_monitor, "gobby#12": other}
+    body = _load("metrics-monitor")
+    assert body.step_workflow is not None
+    stored_refs = {
+        "uuid": (orchestrator.id, log_monitor.id),
+        "qualified": (
+            f"{sample_project['name']}#{orchestrator.seq_num}",
+            f"{sample_project['name']}#{log_monitor.seq_num}",
+        ),
+        "local": (f"#{orchestrator.seq_num}", f"#{log_monitor.seq_num}"),
+    }
     variables = {
-        "orchestrator_session": "gobby#10",
-        "log_monitor_session": "gobby#11",
+        **body.step_workflow.variables,
+        "orchestrator_session": stored_refs[stored_form][0],
+        "log_monitor_session": stored_refs[stored_form][1],
+        "tick_done": True,
+        "tick_window": "sample-window",
         "orchestrator_reported": False,
         "log_monitor_reported": False,
     }
-    context: dict[str, Any] = {
-        "vars": variables,
-        "tool_input": {"target": "session", "target_id": target, "content": content},
-    }
-    evaluator = SafeExpressionEvaluator(context, build_agent_workflow_allowed_funcs(context))
+    manager = AgentStepInstanceManager(temp_db)
+    manager.save(
+        build_step_instance(
+            body,
+            session_id=caller.id,
+            step_workflow_id=None,
+            variables=variables,
+            current_step="report",
+        )
+    )
+    engine = RuleEngine(temp_db)
+
+    async def send(recipient_id: str, recipient_seq: int | None) -> str | None:
+        ref = f"{sample_project['name']}#{recipient_seq}" if stored_form == "uuid" else recipient_id
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=caller.id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-agents",
+                    "tool_name": "send_message",
+                    "arguments": {"target": "session", "target_id": ref, "content": content},
+                },
+                "tool_output": {"success": succeeded, "result": {"target_id": recipient_id}},
+            },
+            metadata={},
+        )
+        return await engine._process_step_after_tool(event, caller.id, {})
+
+    recipient = recipients[target]
+    assert await send(recipient.id, recipient.seq_num) is None
+    instance = manager.get_for_session(caller.id)
+    assert instance is not None
     matched = {
-        handler["variable"]
-        for handler in report.on_mcp_success
-        if handler.get("when") and evaluator.evaluate(handler["when"])
+        name
+        for name in ("orchestrator_reported", "log_monitor_reported")
+        if instance.variables[name]
     }
-    assert matched == expected
-    transition = report.transitions[0]
-    for orchestrator, log_monitor in [(False, False), (True, False), (False, True), (True, True)]:
-        variables.update(orchestrator_reported=orchestrator, log_monitor_reported=log_monitor)
-        assert bool(evaluator.evaluate(transition.when)) is (orchestrator and log_monitor)
+    assert matched == (expected if succeeded else set())
+    assert instance.current_step == "report"
+    if expected and succeeded:
+        remaining = log_monitor if target == "gobby#10" else orchestrator
+        notice = await send(remaining.id, remaining.seq_num)
+        assert notice is not None and notice.startswith("Step transition: report -> tick")
+        instance = manager.get_for_session(caller.id)
+        assert instance is not None
+        assert instance.current_step == "tick"
+        assert instance.variables["tick_done"] is False
+        assert instance.variables["tick_window"] is None
+
+        # The native setter persists step state before its AFTER_TOOL hook.
+        instance.variables.update(tick_done=True, tick_window="next-window")
+        manager.save(instance)
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=caller.id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__set_variable",
+                "tool_input": {"name": "tick_done", "value": True, "scope": "step"},
+                "tool_output": {"success": True},
+            },
+            metadata={},
+        )
+        notice = await engine._process_step_after_tool(event, caller.id, {})
+        assert notice is not None and notice.startswith("Step transition: tick -> report")
+        instance = manager.get_for_session(caller.id)
+        assert instance is not None and instance.current_step == "report"
+        assert instance.variables["orchestrator_reported"] is False
+        assert instance.variables["log_monitor_reported"] is False
+        assert await send(recipient.id, recipient.seq_num) is None
+        notice = await send(remaining.id, remaining.seq_num)
+        assert notice is not None and notice.startswith("Step transition: report -> tick")
+        instance = manager.get_for_session(caller.id)
+        assert instance is not None and instance.current_step == "tick"
+        assert instance.variables["tick_done"] is False
+
+
+async def test_metrics_monitor_handlers_use_supported_runtime_conditions_and_resets() -> None:
+    result = await evaluate_agent_definition(_load("metrics-monitor"))
+    assert result.valid
+    assert {item.code for item in result.warnings} == {"CIRCULAR_ONLY_PATH"}
+
+
+def test_session_refs_equal_preserves_caller_project_scope(temp_db: PostgresHubDatabase) -> None:
+    sessions = SessionManager(temp_db)
+    projects = LocalProjectManager(temp_db)
+    local_project = projects.create("metrics-local")
+    foreign_project = projects.create("metrics-foreign")
+    local, foreign = (
+        sessions.register(
+            external_id=f"metrics-scope-{project.name}",
+            machine_id=get_machine_id(),
+            source="codex",
+            project_id=project.id,
+        )
+        for project in (local_project, foreign_project)
+    )
+    assert local.id != foreign.id
+    assert local.seq_num == foreign.seq_num
+    local_ref = f"#{local.seq_num}"
+    foreign_ref = f"{foreign_project.name}#{foreign.seq_num}"
+    assert session_refs_equal(sessions, local.id, local_ref, local.id)
+    assert session_refs_equal(sessions, local.id, foreign_ref, foreign.id)
+    assert not session_refs_equal(sessions, local.id, local_ref, foreign.id)
+    assert not session_refs_equal(sessions, local.id, foreign_ref, local_ref)
+    for invalid in (None, "", 1, "missing-project#99"):
+        assert not session_refs_equal(sessions, local.id, invalid, invalid)
+        assert not session_refs_equal(sessions, invalid, local.id, local.id)
 
 
 @pytest.mark.parametrize("name", READ_ONLY_SEATS)

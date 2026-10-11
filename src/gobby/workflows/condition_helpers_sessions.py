@@ -16,6 +16,26 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 
+def session_refs_equal(
+    session_manager: SessionManager | None, caller_ref: Any, left_ref: Any, right_ref: Any
+) -> bool:
+    """Compare session identities, resolving local refs in the caller's project."""
+    if session_manager is None:
+        raise RuntimeError("session reference comparison needs a session manager")
+    if any(not isinstance(ref, str) or not ref for ref in (caller_ref, left_ref, right_ref)):
+        return False
+    try:
+        caller_id = session_manager.resolve_session_reference(caller_ref)
+        caller = session_manager.get(caller_id)
+        if caller is None:
+            return False
+        left_id = session_manager.resolve_session_reference(left_ref, caller.project_id)
+        right_id = session_manager.resolve_session_reference(right_ref, caller.project_id)
+    except ValueError:
+        return False
+    return left_id == right_id
+
+
 def send_keys_target_in_scope(
     session_manager: SessionManager | None, caller_ref: Any, target_ref: Any
 ) -> bool:
@@ -217,6 +237,9 @@ def session_condition_helpers(
 ) -> dict[str, Callable[..., Any]]:
     """Bind the session-scope helpers to the evaluator's session manager."""
     return {
+        "session_refs_equal": lambda caller_ref, left_ref, right_ref: session_refs_equal(
+            session_manager, caller_ref, left_ref, right_ref
+        ),
         "send_keys_target_in_scope": lambda caller_ref, target_ref: send_keys_target_in_scope(
             session_manager, caller_ref, target_ref
         ),
