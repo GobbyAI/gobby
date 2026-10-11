@@ -206,7 +206,7 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
     let row = buffer_row_text(&term, area, 0);
     assert!(row.starts_with(" 1: Untitled"), "tab row: {row:?}");
     assert!(row.contains("⍾ 2: Untitled"), "tab row: {row:?}");
-    assert!(row.contains(" 3: Untitled"), "tab row: {row:?}");
+    assert!(row.contains("⍾ 3: Untitled"), "tab row: {row:?}");
     assert!(
         !row.contains('▶') && !row.contains('‖') && !row.contains('○'),
         "tab row: {row:?}"
@@ -243,6 +243,76 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
 // Plan 2.2 tab bar mouse: gclient tests driving `route_mouse` over the drawn
 // tab bar, kept outside the `parity_tests!` block so the herdr inventory
 // stays exact.
+
+#[test]
+fn human_waits_drive_tab_bells_and_needs_you_counts() {
+    for (status, attention, needs_you) in [
+        ("awaiting_input", serde_json::Value::Null, true),
+        ("awaiting_approval", serde_json::Value::Null, true),
+        (
+            "paused",
+            json!({"kind": "actionable", "reason": "question"}),
+            true,
+        ),
+        (
+            "paused",
+            json!({"kind": "actionable", "reason": "decision"}),
+            true,
+        ),
+        ("paused", serde_json::Value::Null, false),
+        ("awaiting_handoff", serde_json::Value::Null, false),
+        ("active", serde_json::Value::Null, false),
+        ("completed", serde_json::Value::Null, false),
+        (
+            "paused",
+            json!({"kind": "non_actionable", "reason": "provider_error"}),
+            false,
+        ),
+    ] {
+        let mut ws = Workspace::scripted();
+        let pane = ws
+            .open_terminal("term-seat", "native", "epoch")
+            .expect("seat pane");
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "attention",
+            "seq": 1,
+            "entries": [{
+                "entry_id": "session:seat",
+                "session_id": "seat",
+                "provider": "codex",
+                "definition_title": "Lane 1 Developer",
+                "terminal": {"terminal_id": "term-seat", "backend": "native"},
+                "lifecycle_status": status,
+                "attention": attention
+            }]
+        }));
+        ws.reconcile_subscribe_first().expect("seat roster");
+        let mut chrome = Chrome::new(theme());
+        chrome.open_tab(pane, "Seat");
+        let area = Rect::new(0, 0, 80, 1);
+        let mut term = terminal(area.width, area.height);
+        draw(&mut term, |frame| {
+            render_tab_bar(frame, area, &ws, &chrome);
+        });
+        let row = buffer_row_text(&term, area, 0);
+        assert_eq!(row.contains('⍾'), needs_you, "{status}: {row:?}");
+        let counts = gobby_client::ui::status_segments::agent_counts(&ws);
+        assert_eq!(counts.need_you, usize::from(needs_you), "{status}");
+        assert_eq!(counts.active, usize::from(status == "active"), "{status}");
+        assert_eq!(
+            ws.attention_entry_ids().len(),
+            usize::from(needs_you),
+            "{status}"
+        );
+        let corners =
+            gobby_client::ui::pane_chrome::pane_corners(&ws, &chrome, ws.pane(pane), true);
+        assert!(
+            corners.title.contains("Lane 1 Developer"),
+            "{}",
+            corners.title
+        );
+    }
+}
 
 const LEFT_DOWN: MouseEventKind = MouseEventKind::Down(MouseButton::Left);
 const LEFT_DRAG: MouseEventKind = MouseEventKind::Drag(MouseButton::Left);

@@ -149,9 +149,16 @@ fn agent_state_follows_attention_and_terminal() {
         "a prompt outranks a pause"
     );
 
-    // An agent awaiting input, approval or a handoff sits at its prompt:
-    // it reads by its pane and is never held.
-    for status in ["awaiting_input", "awaiting_approval", "awaiting_handoff"] {
+    for status in ["awaiting_input", "awaiting_approval"] {
+        let mut waiting = running.clone();
+        waiting.lifecycle_status = Some(status.to_string());
+        for pane in [Some(&quiet), Some(&busy), None] {
+            assert_eq!(agent_state(&waiting, pane), RowState::Attention, "{status}");
+        }
+    }
+
+    // Handoff and coordination waits never require the operator by themselves.
+    for status in ["awaiting_handoff", "interrupted"] {
         let mut waiting = running.clone();
         waiting.lifecycle_status = Some(status.to_string());
         assert_eq!(
@@ -176,6 +183,15 @@ fn agent_state_follows_attention_and_terminal() {
             "a prompt outranks {status}"
         );
     }
+
+    let mut stalled = finished.clone();
+    stalled.attention = Some(Attention {
+        kind: Some("non_actionable".to_string()),
+        reason: Some("provider_error".to_string()),
+        ..Default::default()
+    });
+    assert_eq!(agent_state(&stalled, Some(&quiet)), RowState::Idle);
+    assert_eq!(agent_state(&stalled, Some(&busy)), RowState::Unseen);
 
     let roster = [entry("run:a", Some("terminal-a")), entry("session:s", None)];
     let model = model(&SidebarRows::default(), &roster, &[quiet]);
@@ -683,6 +699,34 @@ fn build_carries_definition_name_and_task_title() {
         "a session with no run falls back to its provider label"
     );
     assert_eq!(model.agents[2].definition_label(), "Claude");
+}
+
+#[test]
+fn roster_seat_title_survives_task_titles_and_missing_run_rows() {
+    let mut seat = entry("session:s", Some("terminal-s"));
+    seat.session_id = Some("s".into());
+    seat.definition_title = Some("Lane 1 Developer".into());
+    let mut rows = SidebarRows::default();
+    for (source, title, expected) in [
+        ("task", "Fix attention", "Lane 1 Developer"),
+        ("provisional", "Codex", "Lane 1 Developer"),
+        ("definition", "Lane 1 Developer", "Lane 1 Developer"),
+        ("manual", "My custom seat", "My custom seat"),
+    ] {
+        rows.sessions.insert(
+            PROJECT.into(),
+            vec![SessionRow {
+                id: "s".into(),
+                title: Some(title.into()),
+                title_source: Some(source.into()),
+                ..Default::default()
+            }],
+        );
+        let model = model(&rows, &[seat.clone()], &[]);
+        assert_eq!(model.agents[0].definition_label(), expected, "{source}");
+    }
+    let model = model(&SidebarRows::default(), &[seat], &[]);
+    assert_eq!(model.agents[0].definition_label(), "Lane 1 Developer");
 }
 
 /// 3.1.6: the model slug is the display name, else the raw model, lowercased

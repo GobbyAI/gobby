@@ -11,6 +11,8 @@ pub struct RosterEntry {
     pub run_id: Option<String>,
     pub session_id: Option<String>,
     pub lifecycle_status: Option<String>,
+    /// Applied seat title, independent of the session's current task title.
+    pub definition_title: Option<String>,
     /// Set only while the subject is blocked; the daemon sends `null` otherwise.
     pub attention: Option<Attention>,
     pub task: Option<TaskRef>,

@@ -4,7 +4,7 @@
 
 use crate::app::{Pane, PaneId};
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::Hit;
 use crate::ui::marks::{self, MarkPalette};
 use crate::ui::pane_chrome::{
@@ -363,7 +363,9 @@ fn frame_state<W: WorkspaceView>(ws: &W, pane: &Pane) -> FrameState {
         .find(|agent| agent.terminal_id == pane.terminal_id);
     if exited(pane, agent) {
         FrameState::Exited
-    } else if agent.is_some_and(|agent| agent.attention.is_some()) {
+    } else if agent.is_some_and(|agent| {
+        crate::app::sidebar_model::agent_row_state(agent, Some(pane)) == RowState::Attention
+    }) {
         FrameState::Attention
     } else {
         FrameState::Ordinary

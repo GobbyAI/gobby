@@ -468,14 +468,14 @@ fn status_counts_every_agent_on_this_machine_by_class() {
     chrome.open_pane(visible, "alpha");
     chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
 
-    // Attention on the active tab counts too; held and awaiting agents count
-    // as idle; the run on another machine is not counted.
+    // Attention on the active tab and human waits count too; held agents
+    // count as idle; the run on another machine is not counted.
     let counts = agent_counts(&ws);
     assert_eq!(
         counts,
         AgentCounts {
-            need_you: 2,
-            idle: 3,
+            need_you: 3,
+            idle: 2,
             active: 1,
             gone: 1,
         }
@@ -498,7 +498,7 @@ fn status_counts_every_agent_on_this_machine_by_class() {
     });
     let line = &rect_rows(&status, Rect::new(0, 0, 120, 1))[0];
     assert!(
-        line.starts_with(" ⍾ 2 need you │ 3 idle │ 1 active │ ◌ 1 gone  "),
+        line.starts_with(" ⍾ 3 need you │ 2 idle │ 1 active │ ◌ 1 gone  "),
         "{line:?}"
     );
     let gone = line
