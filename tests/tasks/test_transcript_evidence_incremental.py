@@ -488,6 +488,19 @@ async def test_invalid_durable_checkpoint_reparses_safely(
     assert parse_counts == [len(records), len(records), 0]
 
 
+def test_snapshot_rejects_relative_gobby_home_before_creating_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.chdir(tmp_path)
+        patch.setenv("GOBBY_HOME", "relative-home")
+
+        with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+            transcript_evidence_cache.write_snapshot("session", b"{}")
+
+    assert not (tmp_path / "relative-home").exists()
+
+
 def test_durable_checkpoint_limits_file_and_total_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

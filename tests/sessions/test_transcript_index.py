@@ -753,6 +753,23 @@ async def test_get_or_build_index_loads_valid_sidecar_after_cache_clear(
     clear_index_cache()
 
 
+def test_sidecar_rejects_relative_gobby_home_before_creating_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, "transcript", _codex_lines())
+    stat = os.stat(path)
+    index = build_index_from_file(
+        path, "codex", SESSION, mtime_ns=stat.st_mtime_ns, size=stat.st_size
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", "relative-home")
+
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        persist_index_sidecar(path, index)
+
+    assert not (tmp_path / "relative-home").exists()
+
+
 def test_sidecars_use_isolated_cache_and_absolute_path_keys(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -8,7 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from gobby.paths import get_gobby_home
+from gobby.agents.constants import agent_home_cache_root
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ _MAX_CACHE_BYTES = 256 * 1024 * 1024
 
 
 def _cache_dir() -> Path:
-    return get_gobby_home() / "cache" / "transcript-evidence-v1"
+    return agent_home_cache_root() / "transcript-evidence-v1"
 
 
 def _snapshot_path(session_id: str) -> Path:
