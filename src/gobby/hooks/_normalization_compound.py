@@ -41,10 +41,10 @@ def command_substitution_bodies(
                 index += 2
                 continue
             if not quote and text.startswith("$'", index):
-                quote = "'"
+                quote = "$'"
                 index += 2
                 continue
-            if quote != "'" and (
+            if quote not in {"'", "$'"} and (
                 (text.startswith("$(", index) and not text.startswith("$((", index)) or char == "`"
             ):
                 start = index + (1 if char == "`" else 2)
@@ -56,7 +56,7 @@ def command_substitution_bodies(
             if char in "\"'":
                 if not quote:
                     quote = char
-                elif quote == char:
+                elif quote == char or (quote == "$'" and char == "'"):
                     quote = ""
             index += 1
         covered_until = max(covered_until, index)
