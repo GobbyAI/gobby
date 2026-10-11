@@ -14,6 +14,7 @@ from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
     _prepare_provider_sandbox,
+    prepare_claude_spawn,
     prepare_codex_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
@@ -46,6 +47,53 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         prepared_spawn=spawn_context,
     )
     return request, spawn_context, run_manager
+
+
+@pytest.mark.parametrize("agent_name", ["task-close-reviewer", "backend-developer"])
+@pytest.mark.parametrize(
+    ("backend", "enforced"),
+    [("srt", True), ("srt", False), ("provider-native", True)],
+)
+@pytest.mark.asyncio
+async def test_claude_srt_close_reviewer_disables_housekeeping(
+    monkeypatch: pytest.MonkeyPatch, agent_name: str, backend: str, enforced: bool
+) -> None:
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        provider="claude",
+        agent_name=agent_name,
+        session_manager=MagicMock(),
+        extra_env={
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "",
+            "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "0",
+        },
+    )
+    launch = SandboxLaunch(backend=backend, enforced=enforced)
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=launch),
+    )
+    record_launch = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", record_launch
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+
+    plan = await prepare_claude_spawn(request)
+
+    assert isinstance(plan, ProviderSpawnPlan)
+    quiet = agent_name == "task-close-reviewer" and backend == "srt" and enforced
+    assert plan.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == ("1" if quiet else "")
+    assert plan.env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"] == (
+        "1" if quiet else "0"
+    )
+    assert record_launch.call_args.kwargs["env"] == plan.env
+    assert plan.launch is launch
 
 
 @pytest.mark.parametrize(
