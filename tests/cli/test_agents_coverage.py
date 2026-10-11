@@ -104,7 +104,7 @@ class TestSpawnAgentCmd:
                 "provider": "codex",
                 "timeout": 120.0,
             },
-            headers={"Authorization": "test"},
+            headers={"Authorization": "test", "X-Gobby-CLI-Internal": "1"},
             timeout=30.0,
         )
         if json_output:
