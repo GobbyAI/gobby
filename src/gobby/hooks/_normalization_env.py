@@ -19,6 +19,8 @@ def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
         word = remaining[index]
         if word == "--":
             index += 1
+            while index < len(remaining) and "=" in remaining[index]:
+                index += 1
             break
         if word in {"--help", "--version"}:
             return [], ()

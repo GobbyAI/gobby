@@ -316,7 +316,7 @@ def _classify_shell_command(
             ):
                 metadata.append(body_metadata)
         if parts[:1] != ["for"] and not preserves_directory(parts):
-            directory.mark_changed()
+            directory.mark_unproven()
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(

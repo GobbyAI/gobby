@@ -61,7 +61,7 @@ def test_loop_directory_join_does_not_assume_an_iteration(tmp_path: Path, comman
 @pytest.mark.parametrize(
     "command",
     [
-        "if cd sub && false; then true; else touch g.py; fi",
+        "if cd sub && false; then :; else touch u.py; fi",
         "if cd sub && false; then true; elif touch g.py; then true; fi",
     ],
 )
@@ -74,7 +74,18 @@ def test_condition_navigation_does_not_attribute_else_to_entry_cwd(
 
 
 @pytest.mark.parametrize(
-    "loop", ["for d in a; do true", "while false; do true", "until true; do true"]
+    "loop",
+    [
+        "for d in a; do true",
+        "while false; do true",
+        "until true; do true",
+        "for d in a; do echo $d",
+        "for d in a; do :",
+        "while false; do echo $d",
+        "while false; do :",
+        "until true; do echo $d",
+        "until true; do :",
+    ],
 )
 def test_directory_preserving_loop_keeps_following_write_scope(tmp_path: Path, loop: str) -> None:
     data = _metadata(f"{loop}; done; touch z.py", tmp_path)
@@ -82,7 +93,7 @@ def test_directory_preserving_loop_keeps_following_write_scope(tmp_path: Path, l
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
-@pytest.mark.parametrize("assignment", ["FOO+=x", "a.b=1"])
+@pytest.mark.parametrize("assignment", ["FOO+=x", "a.b=1", "-- FOO+=x", "-- A=1"])
 def test_env_accepts_assignment_names_outside_shell_identifier_grammar(
     tmp_path: Path, assignment: str
 ) -> None:
@@ -163,6 +174,12 @@ def test_unparseable_wrapper_fails_closed(tmp_path: Path, command: str) -> None:
 def test_case_arm_directory_state(tmp_path: Path, terminator: str, expected: str) -> None:
     data = _metadata(f"case x in x) cd sub; touch c.py{terminator} d) touch e.py;; esac", tmp_path)
     assert data["canonical_file_paths"] == ["sub/c.py", expected]
+
+
+def test_case_write_preserves_following_write_scope(tmp_path: Path) -> None:
+    data = _metadata("case x in x) touch c.py;; esac; touch d.py", tmp_path)
+    assert data["canonical_file_paths"] == ["c.py", "d.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
 @pytest.mark.parametrize(

@@ -157,7 +157,10 @@ async def test_env_git_writes_obey_task_claim_gate(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrapper", ["nohup", "timeout 5", "nice -n 5", "env FOO+=x", "env a.b=1"])
+@pytest.mark.parametrize(
+    "wrapper",
+    ["nohup", "timeout 5", "nice -n 5", "env FOO+=x", "env a.b=1", "env -- FOO+=x", "env -- A=1"],
+)
 @pytest.mark.parametrize("claimed", [False, True])
 async def test_utility_wrapped_writes_obey_claim_gate(
     claim_engine: RuleEngine, tmp_path: Path, wrapper: str, claimed: bool

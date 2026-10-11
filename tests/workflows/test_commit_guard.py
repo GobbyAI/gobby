@@ -457,6 +457,29 @@ async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> Non
     assert response.decision == "allow"
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch d.py",
+        "case x in x) :;; esac; touch d.py",
+        "if true; then echo hi; fi; touch d.py",
+        "for f in a b; do echo $f; done; git add d.py",
+        "if [ ! -d build ]; then mkdir build; fi; cp a.py build/",
+        "if grep -q x a.py; then :; else touch d.py; fi",
+    ],
+)
+@pytest.mark.asyncio
+async def test_directory_preserving_branches_allow_claimed_shell_write(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    guard_harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name = %s)",
+        ("block-unresolved-scope-shell-write",),
+    )
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    assert response.decision == "allow"
+
+
 @pytest.mark.asyncio
 async def test_clean_foreign_edit_releases_stale_entry_for_reedit(
     guard_harness: GuardHarness,

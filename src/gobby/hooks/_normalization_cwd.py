@@ -93,9 +93,13 @@ class ShellDirectoryState:
         self.cwd = None
         self.mark_changed()
 
-    def mark_changed(self) -> None:
-        """Keep script proof monotonic and notify every enclosing branch."""
+    def mark_unproven(self) -> None:
+        """Keep script proof monotonic without assuming directory movement."""
         self.changed = True
+
+    def mark_changed(self) -> None:
+        """Record directory movement in every enclosing branch."""
+        self.mark_unproven()
         for branch in self.branches:
             branch.altered = True
             branch.condition_altered |= branch.in_condition
