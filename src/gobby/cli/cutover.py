@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -69,6 +70,7 @@ def _run(
     cwd: Path,
     label: str,
     timeout: int,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(  # nosec B603 # fixed developer-tool arguments
@@ -78,13 +80,15 @@ def _run(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise CutoverError(f"{label} timed out after {timeout} seconds") from exc
     except OSError as exc:
         raise CutoverError(f"{label} could not start: {exc}") from exc
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        detail = "\n".join(part for part in (result.stderr.strip(), result.stdout.strip()) if part)
+        detail = detail or f"exit {result.returncode}"
         raise CutoverError(f"{label} failed: {detail}")
     return result
 
@@ -188,6 +192,41 @@ def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
     return None
 
 
+def _prove_catalog_freshness(root: Path, candidate: Path) -> None:
+    """Bind the migrated planned catalog to the exact candidate schema assets."""
+    try:
+        identity = probe_set_member_identity(candidate, "gdaemon")
+        env = {**os.environ, "GOBBY_EXPECTED_SCHEMA_IDENTITY": json.dumps(identity)}
+        env.pop("UPDATE_GCORE_SCHEMA_MANIFEST", None)
+        result = _run(
+            [
+                "cargo",
+                "test",
+                "--locked",
+                "-p",
+                "gobby-core",
+                "--features",
+                "postgres",
+                "--test",
+                "catalog_manifest_freshness",
+                "catalog_manifest_is_fresh_for_embedded_assets",
+                "--",
+                "--exact",
+            ],
+            cwd=root,
+            label="catalog manifest freshness",
+            timeout=600,
+            env=env,
+        )
+        if "test result: ok. 1 passed; 0 failed; 0 ignored;" not in result.stdout:
+            raise CutoverError("mandatory catalog manifest freshness test did not run")
+    except (BinarySetCoherenceError, CutoverError) as exc:
+        raise CutoverError(
+            f"refusing to promote: {exc}. Start the isolated test hub or set "
+            "GOBBY_SCHEMA_TEST_DATABASE_URL; regenerate stale catalog/identity carriers"
+        ) from exc
+
+
 def run_cutover(
     root: Path,
     bin_dir: Path,
@@ -199,6 +238,7 @@ def run_cutover(
     artifacts = _build_artifacts(root)
     if refusal := start_refusal(artifacts["gdaemon"]):
         raise CutoverError(f"refusing to promote: {refusal}")
+    _prove_catalog_freshness(root, artifacts["gdaemon"])
     try:
         promote_workspace_binary_set(
             artifacts,

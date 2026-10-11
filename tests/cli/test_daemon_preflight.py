@@ -50,6 +50,7 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
+    monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", lambda _url: None)
     config = DaemonConfig()
     config.agent_sandbox.enabled = False
     config.web_chat_sandbox.enabled = False
@@ -251,6 +252,42 @@ def test_candidate_mode_plans_with_bootstrap_url(
     assert daemon_preflight.restart_start_refusal(ctx, _CANDIDATE) is None
     assert plan_calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
     assert opened == []
+
+
+def test_candidate_test_cluster_failure_refuses_cutover(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        daemon_preflight,
+        "probe_set_member_identity",
+        lambda _binary, _member: dict(expected_schema_identity()),
+    )
+    calls: list[str] = []
+
+    def verify_cluster(database_url: str) -> None:
+        calls.append(database_url)
+        raise SchemaContractError("isolated test hub unavailable")
+
+    monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", verify_cluster)
+    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    assert refusal == "isolated test hub unavailable"
+    assert calls == [_BOOTSTRAP_URL]
+    assert plan_calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
+
+
+def test_candidate_without_hub_url_refuses_cutover(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        daemon_preflight,
+        "probe_set_member_identity",
+        lambda _binary, _member: dict(expected_schema_identity()),
+    )
+    monkeypatch.setattr(daemon_preflight, "_hub_url", lambda _database: None)
+    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    assert refusal is not None
+    assert "requires a readable hub URL" in refusal
+    assert plan_calls == []
 
 
 def test_candidate_identity_mismatch_is_a_refusal(

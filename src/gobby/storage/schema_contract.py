@@ -10,6 +10,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import psycopg
+
 from gobby.storage.schema_identity_pin import SchemaIdentityError, probe_identity, validate_identity
 from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
@@ -185,6 +187,39 @@ def plan_schema(database_url: str, *, gdaemon: Path | None = None) -> str:
         binary=gdaemon,
         remedy="Fix the schema inputs or the hub before restarting",
     )
+
+
+def _cluster_id(connection: psycopg.Connection[tuple[object, ...]]) -> str:
+    row = connection.execute("SELECT system_identifier::text FROM pg_control_system()").fetchone()
+    if row is None or not isinstance(row[0], str):
+        raise SchemaContractError("Cannot prove PostgreSQL cluster isolation")
+    return row[0]
+
+
+def verify_catalog_test_cluster(database_url: str) -> None:
+    """Read-only isolation gate before cutover runs the native freshness test.
+
+    Baseline/migrations can alter cluster-wide roles. A second database on the
+    hub cluster is insufficient; only the isolated test cluster may run the test.
+    """
+    remedy = "Start the isolated test hub or set GOBBY_SCHEMA_TEST_DATABASE_URL"
+    test_url = os.environ.get("GOBBY_SCHEMA_TEST_DATABASE_URL")
+    if not test_url:
+        raise SchemaContractError(
+            f"Candidate catalog preflight requires an isolated schema-test URL. {remedy}"
+        )
+    try:
+        with (
+            psycopg.connect(database_url, autocommit=True, connect_timeout=5) as hub,
+            psycopg.connect(test_url, autocommit=True, connect_timeout=5) as admin,
+        ):
+            if _cluster_id(hub) == _cluster_id(admin):
+                raise SchemaContractError(
+                    "Candidate catalog preflight requires a separate PostgreSQL cluster; "
+                    f"the schema-test URL resolves to the live hub cluster. {remedy}"
+                )
+    except psycopg.Error as exc:
+        raise SchemaContractError(f"Candidate catalog preflight failed: {exc}. {remedy}") from exc
 
 
 def verify_schema(database_url: str) -> None:
