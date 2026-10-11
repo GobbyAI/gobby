@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from zipfile import ZipFile
 
 import pytest
@@ -189,13 +189,39 @@ async def test_install_validation_error_is_cleaned(temp_db: HubDatabase, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_http_discovery_metadata_is_cleaned(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gobby.servers.routes.mcp.endpoints import execution, request_context
+async def test_http_discovery_metadata_is_cleaned(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from starlette.requests import Request
+
+    from gobby.app_context import ServiceContainer
+    from gobby.servers.http import HTTPServer
+    from gobby.servers.routes.mcp.endpoints import execution
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+    from gobby.storage.tasks import LocalTaskManager
 
     config = MCPServerConfig(
-        name="external", project_id="test-project", transport="http", url="https://example.test"
+        name="external", project_id=GLOBAL_PROJECT_ID, transport="http", url="https://example.test"
     )
-    manager = MCPClientManager(server_configs=[config], project_id="test-project")
+    manager = MCPClientManager(server_configs=[config], project_id=GLOBAL_PROJECT_ID)
+    server = HTTPServer(
+        ServiceContainer(
+            database=temp_db,
+            session_manager=None,
+            task_manager=LocalTaskManager(temp_db),
+            project_id=GLOBAL_PROJECT_ID,
+        ),
+        test_mode=True,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp/external/tools",
+            "query_string": b"",
+            "headers": [(b"x-gobby-project-id", GLOBAL_PROJECT_ID.encode())],
+        }
+    )
     session = SimpleNamespace(
         list_tools=AsyncMock(
             return_value=ListToolsResult(
@@ -210,19 +236,17 @@ async def test_http_discovery_metadata_is_cleaned(monkeypatch: pytest.MonkeyPatc
         )
     )
     monkeypatch.setattr(manager, "ensure_connected", AsyncMock(return_value=session))
-    token = SimpleNamespace(resolved_session_id=None)
-    monkeypatch.setattr(request_context, "_set_context_for_request", AsyncMock(return_value=token))
-    monkeypatch.setattr(request_context, "_reset_context", lambda _token: None)
-    monkeypatch.setattr(execution, "_enforce_workflow_for_request", AsyncMock(return_value=False))
-    monkeypatch.setattr(execution, "_http_request_scope", lambda *_args: "test-project")
-    result = await execution.list_mcp_tools(config.name, MagicMock(), MagicMock(), None, manager)
+    result = await execution.list_mcp_tools(config.name, request, server, None, manager)
     assert result["success"] is True
     assert result["tools"][0]["description"] == "description"
     assert result["tools"][0]["inputSchema"]["description"] == "schema"
     session.list_tools.side_effect = RuntimeError("remote failure" + HIDDEN)
-    failure = await execution.list_mcp_tools(config.name, MagicMock(), MagicMock(), None, manager)
+    failure = await execution.list_mcp_tools(config.name, request, server, None, manager)
     assert failure["success"] is False
     assert failure["error"] == "Failed to list tools: remote failure"
+    for response in (result, failure):
+        assert "\u202e" not in str(response)
+        assert "\U000e0061" not in str(response)
 
 
 def test_imported_metadata_key_is_rejected() -> None:
