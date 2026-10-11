@@ -490,7 +490,11 @@ def _mask_code(code: str, path: str) -> str:
 def _literal_regex(path: str) -> re.Pattern[str]:
     if _is_rust(path):
         return _RUST_LITERAL_RE
-    return _JS_LITERAL_RE if Path(path).suffix in _JS_EXTENSIONS else _TEXT_LITERAL_RE
+    return _JS_LITERAL_RE if _is_javascript(path) else _TEXT_LITERAL_RE
+
+
+def _is_javascript(path: str) -> bool:
+    return Path(path).suffix.casefold() in _JS_EXTENSIONS
 
 
 def _literal_spans(source: str, path: str) -> list[tuple[int, int]]:
@@ -602,7 +606,7 @@ def _include_symbol_attributes(source: str, declaration_start: int) -> int:
 def _matching_brace_end(source: str, opening: int, path: str) -> int:
     scan_re = _RUST_BRACE_SCAN_RE if _is_rust(path) else _TEXT_BRACE_SCAN_RE
     text_spans = []
-    if Path(path).suffix in _JS_EXTENSIONS:
+    if _is_javascript(path):
         scan_re = re.compile(r"[{}]")
         text_spans = _literal_spans(source, path)
     depth = 0
@@ -634,7 +638,7 @@ _JS_CONSTANT_RE = re.compile(
 )
 _JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _JS_LITERAL_RE = re.compile(
-    r"(?P<prefix>(?:^|[=(,:;!&|?{}>\[+*%~<^-]|"
+    r"(?P<prefix>(?:^|[=(,:;!&|?{}>\[+*%~^-]|"
     r"\b(?:return|throw|case|yield|void|typeof|delete|in|instanceof|await))\s*)/(?![/*])"
     r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*|" + _TEXT_LITERAL_PATTERN,
     re.MULTILINE | re.DOTALL,

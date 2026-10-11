@@ -127,6 +127,7 @@ def test_javascript_assertion_requires_executable_matcher(body: str) -> None:
         r"const pattern = /^https?:\/\//; expect(url).toEqual(expected);",
         r"expect(url).toMatch(/[}/]/);",
         "expect(total / count).toEqual(expected);",
+        "render(<p>a</p>); expect(url).toMatch(/b/);",
     ],
 )
 def test_javascript_regex_preserves_executable_assertions(tmp_path: Path, body: str) -> None:
@@ -148,7 +149,6 @@ def test_javascript_regex_preserves_executable_assertions(tmp_path: Path, body: 
         "const patterns = [/expect(actual).toEqual(expected)/];",
         "const pattern = value + /expect(actual).toEqual(expected)/;",
         "const pattern = value * /expect(actual).toEqual(expected)/;",
-        "const pattern = value < /expect(actual).toEqual(expected)/;",
         "throw /expect(actual).toEqual(expected)/;",
     ],
 )
@@ -156,6 +156,40 @@ def test_javascript_regex_text_never_earns_assertion_credit(body: str) -> None:
     test = AcceptanceTest("regex.test.ts::feature", "regex.test.ts", "feature", body)
     assert artifacts_module._test_body_findings(test) == [
         f"{test.reference}: contains no executable assertion or panic expectation"
+    ]
+
+
+def test_typescript_jsx_closing_tags_preserve_test_body(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / "list.test.tsx").write_text(
+        """it("list", () => {
+  render(<ul>{items.map((i) => <li key={i}>{i}</li>)}</ul>);
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+});
+""",
+        encoding="utf-8",
+    )
+    sha = _commit(repo, "JSX assertion fixture")
+    result = evaluate_acceptance_artifacts(
+        criteria="test: `list.test.tsx::list`", repo_path=str(repo), commit_shas=[sha]
+    )
+    assert result.passed, result.findings
+    assert len(result.tests) == 1
+
+
+@pytest.mark.parametrize("extension", [".TS", ".JS", ".TSX"])
+def test_javascript_uppercase_suffix_uses_regex_masking(extension: str) -> None:
+    path = f"regex.test{extension}"
+    test = AcceptanceTest(path + "::feature", path, "feature", r"expect(url).toMatch(/\/\//);")
+    assert artifacts_module._test_body_findings(test) == []
+    literal_only = AcceptanceTest(
+        path + "::feature",
+        path,
+        "feature",
+        "const patterns = [/expect(actual).toEqual(expected)/];",
+    )
+    assert artifacts_module._test_body_findings(literal_only) == [
+        f"{literal_only.reference}: contains no executable assertion or panic expectation"
     ]
 
 
