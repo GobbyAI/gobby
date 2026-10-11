@@ -10,13 +10,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
-from uuid import uuid4
 
-import psycopg
 import pytest
 from click.testing import CliRunner, Result
-from psycopg import sql
-from psycopg.conninfo import make_conninfo
 
 from gobby.cli import cli
 from gobby.install import bin_set_coherence
@@ -105,7 +101,7 @@ def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_targ
 
 
 @pytest.mark.integration
-def test_stale_embedded_catalog_refuses_cutover_before_hub_migrations(
+def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_cargo_target: None
 ) -> None:
     """Compile a stale candidate and use real native freshness against isolated60892."""
@@ -153,25 +149,15 @@ def test_stale_embedded_catalog_refuses_cutover_before_hub_migrations(
     monkeypatch.setattr(cutover_module, "_prove_catalog_freshness", _PROVE_CATALOG_FRESHNESS)
     promotion, restart = Mock(), Mock()
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
-    name = f"catalog_live_{uuid4().hex}"
-    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as admin:
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        try:
-            with psycopg.connect(make_conninfo(os.environ["DATABASE_URL"], dbname=name)) as hub:
-                with pytest.raises(cutover_module.CutoverError) as error:
-                    cutover_module.run_cutover(
-                        fixture,
-                        tmp_path / "bin",
-                        restart_daemon=restart,
-                        start_refusal=lambda _candidate: None,
-                    )
-                assert "catalog manifest is stale" in str(error.value)
-                assert removed["name"] in str(error.value)
-                assert hub.execute("SELECT to_regclass('public.schema_migrations')").fetchone() == (
-                    None,
-                )
-        finally:
-            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+    with pytest.raises(cutover_module.CutoverError) as error:
+        cutover_module.run_cutover(
+            fixture,
+            tmp_path / "bin",
+            restart_daemon=restart,
+            start_refusal=lambda _candidate: None,
+        )
+    assert "catalog manifest is stale" in str(error.value)
+    assert removed["name"] in str(error.value)
     promotion.assert_not_called()
     restart.assert_not_called()
     assert not (tmp_path / "bin").exists()

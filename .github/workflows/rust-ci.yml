@@ -149,7 +149,8 @@ jobs:
           cargo clippy -p gobby-terminal --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 
       - name: Test workspace
-        run: cargo nextest run --profile ci --workspace
+        # The mandatory catalog proof runs in postgres-backed-tests below.
+        run: cargo nextest run --profile ci --workspace -E 'not binary(catalog_manifest_freshness)'
 
       - name: Test doctests (workspace)
         run: cargo test --doc --workspace
@@ -324,7 +325,7 @@ jobs:
       - name: Generate LCOV report
         run: |
           cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report nextest --workspace --profile ci
+          cargo llvm-cov --no-report nextest --workspace --profile ci -E 'not binary(catalog_manifest_freshness)'
           cargo llvm-cov report --lcov --output-path lcov.info
 
       - name: Upload LCOV artifact

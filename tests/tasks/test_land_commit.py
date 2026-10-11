@@ -247,10 +247,12 @@ async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, relea
         ),
     ],
 )
-async def test_migration_landing_requires_both_schema_carriers(
+async def test_catalog_neutral_migration_landing_requires_identity_pin(
     case: LandingCase, carriers: tuple[str, ...]
 ) -> None:
-    files = {"crates/gcore/assets/schema/migrations/999-test.sql": "SELECT 1;"}
+    files = {
+        "crates/gcore/assets/schema/migrations/999-test.sql": "GRANT USAGE ON SCHEMA public TO gobby_daemon_runtime;"
+    }
     files.update(dict.fromkeys(carriers, "updated carrier"))
     sha = case.candidate("schema-lane", files)
     task = case.reviewed(sha)
@@ -263,7 +265,7 @@ async def test_migration_landing_requires_both_schema_carriers(
         facts={"reason": "restart"},
     )
     result = await case.land(task, sha)
-    if len(carriers) == 2:
+    if "src/gobby/storage/schema_expected_identity.json" in carriers:
         assert result["landed"] is True
         assert case.git("rev-parse", "trunk") == sha
     else:
@@ -271,7 +273,6 @@ async def test_migration_landing_requires_both_schema_carriers(
         assert result["error"] == "schema_carriers_missing"
         assert result["missing_schema_carriers"] == sorted(
             {
-                "crates/gcore/assets/schema/catalog.manifest.json",
                 "src/gobby/storage/schema_expected_identity.json",
             }
             - set(carriers)

@@ -78,7 +78,11 @@ def classify_paths(paths: Iterable[str]) -> str:
 
 
 def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
-    """Schema assets must land with their catalog and Python identity carriers."""
+    """Schema assets must land with their Python identity carrier.
+
+    Catalog-neutral migrations leave the manifest unchanged. Cutover's mandatory
+    native freshness test proves the manifest against all embedded assets.
+    """
     changed = set(paths)
     schema_root = "crates/gcore/assets/schema/"
     if not any(
@@ -89,7 +93,6 @@ def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
         return []
     return sorted(
         {
-            f"{schema_root}catalog.manifest.json",
             "src/gobby/storage/schema_expected_identity.json",
         }
         - changed
