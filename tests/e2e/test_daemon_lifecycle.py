@@ -28,7 +28,11 @@ import psycopg
 import pytest
 import yaml
 
-from gobby.cli.install_setup_impeccable import _publish_launcher, _publish_stamp
+from gobby.cli.install_setup_impeccable import (
+    _activate_generation,
+    _publish_launcher,
+    _publish_stamp,
+)
 from gobby.cli.utils_process import is_port_available
 from gobby.install.bin_set_coherence import probe_set_member_identity
 from gobby.storage.schema_identity_pin import stamp_bytes
@@ -418,7 +422,10 @@ def _real_cli_env(config_path: Path) -> dict[str, str]:
     link_operator_srt(gobby_home)
     # Impeccable's launcher embeds its home, so activate the copy for this one.
     impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
-    shutil.copytree(managed_tools / "impeccable" / IMPECCABLE_RELEASE.version, impeccable)
+    generation = (managed_tools / "impeccable" / IMPECCABLE_RELEASE.version).resolve(strict=True)
+    isolated_generation = impeccable.parent / generation.name
+    shutil.copytree(generation, isolated_generation, symlinks=True)
+    _activate_generation(impeccable.parent, impeccable, isolated_generation)
     _publish_launcher(gobby_home, impeccable)
     _publish_stamp(gobby_home)
     return env

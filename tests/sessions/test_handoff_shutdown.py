@@ -202,6 +202,18 @@ def test_cli_shutdown_fence_rejects_new_stage_without_writes(
     assert consume_pending_handoff(temp_db, handoff_session) is not None
 
 
+def test_shutdown_guard_refuses_a_second_connection(temp_db: HubDatabase, machine_id: str) -> None:
+    def second_shutdown() -> None:
+        with guard_handoff_shutdown(temp_db, machine_id):
+            pytest.fail("A second connection acquired the exclusive shutdown guard")
+
+    with guard_handoff_shutdown(temp_db, machine_id), ThreadPoolExecutor() as executor:
+        with pytest.raises(HandoffShutdownBlocked, match="another shutdown is in progress"):
+            executor.submit(second_shutdown).result(timeout=5)
+    with guard_handoff_shutdown(temp_db, machine_id):
+        pass
+
+
 def test_inflight_staging_prevents_shutdown_check(temp_db: HubDatabase, machine_id: str) -> None:
     def prepare() -> None:
         prepare_handoff_shutdown(temp_db, machine_id)

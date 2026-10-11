@@ -672,6 +672,43 @@ raise SystemExit(0)
 }
 
 #[tokio::test]
+async fn full_restart_marker_exits_without_respawn_and_survives_for_successor() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); starts=home/'starts'
+with starts.open('a') as output: output.write('a')
+write_shutdown_intent('cli_restart','restart',home=home,details={'restart_scope':'supervisor'})
+raise SystemExit(0)
+"#;
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "a");
+        let path = home.path().join("shutdown_intent_active.json");
+        let bytes = fs::read(&path)?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes)?["intent"],
+            "restart"
+        );
+        assert!(claim_pid_file(&home.path().join("gobby.pid"), Role::Maintenance)?.is_some());
+        let mut successor = IntentMarker::new(home.path());
+        successor.before_spawn().await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs_f64();
+        assert_eq!(successor.after_exit(now).await?, None);
+        assert_eq!(fs::read(path)?, bytes);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn future_shutdown_marker_uses_crash_backoff() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;

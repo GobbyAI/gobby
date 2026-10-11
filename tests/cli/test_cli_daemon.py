@@ -12,9 +12,11 @@ import subprocess
 import sys
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import httpx
 import psutil
 import pytest
@@ -22,13 +24,14 @@ from click.testing import CliRunner
 
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli import cli
+from gobby.cli.daemon_lifecycle import _request_admin_stop as request_admin_stop
 from gobby.cli.daemon_start import (
     PORT_REUSE_WAIT_SECONDS,
     _reconcile_ui_exposure,
     _start_dependency_errors,
 )
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
-from gobby.runner_pid_file import PidFileClaim
+from gobby.runner_pid_file import PidFileClaim, ProbeState
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 from gobby.utils.status import RichStatusProbe
 from tests.fixtures.fake_hub import FAKE_DATABASE_URL
@@ -1148,6 +1151,64 @@ class TestStartCommand:
                 mock_kill_daemons.assert_not_called()
 
 
+@pytest.mark.parametrize("command", ["stop", "restart"])
+def test_guarded_cli_shutdown_owns_admission_and_full_restart_intent(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    from gobby.cli import daemon_lifecycle as lifecycle
+
+    held = False
+    started: list[bool] = []
+    requested: list[dict[str, str]] = []
+
+    @contextmanager
+    def guard(*_args: object, **kwargs: object) -> Generator[None]:
+        nonlocal held
+        assert kwargs["force"] is False
+        held = True
+        try:
+            yield
+        finally:
+            held = False
+
+    def post(url: str, *, params: dict[str, str], **_kwargs: object) -> httpx.Response:
+        assert held, "The CLI must retain its handoff guard during the admin request"
+        assert url.endswith("/api/admin/shutdown")
+        requested.append(params)
+        return httpx.Response(200, json={"status": "shutting_down"})
+
+    def start(verbose: bool) -> None:
+        assert not held, "The retiring owner's guard must be released before starting"
+        started.append(verbose)
+
+    monkeypatch.setattr(lifecycle, "_request_admin_stop", request_admin_stop)
+    monkeypatch.setattr(lifecycle, "is_test_protect_enabled", lambda: False)
+    monkeypatch.setattr(lifecycle, "stop_singleton_gate", lambda _path: ("stop", None))
+    monkeypatch.setattr(
+        lifecycle, "probe_daemon_lock", lambda _path: MagicMock(state=ProbeState.DAEMON)
+    )
+    monkeypatch.setattr(lifecycle, "_is_daemon_healthy", lambda _port: True)
+    monkeypatch.setattr(lifecycle, "_read_pid_file", lambda: 42)
+    monkeypatch.setattr(lifecycle, "_is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(lifecycle, "get_service_status", lambda: {})
+    monkeypatch.setattr(lifecycle, "protect_pending_handoffs", guard)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.httpx.post", post)
+    monkeypatch.setattr(lifecycle, "daemon_auth_headers", lambda: {})
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr("gobby.cli.daemon_start.start", click.Command("start", callback=start))
+    result = CliRunner().invoke(cli, [command, "--full"] if command == "restart" else [command])
+    assert result.exit_code == 0, result.output
+    assert requested == [
+        {
+            "force": "true",
+            "terminals": "false",
+            "restart_supervisor": str(command == "restart").lower(),
+        }
+    ]
+    assert started == ([False] if command == "restart" else [])
+    assert not held
+
+
 class TestStopCommand:
     """Tests for the 'stop' command."""
 
@@ -1545,8 +1606,8 @@ class TestRestartCommand:
         assert "Health check passed (4.0s)" in result.output
         mock_stop_daemon.assert_not_called()
         mock_service_stop.assert_called_once_with(
-            shutdown_intent="stop",
-            shutdown_source="cli_stop",
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
             drain_terminals=False,
         )
         mock_service_start.assert_called_once()
@@ -1697,8 +1758,8 @@ class TestRestartCommand:
         assert "Daemon did not become healthy after service start" in result.output
         mock_stop_daemon.assert_not_called()
         mock_service_stop.assert_called_once_with(
-            shutdown_intent="stop",
-            shutdown_source="cli_stop",
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
             drain_terminals=False,
         )
         mock_service_start.assert_called_once()
@@ -1756,8 +1817,8 @@ class TestRestartCommand:
         )
         mock_stop_daemon.assert_not_called()
         mock_service_stop.assert_called_once_with(
-            shutdown_intent="stop",
-            shutdown_source="cli_stop",
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
             drain_terminals=False,
         )
         mock_wait_for_service_stop.assert_called_once_with(
@@ -1847,8 +1908,8 @@ class TestRestartCommand:
         assert result.exit_code == 1
         mock_stop_daemon.assert_called_once_with(
             quiet=False,
-            shutdown_intent="stop",
-            shutdown_source="cli_stop",
+            shutdown_intent="restart",
+            shutdown_source="cli_restart",
             drain_terminals=False,
         )
 

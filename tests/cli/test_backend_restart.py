@@ -51,7 +51,7 @@ def test_backend_restart_waits_for_old_process_before_readiness(
     assert restart_boundaries["alive"].call_count == 2
     restart_boundaries["post"].assert_called_once_with(
         "http://localhost:61987/api/admin/restart",
-        params={"force": "false", "terminals": "true"},
+        params={"force": "true", "terminals": "true"},
         headers={"Authorization": "Bearer test"},
         timeout=5.0,
     )

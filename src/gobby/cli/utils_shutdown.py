@@ -145,7 +145,9 @@ def stop_daemon(
         write_shutdown_source(
             shutdown_source,
             intent=shutdown_intent,
-            details=shutdown_marker_details(drain_terminals=drain_terminals),
+            details=shutdown_marker_details(
+                drain_terminals=drain_terminals, restart_supervisor=shutdown_intent == "restart"
+            ),
         )
 
     stop_start = time.time()

@@ -89,7 +89,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
     @router.post("/shutdown")
     async def shutdown(
-        response: Response, terminals: bool = False, force: bool = False
+        response: Response,
+        terminals: bool = False,
+        force: bool = False,
+        restart_supervisor: bool = False,
     ) -> dict[str, Any]:
         """
         Graceful daemon shutdown endpoint.
@@ -124,11 +127,14 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             logger.debug("Shutdown requested via HTTP endpoint")
             from gobby.runner_maintenance import write_shutdown_source
 
-            if terminals:
+            intent = "restart" if restart_supervisor else "stop"
+            if terminals or restart_supervisor:
                 write_shutdown_source(
                     "http_shutdown",
-                    intent="stop",
-                    details=shutdown_marker_details(drain_terminals=True),
+                    intent=intent,
+                    details=shutdown_marker_details(
+                        drain_terminals=terminals, restart_supervisor=restart_supervisor
+                    ),
                 )
             else:
                 write_shutdown_source("http_shutdown", intent="stop")

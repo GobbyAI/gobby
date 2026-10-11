@@ -965,6 +965,24 @@ class TestAdminRoutes:
         mock_server._process_shutdown.assert_not_called()
         assert mock_server._background_tasks == set()
 
+    @pytest.mark.parametrize("terminals", [False, True])
+    def test_full_restart_shutdown_retains_restart_intent_but_requests_stop(
+        self, client: TestClient, mock_server: MagicMock, terminals: bool
+    ) -> None:
+        with patch("gobby.runner_maintenance.write_shutdown_source") as write_marker:
+            response = client.post(
+                "/api/admin/shutdown",
+                params={"restart_supervisor": True, "terminals": terminals},
+            )
+        assert response.status_code == 200
+        assert response.json()["status"] == "shutting_down"
+        details: dict[str, object] = {"restart_scope": "supervisor"}
+        if terminals:
+            details["drain_terminals"] = True
+        write_marker.assert_called_once_with("http_shutdown", intent="restart", details=details)
+        assert mock_server._runner.request_shutdown_calls == [ShutdownIntent.STOP]
+        assert mock_server._runner.drain_terminals is terminals
+
     def test_shutdown_endpoint_without_runner_schedules_process_shutdown(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:

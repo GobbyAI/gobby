@@ -242,8 +242,13 @@ def _do_stop(
     try:
         with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
             previous_pid = _read_pid_file()
+            # The CLI already checked protected runs and holds the handoff guard
+            # through exit; the route must not try to acquire that same lock.
             admin_stop = _request_admin_stop(
-                config.daemon_port, force=force, drain_terminals=drain_terminals
+                config.daemon_port,
+                force=True,
+                drain_terminals=drain_terminals,
+                restart_supervisor=shutdown_intent == "restart",
             )
             if admin_stop is False:
                 return False
@@ -327,7 +332,9 @@ def _do_stop(
         return False
 
 
-def _request_admin_stop(http_port: int, *, force: bool, drain_terminals: bool) -> bool | None:
+def _request_admin_stop(
+    http_port: int, *, force: bool, drain_terminals: bool, restart_supervisor: bool = False
+) -> bool | None:
     """Ask a serving backend to drain; None permits native signal fallback."""
     if is_test_protect_enabled():
         marker = os.environ.get(E2E_ISOLATED_HOME_ENV, "")
@@ -339,7 +346,11 @@ def _request_admin_stop(http_port: int, *, force: bool, drain_terminals: bool) -
     try:
         response = httpx.post(
             f"http://localhost:{http_port}/api/admin/shutdown",
-            params={"force": str(force).lower(), "terminals": str(drain_terminals).lower()},
+            params={
+                "force": str(force).lower(),
+                "terminals": str(drain_terminals).lower(),
+                "restart_supervisor": str(restart_supervisor).lower(),
+            },
             headers=daemon_auth_headers(),
             timeout=5.0,
         )
@@ -472,7 +483,7 @@ def restart(
     if not _do_stop(
         ctx,
         docker_flag,
-        shutdown_intent="stop",
+        shutdown_intent="restart",
         force=force,
         wait=wait,
         drain_terminals=drain_terminals,
@@ -507,7 +518,8 @@ def _restart_backend(
             try:
                 response = httpx.post(
                     f"http://localhost:{port}/api/admin/restart",
-                    params={"force": str(force).lower(), "terminals": str(drain_terminals).lower()},
+                    # Admission is owned by the CLI guard above.
+                    params={"force": "true", "terminals": str(drain_terminals).lower()},
                     headers=daemon_auth_headers(),
                     timeout=5.0,
                 )
