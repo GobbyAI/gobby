@@ -476,6 +476,13 @@ def test_combined_grammar_prefixes_preserve_write_classification(
         "cd sub || exit 1; touch y.py",
         "cd sub || exit 1; git add x.py",
         "cd sub || touch x.py",
+        "{ cd sub; } || touch x.py",
+        "{ cd sub; } & touch x.py",
+        "cd sub && if true; then true; fi || touch x.py",
+        "cd sub && while false; do true; done || touch x.py",
+        "cd sub && case x in x) true;; esac || touch x.py",
+        "cd sub && { true; } || touch x.py",
+        "{ cd sub; make; } || true; touch x.py",
         "false || cd sub; touch x.py",
         "false || cd sub && touch x.py",
         "f() { cd sub; }; f; touch y.py",
@@ -537,6 +544,11 @@ def test_nonexecuted_directory_words_preserve_scope(tmp_path: Path, command: str
         ("cd sub; false || true; touch x.py", ["sub/x.py"]),
         ("cd sub; false || touch x.py", ["sub/x.py"]),
         ("cd sub; sleep 1 & touch x.py", ["sub/x.py"]),
+        ("if true; then\n  cd sub\n  test -f x.py || touch x.py\nfi", ["sub/x.py"]),
+        ("{ cd sub; false || true; touch x.py; }", ["sub/x.py"]),
+        ("cd sub && { false || touch x.py; }", ["sub/x.py"]),
+        ("cd sub; { true; } || touch x.py", ["sub/x.py"]),
+        ("{ cd sub; } | cat || touch x.py", ["x.py"]),
     ],
 )
 def test_unchanged_and_or_list_preserves_directory_scope(
@@ -560,10 +572,14 @@ def test_directory_change_after_background_boundary_fails_closed(tmp_path: Path)
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
-def test_changed_and_or_list_retains_prior_write_and_unknown_scope(tmp_path: Path) -> None:
-    data = _invocation_metadata(
-        "cd sub && touch a.py || touch b.py", tool_cwd=tmp_path, project_path=tmp_path
-    )
+@pytest.mark.parametrize(
+    "command",
+    ["cd sub && touch a.py || touch b.py", "{ cd sub; } && touch a.py || touch b.py"],
+)
+def test_changed_and_or_list_retains_prior_write_and_unknown_scope(
+    tmp_path: Path, command: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
     assert data["canonical_file_paths"] == ["sub/a.py"]
     assert data["canonical_repo_mutation_scope_unknown"] is True
 

@@ -30,6 +30,8 @@ class ShellDirectoryState:
     cwd: str | None
     changed: bool = False
     list_changed: bool = False
+    list_frames: list[list[bool]] = field(default_factory=list)
+    list_ops: list[bool | None] = field(default_factory=list)
     branches: list[_Branch] = field(default_factory=list)
     unstable_loops: frozenset[int] = frozenset()
     altered_loops: set[int] = field(default_factory=set)
@@ -93,6 +95,15 @@ class ShellDirectoryState:
                 self.list_changed = False
         elif before not in {"&&", "|"}:
             self.invalidate()
+        for isolated in self.list_ops:
+            if isolated is None:
+                if self.list_frames:
+                    parent, within, frame_isolated = self.list_frames.pop()
+                    self.list_changed = parent or (within and not frame_isolated)
+            else:
+                self.list_frames.append([self.list_changed, False, isolated])
+                self.list_changed = False
+        self.list_ops.clear()
 
     def compound_tokens(
         self, tokens: list[ShellToken], gap: str, case_depth: int, pending: bool
@@ -119,8 +130,10 @@ class ShellDirectoryState:
         first = tokens[0]
         if not first.quoted and first.value == "esac":
             self._close("case")
+            self.list_ops.append(None)
         elif not first.quoted and first.value == "case":
             self.branches.append(_Branch("case", self.cwd))
+            self.list_ops.append(False)
         elif re.search(r";;(?!&)", gap):
             self._restore("case")
 
@@ -133,6 +146,7 @@ class ShellDirectoryState:
             word = tokens[0].value
             if word == "if":
                 self.branches.append(_Branch("if", self.cwd, in_condition=True))
+                self.list_ops.append(False)
             elif word in {"else", "elif"}:
                 self._restore("if")
                 if self.branches and self.branches[-1].kind == "if":
@@ -142,6 +156,7 @@ class ShellDirectoryState:
                     branch.in_condition = word == "elif"
             elif word == "fi":
                 self._close("if")
+                self.list_ops.append(None)
             elif word == "then":
                 if self.branches and self.branches[-1].kind == "if":
                     branch = self.branches[-1]
@@ -149,12 +164,14 @@ class ShellDirectoryState:
                     branch.in_condition = False
             elif word in {"for", "while", "until"}:
                 self.branches.append(_Branch("loop", self.cwd, loop=self.loops_opened))
+                self.list_ops.append(False)
                 self.loops_opened += 1
                 if word == "for":
                     break  # Keep the header for loop binding attribution.
                 self._enter_loop_body()
             elif word == "done":
                 self._close("loop")
+                self.list_ops.append(None)
             elif word == "do":
                 self._enter_loop_body()
             elif word == "!":
@@ -174,10 +191,12 @@ class ShellDirectoryState:
                 if isolated:
                     self.branches = []
                 self.group_entry = True
+                self.list_ops.append(isolated)
             elif word == "}":
                 if self.groups and (entry := self.groups.pop()) is not None:
                     self.cwd, self.changed, self.branches = entry[:3]
                 self.group_entry = False
+                self.list_ops.append(None)
             else:
                 break
             tokens = tokens[1:]
@@ -233,6 +252,10 @@ class ShellDirectoryState:
         """Record directory movement in every enclosing branch."""
         self.mark_unproven()
         self.list_changed = True
+        for frame in reversed(self.list_frames):
+            frame[1] = True
+            if frame[2]:
+                break
         for entry in self.groups:
             if entry is not None and entry[3] is not None:
                 self.directory_functions.add(entry[3])
