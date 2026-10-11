@@ -7,6 +7,7 @@ Run with SRT_MANAGED_AUTH_PROBE pointing at that checkout's built example.
 import asyncio
 import json
 import os
+import site
 import subprocess
 import sys
 import threading
@@ -131,7 +132,7 @@ def test_srt_seat_auth_uses_only_its_private_envelope(
                 **os.environ,
                 **launches["own"].env,
                 "PATH": f"{provider_bin}{os.pathsep}{os.environ['PATH']}",
-                "PYTHONPATH": str(_REPO / "src"),
+                "PYTHONPATH": os.pathsep.join([str(_REPO / "src"), *site.getsitepackages()]),
                 "GOBBY_DAEMON_URL": f"http://127.0.0.1:{port}",
             }
             env.pop("GOBBY_MANAGED_EXECUTION_ID", None)
