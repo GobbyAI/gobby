@@ -432,9 +432,32 @@ async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> N
             )
             == {}
         )
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(
+            seats.former,
+            "escalate_task",
+            {"task_id": seats.ref, "reason": "Handed off: reviewer LAND"},
+            {},
+        ),
+        seats.former,
+        {},
+    )
     assert _current_step(seats.db, seats.former) == "claim"
-    manager.de_escalate_task(seats.task_id, reason="Landed and released")
+    de_escalate_event = replace(
+        _after_tool(seats.former, "de_escalate_task", {"task_id": seats.ref}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    assert (
+        RuleEngine(seats.db)._check_step_tool_enforcement(de_escalate_event, seats.former, {})
+        is None
+    )
     with session_context_for_test(seats.former):
+        assert (
+            await registry.call(
+                "de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"}
+            )
+            == {}
+        )
         claimed = await registry.call("claim_task", {"task_id": seats.ref})
     assert claimed["success"] is True
     engine = RuleEngine(seats.db)
@@ -458,6 +481,118 @@ async def test_reclaimed_de_escalated_handoff_reaches_submit(seats: _Seats) -> N
     close_event = _after_tool(seats.former, "close_task", {"task_id": seats.ref}, {})
     close_event = replace(close_event, event_type=HookEventType.BEFORE_TOOL)
     assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
+
+
+@pytest.mark.parametrize("step", ["claim", "implement", "submit"])
+def test_developer_cannot_de_escalate_without_its_handoff(seats: _Seats, step: str) -> None:
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, step)
+    event = replace(
+        _after_tool(seats.former, "de_escalate_task", {"task_id": seats.ref}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    response = RuleEngine(seats.db)._check_step_tool_enforcement(event, seats.former, {})
+    assert response is not None and response.decision == "block"
+    assert "Finish only a task this developer handed off" in str(response.reason)
+
+
+def test_developer_cannot_forge_handoff_permission(seats: _Seats) -> None:
+    _seat(seats, seats.former, "implement")
+    event = replace(
+        _after_tool(seats.former, "set_variable", {}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    event.data.update(
+        tool_name="mcp__gobby__set_variable",
+        tool_input={"name": "_developer_handoff_tasks", "value": [seats.task_id], "scope": "step"},
+    )
+    response = RuleEngine(seats.db)._check_step_tool_enforcement(event, seats.former, {})
+    assert response is not None and response.decision == "block"
+    assert "managed by the step workflow runtime" in str(response.reason)
+
+
+@pytest.mark.parametrize("active_step", ["implement", "submit"])
+async def test_handoff_close_preserves_next_task_binding(
+    seats: _Seats, tmp_path: Path, active_step: str
+) -> None:
+    """Exercise real MCP gates and close storage without a live criteria reviewer."""
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    # A structural parent uses the actual close checklist without spawning a reviewer.
+    handed_off = tasks.create_task(project_id, "Finished parent", task_type="epic")
+    child = tasks.create_task(
+        project_id,
+        "Finished child",
+        parent_task_id=handed_off.id,
+        validation_criteria="The child is closed before its parent.",
+    )
+    seats = replace(seats, task_id=handed_off.id, ref=f"#{handed_off.seq_num}")
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
+    claim_task(seats.db, seats.task_id, seats.former)
+    tasks.close_task(child.id, reason="completed")
+    _seat(seats, seats.former, "submit")
+    proxy = _task_proxy(seats)
+    engine = RuleEngine(seats.db)
+
+    async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        with session_context_for_test(seats.former):
+            result = await proxy.call_tool(
+                "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
+            )
+        if not result.get("error"):
+            await engine._process_step_after_tool(
+                _after_tool(seats.former, tool, arguments, result), seats.former, {}
+            )
+        return cast(dict[str, Any], result)
+
+    assert (
+        await call(
+            "escalate_task", {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at abc"}
+        )
+        == {}
+    )
+    assert _current_step(seats.db, seats.former) == "claim"
+    next_task = tasks.create_task(
+        project_id, "Next directed task", validation_criteria="The active binding survives."
+    )
+    claimed = await call("claim_task", {"task_id": next_task.id})
+    assert claimed == {"task_id": next_task.id, "title": "Next directed task"}
+    assert _current_step(seats.db, seats.former) == "route_skills"
+    assert await call("get_task", {"task_id": next_task.id})
+    instance_manager = AgentStepInstanceManager(seats.db)
+    instance = instance_manager.get_for_session(seats.former)
+    assert instance is not None
+    instance.current_step = active_step
+    instance.variables.update(
+        skills_routed=True,
+        additional_skills_loaded=True,
+        implementation_complete=active_step == "submit",
+    )
+    instance_manager.save(instance)
+    before = _instance_state(seats.db, seats.former)
+    session_before = SessionVariableManager(seats.db).get_variables(seats.former)
+
+    foreign = await call("de_escalate_task", {"task_id": next_task.id, "reason": "Not handed off"})
+    assert foreign["error_code"] == "TOOL_BLOCKED"
+    assert "Finish only a task this developer handed off" in foreign["error"]
+    assert (
+        await call("de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"})
+        == {}
+    )
+    assert not tasks.get_task(seats.task_id).is_escalated
+    result = await call(
+        "close_task", {"task_id": seats.ref, "changes_summary": "All children finished."}
+    )
+    assert result["closed"] is True
+    assert tasks.get_task(seats.task_id).closed_at is not None
+    step_after, state_after = _instance_state(seats.db, seats.former)
+    assert step_after == before[0]
+    expected_state = {**before[1], "_developer_handoff_tasks": []}
+    assert state_after == expected_state
+    session_after = SessionVariableManager(seats.db).get_variables(seats.former)
+    for key in ("task_claimed", "assigned_task_id", "claimed_tasks"):
+        assert session_after.get(key) == session_before.get(key)
+    assert tasks.get_task(next_task.id).claimed_by_session_id == seats.former
 
 
 @pytest.mark.parametrize("move", [_transfer, _force_transfer, _release])

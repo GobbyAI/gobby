@@ -67,6 +67,8 @@ step_workflow:
       - gobby:references/tasks/overview.md
     required_skills_loaded: false
     additional_skills: []
+    # Runtime-owned completion rights survive the next task's claim and reset.
+    _developer_handoff_tasks: []
     additional_skills_loaded: false
     implementation_complete: false
     candidate_sent: false
@@ -146,6 +148,8 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
+        - "gobby-tasks:de_escalate_task"
+        - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
@@ -154,7 +158,33 @@ step_workflow:
         - "gobby-memory:create_memory"
         - "gobby-memory:update_memory"
         - "gobby-memory:delete_memory"
+      on_mcp_before:
+        - &handoff_de_escalate_guard
+          server: gobby-tasks
+          tool: de_escalate_task
+          action: block
+          when: >-
+            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
+          reason: "Finish only a task this developer handed off."
+        - &handoff_close_guard
+          server: gobby-tasks
+          tool: close_task
+          action: block
+          when: >-
+            tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
+          reason: "Finish only a task this developer handed off."
       on_mcp_success:
+        - &forget_closed_handoff
+          server: gobby-tasks
+          tool: close_task
+          action: set_variable
+          variable: _developer_handoff_tasks
+          value: >-
+            [task_id for task_id in vars.get('_developer_handoff_tasks', [])
+             if task_id != tool_input.get('task_id')]
+          when: >-
+            tool_output.get('closed') is True
+            or (tool_output.get('result') or {}).get('closed') is True
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
@@ -289,14 +319,18 @@ step_workflow:
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
         the commit moves you to submit. Close only from submit, after your Lane
         Manager releases the task.
+        After release, a task you handed off with the reviewer LAND reason can
+        be de-escalated and closed directly, preserving the active task's binding.
       allowed_tools: "all"
       blocked_mcp_tools:
-        - "gobby-tasks:close_task"
-        - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:reopen_task"
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
+      on_mcp_before:
+        - *handoff_de_escalate_guard
+        - *handoff_close_guard
       on_mcp_success:
+        - *forget_closed_handoff
         - server: gobby-tasks
           tool: link_commit
           when: &own_task >-
@@ -351,7 +385,9 @@ step_workflow:
         - "gobby-tasks:get_task"
         - "gobby-tasks:link_commit"
         - "gobby-tasks:escalate_task"
+        - "gobby-tasks:de_escalate_task"
       on_mcp_before:
+        - *handoff_de_escalate_guard
         - server: gobby-tasks
           tool: escalate_task
           action: block
@@ -360,6 +396,15 @@ step_workflow:
             or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
           reason: "Hand off only the assigned task from submit."
       on_mcp_success:
+        - *forget_closed_handoff
+        - server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: _developer_handoff_tasks
+          value: "vars.get('_developer_handoff_tasks', []) + [vars.assigned_task_id]"
+          when: >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND')
         # A directed hand-off ends this task's loop just like a close. Match
         # the assigned task first, then clear its binding last.
         - server: gobby-tasks
