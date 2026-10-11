@@ -269,7 +269,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         extra["_canonical_repo_mutation_scope_resolved_by_loop_binding"] = True
     elif mutation_scope_unknown:
         extra.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", None)
-    if navigation_scope_unknown and not paths:
+    if navigation_scope_unknown:
         extra["_canonical_code_navigation_scope_unknown"] = True
 
     # Only publish paths proved to belong to mutating segments. A live loop

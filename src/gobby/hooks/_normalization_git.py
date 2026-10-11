@@ -36,8 +36,8 @@ def classify_search_segment(
     paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), search_cwd)
     if unknown or (not paths and (search_cwd or "").startswith(UNRESOLVED_DIRECTORY)):
         paths = [UNRESOLVED_DIRECTORY]
-    elif not paths and search_cwd and search_cwd != (cwd or (str(base_cwd) if base_cwd else None)):
-        paths = [search_cwd]  # git -C moved the implicit search root
+    elif not paths and search_cwd:
+        paths = [search_cwd]  # Preserve the implicit root after cd or an invocation wrapper.
     extra = search_navigation_metadata(paths)
     if cmd == "git" and _git_grep_is_revision_scoped(parts):
         extra["canonical_search_revision_scoped"] = True
