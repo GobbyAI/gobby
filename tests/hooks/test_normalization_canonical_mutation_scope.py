@@ -35,14 +35,29 @@ def test_env_directory_rebases_git_scope(tmp_path: Path, wrapper: str, operation
 @pytest.mark.parametrize("selector", ["GIT_DIR", "GIT_WORK_TREE"])
 @pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
 @pytest.mark.parametrize("wrapper", ["{}", "sh -c '{}'"])
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "export {selector}=/other",
+        "declare -x {selector}=/other",
+        "typeset -x {selector}=/other",
+        "set -a; {selector}=/other",
+        "{selector}=/other",
+        "readonly {selector}=/other",
+        "local -x {selector}=/other",
+        "declare -x {selector}",
+    ],
+)
 def test_exported_git_selector_never_falls_back_to_cwd(
-    tmp_path: Path, selector: str, operation: str, wrapper: str
+    tmp_path: Path, selector: str, operation: str, wrapper: str, setup: str
 ) -> None:
     data = _invocation_metadata(
-        f"export {selector}=/other && {wrapper.format('git ' + operation)}", tool_cwd=tmp_path
+        f"{setup.format(selector=selector)} && {wrapper.format('git ' + operation)}",
+        tool_cwd=tmp_path,
     )
     assert data["canonical_repo_mutation"] is True
     assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
     ordinary = _invocation_metadata("git add x.py", tool_cwd=tmp_path)
     assert ordinary["canonical_file_paths"] == [str(tmp_path / "x.py")]
 
@@ -104,6 +119,35 @@ def test_nested_env_directory_changes_rebase_git(tmp_path: Path, wrapper: str) -
     data = _invocation_metadata(f"{wrapper} git add x.py", tool_cwd=tmp_path)
     target = tmp_path / ("other/child/x.py" if "child" in wrapper else "other/x.py")
     assert data["canonical_file_paths"] == [str(target)]
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "expected"),
+    [
+        ("env -C a -C b", "b/x.py"),
+        ("env --chdir=a --chdir=b", "b/x.py"),
+        ("env -C a env -C b", "a/b/x.py"),
+        ("env -C a -C b env -C c -C d", "b/d/x.py"),
+    ],
+)
+def test_env_uses_last_chdir_per_invocation(tmp_path: Path, wrapper: str, expected: str) -> None:
+    data = _invocation_metadata(f"{wrapper} touch x.py", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == [str(tmp_path / expected)]
+
+
+def test_case_pattern_alternation_preserves_arm_directory(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "case x in x|y) cd sub; touch c.py;; esac", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_file_paths"] == ["sub/c.py"]
+
+
+def test_process_substitution_keeps_literal_write_after_directory_change(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "cd sub && cat <(touch p.py)", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_file_paths"] == ["sub/p.py"]
+    assert data["canonical_repo_mutation"] is True
 
 
 @pytest.mark.parametrize("command", ["echo 'cat <(touch p.py)'", "cat '<(touch p.py)'"])

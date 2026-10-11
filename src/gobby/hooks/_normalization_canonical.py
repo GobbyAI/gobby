@@ -21,6 +21,7 @@ from gobby.hooks._normalization_git import (
     classify_git_mutation,
     exported_git_selector,
     git_environment_parts,
+    git_selector_setup,
 )
 from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
@@ -221,6 +222,7 @@ def _classify_shell_command(
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
+        consuming_case_pattern = pending_case_pattern
         start = spans_by_token[id(segment.tokens[0])][0]
         gap = command[previous_end:start]
         previous_end = spans_by_token[id(segment.tokens[-1])][1]
@@ -232,7 +234,15 @@ def _classify_shell_command(
         owner_tokens, process_bodies = process_substitution_bodies(
             arm_tokens, spans_by_token, command
         )
-        segment = replace(segment, tokens=owner_tokens)
+        segment = replace(
+            segment,
+            tokens=owner_tokens,
+            separator_before=(
+                ";"
+                if consuming_case_pattern and not pending_case_pattern
+                else segment.separator_before
+            ),
+        )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
@@ -249,9 +259,7 @@ def _classify_shell_command(
         )
         leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
-        if parts[:1] == ["export"] and any(
-            word.split("=", 1)[0] in {"GIT_DIR", "GIT_WORK_TREE"} for word in parts[1:]
-        ):
+        if git_selector_setup(raw_parts, parts):
             exported_git_selector.set(True)
         env_directories = env_directory_operands(raw_parts)
         segment_cwd = persistent_cwd
@@ -270,7 +278,10 @@ def _classify_shell_command(
         for body in process_bodies:
             metadata.append(
                 _classify_shell_segment_without_redirection(
-                    ["sh", "-c", body], persistent_cwd, depth=depth, base_cwd=base_cwd
+                    ["sh", "-c", body],
+                    persistent_cwd,
+                    depth=depth,
+                    base_cwd=None if directory_changed else base_cwd,
                 )
             )
         directory_changed = directory_changed or not preserves_directory(parts)

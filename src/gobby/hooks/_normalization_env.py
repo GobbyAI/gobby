@@ -2,7 +2,7 @@
 
 
 def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
-    """Return the command and ordered chdir operands, preserving unknown wrappers."""
+    """Return the command and final chdir operand, preserving unknown wrappers."""
     if parts[:1] != ["env"]:
         return parts, ()
     index = 1
@@ -16,10 +16,10 @@ def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
             if index + 1 >= len(parts):
                 return parts, ()
             if word in {"-C", "--chdir"}:
-                directories.append(parts[index + 1])
+                directories = [parts[index + 1]]
             index += 2
         elif word.startswith("--chdir=") or word.startswith("-C"):
-            directories.append(word.split("=", 1)[1] if "=" in word else word[2:])
+            directories = [word.split("=", 1)[1] if "=" in word else word[2:]]
             index += 1
         elif word in {"-i", "--ignore-environment", "-"} or word.startswith("--unset="):
             index += 1

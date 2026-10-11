@@ -19,6 +19,19 @@ from gobby.hooks.code_navigation import shell_command_name
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
 
 
+def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
+    """Fail closed after shell-level selector assignments or declarations."""
+    if not parts:
+        words = raw_parts
+    elif parts[0] in {"export", "declare", "typeset", "local", "readonly"}:
+        words = parts[1:]
+    else:
+        return False
+    return any(
+        word.split("=", 1)[0].removesuffix("+") in {"GIT_DIR", "GIT_WORK_TREE"} for word in words
+    )
+
+
 def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     """Preserve repository selectors lost when transparent wrappers are removed."""
     if not parts or shell_command_name(parts[0]) != "git":

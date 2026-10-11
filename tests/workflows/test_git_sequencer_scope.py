@@ -61,6 +61,18 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
 
 
 @pytest.fixture
+def claim_engine(temp_db: HubDatabase, engine: RuleEngine) -> RuleEngine:
+    result = sync_rule_file(
+        temp_db,
+        get_bundled_rules_path() / "task-enforcement/require-task-before-edit.yaml",
+        tag="gobby",
+    )
+    assert result["success"] is True, result
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    return engine
+
+
+@pytest.fixture
 def destructive_engine(temp_db: HubDatabase) -> RuleEngine:
     result = sync_rule_file(
         temp_db,
@@ -129,27 +141,42 @@ CLAIMED_VARIABLES: dict[str, Any] = {
 @pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
 @pytest.mark.parametrize("claimed", [False, True])
 async def test_env_git_writes_obey_task_claim_gate(
-    temp_db: HubDatabase,
-    engine: RuleEngine,
+    claim_engine: RuleEngine,
     tmp_path: Path,
     wrapper: str,
     operation: str,
     claimed: bool,
 ) -> None:
-    result = sync_rule_file(
-        temp_db,
-        get_bundled_rules_path() / "task-enforcement/require-task-before-edit.yaml",
-        tag="gobby",
-    )
-    assert result["success"] is True, result
-    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
     event = _event(f"{wrapper.format(root=tmp_path)} git {operation}", tmp_path)
     variables = {**CLAIMED_VARIABLES, "task_claimed": claimed}
-    response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    response = await claim_engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert event.data["canonical_repo_mutation"] is True
     assert response.decision == ("allow" if claimed else "block"), response.reason
     if not claimed:
         assert "require-task-before-edit" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["cat <(./w.sh)", "(./w.sh)"])
+async def test_changed_directory_script_body_requires_claim(
+    claim_engine: RuleEngine, tmp_path: Path, body: str
+) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "README").write_text("read only\n")
+    outer = tmp_path / "w.sh"
+    inner = tmp_path / "sub/w.sh"
+    outer.write_text("#!/bin/sh\ncat README\n")
+    inner.write_text("#!/bin/sh\ntouch evil.py\n")
+    outer.chmod(0o755)
+    inner.chmod(0o755)
+    event = _event(f"cd sub && {body}", tmp_path)
+    response = await claim_engine.evaluate(
+        event, session_id=SESSION_ID, variables={**CLAIMED_VARIABLES, "task_claimed": False}
+    )
+    assert event.data["canonical_script_execution"] is True
+    assert str(outer) not in event.data.get("canonical_script_bodies", [])
+    assert response.decision == "block"
+    assert "require-task-before-edit" in (response.reason or "")
 
 
 @pytest.mark.asyncio
