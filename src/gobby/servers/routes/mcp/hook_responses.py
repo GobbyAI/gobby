@@ -15,6 +15,10 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "pre-tool-use": "PreToolUse",
     "BeforeTool": "PreToolUse",
     "AskUserQuestion": "AskUserQuestion",
+    "PermissionRequest": "PermissionRequest",
+    "permission-request": "PermissionRequest",
+    "PostToolUse": "PostToolUse",
+    "post-tool-use": "PostToolUse",
 }
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from starlette.requests import Request
 
@@ -18,6 +18,7 @@ from gobby.servers.tool_approvals import (
 )
 
 if TYPE_CHECKING:
+    from gobby.communications.manager import CommunicationsManager
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ async def _maybe_hold_open(
     server: HTTPServer | None = None,
 ) -> dict[str, Any] | None:
     """Hold web-chat hook responses open until user interaction resolves."""
+    if hook_type in {"PermissionRequest", "PostToolUse"}:
+        input_data = payload.get("input_data") or {}
+        if input_data.get("tool_name") != "AskUserQuestion":
+            return None
     from gobby.storage.sessions import SessionManager
 
     resolved_server: HTTPServer | None = server or getattr(request.app.state, "server", None)
@@ -64,6 +69,24 @@ async def _maybe_hold_open(
         return None
 
     if getattr(db_session, "session_type", "terminal") != "web_chat":
+        comms = cast(
+            "CommunicationsManager | None", resolved_server.services.communications_manager
+        )
+        input_data = payload.get("input_data") or {}
+        if source != "claude" or comms is None or input_data.get("tool_name") != "AskUserQuestion":
+            return None
+        tool_call_id = input_data.get("tool_use_id", "")
+        tool_input = input_data.get("tool_input", input_data.get("arguments", {}))
+        if not isinstance(tool_input, dict):
+            return None
+        if hook_type == "PostToolUse":
+            await comms.telegram_questions.terminal_answer(db_session.id, tool_call_id, tool_input)
+            return None
+        manager = getattr(request.app.state, "pending_interaction_manager", None)
+        if hook_type == "PermissionRequest" and manager is not None:
+            return await comms.telegram_questions.ask(
+                manager, db_session.id, tool_call_id, tool_input
+            )
         return None
 
     project_path: str | None = None

@@ -133,6 +133,43 @@ def test_rule_denial_short_circuits_before_web_chat_auto_approval(
     hold_open.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "adapter_result", [{"continue": True}, {"continue": False, "reason": "rule denial"}]
+)
+def test_post_tool_settlement_failure_preserves_adapter_result(
+    session_storage: SessionManager, adapter_result: dict[str, Any]
+) -> None:
+    services = ServiceContainer(
+        database=session_storage.db, session_manager=session_storage, task_manager=MagicMock()
+    )
+    server = HTTPServer(
+        services=services, port=60887, test_mode=True, bootstrap_config=BootstrapConfig()
+    )
+    authenticate_test_server(server)
+    server.app.state.hook_manager = MagicMock()
+    with (
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter,
+        patch(
+            "gobby.servers.routes.mcp.hook_hold_open._maybe_hold_open",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("database unavailable"),
+        ) as settlement,
+    ):
+        adapter.return_value.handle_native.return_value = adapter_result
+        response = TestClient(server.app).post(
+            "/api/hooks/execute",
+            headers={"X-Gobby-Session-Id": "terminal-session"},
+            json=_hook_envelope(
+                hook_type="PostToolUse",
+                source="claude",
+                input_data={"tool_name": "AskUserQuestion", "tool_input": {"questions": []}},
+            ),
+        )
+    assert response.status_code == 200
+    assert response.json() == adapter_result
+    settlement.assert_awaited_once()
+
+
 def test_allowed_result_still_uses_web_chat_hold_open(
     session_storage: SessionManager,
 ) -> None:

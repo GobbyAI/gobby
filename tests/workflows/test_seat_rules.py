@@ -315,6 +315,9 @@ async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
     assert {"assistant", "orchestrator", "inbox-manager", "release-manager"} <= set(seats)
 
     for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
+        if agent_type == "assistant":
+            assert (await _decide(engine, ask, ASSISTANT)).decision == "allow"
+            continue
         blocked = await _decide(engine, ask, {"_agent_type": agent_type})
         assert blocked.decision == "block", agent_type
         assert "Use `gobby-agents:send_message` to send your question" in (blocked.reason or "")
@@ -342,7 +345,10 @@ def test_every_seat_scoped_rule_covers_every_seat_definition() -> None:
         "seat-no-ask-user-question",
     } <= set(scoped)
     for name, when in scoped.items():
-        assert [seat for seat in seats if f"'{seat}'" not in when] == [], name
+        exemptions = {"assistant"} if name == "seat-no-ask-user-question" else set()
+        assert [
+            seat for seat in seats if seat not in exemptions and f"'{seat}'" not in when
+        ] == [], name
 
 
 PROJECT_CREATES = (

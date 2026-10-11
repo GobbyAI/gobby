@@ -527,18 +527,30 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     timeout_seconds=hook_timeout,
                 )
 
+                session_header = request.headers.get("X-Gobby-Session-Id", "")
+                normalized_hold_open_type = _normalize_hold_open_hook_type(hook_type)
+                # A completed terminal answer settles even if an after-tool rule blocks.
+                if session_header and normalized_hold_open_type == "PostToolUse":
+                    try:
+                        await hook_hold_open._maybe_hold_open(
+                            request, session_header, "PostToolUse", payload, source, server=server
+                        )
+                    except Exception:
+                        logger.exception("Failed to settle terminal question after PostToolUse")
+
                 # Rule and adapter denials are final. Never let web-chat approval,
                 # auto-approval, or browser interaction overwrite them.
                 if _result_encodes_denial(result):
                     return await mark_processed_and_return(result)
 
-                # After existing hook processing, check for web chat hold-open.
-                # Terminal sessions pass straight through; only web_chat sessions
-                # create pending interactions that hold the HTTP response open
-                # until the user approves/denies in the browser.
-                session_header = request.headers.get("X-Gobby-Session-Id", "")
-                normalized_hold_open_type = _normalize_hold_open_hook_type(hook_type)
-                if session_header and normalized_hold_open_type:
+                # Web-chat approvals and attached terminal questions share pending
+                # interactions. PermissionRequest runs alongside the terminal UI;
+                # PostToolUse settles a question answered there first.
+                if (
+                    session_header
+                    and normalized_hold_open_type
+                    and normalized_hold_open_type != "PostToolUse"
+                ):
                     hold_open_result = await hook_hold_open._maybe_hold_open(
                         request,
                         session_header,

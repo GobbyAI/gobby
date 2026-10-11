@@ -41,6 +41,7 @@ from gobby.communications.telegram_decisions import (
     edit_keyboard_message,
     publish_answer_status,
 )
+from gobby.communications.telegram_questions import TelegramQuestionController
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
 from gobby.sessions.status_events import SessionStatusTransition
@@ -123,6 +124,7 @@ class CommunicationsManager:
         self._lifecycle = AdapterLifecycleOperations(self)
         self._outbound = OutboundCommunications(self)
         self._inbound = InboundCommunications(self)
+        self.telegram_questions = TelegramQuestionController(self)
         self.decision_answers = DecisionAnswerStore(store.db, machine_id=store.machine_id)
         self.responder = CommunicationsResponder(
             self,
@@ -758,6 +760,8 @@ class CommunicationsManager:
         message: CommsMessage,
     ) -> bool:
         """Consume an actionable inbound message before responder fan-out."""
+        if await self.telegram_questions.handle(channel_name, message):
+            return True
         if self._telegram_actions is None:
             return False
         return await self._telegram_actions.handle(channel_name, message)
