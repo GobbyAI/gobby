@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.apply_agent_definition import (
     definition_pin,
 )
 from gobby.mcp_proxy.tools.workflows._import import reload_cache
+from gobby.storage.definitions._shared import encode_json_value
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -78,10 +79,10 @@ def seat_ids(hub_db: HubDatabase) -> tuple[str, str]:
     return session_id, project_id
 
 
-@pytest.mark.parametrize("restart", [False, True], ids=["reload-cache", "restart"])
+@pytest.mark.parametrize("recreate_engine", [False, True], ids=["reload-cache", "recreated-engine"])
 @pytest.mark.asyncio
 async def test_running_seat_uses_synced_definition(
-    hub_db: HubDatabase, tmp_path: Path, restart: bool, seat_ids: tuple[str, str]
+    hub_db: HubDatabase, tmp_path: Path, recreate_engine: bool, seat_ids: tuple[str, str]
 ) -> None:
     session_id, project_id = seat_ids
     agents_dir = tmp_path / "agents"
@@ -141,7 +142,7 @@ async def test_running_seat_uses_synced_definition(
 
     current = resolve_agent(original.name, hub_db, project_id=project_id)
     assert current is not None
-    if restart:
+    if recreate_engine:
         engine = RuleEngine(hub_db)
     after_sync = await engine.evaluate(
         event, session_id=session_id, variables=variable_mgr.get_variables(session_id)
@@ -250,5 +251,63 @@ async def test_project_definition_controls_running_seat(
         assert "removed step 'submit'" in context.status_message
         assert "handoff and memory access" in context.status_message
         assert "end_agent_run with blockers" in context.status_message
+    retained = instance_mgr.get_for_session(session_id)
+    assert retained is not None and retained.snapshot == instance.snapshot
+
+
+@pytest.mark.parametrize("invalid_row", [True, False], ids=["unresolvable-row", "removed-workflow"])
+@pytest.mark.asyncio
+async def test_unavailable_current_workflow_retains_snapshot_permissions(
+    hub_db: HubDatabase, seat_ids: tuple[str, str], invalid_row: bool
+) -> None:
+    session_id, _ = seat_ids
+    original = _definition("R1", "get_task")
+    assert original.step_workflow is not None
+    manager = AgentDefinitionManager(hub_db)
+    row = manager.upsert_with_steps(
+        original.name, original.model_dump(), original.step_workflow.model_dump()
+    )
+    instance = build_step_instance(
+        original,
+        session_id=session_id,
+        step_workflow_id=row.step_workflow_id,
+        current_step="submit",
+    )
+    instance_mgr = AgentStepInstanceManager(hub_db)
+    instance_mgr.save(instance)
+    updated = _definition("R2", "escalate_task")
+    assert updated.step_workflow is not None
+    body = updated.model_dump()
+    manager.upsert_with_steps(
+        original.name, body, updated.step_workflow.model_dump() if invalid_row else None
+    )
+    if invalid_row:
+        # Reproduce a pre-existing row; the public write boundary rejects this field.
+        body["terminal_backend"] = "tmux"
+        with hub_db.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_definitions SET definition_json = %s WHERE id = %s",
+                (encode_json_value(body), row.id),
+            )
+    engine = RuleEngine(hub_db)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-tasks", "tool_name": "escalate_task"},
+        },
+    )
+    denied = await engine.evaluate(event, session_id=session_id, variables={})
+    assert denied.decision == "block"
+    assert denied.reason is not None and "gobby-tasks:get_task" in denied.reason
+    event.data["tool_input"]["tool_name"] = "get_task"
+    allowed = await engine.evaluate(event, session_id=session_id, variables={})
+    assert allowed.decision == "allow"
+    event.data["tool_input"] = {"server_name": "gobby-sessions", "tool_name": "get_handoff"}
+    recovery = await engine.evaluate(event, session_id=session_id, variables={})
+    assert recovery.decision == "allow"
     retained = instance_mgr.get_for_session(session_id)
     assert retained is not None and retained.snapshot == instance.snapshot

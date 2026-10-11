@@ -181,17 +181,23 @@ class AgentStepInstanceManager:
 
     def get_active_for_session(self, session_id: str) -> AgentStepInstance | None:
         """Resolve current policy without replacing the seat's execution state."""
-        from gobby.workflows.agent_resolver import resolve_agent
+        from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
         from gobby.workflows.variable_defaults import resolve_session_project_id
 
         instance = self.get_for_session(session_id)
         if instance is None or not instance.enabled:
             return instance
-        definition = resolve_agent(
-            instance.agent_name,
-            self.db,
-            project_id=resolve_session_project_id(self.db, session_id),
-        )
+        try:
+            definition = resolve_agent(
+                instance.agent_name,
+                self.db,
+                project_id=resolve_session_project_id(self.db, session_id),
+            )
+        except AgentResolutionError as exc:
+            logger.warning(
+                "Failed to resolve active agent definition %s: %s", instance.agent_name, exc
+            )
+            return instance
         if definition is not None and definition.step_workflow is not None:
             instance.current_definition = definition.step_workflow
         return instance
