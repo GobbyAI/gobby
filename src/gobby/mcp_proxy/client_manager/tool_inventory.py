@@ -61,9 +61,7 @@ async def list_tools(
         for config in visible_configs(manager, project_id):
             cached = manager._tool_schema_cache.get(config.id)
             if cached is not None:
-                cleaned = [_clean_tool_metadata(tool) for tool in cached]
-                await asyncio.to_thread(manager.cache_discovered_tools, config.id, cleaned)
-                results[config.name] = cleaned
+                results[config.name] = cached
                 continue
             try:
                 results[config.name] = await manager._list_tools_for_server(config.id)

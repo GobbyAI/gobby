@@ -5,7 +5,6 @@ Extracted from tools.py as part of Phase 2 Strangler Fig decomposition.
 These endpoints handle tool listing, schema retrieval, and tool execution.
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.services.server_resolution import resolve_server
@@ -341,8 +341,7 @@ async def list_mcp_tools(
 
         # List tools using MCP SDK
         try:
-            tools = await mcp_manager._list_tools_from_session(session)
-            await asyncio.to_thread(mcp_manager.cache_discovered_tools, resolved.id, tools)
+            tools = await list_tools_from_session(session)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
