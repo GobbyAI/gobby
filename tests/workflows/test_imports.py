@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +20,196 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
-from gobby.workflows.imports import sync_imported_definition, sync_imported_workflow_file
+from gobby.workflows.imports import (
+    sync_imported_definition,
+    sync_imported_workflow_file,
+    sync_imported_workflows,
+)
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_models import PipelineDefinition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("remove_directory", [False, True], ids=["file", "directory"])
+def test_deleted_project_pipeline_is_retired_without_touching_other_rows(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remove_directory: bool,
+) -> None:
+    project_path = tmp_path / "retirement"
+    project = isolated_checkout_factory(temp_db, "retirement", root=project_path).project
+    other = isolated_checkout_factory(temp_db, "other-retirement").project
+    root = project_path / ".gobby" / "workflows"
+    stale_path = root / "pipelines" / "retired.yaml"
+    _write_pipeline(stale_path, "retired")
+    _write_pipeline(root / "pipelines" / "present.yml", "present")
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    manager = PipelineDefinitionManager(temp_db)
+    payload = {"type": "pipeline", "steps": [{"id": "work", "exec": "true"}]}
+    global_row = manager.create("retired", payload, tags=["gobby"])
+    other_row = manager.create("retired", payload, project_id=other.id)
+    custom = manager.create("custom", payload, project_id=project.id, source="custom")
+    bundled = manager.create("bundled", payload, project_id=project.id, tags=["gobby"])
+    first = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    stale = manager.get_by_name("retired", project_id=project.id)
+    present = manager.get_by_name("present", project_id=project.id)
+    assert first["errors"] == []
+    assert stale is not None and stale.project_id == project.id
+    assert present is not None
+
+    if remove_directory:
+        shutil.rmtree(root)
+    else:
+        stale_path.unlink()
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == (2 if remove_directory else 1)
+    assert manager.get(stale.id, include_deleted=True).deleted_at is not None
+    assert (
+        manager.get(present.id, include_deleted=True).deleted_at is not None
+    ) is remove_directory
+    for row in (global_row, other_row, custom, bundled):
+        assert manager.get(row.id).deleted_at is None
+    assert (
+        sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)[
+            "orphaned"
+        ]
+        == 0
+    )
+    _write_pipeline(stale_path, "retired")
+    reimported = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    assert reimported["errors"] == []
+    restored = manager.get_by_name("retired", project_id=project.id)
+    assert restored is not None and restored.project_id == project.id
+    assert restored.deleted_at is None
+
+
+@pytest.mark.parametrize(
+    "kind,definition,manager_type",
+    [
+        (
+            "agent",
+            {"prompts": {"agent": "Inspect."}, "workflows": {"rule_selectors": {"include": []}}},
+            AgentDefinitionManager,
+        ),
+        (
+            "rule",
+            {"event": "before_tool", "effects": [{"type": "block", "reason": "stop"}]},
+            RuleDefinitionManager,
+        ),
+        ("variable", {"value": 1}, SessionVariableDefaultManager),
+    ],
+)
+def test_deleted_project_definition_is_retired(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    definition: dict[str, Any],
+    manager_type: type[AgentDefinitionManager]
+    | type[RuleDefinitionManager]
+    | type[SessionVariableDefaultManager],
+) -> None:
+    project_path = tmp_path / "typed-retirement"
+    project = isolated_checkout_factory(temp_db, "typed-retirement", root=project_path).project
+    path = project_path / ".gobby" / "workflows" / f"{kind}s" / "retired.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.safe_dump({"name": "retired", "type": kind, **definition}))
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    manager = manager_type(temp_db)
+    row = manager.get_by_name("retired", project_id=project.id)
+    assert result["errors"] == []
+    assert row is not None
+    path.unlink()
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == 1
+    assert manager.get(row.id, include_deleted=True).deleted_at is not None
+
+
+@pytest.mark.parametrize("failure", ["invalid", "unreadable", "missing-checkout"])
+def test_incomplete_project_scan_does_not_retire_rows(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    project_path = tmp_path / "incomplete"
+    project = isolated_checkout_factory(temp_db, "incomplete", root=project_path).project
+    path = project_path / ".gobby" / "workflows" / "pipelines" / "retired.yaml"
+    _write_pipeline(path, "retired")
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    manager = PipelineDefinitionManager(temp_db)
+    row = manager.get_by_name("retired", project_id=project.id)
+    assert row is not None
+    path.unlink()
+    if failure == "invalid":
+        (path.parent / "broken.yaml").write_text("name: [")
+    elif failure == "unreadable":
+        original_iterdir = Path.iterdir
+
+        def fail_scan(directory: Path) -> Iterator[Path]:
+            if directory == path.parent:
+                raise PermissionError("unreadable workflow directory")
+            return original_iterdir(directory)
+
+        monkeypatch.setattr(Path, "iterdir", fail_scan)
+    else:
+        project_path.rename(tmp_path / "unavailable")
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["orphaned"] == 0
+    assert bool(result["errors"]) is (failure != "missing-checkout")
+    assert manager.get(row.id).deleted_at is None
+
+
+def test_project_multi_rule_scan_retires_only_removed_rules(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = tmp_path / "grouped-retirement"
+    project = isolated_checkout_factory(temp_db, "grouped-retirement", root=project_path).project
+    path = project_path / ".gobby" / "workflows" / "rules" / "policy.yaml"
+    path.parent.mkdir(parents=True)
+    rule = {"event": "before_tool", "effects": [{"type": "block", "reason": "stop"}]}
+    path.write_text(yaml.safe_dump({"rules": {"retired": rule, "present": rule}}))
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    initial = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    manager = RuleDefinitionManager(temp_db)
+    stale = manager.get_by_name("retired", project_id=project.id)
+    present = manager.get_by_name("present", project_id=project.id)
+    assert initial["errors"] == []
+    assert stale is not None and present is not None
+    path.write_text(yaml.safe_dump({"rules": {"present": rule}}))
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["errors"] == []
+    assert result["orphaned"] == 1
+    assert manager.get(stale.id, include_deleted=True).deleted_at is not None
+    assert manager.get(present.id).deleted_at is None
 
 
 def test_pipeline_yaml_tags_persist_on_import(
