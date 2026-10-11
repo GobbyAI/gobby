@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, cast
 
+import psutil
+
 from gobby.runner_pid_record import (
     RECORD_VERSION,
     RESERVATION_AGE_BOUND_SECONDS,
@@ -228,15 +230,16 @@ def _read_pid(pid_file: Path) -> int | None:
 
 
 def _pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+    if pid <= 0:
         return False
-    except PermissionError:
+    try:
+        # An exited owner may remain unreaped by its external launcher. Its PID
+        # still answers kill(0), but it has released every singleton descriptor.
+        return bool(psutil.Process(pid).status() != psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
         return True
-    except OSError as exc:
-        return exc.errno == errno.EPERM
-    return True
 
 
 def _open_lock(lock_path: Path) -> int:

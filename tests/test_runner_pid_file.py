@@ -16,14 +16,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psutil
 import pytest
 from click.testing import CliRunner
 
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon_lifecycle import _do_stop
+from gobby.cli.daemon_singleton import admit_direct_start
 from gobby.cli.daemon_start import start
 from gobby.cli.runtime import CliRuntime
+from gobby.cli.utils_process import _is_process_alive
 from gobby.config.logging import LoggingSettings
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import (
@@ -34,6 +37,7 @@ from gobby.runner_pid_file import (
     SingletonProbe,
     SingletonRecordError,
     SingletonReservationError,
+    _pid_is_alive,
     adopt_inherited_claim,
     cancel_service_reservation,
     claim_pid_file,
@@ -108,6 +112,84 @@ def test_probe_reports_gdaemon_claim(tmp_path: Path, role: str) -> None:
         if child.poll() is None:
             child.kill()
         child.communicate(timeout=10)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(psutil.STATUS_RUNNING, True), (psutil.STATUS_ZOMBIE, False)],
+)
+def test_pid_liveness_distinguishes_exited_owners(status: str, expected: bool) -> None:
+    with patch("gobby.runner_pid_file.psutil.Process") as process:
+        process.return_value.status.return_value = status
+        assert _pid_is_alive(12345) is expected
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [(psutil.NoSuchProcess(12345), False), (psutil.AccessDenied(12345), True)],
+)
+def test_pid_liveness_preserves_permission_safety(error: psutil.Error, expected: bool) -> None:
+    with patch("gobby.runner_pid_file.psutil.Process", side_effect=error):
+        assert _pid_is_alive(12345) is expected
+
+
+@pytest.mark.parametrize("pid", [0, -1])
+def test_pid_liveness_rejects_invalid_owner(pid: int) -> None:
+    assert not _pid_is_alive(pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Rust flock capability is Unix-only")
+def test_restart_claim_accepts_unreaped_native_owner(tmp_path: Path) -> None:
+    """Restart must reclaim after owner exit, before its external parent reaps it."""
+    peer = _rust_pid_claim_peer()
+    assert peer.is_file(), "build the Rust pid_claim_fixture example before this focused test"
+    pid_file = tmp_path / "gobby.pid"
+    env = dict(os.environ)
+    env.pop("GOBBY_SERVICE_LAUNCH", None)
+    env.pop("GOBBY_SERVICE_NONCE", None)
+    child = spawn.popen(
+        [str(peer), str(pid_file), "daemon"],
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert child.stdout is not None
+        ready, _, _ = select.select([child.stdout], [], [], 10)
+        assert ready, "Rust peer did not publish its claim"
+        assert child.stdout.readline().split()[0] == "ready"
+        assert probe_daemon_lock(pid_file).state is ProbeState.DAEMON
+        assert child.stdin is not None
+        child.stdin.write("release\n")
+        child.stdin.flush()
+        ready, _, _ = select.select([child.stdout], [], [], 10)
+        assert ready, "Rust owner did not exit"
+        assert child.stdout.read() == ""
+        exited = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        assert exited is not None
+        assert exited.si_status == 0
+        assert psutil.Process(child.pid).status() == psutil.STATUS_ZOMBIE
+
+        # Do not poll/wait/communicate until the successor has claimed ownership.
+        assert pid_file.read_text().strip() == str(child.pid)
+        os.kill(child.pid, 0)
+        assert not _is_process_alive(child.pid)
+        assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
+        claim, error = admit_direct_start(pid_file)
+        assert claim is not None, error
+        try:
+            assert error is None
+            assert pid_file.read_text().strip() == str(os.getpid())
+            assert probe_daemon_lock(pid_file).state is ProbeState.DAEMON
+        finally:
+            claim.release()
+    finally:
+        if child.poll() is None:
+            child.kill()
+        output, errors = child.communicate(timeout=10)
+        assert child.returncode == 0, (output, errors)
 
 
 @pytest.mark.parametrize("name", ["daemon_claim", "service_reservation"])
