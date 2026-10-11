@@ -19,6 +19,7 @@ from gobby.utils.datetime import (
     utc_now,
 )
 from gobby.workflows.agent_models import AgentDefinitionBody, AgentStepWorkflowBody
+from gobby.workflows.definitions import WorkflowStep
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,22 @@ class StaleStepInstanceWriteError(Exception):
 
 class CorruptStepSnapshotError(ValueError):
     """Raised when a stored step snapshot is not a valid workflow body."""
+
+
+def build_removed_step_fallback(step_name: str) -> WorkflowStep:
+    """Keep a removed runtime step restrictive with consistent recovery guidance."""
+    return WorkflowStep(
+        name=step_name,
+        description="The installed definition removed the active step.",
+        status_message=(
+            f"The installed definition removed step '{step_name}'. "
+            "Tool access is restricted; handoff and memory access, "
+            "plus end_agent_run with blockers, remain available. "
+            "Coordinate recovery with the session's parent or operator."
+        ),
+        allowed_tools=["mcp__gobby__call_tool"],
+        allowed_mcp_tools=[],
+    )
 
 
 class AgentStepInstance(BaseModel):

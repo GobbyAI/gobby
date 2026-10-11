@@ -251,6 +251,13 @@ async def test_project_definition_controls_running_seat(
         assert "removed step 'submit'" in context.status_message
         assert "handoff and memory access" in context.status_message
         assert "end_agent_run with blockers" in context.status_message
+        enforced_step, _ = engine._get_step_for_session(session_id)
+        assert enforced_step is not None
+        assert enforced_step.status_message == context.status_message
+        assert enforced_step.description == context.description
+        assert enforced_step.allowed_tools == context.allowed_tools
+        assert enforced_step.allowed_mcp_tools == []
+        assert "parent or operator" in context.status_message
     retained = instance_mgr.get_for_session(session_id)
     assert retained is not None and retained.snapshot == instance.snapshot
 

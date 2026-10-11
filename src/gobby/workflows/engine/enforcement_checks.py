@@ -25,7 +25,11 @@ from gobby.workflows.engine.skill_load_guidance import (
 )
 from gobby.workflows.engine.step_tool_input import inner_tool_input, step_tool_input
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
-from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
+from gobby.workflows.step_instances import (
+    AgentStepInstance,
+    AgentStepInstanceManager,
+    build_removed_step_fallback,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -405,11 +409,7 @@ class EnforcementCheckMixin:
         step = instance.workflow.get_step(instance.current_step)
         if step is None:
             # A removed active step must not turn a restricted seat into an unrestricted one.
-            step = WorkflowStep(
-                name=instance.current_step,
-                allowed_tools=["mcp__gobby__call_tool"],
-                allowed_mcp_tools=[],
-            )
+            step = build_removed_step_fallback(instance.current_step)
         return step, instance
 
     def _check_agent_tool_enforcement(
