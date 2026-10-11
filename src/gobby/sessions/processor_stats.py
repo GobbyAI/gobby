@@ -58,7 +58,7 @@ class ProcessorStatsMixin:
     ) -> None:
         if complete and rendered.get("role") == "assistant" and self.communications_manager:
             blocks = rendered.get("content_blocks", [])
-            text = "\n\n".join(
+            text = "".join(
                 block["content"]
                 for block in blocks
                 if isinstance(block, dict)

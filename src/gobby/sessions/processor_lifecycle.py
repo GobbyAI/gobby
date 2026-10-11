@@ -42,12 +42,14 @@ class ProcessorLifecycleMixin:
             return
 
         self._running = True
+        self._stopped = False
         self._owner_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._loop())
         logger.info("SessionMessageProcessor started")
 
     async def stop(self: ProcessorHost) -> None:
         """Stop the processing loop."""
+        self._stopped = True
         self._running = False
         if self._task:
             self._task.cancel()
@@ -56,6 +58,11 @@ class ProcessorLifecycleMixin:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        # Hook flushes also own these locks. Drain them before the runner closes
+        # the database executor; stopped admission prevents new DB work.
+        for lock in list(self._processing_locks.values()):
+            async with lock:
+                pass
         logger.info("SessionMessageProcessor stopped")
 
     def register_session(
@@ -123,6 +130,8 @@ class ProcessorLifecycleMixin:
         Useful when stats need to be up-to-date before reading them
         (e.g., at SESSION_END before completing an agent run).
         """
+        if self._stopped:
+            return SessionFlushResult(flushed=False, error="processor is stopped")
         owner_loop = self._owner_loop
         if owner_loop is not None and owner_loop is not asyncio.get_running_loop():
             # Processor state and its per-session asyncio locks belong to the loop that
@@ -139,20 +148,27 @@ class ProcessorLifecycleMixin:
         try:
             # Each pass is bounded; a flush promises the whole transcript, so keep
             # passing until one reaches EOF. The lock is released between passes.
-            while not await self._process_session(session_id, transcript_path, at_eof=True):
-                pass
+            while True:
+                if self._stopped:
+                    return SessionFlushResult(flushed=False, error="processor is stopped")
+                if await self._process_session(session_id, transcript_path, at_eof=True):
+                    return SessionFlushResult(
+                        flushed=not self._stopped,
+                        error="processor is stopped" if self._stopped else None,
+                    )
         except Exception as exc:
             logger.exception(
                 "Failed to flush session transcript",
                 extra={"session_id": session_id, "transcript_path": transcript_path},
             )
             return SessionFlushResult(flushed=False, error=str(exc))
-        return SessionFlushResult(flushed=True)
 
     async def complete_turn(
         self: ProcessorHost, session_id: str, expected_final_text: str | None = None
     ) -> SessionFlushResult:
         """Read through turn-end evidence before publishing the final assistant group."""
+        if self._stopped:
+            return SessionFlushResult(flushed=False, error="processor is stopped")
         owner_loop = self._owner_loop
         if owner_loop is not None and owner_loop is not asyncio.get_running_loop():
             if not owner_loop.is_running():
@@ -171,10 +187,15 @@ class ProcessorLifecycleMixin:
         stable_since = asyncio.get_running_loop().time()
         async with lock:
             while True:
+                if self._stopped:
+                    return SessionFlushResult(flushed=False, error="processor is stopped")
                 while not await self._process_session_unlocked(
                     session_id, transcript_path, at_eof=True
                 ):
-                    pass
+                    if self._stopped:
+                        return SessionFlushResult(flushed=False, error="processor is stopped")
+                if self._stopped:
+                    return SessionFlushResult(flushed=False, error="processor is stopped")
                 state = self._render_states.get(session_id)
                 message = state.current_message if state else None
                 now = asyncio.get_running_loop().time()

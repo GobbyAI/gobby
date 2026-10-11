@@ -494,7 +494,7 @@ class TestSessionRegistration:
         stats = processor._stats["sid"]
         assert stats["message_count"] == initial_count + 1
         assert stats["last_assistant_content"] == "second"
-        expected_groups = initial_groups + int(not same_response)
+        expected_groups = initial_groups
         assert processor._index_appenders["sid"].index.total_groups == expected_groups
         latest = load_index_sidecar(
             str(transcript),

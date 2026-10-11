@@ -5362,6 +5362,31 @@ class TestAgentRestartRecoveryHelpers:
         assert monitor.stopped is True
 
     @pytest.mark.asyncio
+    async def test_message_processor_shutdown_must_finish_its_database_drain(self) -> None:
+        drained = False
+
+        async def drain() -> None:
+            nonlocal drained
+            drained = True
+
+        async def expired_deadline(awaitable: Coroutine[Any, Any, None], timeout: float) -> None:
+            awaitable.close()
+            raise TimeoutError
+
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            message_processor=SimpleNamespace(stop=drain),
+        )
+        with patch(
+            "gobby.runner_lifecycle_shutdown.asyncio.wait_for", side_effect=expired_deadline
+        ):
+            await runner_lifecycle_shutdown._stop_started_services(
+                cast(GobbyRunner, runner), shutdown_intent=ShutdownIntent.STOP
+            )
+        assert drained
+
+    @pytest.mark.asyncio
     async def test_restart_shutdown_policy_preserves_active_agents(self) -> None:
         class LifecycleMonitor:
             def __init__(self) -> None:

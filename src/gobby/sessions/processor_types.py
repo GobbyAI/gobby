@@ -66,6 +66,7 @@ class ProcessorHost(Protocol):
     _stats: dict[str, MessageStats]
     _stats_hydration_skipped: set[str]
     _running: bool
+    _stopped: bool
     _task: asyncio.Task[None] | None
     _owner_loop: asyncio.AbstractEventLoop | None
 

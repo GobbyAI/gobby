@@ -1,6 +1,8 @@
 """Only confirmed whole-turn completion schedules the final transcript mirror."""
 
 import asyncio
+import logging
+from concurrent.futures import Future
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +14,48 @@ from gobby.sessions.processor_lifecycle import SessionFlushResult
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("outcome", ["cancelled", "stopped", "failed"])
+async def test_completion_callback_distinguishes_shutdown_from_failure(
+    event_handlers: EventHandlers,
+    outcome: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    turns = CompletedTurns()
+    event_handlers._event_loop = asyncio.get_running_loop()
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(HookEventType.STOP, metadata={"_platform_session_id": "session"})
+    event.turn_disposition = "completed"
+    future: Future[SessionFlushResult] = Future()
+    if outcome == "cancelled":
+        future.cancel()
+    elif outcome == "stopped":
+        future.set_result(SessionFlushResult(flushed=False, error="processor is stopped"))
+    else:
+        future.set_exception(RuntimeError("database failure"))
+    with (
+        patch(
+            "gobby.hooks.event_handlers._agent.asyncio.run_coroutine_threadsafe",
+            return_value=future,
+        ) as schedule,
+        patch.object(event_handlers, "logger", logging.getLogger("mirror-callback-test")),
+        caplog.at_level(logging.DEBUG, logger="mirror-callback-test"),
+    ):
+        event_handlers._mirror_completed_turn(event)
+        # The scheduler fake owns the unsubmitted coroutine.
+        schedule.call_args.args[0].close()
+    assert len(caplog.records) == 1
+    log = caplog.records[0]
+    if outcome == "failed":
+        assert log.levelno == logging.ERROR
+        assert log.getMessage() == "Final transcript mirror failed for session"
+        assert log.exc_info is not None
+        assert str(log.exc_info[1]) == "database failure"
+    else:
+        assert log.levelno == logging.DEBUG
+        assert log.exc_info is None
+        assert "session" in log.getMessage()
 
 
 @pytest.mark.parametrize("event_type", [HookEventType.AFTER_AGENT, HookEventType.STOP])

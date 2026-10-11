@@ -472,6 +472,149 @@ async def test_native_claude_multiline_eof_and_cold_replay_keep_one_delivery(
     assert len(manager.store.list_messages(session_id=session_id)) == 1
 
 
+async def test_stop_drains_inflight_flush_and_rejects_late_work(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, send = attached
+    target = processor(temp_db, manager)
+    target._active_sessions[session_id] = "transcript"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def finish_pass(*args: object, **kwargs: object) -> bool:
+        entered.set()
+        await release.wait()
+        finished.set()
+        return True
+
+    with patch.object(target, "_process_session_unlocked", side_effect=finish_pass) as process:
+        flush = asyncio.create_task(target.flush_session(session_id))
+        await entered.wait()
+        queued_flush = asyncio.create_task(target.flush_session(session_id))
+        stopping = asyncio.create_task(target.stop())
+        # Give stop its turn while the flush owns the processing lock.
+        tick = asyncio.Event()
+        asyncio.get_running_loop().call_soon(tick.set)
+        await tick.wait()
+        try:
+            assert not stopping.done()
+        finally:
+            release.set()
+        assert not (await flush).flushed
+        assert not (await queued_flush).flushed
+        await stopping
+        assert finished.is_set()
+        late_flush = await target.flush_session(session_id)
+        late_completion = await target.complete_turn(session_id, "last")
+        assert not late_flush.flushed
+        assert not late_completion.flushed
+        assert late_flush.error == late_completion.error == "processor is stopped"
+        assert process.await_count == 1
+    send.assert_not_awaited()
+
+
+async def test_stop_releases_completion_waiting_for_final_text(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, send = attached
+    target = processor(temp_db, manager)
+    target._active_sessions[session_id] = "transcript"
+    entered = asyncio.Event()
+
+    async def no_final_text(*args: object, **kwargs: object) -> bool:
+        entered.set()
+        return True
+
+    with patch.object(target, "_process_session_unlocked", side_effect=no_final_text) as process:
+        completion = asyncio.create_task(target.complete_turn(session_id, "missing"))
+        await entered.wait()
+        await target.stop()
+        result = await completion
+    assert not result.flushed
+    assert result.error == "processor is stopped"
+    assert process.await_count == 1
+    send.assert_not_awaited()
+
+
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize(
+    "prefix,suffix",
+    [
+        ("Before tool.\n\n", "After tool."),
+        ("Echo.\n\n", "Echo.\n\n"),
+    ],
+)
+async def test_text_tool_text_waits_for_whole_turn_completion(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    resume: bool,
+    prefix: str,
+    suffix: str,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "tool-turn.jsonl"
+    transcript.write_text("")
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    records = [
+        native_line("assistant", "first", prefix),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "tool",
+                    "content": [
+                        {"type": "thinking", "thinking": "private reasoning"},
+                        {
+                            "type": "tool_use",
+                            "id": "call",
+                            "name": "list_conversation_attachments",
+                            "input": {},
+                        },
+                    ],
+                },
+            }
+        )
+        + "\n",
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call", "content": "tool output"},
+                    ]
+                },
+            }
+        )
+        + "\n",
+    ]
+    for line in records:
+        with transcript.open("a") as stream:
+            stream.write(line)
+        assert (await target.flush_session(session_id)).flushed
+        send.assert_not_awaited()
+    if resume:
+        target = processor(temp_db, manager)
+        target.register_session(session_id, str(transcript))
+        assert target._byte_offsets[session_id] == transcript.stat().st_size
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", "last", suffix))
+    assert (await target.flush_session(session_id)).flushed
+    send.assert_not_awaited()
+    assert (await target.complete_turn(session_id, suffix)).flushed
+    assert (await target.complete_turn(session_id)).flushed
+    send.assert_awaited_once()
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(rows) == 1
+    assert rows[0].content == prefix + suffix
+    assert rows[0].status == "sent"
+    assert send.call_args.args[0].content == rows[0].content
+
+
 @pytest.mark.parametrize("delivered", [False, True])
 async def test_sidecar_restart_keeps_final_reply_and_next_native_response_separate(
     temp_db: HubDatabase,

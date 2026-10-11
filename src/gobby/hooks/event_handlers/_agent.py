@@ -634,12 +634,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
 
         def finished(result: Any) -> None:
+            if result.cancelled():
+                self.logger.debug("Final transcript mirror cancelled for %s", session_id)
+                return
             try:
                 outcome = result.result()
                 if not outcome.flushed:
-                    self.logger.warning(
-                        "Final transcript mirror not flushed for %s: %s", session_id, outcome.error
+                    log = (
+                        self.logger.debug
+                        if outcome.error == "processor is stopped"
+                        else self.logger.warning
                     )
+                    log("Final transcript mirror not flushed for %s: %s", session_id, outcome.error)
             except Exception:
                 self.logger.exception("Final transcript mirror failed for %s", session_id)
 

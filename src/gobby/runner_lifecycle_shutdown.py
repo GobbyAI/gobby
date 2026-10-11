@@ -357,10 +357,10 @@ async def _stop_started_services(
         )
 
     if runner.message_processor:
+        # Its drain must finish before the database executor is closed.
         await _best_effort(
             runner.message_processor.stop,
             "Message processor shutdown",
-            timeout=2.0,
         )
 
 
