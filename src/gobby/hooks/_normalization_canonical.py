@@ -16,6 +16,7 @@ from gobby.hooks._normalization_bindings import (
     _raw_shell_word_is_literal,
 )
 from gobby.hooks._normalization_compound import (
+    case_pattern_process_bodies,
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
@@ -238,6 +239,18 @@ def _classify_shell_command(
         arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
             segment.tokens, gap, case_depth, pending_case_pattern
         )
+        pattern_bodies, unreadable = case_pattern_process_bodies(
+            segment.tokens, arm_tokens, spans_by_token, command
+        )
+        process_bodies.extend(pattern_bodies)
+        if unreadable:
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "write",
+                    repo_mutation=True,
+                    extra={"_canonical_repo_mutation_scope_unknown": True},
+                )
+            )
         owner_tokens, _ = process_substitution_bodies(arm_tokens, spans_by_token, command)
         segment = replace(
             segment,
