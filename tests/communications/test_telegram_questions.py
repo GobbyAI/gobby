@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -51,7 +52,16 @@ class QuestionHarness:
         task = asyncio.create_task(
             self.controller.ask(self.pending, SESSION_ID, "", tool_input or TOOL_INPUT)
         )
-        await asyncio.wait_for(self.sent.wait(), timeout=2)
+        # Readiness is event-driven; host load must not impose a first-send deadline.
+        sent = asyncio.create_task(self.sent.wait())
+        try:
+            done, _ = await asyncio.wait({task, sent}, return_when=asyncio.FIRST_COMPLETED)
+            if sent not in done:
+                await task  # Surface delivery errors instead of hanging on the event.
+                raise AssertionError("Question ended before sending its prompt")
+        finally:
+            sent.cancel()
+            await asyncio.gather(sent, return_exceptions=True)
         return task
 
     def callback(self, option: object, *, question: int = 0) -> CommsMessage:
@@ -118,6 +128,7 @@ async def harness(hub_db: HubDatabase) -> AsyncIterator[QuestionHarness]:
 @pytest.mark.asyncio
 async def test_attached_question_sends_options_and_callback_answers(
     harness: QuestionHarness,
+    hub_db: HubDatabase,
 ) -> None:
     task = await harness.start()
     assert len(harness.messages) == 1
@@ -140,8 +151,20 @@ async def test_attached_question_sends_options_and_callback_answers(
     }
     assert await harness.controller.handle("telegram", harness.callback(1))
     assert harness.messages[-1].content == "This question is already resolved."
-    await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
-    assert decision["updatedInput"]["answers"] == {"Which framework?": "React"}
+    sent_count = len(harness.messages)
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
+        resolve.assert_not_awaited()
+    assert not harness.controller._prompts
+    assert len(harness.messages) == sent_count
+    with hub_db.transaction() as conn:
+        row = conn.execute(
+            "SELECT status, response_json FROM pending_interactions WHERE id = %s",
+            (prompt.metadata_json["pending_question_id"],),
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "resolved"
+    assert json.loads(row["response_json"])["source"] == "telegram"
 
 
 @pytest.mark.asyncio
@@ -158,6 +181,32 @@ async def test_unattached_question_sends_nothing(harness: QuestionHarness) -> No
     harness.comms.attached_destination.return_value = None
     assert await harness.controller.ask(harness.pending, SESSION_ID, "", TOOL_INPUT) is None
     assert harness.messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question_count", [1, 2])
+async def test_reply_requires_other_tap(harness: QuestionHarness, question_count: int) -> None:
+    tool_input = copy.deepcopy(TOOL_INPUT)
+    if question_count == 2:
+        tool_input["questions"].append(
+            {**tool_input["questions"][0], "question": "Which language?"}
+        )
+    task = await harness.start(tool_input)
+    harness.comms.store.get_message_by_platform_id.return_value = harness.messages[0]
+    typed = CommsMessage(
+        id="text",
+        channel_id="telegram",
+        direction="inbound",
+        content="Svelte",
+        created_at=utc_now(),
+        session_id=SESSION_ID,
+        metadata_json={"chat_id": "42", "reply_to_message_id": "prompt"},
+    )
+    assert await harness.controller.handle("telegram", typed)
+    assert harness.messages[-1].content == "Choose Other on the question to answer."
+    assert not task.done()
+    await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", tool_input)
+    assert await task is None
 
 
 @pytest.mark.asyncio

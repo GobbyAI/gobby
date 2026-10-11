@@ -194,8 +194,6 @@ class TelegramQuestionController:
                 if prompt is None:
                     return False
             question_index = prompt.other if prompt is not None else None
-            if prompt is not None and question_index is None and len(prompt.questions) == 1:
-                question_index = 0
             option = "text"
         if prompt is None or message.session_id != prompt.session_id:
             await self._feedback(channel_name, message, "This question is already resolved.")
