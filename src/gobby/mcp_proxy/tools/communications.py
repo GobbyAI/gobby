@@ -327,6 +327,10 @@ def create_communications_registry(
         """Query message history."""
         try:
             session_id = _resolve_session_id(session_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+        try:
             channel_id = None
             if channel:
                 ch = communications_manager.get_channel_by_name(channel)
@@ -355,8 +359,6 @@ def create_communications_registry(
                     for m in messages
                 ],
             }
-        except ValueError as e:
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}

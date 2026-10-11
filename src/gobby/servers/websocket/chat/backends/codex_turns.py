@@ -266,7 +266,7 @@ async def stream_codex_turn(
         turn_deadline = asyncio.get_running_loop().time() + _CODEX_TURN_TIMEOUT_SECONDS
 
         while not turn_completed.is_set() or not event_queue.empty():
-            if not client.is_connected:
+            if event_queue.empty() and not client.is_connected:
                 raise RuntimeError("Codex app-server disconnected before turn completed")
             poll_deadline = min(turn_deadline, asyncio.get_running_loop().time() + 0.1)
             try:
@@ -385,6 +385,8 @@ async def stream_codex_turn(
                 raise RuntimeError("Codex thread closed before turn completed")
 
             if method == "turn/failed":
+                if turn_completed.is_set():
+                    continue
                 error = params.get("error")
                 message = str(error) if error else "Codex turn failed"
                 raise RuntimeError(message)
@@ -414,11 +416,12 @@ async def stream_codex_turn(
 
         if (
             final_record is not None
-            and last_text_item_id is not None
-            and final_record.message_id == last_text_item_id
+            and saw_text_output
+            and isinstance(final_record.message_id, str)
+            and (final_record.message_id == last_text_item_id or not unkeyed_delta_text)
             and isinstance(final_record.content, str)
         ):
-            recovered = _recover_item_text(last_text_item_id, final_record.content)
+            recovered = _recover_item_text(final_record.message_id, final_record.content)
             if recovered is not None:
                 yield recovered
 
