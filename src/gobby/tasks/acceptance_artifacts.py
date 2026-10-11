@@ -155,6 +155,8 @@ def _mask_fenced_criteria(criteria: str) -> str:
     lines: list[str] = []
     for line in criteria.splitlines(keepends=True):
         marker = re.match(r"^[ \t]*(`{3,}|~{3,})([^\n]*)", line)
+        if marker and not fence and marker.group(1).startswith("`") and "`" in marker.group(2):
+            marker = None
         masked = bool(fence or marker)
         if marker:
             delimiter, rest = marker.groups()

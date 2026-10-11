@@ -353,6 +353,30 @@ def test_artifact_references_keep_real_tests_after_fenced_examples() -> None:
     assert malformed_test_reference_findings(criteria) == ()
 
 
+@pytest.mark.parametrize(
+    "opener",
+    ["```npm run e2e``` must pass", "````npm run e2e```` must pass", "```py`thon"],
+)
+def test_artifact_references_keep_tests_after_backtick_info_span(opener: str) -> None:
+    criteria = f"{opener}\ntest: `tests/live.py::test_live`"
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/live.py::test_live",
+    )
+
+
+@pytest.mark.parametrize("opener", ["```python", "~~~python", "~~~`python`"])
+def test_artifact_references_mask_real_backtick_and_tilde_fences(opener: str) -> None:
+    criteria = (
+        f"{opener}\n"
+        "test: `tests/example.py::test_example`\n"
+        f"{opener[:3]}\n"
+        "test: `tests/live.py::test_live`"
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/live.py::test_live",
+    )
+
+
 def test_artifact_references_keep_pathlike_bare_tokens() -> None:
     criteria = (
         "test: tests/tasks/test_validation.py::test_gate.\n"
