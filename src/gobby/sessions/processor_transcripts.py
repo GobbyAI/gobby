@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Sequence
@@ -137,11 +138,15 @@ class ProcessorTranscriptMixin:
             async with lock:
                 if self._stopped or self._active_sessions.get(session_id) != transcript_path:
                     return True
-                return await self._process_session_unlocked(
+                pending_completion = session_id in self._pending_turn_completions
+                caught_up = await self._process_session_unlocked(
                     session_id,
                     transcript_path,
-                    at_eof=at_eof,
+                    at_eof=at_eof or pending_completion,
                 )
+                if caught_up and pending_completion:
+                    await self._finish_pending_turn(session_id)
+                return caught_up
         finally:
             if session_id not in self._active_sessions:
                 self.unregister_session(session_id)
@@ -251,6 +256,13 @@ class ProcessorTranscriptMixin:
                         new_line_offsets.append(line_start)
                         valid_offset = await f.tell()
                     elif at_eof:
+                        try:
+                            await asyncio.to_thread(json.loads, raw_line)
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            # A completion hook can race the provider's final write.
+                            # Leave an incomplete JSON record at the cursor for retry.
+                            reached_eof = True
+                            break
                         new_lines.append(raw_line.decode("utf-8", errors="replace"))
                         new_line_offsets.append(line_start)
                         valid_offset = await f.tell()
@@ -473,6 +485,16 @@ class ProcessorTranscriptMixin:
                 rendered_msg.to_dict(),
                 complete=True,
             )
+            if rendered_msg.role == "assistant":
+                completion = self._pending_turn_completions.pop(session_id, None)
+                if completion is not None:
+                    completion.flushed = True
+        if any(
+            message.role == "user"
+            and message.content_type not in ("tool_result", "mcp_tool_result")
+            for message in messages
+        ):
+            self._pending_turn_completions.pop(session_id, None)
         if render_state.current_message:
             await self._broadcast_rendered_session_message(
                 session_id,

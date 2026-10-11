@@ -813,11 +813,177 @@ async def test_completed_text_sends_once_after_rollback_and_restart_replay(
     assert sent.session_id == session_id
     assert sent.metadata_json["platform_destination"] == "42"
     assert manager.store.get_message(sent.id) is not None
-    removed, paths = manager.store.delete_messages_before(TS + timedelta(days=365))
+    removed, paths = manager.store.delete_messages_before(datetime.now(UTC) - timedelta(days=30))
     assert removed == 0
     assert paths == []
     await processor(temp_db, manager)._process_parsed_batch(session_id, batch)
     assert send.await_count == 1
+
+
+async def test_retention_prunes_old_mirror_rows_and_preserves_recent_dedupe(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = [f"delivered-{index}" for index in range(4)]
+    for index in range(3):
+        await manager.mirror_session_message(session_id, f"old-{index}", f"old reply {index}")
+    old_rows = manager.store.list_messages(session_id=session_id)
+    now = datetime.now(UTC)
+    with temp_db.transaction() as conn:
+        for row in old_rows:
+            conn.execute(
+                "UPDATE comms_messages SET created_at = %s WHERE id = %s",
+                (now - timedelta(days=31), row.id),
+            )
+    await manager.mirror_session_message(session_id, "recent", "recent reply")
+
+    cutoff = now - timedelta(days=30)
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (2, [])
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (1, [])
+    assert manager.store.delete_messages_before(cutoff, limit=2) == (0, [])
+    assert all(manager.store.get_message(row.id) is None for row in old_rows)
+    recent = manager.store.list_messages(session_id=session_id)
+    assert len(recent) == 1
+    assert recent[0].content == "recent reply"
+    await manager.mirror_session_message(session_id, "recent", "recent reply")
+    assert send.await_count == 4
+
+
+@pytest.mark.parametrize("write_mode", ["newline", "unterminated", "split"])
+@pytest.mark.parametrize("initial_role", ["assistant", "user"])
+async def test_timed_out_completion_mirrors_final_text_on_poll_without_later_record(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    write_mode: str,
+    initial_role: str,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "late-final.jsonl"
+    transcript.write_text(native_line(initial_role, "reply", "prefix ") + "\n")
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    result = await target.complete_turn(session_id, "final reply")
+    assert not result.flushed
+    assert result.error == "final transcript text not yet present"
+    send.assert_not_awaited()
+    await target._process_all_sessions()
+    send.assert_not_awaited()
+
+    final_line = native_line("assistant", "reply", "final reply").rstrip("\n")
+    if write_mode == "split":
+        split = len(final_line) // 2
+        with transcript.open("a") as stream:
+            stream.write(final_line[:split])
+        await target._process_all_sessions()
+        send.assert_not_awaited()
+        final_line = final_line[split:]
+    with transcript.open("a") as stream:
+        stream.write(final_line + ("\n" if write_mode == "newline" else ""))
+    await target._process_all_sessions()
+    send.assert_awaited_once()
+    expected_reply = "prefix final reply" if initial_role == "assistant" else "final reply"
+    assert send.call_args.args[0].content == expected_reply
+    await target._process_all_sessions()
+    assert send.await_count == 1
+
+
+def _tool_use_line() -> str:
+    return (
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "id": "a1",
+                    "content": [{"type": "tool_use", "id": "call", "name": "Bash", "input": {}}],
+                },
+            }
+        )
+        + "\n"
+    )
+
+
+def _tool_result_line() -> str:
+    return (
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [{"type": "tool_result", "tool_use_id": "call", "content": "out"}]
+                },
+            }
+        )
+        + "\n"
+    )
+
+
+@pytest.mark.parametrize("lagged_tool_result", [False, True])
+async def test_lagged_tool_result_keeps_pending_completion(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    lagged_tool_result: bool,
+) -> None:
+    manager, session_id, send = attached
+    transcript = tmp_path / "lag.jsonl"
+    head = (
+        native_line("user", "u1", "question")
+        + native_line("assistant", "a1", "Working.")
+        + _tool_use_line()
+    )
+    if not lagged_tool_result:
+        head += _tool_result_line()
+    transcript.write_text(head)
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    assert not (await target.complete_turn(session_id, "Final.")).flushed
+    if lagged_tool_result:
+        with transcript.open("a") as stream:
+            stream.write(_tool_result_line())
+        await target._process_all_sessions()
+        assert session_id in target._pending_turn_completions
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", "a2", "Final."))
+    await target._process_all_sessions()
+    send.assert_awaited_once()
+    assert send.call_args.args[0].content.endswith("Final.")
+
+
+@pytest.mark.parametrize("next_id", ["a2", "a2b"])
+@pytest.mark.parametrize("late_reply", [True, False])
+async def test_stale_completion_does_not_close_next_turn(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    next_id: str,
+    late_reply: bool,
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = [f"delivered-{index}" for index in range(5)]
+    transcript = tmp_path / "successive-turns.jsonl"
+    transcript.write_text(native_line("user", "u1", "question"))
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    assert not (await target.complete_turn(session_id, "Done.")).flushed
+    with transcript.open("a") as stream:
+        if late_reply:
+            stream.write(native_line("assistant", "a1", "Done."))
+        stream.write(native_line("user", "u2", "next"))
+    await target._process_all_sessions()
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", "a2", "Step one. Done."))
+    await target._process_all_sessions()
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", next_id, "Final answer."))
+    await target._process_all_sessions()
+    assert (await target.complete_turn(session_id, "Final answer.")).flushed
+    sent = [call.args[0].content for call in send.await_args_list]
+    assert len(sent) == (2 if late_reply else 1)
+    if late_reply:
+        assert sent[0] == "Done."
+    assert "Step one. Done." in sent[-1]
+    assert "Final answer." in sent[-1]
 
 
 @pytest.mark.parametrize("kind", ["thinking", "tool_use", "partial", "user", "unattached"])

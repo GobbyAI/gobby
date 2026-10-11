@@ -35,6 +35,7 @@ INDEX_CACHE_MAX_ENTRIES = 16
 # It also invalidates pre-fix AGY tool-event parser positions (version 1).
 # Version 4 rebuilds assistant groups at native message ID boundaries.
 # Version 5 restores distinct user groups and persists rendered IDs for append resume.
+# Version 6 keeps whole assistant turns together across tool records.
 INDEX_SCHEMA_VERSION = 6
 INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
 _SKIP_ADJUSTMENT_VALUE = object()

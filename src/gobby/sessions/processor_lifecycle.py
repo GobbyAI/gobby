@@ -32,6 +32,16 @@ class SessionFlushResult:
     error: str | None = None
 
 
+@dataclass
+class TurnCompletion:
+    """Provider completion evidence retained while the final transcript write catches up."""
+
+    expected_final_text: str | None
+    stable_since: float
+    previous_content: tuple[str, str] | None = None
+    flushed: bool = False
+
+
 class ProcessorLifecycleMixin:
     _task: asyncio.Task[None] | None
     _owner_loop: asyncio.AbstractEventLoop | None
@@ -63,6 +73,7 @@ class ProcessorLifecycleMixin:
         for lock in list(self._processing_locks.values()):
             async with lock:
                 pass
+        self._pending_turn_completions.clear()
         logger.info("SessionMessageProcessor stopped")
 
     def register_session(
@@ -183,9 +194,9 @@ class ProcessorLifecycleMixin:
             return SessionFlushResult(flushed=False, error="session is not registered")
         lock = self._processing_locks.setdefault(session_id, asyncio.Lock())
         deadline = asyncio.get_running_loop().time() + 5.0
-        previous_content: tuple[str, str] | None = None
-        stable_since = asyncio.get_running_loop().time()
         async with lock:
+            self._pending_turn_completions.pop(session_id, None)
+            completion: TurnCompletion | None = None
             while True:
                 if self._stopped:
                     return SessionFlushResult(flushed=False, error="processor is stopped")
@@ -196,44 +207,54 @@ class ProcessorLifecycleMixin:
                         return SessionFlushResult(flushed=False, error="processor is stopped")
                 if self._stopped:
                     return SessionFlushResult(flushed=False, error="processor is stopped")
-                state = self._render_states.get(session_id)
-                message = state.current_message if state else None
-                now = asyncio.get_running_loop().time()
-                current_content = (message.id, message.content) if message is not None else None
-                if current_content != previous_content:
-                    previous_content = current_content
-                    stable_since = now
-                if message is not None and message.role == "assistant":
-                    ready = (
-                        message.content.rstrip().endswith(expected_final_text.rstrip())
-                        if expected_final_text
-                        else now - stable_since >= 0.25
+                if completion is None:
+                    # Hydrate existing transcript history before arming the completion;
+                    # only subsequent user records retire this turn's evidence.
+                    completion = TurnCompletion(
+                        expected_final_text, asyncio.get_running_loop().time()
                     )
-                    if ready:
-                        # This provider hook confirms a new live completion,
-                        # including a response whose prefix was present at registration.
-                        self._mirror_eligible_ids.setdefault(session_id, set()).add(message.id)
-                        await self._broadcast_rendered_session_message(
-                            session_id, message.to_dict(), complete=True
-                        )
-                        # A provider can begin another assistant turn without a
-                        # user record (for example, an automatic continuation).
-                        # Its text must not reuse this completed group's ledger key.
-                        assert state is not None
-                        state.current_message = None
-                        state.seen_content.clear()
-                        return SessionFlushResult(flushed=True)
-                if (
-                    not expected_final_text
-                    and (message is None or message.role != "assistant")
-                    and now - stable_since >= 0.25
-                ):
+                    self._pending_turn_completions[session_id] = completion
+                if completion.flushed or await self._finish_pending_turn(session_id):
                     return SessionFlushResult(flushed=True)
                 if asyncio.get_running_loop().time() >= deadline:
                     return SessionFlushResult(
                         flushed=False, error="final transcript text not yet present"
                     )
                 await asyncio.sleep(0.05)
+
+    async def _finish_pending_turn(self: ProcessorHost, session_id: str) -> bool:
+        """Publish a confirmed completion once EOF contains its final text, under the lock."""
+        completion = self._pending_turn_completions.get(session_id)
+        if completion is None:
+            return False
+        state = self._render_states.get(session_id)
+        message = state.current_message if state else None
+        now = asyncio.get_running_loop().time()
+        current_content = (message.id, message.content) if message is not None else None
+        previous_content = completion.previous_content
+        if current_content != previous_content:
+            completion.previous_content = current_content
+            completion.stable_since = now
+        expected = completion.expected_final_text
+        if message is not None and message.role == "assistant":
+            ready = (
+                message.content.rstrip().endswith(expected.rstrip())
+                if expected
+                else now - completion.stable_since >= 0.25
+            )
+            if not ready:
+                return False
+            self._mirror_eligible_ids.setdefault(session_id, set()).add(message.id)
+            await self._broadcast_rendered_session_message(
+                session_id, message.to_dict(), complete=True
+            )
+            assert state is not None
+            state.current_message = None
+            state.seen_content.clear()
+        elif expected or now - completion.stable_since < 0.25:
+            return False
+        self._pending_turn_completions.pop(session_id, None)
+        return True
 
     async def reconcile_codex_transcript(
         self: ProcessorHost, session_id: str
@@ -278,6 +299,7 @@ class ProcessorLifecycleMixin:
         self._restored_render_sessions.discard(session_id)
         self._mirror_start_offsets.pop(session_id, None)
         self._mirror_eligible_ids.pop(session_id, None)
+        self._pending_turn_completions.pop(session_id, None)
         if was_registered:
             logger.debug("Unregistered session %s", session_id)
 
@@ -303,6 +325,7 @@ class ProcessorLifecycleMixin:
         self._stats.pop(session_id, None)
         self._restored_render_sessions.discard(session_id)
         self._mirror_eligible_ids.pop(session_id, None)
+        self._pending_turn_completions.pop(session_id, None)
         try:
             self._mirror_start_offsets[session_id] = await asyncio.to_thread(
                 os.path.getsize, transcript_path

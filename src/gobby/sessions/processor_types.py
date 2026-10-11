@@ -17,7 +17,7 @@ from gobby.storage.token_events import TokenEventStore
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
     from gobby.hooks.hook_manager import HookManager
-    from gobby.sessions.processor_lifecycle import SessionFlushResult
+    from gobby.sessions.processor_lifecycle import SessionFlushResult, TurnCompletion
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
     from gobby.storage.unmodeled_observations import UnmodeledObservationStore
@@ -61,6 +61,7 @@ class ProcessorHost(Protocol):
     _restored_render_sessions: set[str]
     _mirror_start_offsets: dict[str, int]
     _mirror_eligible_ids: dict[str, set[str]]
+    _pending_turn_completions: dict[str, TurnCompletion]
     _index_appenders: dict[str, TranscriptIndexAppender]
     _observation_store: UnmodeledObservationStore
     _stats: dict[str, MessageStats]
@@ -104,6 +105,8 @@ class ProcessorHost(Protocol):
     async def complete_turn(
         self, session_id: str, expected_final_text: str | None = None
     ) -> SessionFlushResult: ...
+
+    async def _finish_pending_turn(self, session_id: str) -> bool: ...
 
     async def reconcile_codex_transcript(self, session_id: str) -> SessionFlushResult: ...
 
