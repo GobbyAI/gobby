@@ -260,6 +260,12 @@ class BaseChannelAdapter(ABC):
             raise RuntimeError("Retry loop completed without producing a result.")
         raise last_exc
 
+    def retry_after_delay(self, response: httpx.Response) -> float | None:
+        """Read the server's requested retry delay."""
+        return parse_retry_after(
+            response.headers.get("Retry-After"), max_delay=_MAX_RETRY_AFTER_DELAY_SECONDS
+        )
+
     async def _retry_request(
         self,
         coro_factory: Callable[[], Awaitable[httpx.Response]],
@@ -317,12 +323,8 @@ class BaseChannelAdapter(ABC):
             if response.status_code == 429:
                 if attempt >= max_retries:
                     break
-                retry_after = response.headers.get("Retry-After")
                 delay = backoff_base * (2**attempt)  # default fallback
-                parsed_retry_after = parse_retry_after(
-                    retry_after,
-                    max_delay=_MAX_RETRY_AFTER_DELAY_SECONDS,
-                )
+                parsed_retry_after = self.retry_after_delay(response)
                 if parsed_retry_after is not None:
                     delay = parsed_retry_after
                 if self._rate_limit_callback is not None:

@@ -181,6 +181,18 @@ class TelegramAdapter(BaseChannelAdapter):
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
 
+    def retry_after_delay(self, response: httpx.Response) -> float | None:
+        """Telegram flood control carries retry_after in its JSON parameters."""
+        try:
+            body = response.json()
+        except ValueError:
+            return super().retry_after_delay(response)
+        parameters = body.get("parameters") if isinstance(body, dict) else None
+        delay = parameters.get("retry_after") if isinstance(parameters, dict) else None
+        if isinstance(delay, int) and not isinstance(delay, bool) and delay >= 0:
+            return float(delay)
+        return super().retry_after_delay(response)
+
     async def _post_json(
         self, method: str, payload: dict[str, Any], *, message_id: str | None = None
     ) -> dict[str, Any]:

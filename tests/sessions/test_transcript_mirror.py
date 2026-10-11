@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,6 +23,153 @@ from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.integration
 TS = datetime(2026, 10, 10, tzinfo=UTC)
+
+
+@pytest.fixture
+def retry_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    now = datetime.now(UTC)
+
+    def read_clock() -> datetime:
+        return now
+
+    def advance(seconds: float) -> None:
+        nonlocal now
+        now += timedelta(seconds=seconds)
+
+    monkeypatch.setattr("gobby.storage.communications.utc_now", read_clock)
+    monkeypatch.setattr("gobby.communications.outbound.utc_now", read_clock)
+    return advance
+
+
+async def test_outage_backoff_survives_polling_and_replay(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], None],
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = [RuntimeError("offline"), RuntimeError("offline"), "delivered"]
+    with pytest.raises(RuntimeError, match="offline"):
+        await manager.mirror_session_message(session_id, "outage", "reply")
+    retry_clock(8)
+    await manager.retry_transcript_deliveries(session_id)
+    with pytest.raises(RuntimeError, match="offline"):
+        await manager.mirror_session_message(session_id, "outage", "reply")
+    send.assert_awaited_once()
+    retry_clock(2)
+    await manager.retry_transcript_deliveries(session_id)
+    assert send.await_count == 2
+    retry_clock(19)
+    await manager.retry_transcript_deliveries(session_id)
+    assert send.await_count == 2
+    retry_clock(1)
+    await manager.retry_transcript_deliveries(session_id)
+    assert send.await_count == 3
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(rows) == 1 and rows[0].status == "sent"
+
+
+async def test_telegram_flood_control_delays_transport_and_durable_retry(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], None],
+) -> None:
+    manager, session_id, _ = attached
+    adapter = TelegramAdapter()
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) <= 4:
+            return httpx.Response(429, json={"parameters": {"retry_after": 60}})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        adapter._client = client
+        adapter._api_base = "https://telegram.test"
+        manager._adapters["mirror-test"] = adapter
+        with patch(
+            "gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep:
+            with pytest.raises(RuntimeError, match="429"):
+                await manager.mirror_session_message(session_id, "flood", "reply")
+        assert [call.args[0] for call in sleep.await_args_list] == [60, 60, 60]
+        retry_clock(59)
+        await manager.retry_transcript_deliveries(session_id)
+        assert len(requests) == 4
+        retry_clock(1)
+        await manager.retry_transcript_deliveries(session_id)
+    rows = manager.store.list_messages(session_id=session_id)
+    assert len(requests) == 5 and rows[0].status == "sent"
+
+
+async def test_detach_cancels_retries_before_same_dm_reattachment(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], None],
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = RuntimeError("offline")
+    with pytest.raises(RuntimeError, match="offline"):
+        await manager.mirror_session_message(session_id, "old", "old reply")
+    previous = manager.store.list_messages(session_id=session_id)[0]
+    manager.detach_conversation("mirror-test", "dm:42", session_id)
+    # A late result from the old in-flight attempt cannot revive its retry.
+    manager.store.update_message_delivery(
+        previous.id, "failed", "late failure", None, previous.metadata_json
+    )
+    manager.attach_conversation("mirror-test", "dm:42", session_id)
+    retry_clock(30)
+    await manager.retry_transcript_deliveries(session_id)
+    send.assert_awaited_once()
+    rows = manager.store.list_messages(session_id=session_id)
+    assert rows[0].status == "cancelled"
+    assert manager.store.list_retryable_transcript_messages(session_id) == []
+
+
+@pytest.mark.parametrize("changed", ["destination", "thread"])
+async def test_stale_rows_cannot_starve_newer_retry_window(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], None],
+    changed: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager, session_id, send = attached
+    monkeypatch.setattr(manager._rate_limiter, "wait_if_needed", AsyncMock())
+    send.side_effect = RuntimeError("offline")
+    for index in range(11):
+        with pytest.raises(RuntimeError, match="offline"):
+            await manager.mirror_session_message(session_id, str(index), str(index))
+        row = manager.store.list_messages(session_id=session_id, limit=20)[0]
+        if changed == "destination":
+            row.metadata_json["platform_destination"] = "old-dm"
+        else:
+            row.platform_thread_id = "old-thread"
+        # Persist the deliberate old destination through the message boundary.
+        manager.store.db.execute(
+            "UPDATE comms_messages SET platform_thread_id = %s WHERE id = %s",
+            (row.platform_thread_id, row.id),
+        )
+        manager.store.update_message_delivery(row.id, "failed", row.error, None, row.metadata_json)
+    with pytest.raises(RuntimeError, match="offline"):
+        await manager.mirror_session_message(session_id, "new", "new reply")
+    send.side_effect = None
+    send.return_value = "delivered"
+    retry_clock(30)
+    await manager.retry_transcript_deliveries(session_id)
+    rows = manager.store.list_messages(session_id=session_id, limit=20)
+    assert send.await_count == 13
+    assert sum(row.status == "cancelled" for row in rows) == 11
+    assert next(row for row in rows if row.content == "new reply").status == "sent"
+
+
+async def test_unattached_session_never_queries_retry_ledger(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+) -> None:
+    manager, session_id, _ = attached
+    manager.detach_conversation("mirror-test", "dm:42", session_id)
+    channel = manager.store.get_channel_by_name("mirror-test")
+    assert channel is not None
+    assert manager.attached_destination(channel.id, session_id) is None
+    with patch.object(manager.store, "list_retryable_transcript_messages") as query:
+        await manager.retry_transcript_deliveries(session_id)
+    query.assert_not_called()
 
 
 def record(index: int, role: str, content: str, content_type: str = "text") -> ParsedMessage:
@@ -122,6 +270,7 @@ async def test_delivery_failure_keeps_cursor_stats_and_websocket_progressing(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     tmp_path: Path,
     failure: str,
+    retry_clock: Callable[[float], None],
 ) -> None:
     manager, session_id, send = attached
     transcript = tmp_path / "ingest.jsonl"
@@ -144,6 +293,7 @@ async def test_delivery_failure_keeps_cursor_stats_and_websocket_progressing(
         row.metadata_json["transcript_lease_until"] = datetime.now(UTC).timestamp() + 900
         manager.store.update_message_delivery(row.id, "pending", None, None, row.metadata_json)
     for _ in range(4):
+        retry_clock(30)
         await target._process_all_sessions()
     assert target._byte_offsets[session_id] == len(content.encode())
     assert target._stats[session_id]["message_count"] == 2
@@ -154,6 +304,7 @@ async def test_delivery_failure_keeps_cursor_stats_and_websocket_progressing(
         content + native_line("assistant", second_id, "two") + native_line("user", "u2", "third")
     )
     for _ in range(5):
+        retry_clock(30)
         await target._process_all_sessions()
     assert target._byte_offsets[session_id] == transcript.stat().st_size
     assert target._stats[session_id]["message_count"] == 4
@@ -398,6 +549,7 @@ async def test_failed_final_reply_retries_on_poll_without_new_transcript_lines(
     temp_db: HubDatabase,
     attached: tuple[CommunicationsManager, str, AsyncMock],
     tmp_path: Path,
+    retry_clock: Callable[[float], None],
 ) -> None:
     manager, session_id, send = attached
     transcript = tmp_path / "retry.jsonl"
@@ -414,6 +566,7 @@ async def test_failed_final_reply_retries_on_poll_without_new_transcript_lines(
     target.register_session(session_id, str(transcript))
     send.side_effect = [RuntimeError("temporary failure"), "delivered"]
     assert (await target.complete_turn(session_id, "whole reply")).flushed
+    retry_clock(10)
     assert (await target.flush_session(session_id)).flushed
     assert send.await_count == 2
     rows = manager.store.list_messages(session_id=session_id)
@@ -518,10 +671,12 @@ async def test_turn_end_waits_for_final_line_and_role_change_does_not_resend(
 async def test_failed_delivery_retries_are_bounded(
     temp_db: HubDatabase,
     attached: tuple[CommunicationsManager, str, AsyncMock],
+    retry_clock: Callable[[float], None],
 ) -> None:
     manager, session_id, send = attached
     send.side_effect = RuntimeError("transport down")
     for _ in range(4):
+        retry_clock(30)
         with pytest.raises(RuntimeError, match="transport down"):
             await manager.mirror_session_message(session_id, "stable-id", "reply")
     assert send.await_count == 3
@@ -531,6 +686,7 @@ async def test_failed_delivery_retries_are_bounded(
 async def test_partial_reply_resumes_only_unconfirmed_chunks(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     recovery: str,
+    retry_clock: Callable[[float], None],
 ) -> None:
     manager, session_id, _ = attached
     adapter = TelegramAdapter()
@@ -562,6 +718,7 @@ async def test_partial_reply_resumes_only_unconfirmed_chunks(
         if recovery == "expired-pending":
             row.metadata_json["transcript_lease_until"] = 0
             manager.store.update_message_delivery(row.id, "pending", None, None, row.metadata_json)
+        retry_clock(10)
         await manager.mirror_session_message(session_id, "stable-id", reply)
         await manager.mirror_session_message(session_id, "stable-id", reply)
     messages = manager.store.list_messages(session_id=session_id)

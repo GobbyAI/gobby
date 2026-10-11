@@ -236,6 +236,24 @@ class CommunicationsManager:
 
     async def retry_transcript_deliveries(self, session_id: str) -> None:
         """Recover bounded delivery attempts without rolling back transcript ingestion."""
+        channel = next(
+            (
+                channel
+                for channel in self._channel_by_name.values()
+                if channel.enabled and self.attached_destination(channel.id, session_id) is not None
+            ),
+            None,
+        )
+        if channel is None:
+            return
+        current = await self._outbound.enrich_metadata(channel, channel.name, session_id, None)
+        await asyncio.to_thread(
+            self._store.cancel_transcript_messages,
+            session_id,
+            channel_id=channel.id,
+            destination=current.get("platform_destination"),
+            thread_id=current.get("thread_id"),
+        )
         messages = await asyncio.to_thread(
             self._store.list_retryable_transcript_messages, session_id
         )
@@ -263,6 +281,13 @@ class CommunicationsManager:
                     != message.metadata_json.get("platform_destination")
                     or current.get("thread_id") != message.platform_thread_id
                 ):
+                    await asyncio.to_thread(
+                        self._store.cancel_transcript_messages,
+                        session_id,
+                        channel_id=channel.id,
+                        destination=current.get("platform_destination"),
+                        thread_id=current.get("thread_id"),
+                    )
                     continue
                 await self.send_message(
                     channel.name,
@@ -622,6 +647,8 @@ class CommunicationsManager:
                 targets = channel.config_json.setdefault("telegram_agent_targets", {})
                 targets[conversation_id] = session_id
                 self._managed_telegram_targets.add(key)
+            if self._conversation_attachments.get(key) != session_id:
+                self._store.cancel_transcript_messages(session_id)
             self._conversation_attachments[key] = session_id
 
     def switch_conversation(self, channel_name: str, conversation_id: str, session_id: str) -> None:
@@ -642,6 +669,8 @@ class CommunicationsManager:
                 if not was_managed:
                     self._managed_telegram_targets.discard(key)
                 raise
+            if previous is not None and previous != session_id:
+                self._store.cancel_transcript_messages(previous)
 
     def clear_conversation_target(
         self, channel_name: str, conversation_id: str, expected_session_id: str
@@ -654,6 +683,7 @@ class CommunicationsManager:
         with self._attachment_lock:
             if self._conversation_attachments.get(key) != expected_session_id:
                 return False
+            self._store.cancel_transcript_messages(expected_session_id)
             if key in self._managed_telegram_targets:
                 self._store.set_telegram_agent_target(channel.id, conversation_id, None)
                 targets = channel.config_json.get("telegram_agent_targets")

@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.models import (
     ChannelConfig,
@@ -18,6 +20,7 @@ from gobby.communications.models import (
     CommsMessage,
 )
 from gobby.communications.telegram_callbacks import bounded_callback_ttl
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -331,6 +334,11 @@ class OutboundCommunications:
         except Exception as e:
             message.status = "failed"
             message.error = str(e) or type(e).__name__
+            if "transcript_message_id" in message.metadata_json:
+                delay = 10.0 * 2 ** (message.metadata_json["transcript_delivery_attempt"] - 1)
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                    delay = max(delay, adapter.retry_after_delay(e.response) or 0)
+                message.metadata_json["transcript_retry_at"] = utc_now().timestamp() + delay
             logger.exception(
                 "Failed to send message %s to %r: %s: %s",
                 message.id,

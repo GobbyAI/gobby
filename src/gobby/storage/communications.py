@@ -331,12 +331,18 @@ class LocalCommunicationsStore:
                     "metadata_json = jsonb_set(jsonb_set(metadata_json, '{transcript_delivery_attempt}', "
                     "to_jsonb(COALESCE((metadata_json->>'transcript_delivery_attempt')::integer, 1) + 1)), "
                     "'{transcript_lease_until}', to_jsonb(%s::double precision)) "
-                    "WHERE id = %s AND (status = 'failed' OR (status = 'pending' "
+                    "WHERE id = %s AND ((status = 'failed' AND "
+                    "COALESCE((metadata_json->>'transcript_retry_at')::double precision, 0) "
+                    "<= %s) OR (status = 'pending' "
                     "AND (metadata_json->>'transcript_lease_until')::double precision "
                     "< EXTRACT(EPOCH FROM now()))) "
                     "AND COALESCE((metadata_json->>'transcript_delivery_attempt')::integer, 1) < 3 "
                     "RETURNING *",
-                    (message.metadata_json["transcript_lease_until"], persisted.id),
+                    (
+                        message.metadata_json["transcript_lease_until"],
+                        persisted.id,
+                        utc_now().timestamp(),
+                    ),
                 ).fetchone()
                 if row is not None:
                     return CommsMessage.from_row(row), True
@@ -347,12 +353,35 @@ class LocalCommunicationsStore:
         rows = self.db.fetchall(
             "SELECT * FROM comms_messages WHERE session_id = %s "
             "AND metadata_json ? 'transcript_message_id' "
-            "AND ((status = 'failed' AND (metadata_json->>'transcript_delivery_attempt')::integer < 3) "
+            "AND ((status = 'failed' AND (metadata_json->>'transcript_delivery_attempt')::integer < 3 "
+            "AND COALESCE((metadata_json->>'transcript_retry_at')::double precision, 0) "
+            "<= %s) "
             "OR (status = 'pending' AND (metadata_json->>'transcript_lease_until')::double precision "
             "< EXTRACT(EPOCH FROM now()))) ORDER BY created_at, id LIMIT 10",
-            (session_id,),
+            (session_id, utc_now().timestamp()),
         )
         return [CommsMessage.from_row(row) for row in rows]
+
+    def cancel_transcript_messages(
+        self,
+        session_id: str,
+        *,
+        channel_id: str | None = None,
+        destination: str | None = None,
+        thread_id: str | None = None,
+    ) -> None:
+        """Retire detached deliveries, or all rows outside the current destination."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE comms_messages SET status = 'cancelled', "
+                "error = 'Transcript attachment changed before delivery' "
+                "WHERE session_id = %s AND metadata_json ? 'transcript_message_id' "
+                "AND status IN ('pending', 'failed') AND (%s::text IS NULL OR "
+                "channel_id IS DISTINCT FROM %s OR "
+                "metadata_json->>'platform_destination' IS DISTINCT FROM %s OR "
+                "platform_thread_id IS DISTINCT FROM %s)",
+                (session_id, channel_id, channel_id, destination, thread_id),
+            )
 
     def create_message_with_attachments(
         self,
@@ -578,6 +607,7 @@ SELECT
                        platform_message_id = %s,
                        metadata_json = %s
                  WHERE id = %s
+                   AND NOT (status = 'cancelled' AND metadata_json ? 'transcript_message_id')
                 """,
                 (
                     status,
