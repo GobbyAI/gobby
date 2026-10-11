@@ -587,7 +587,7 @@
     {
       "id": "inventory",
       "command": "gcode outline/symbol-at on communications MCP registry, CLI and HTTP routes; AST route inventory",
-      "result": "44 operations inventoried and mapped: 20 MCP, 10 CLI, 14 HTTP. The 2026-10-10 update (#23909) adds resolve_operator_conversation and list_conversation_attachments; these and attach_conversation/detach_conversation have no CLI or HTTP route."
+      "result": "31 operations inventoried and mapped: 15 MCP, 6 CLI, 10 HTTP. The MCP count was confirmed against live gobby-communications list_tools on 2026-10-11 (#23920). The 2026-10-10 update (#23909) adds resolve_operator_conversation and list_conversation_attachments; these and attach_conversation/detach_conversation have no CLI or HTTP route."
     },
     {
       "id": "conversation-attachment",
@@ -606,8 +606,8 @@
     },
     {
       "id": "schemas",
-      "command": "get_tool_schema on the original 18 gobby-communications tools; gcode symbol-at on create_communications_registry.resolve_operator_conversation and list_conversation_attachments",
-      "result": "All 20 registered tool parameters and defaults inspected; no live external mutations. attach_conversation and detach_conversation were read on 2026-09-23 (#22804); resolve_operator_conversation(channel: str) and list_conversation_attachments() were read on 2026-10-10 (#23909)."
+      "command": "get_tool_schema on the original 13 gobby-communications tools; gcode symbol-at on create_communications_registry.resolve_operator_conversation and list_conversation_attachments",
+      "result": "All 15 registered tool parameters and defaults inspected; no live external mutations. attach_conversation and detach_conversation were read on 2026-09-23 (#22804); resolve_operator_conversation(channel: str) and list_conversation_attachments() were read on 2026-10-10 (#23909)."
     },
     {
       "id": "operator-registration",
@@ -641,8 +641,8 @@
     },
     {
       "id": "cli-help-complete",
-      "command": "uv run gobby comms <operation> --help for all ten inventoried CLI commands",
-      "result": "All ten CLI operations verified across this and previous context; channels remove additionally supports --yes."
+      "command": "uv run gobby comms <operation> --help for all six inventoried CLI commands",
+      "result": "All six CLI operations verified across this and previous context; channels remove additionally supports --yes."
     },
     {
       "id": "installed-persona",
@@ -804,6 +804,6 @@
     }
   ],
   "coverage_notes": [
-    "All 27 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel mutations. Final post-metadata validation is recorded in the task close transcript."
+    "All 31 communications operations mapped. Communications and Telegram guide sections audited against implementation, registered schemas, installed persona and focused isolated tests. CLI guide audit limited to communications inventory. Official Telegram guidance checked for privacy, transport and rate limits. No live external messages or channel mutations. Final post-metadata validation is recorded in the task close transcript."
   ]
 }
