@@ -28,7 +28,7 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
-from gobby.runner_front_door import backend_bind
+from gobby.runner_backend import backend_bind
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -542,14 +542,13 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     if database is not None:
         bind_fenced_writer(database, lease)
     server.grant_service = presenter
-    front_door = getattr(runner, "front_door_child", None)
     server.auth_service.bind_runtime(
         grant_service=presenter,
         lease_live=lease.owns_live_lease,
         local_machine_id=lease.machine_id,
         effect_fence=fence,
         clock=lambda: int(time.time()),
-        front_door_secret=front_door.secret if front_door is not None else None,
+        front_door_secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

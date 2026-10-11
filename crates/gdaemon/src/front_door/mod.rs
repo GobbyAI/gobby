@@ -23,6 +23,7 @@ use routes::RouteTable;
 /// Shared state for one listener: its backend target and the proxy client.
 #[derive(Clone)]
 pub struct FrontDoorState {
+    pub runtime: Option<Arc<crate::state::RuntimeState>>,
     pub target: SocketAddr,
     pub backend_state: BackendState,
     pub client: ProxyClient,
@@ -36,6 +37,7 @@ impl FrontDoorState {
         auth: Arc<auth::AuthState>,
     ) -> Self {
         Self {
+            runtime: None,
             target,
             backend_state,
             client: proxy::client(),
@@ -68,6 +70,44 @@ impl FrontDoor {
         https: bool,
     ) -> Response<Body> {
         observe_peer(request.headers_mut(), peer, https);
+        let mut state = self.state.clone();
+        if let Some(runtime) = &state.runtime {
+            if crate::lease::admin_api::is_route(request.uri().path()) {
+                if let Err(response) = state.auth.authenticate(request.headers_mut()).await {
+                    return *response;
+                }
+                if !request.headers().contains_key("x-gobby-key-id") {
+                    return auth::rejection(
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        "authentication_required",
+                        "A valid API key is required for native lease administration",
+                    );
+                }
+                return crate::lease::admin_api::handle(runtime, request).await;
+            }
+            let backend = runtime.backend.borrow().clone();
+            let refusal = match backend {
+                crate::lifecycle::backend::BackendStatus::Refused { reason } => Some(
+                    serde_json::json!({"error": "backend_refused", "status": "unavailable", "backend": {
+                        "state": "refused", "refusal": reason, "target": state.target.to_string()
+                    }}),
+                ),
+                _ if runtime.standby().await => Some(serde_json::json!({
+                    "error": "standby", "status": "unavailable", "state": "standby", "backend": {
+                        "state": "standby", "target": state.target.to_string()
+                    }
+                })),
+                _ => None,
+            };
+            if let Some(body) = refusal {
+                return health::json_response(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    body,
+                    true,
+                );
+            }
+            state.backend_state = BackendState::Starting;
+        }
         if request.method() == axum::http::Method::POST
             && request.uri().path() == "/api/runtime/handshake/challenge"
         {
@@ -80,9 +120,9 @@ impl FrontDoor {
             return *response;
         }
         if ws::is_upgrade(request.headers()) {
-            ws::splice(&self.state, request).await
+            ws::splice(&state, request).await
         } else {
-            self.table.dispatch(&self.state, request).await
+            self.table.dispatch(&state, request).await
         }
     }
 }

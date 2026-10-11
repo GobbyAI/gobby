@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
+import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.daemon_lease import DaemonLeaseStatus
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.admin._lease import register_lease_routes
 
@@ -19,16 +19,6 @@ class FakeAgentRunner:
 
     def get_running_agents_count(self) -> int:
         return self.running
-
-
-class FakeLease:
-    def status(self) -> DaemonLeaseStatus:
-        return DaemonLeaseStatus(
-            held=True,
-            owner_pid=123,
-            owner_application_name="gobby-lease-v1:machine:instance",
-            heartbeat_age_seconds=0.1,
-        )
 
 
 @dataclass
@@ -53,7 +43,6 @@ class FakeRunner:
         self.cron_scheduler = (
             FakeCronScheduler(FakeCronStorage(running_crons)) if running_crons is not None else None
         )
-        self.daemon_lease = FakeLease()
         self.shutdown_requested = False
 
     def request_shutdown(self) -> None:
@@ -83,14 +72,16 @@ def _client(
     return TestClient(app), runner
 
 
-def test_active_lease_status_reports_holder() -> None:
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("GET", "status"), ("POST", "promote"), ("POST", "recover")],
+)
+def test_native_lease_routes_are_absent_from_python_backend(method: str, path: str) -> None:
     client, _runner = _client(0)
 
-    response = client.get("/api/admin/lease/status")
+    response = client.request(method, f"/api/admin/lease/{path}")
 
-    assert response.status_code == 200
-    assert response.json()["mode"] == "active"
-    assert response.json()["owner_pid"] == 123
+    assert response.status_code == 404
 
 
 def test_handoff_refuses_while_local_agents_are_running() -> None:

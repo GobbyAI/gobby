@@ -40,6 +40,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class StartRefusal(RuntimeError):
+    """Deterministic startup refusal that needs operator recovery."""
+
+
 def bundled_content_refusal(runner: GobbyRunner) -> str | None:
     """Return the dev-mode refusal for dirty bundled content, or ``None``.
 
@@ -124,7 +128,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     """Run phase 1 synchronously; GobbyRunner.create runs the refusal off the loop."""
     open_storage_and_config(runner, config_path, verbose)
     if refusal := bundled_content_refusal(runner):
-        raise RuntimeError(refusal)
+        raise StartRefusal(refusal)
     init_startup_content(runner)
 
 

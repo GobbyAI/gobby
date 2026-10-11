@@ -172,7 +172,15 @@ class FailOpenPidOwnership:
         """Match the ownership contract when no PID-file claim exists."""
 
 
-PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership
+@dataclass(frozen=True)
+class SupervisedPidOwnership:
+    """The native supervisor owns the claim; the backend never releases it."""
+
+    def release(self) -> None:
+        """The supervisor alone owns the descriptor and PID record."""
+
+
+PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership | SupervisedPidOwnership
 
 _CURRENT_CLAIM: PidFileClaim | None = None
 

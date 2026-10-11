@@ -490,7 +490,7 @@ def _prepare_gcode_runtime(
 
 def _active_deployment_grant_context() -> DeploymentGrantContext:
     """Read token, epoch, and signing secret from the live daemon lease."""
-    from gobby.daemon_lease import current_lease
+    from gobby.runtime_grants.lease_view import current_lease
 
     lease = current_lease()
     token = getattr(lease, "deployment_token", None)

@@ -74,6 +74,26 @@ def installed_dir(tmp_path: Path) -> Path:
     return bin_dir
 
 
+def test_checkout_selection_precedes_child_cache_cleanup(
+    installed_dir: Path, tmp_path: Path
+) -> None:
+    target = tmp_path / "cargo-output"
+    binary = _executable(target / "debug" / GDAEMON)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = e2e_fixtures.prepare_daemon_env(
+        {
+            "GOBBY_TEST_GDAEMON": "checkout",
+            "CARGO_TARGET_DIR": str(target),
+            NATIVE_BIN_DIR_ENV: str(installed_dir),
+        },
+        home_dir=home,
+    )
+
+    assert (Path(env[NATIVE_BIN_DIR_ENV]) / GDAEMON).resolve() == binary.resolve()
+    assert "CARGO_TARGET_DIR" not in env
+
+
 def test_checkout_gdaemon_survives_pinned_gterm_dir(
     checkout_gdaemon: Path, installed_dir: Path, tmp_path: Path
 ) -> None:

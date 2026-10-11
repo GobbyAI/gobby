@@ -4,6 +4,7 @@
 //! operation is bounded; failure discards the dedicated session and its fence.
 //! Fences must never be cached by consumers beyond the owner's live authority.
 
+pub mod admin_api;
 pub mod standby;
 
 use anyhow::{Result, bail};
@@ -20,12 +21,7 @@ pub(crate) const APPLICATION_PREFIX: &str = "gobby-lease-v1:";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Node mode has no local hub authority, even if database credentials exist.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LeaseMode {
-    Standalone,
-    Hub,
-    Node,
-}
+pub use gobby_core::bootstrap::RunMode as LeaseMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeaseState {

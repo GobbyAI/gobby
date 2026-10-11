@@ -21,7 +21,7 @@ from gobby.cli.daemon_singleton import (
 )
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
-from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
+from gobby.runner_pid_file import cancel_service_reservation, convert_held_claim_to_reservation
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -30,9 +30,11 @@ from gobby.utils.dependency_requirements import (
 )
 from gobby.utils.dev import worktree_daemon_refusal
 from gobby.utils.env import is_test_protect_enabled
+from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.status import format_startup_summary
 
-from .daemon import _services_start, _step, _wait_for_daemon_health
+from .daemon import _services_start
+from .daemon_lifecycle import _step, _wait_for_daemon_health
 from .installers.service import get_service_status, service_start
 from .ui_mode import resolve_ui_mode
 from .utils import (
@@ -52,6 +54,7 @@ logger = logging.getLogger(__name__)
 # which reached 168s on a loaded machine while the previous 60s budget reported
 # that healthy daemon as a failed start.
 STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
+PORT_REUSE_WAIT_SECONDS = 10.0
 
 
 def _start_dependency_errors() -> list[str]:
@@ -112,6 +115,14 @@ def _poll_startup_progress(
                 timeout=1.0,
             )
             if resp.status_code != 200:
+                if resp.status_code == 503:
+                    unavailable = resp.json()
+                    if (
+                        isinstance(unavailable, dict)
+                        and unavailable.get("error") == "backend_unavailable"
+                    ):
+                        time.sleep(0.5)
+                        continue
                 return False
             progress = resp.json()
 
@@ -173,7 +184,7 @@ def _launch_direct_runner(
     config: Any,
     verbose: bool,
 ) -> None:
-    """Launch the runner subprocess with the inherited singleton descriptor."""
+    """Launch the native supervisor through a one-shot singleton reservation."""
     runtime_log_file = resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)
     gobby_dir.mkdir(parents=True, exist_ok=True)
     runtime_log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -201,9 +212,14 @@ def _launch_direct_runner(
 
     _step(f"Ports available (HTTP: {http_port}, WS: {ws_port})")
 
-    cmd = [sys.executable, "-m", "gobby.runner"]
+    native_bin = resolve_native_bin("gdaemon")
+    if native_bin is None:
+        _step("gdaemon is missing; reinstall the managed native binary set", error=True)
+        sys.exit(1)
+    cmd = [native_bin, "serve"]
+    backend_command = [sys.executable, "-m", "gobby.runner"]
     if verbose:
-        cmd.append("--verbose")
+        backend_command.append("--verbose")
 
     if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex")):
         click.secho(
@@ -213,7 +229,10 @@ def _launch_direct_runner(
         )
 
     env = os.environ.copy()
-    env.update(claim.inherit_environment())
+    env["GOBBY_HOME"] = str(gobby_dir)
+    env["GOBBY_SERVICE_LAUNCH"] = "1"
+    env["GOBBY_BACKEND_COMMAND"] = json.dumps(backend_command)
+    env.pop("GOBBY_SINGLETON_LOCK_FD", None)
     popen_kwargs: dict[str, Any] = {
         "stdout": None,
         "stderr": None,
@@ -223,15 +242,14 @@ def _launch_direct_runner(
     }
     if os.name == "posix":
         popen_kwargs["close_fds"] = True
-        popen_kwargs["pass_fds"] = (claim.fileno(),)
 
     with open(runtime_log_file, "a") as runtime_log:
+        reservation = convert_held_claim_to_reservation(claim, backend="direct")
+        env["GOBBY_SERVICE_NONCE"] = reservation.nonce_path
         popen_kwargs["stdout"] = runtime_log
         popen_kwargs["stderr"] = runtime_log
         try:
             process = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603
-            pid_file.write_text(str(process.pid), encoding="utf-8")
-            claim.detach()
 
             time.sleep(1.0)
             if process.poll() is not None:
@@ -281,6 +299,8 @@ def _launch_direct_runner(
         except Exception as exc:
             _step(f"Error starting daemon: {exc}", error=True)
             sys.exit(1)
+        finally:
+            cancel_service_reservation(pid_file)
 
 
 @click.command()

@@ -11,6 +11,7 @@ import re
 import subprocess  # nosec B404 # subprocess needed for launchctl/systemctl
 import sys
 import time
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -363,15 +364,15 @@ def _validate_plist_paths(plist_file: Path) -> list[str]:
     warnings = []
     try:
         content = plist_file.read_text(encoding="utf-8")
-        # Extract ProgramArguments first <string> (python executable)
+        # Extract ProgramArguments first <string> (native supervisor).
         exe_match = re.search(
             r"<key>ProgramArguments</key>\s*<array>\s*<string>([^<]+)</string>",
             content,
         )
         if exe_match:
-            exe_path = Path(exe_match.group(1))
+            exe_path = Path(unescape(exe_match.group(1)))
             if not exe_path.exists():
-                warnings.append(f"Python executable not found: {exe_path}")
+                warnings.append(f"Daemon executable not found: {exe_path}")
 
         # Extract WorkingDirectory
         wd_match = re.search(
@@ -379,7 +380,7 @@ def _validate_plist_paths(plist_file: Path) -> list[str]:
             content,
         )
         if wd_match:
-            wd_path = Path(wd_match.group(1))
+            wd_path = Path(unescape(wd_match.group(1)))
             if not wd_path.exists():
                 warnings.append(f"Working directory not found: {wd_path}")
     except OSError:

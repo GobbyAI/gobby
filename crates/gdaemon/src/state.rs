@@ -1,0 +1,124 @@
+//! Single native owner of the machine PID claim, lease and backend lifecycle.
+//!
+//! Node relay work consumes gcore's bootstrap RunMode and this state; it must
+//! never create a second mode parser or a database lease for a node.
+
+use crate::{
+    lease::ActiveDaemonLease,
+    lifecycle::{
+        backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
+        pid_file::claim_from_environment,
+    },
+};
+use anyhow::{Context, Result};
+use gobby_core::bootstrap::{HubDatabaseBootstrap, RunMode};
+use std::{path::Path, sync::Arc, time::Duration};
+use tokio::sync::{Mutex, watch};
+
+/// The HTTP layer sees a projection, while the supervisor owns the PID claim.
+pub struct RuntimeState {
+    pub mode: RunMode,
+    pub lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+    pub backend: watch::Receiver<BackendStatus>,
+}
+
+impl RuntimeState {
+    pub fn prepare(
+        bootstrap: &HubDatabaseBootstrap,
+        home: &Path,
+        secret: &str,
+    ) -> Result<Option<(Arc<Self>, BackendSupervisor)>> {
+        let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
+            return Ok(None);
+        };
+        let lease = match bootstrap.mode {
+            RunMode::Node => None,
+            mode => {
+                let database_url = bootstrap
+                    .database_url
+                    .as_deref()
+                    .context("native runtime ownership requires bootstrap database_url")?;
+                let machine = gobby_core::machine::read_machine_id_from_home(home)?;
+                let token = gobby_core::grant::deployment_token(home);
+                Some(Arc::new(Mutex::new(ActiveDaemonLease::new(
+                    database_url,
+                    &machine,
+                    &token,
+                    mode,
+                )?)))
+            }
+        };
+        let mut config = BackendConfig::from_environment(home)?;
+        config
+            .environment
+            .insert("GOBBY_FRONT_DOOR_SECRET".into(), secret.into());
+        let supervisor = BackendSupervisor::with_lease(lease.clone(), claim, config);
+        let state = Arc::new(Self {
+            mode: bootstrap.mode,
+            lease,
+            backend: supervisor.subscribe(),
+        });
+        Ok(Some((state, supervisor)))
+    }
+
+    pub async fn run(
+        &self,
+        mut supervisor: BackendSupervisor,
+        mut shutdown: watch::Receiver<bool>,
+        bootstrap: HubDatabaseBootstrap,
+        home: std::path::PathBuf,
+    ) -> Result<()> {
+        loop {
+            if *shutdown.borrow() {
+                return Ok(());
+            }
+            if let Some(lease) = &self.lease {
+                let acquired = match lease.lock().await.try_acquire().await {
+                    Ok(acquired) => acquired,
+                    Err(error) => {
+                        eprintln!("gdaemon lease acquisition: {error:#}");
+                        false
+                    }
+                };
+                if !acquired {
+                    tokio::select! {
+                        changed = shutdown.changed() => {
+                            if changed.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
+                    continue;
+                }
+            }
+            let services = crate::state_services::ActiveServices::start(&bootstrap, &home).await?;
+            let outcome = supervisor.run(shutdown.clone()).await;
+            services.stop().await?;
+            match outcome? {
+                SupervisorExit::Stopped => return Ok(()),
+                SupervisorExit::Refused => {
+                    // Refusal is sticky and keeps the machine claim, but releases
+                    // database ownership. Only a full process restart retries.
+                    while !*shutdown.borrow() {
+                        if shutdown.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                    return Ok(());
+                }
+                SupervisorExit::Standby | SupervisorExit::LeaseLost => {}
+            }
+        }
+    }
+
+    pub async fn standby(&self) -> bool {
+        if matches!(*self.backend.borrow(), BackendStatus::Refused { .. }) {
+            return false;
+        }
+        match &self.lease {
+            Some(lease) => lease.lock().await.fence().is_none(),
+            None => false,
+        }
+    }
+}

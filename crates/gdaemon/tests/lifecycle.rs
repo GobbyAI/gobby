@@ -42,6 +42,9 @@ impl TestDb {
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
         let mut config = BackendConfig::from_command_json(home, Some(&argv))?;
+        config
+            .environment
+            .insert("HOME".into(), home.as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
         Ok(BackendSupervisor::new(lease, claim, config))
@@ -266,6 +269,112 @@ fn crash_backoff_caps_at_thirty_seconds() {
 }
 
 #[tokio::test]
+async fn healthy_backend_resets_crash_backoff() -> Result<()> {
+    let home = TempDir::new()?;
+    let script = r#"import os,pathlib,time
+home=pathlib.Path(os.environ['GOBBY_HOME'])
+counter=home/'runs'
+n=int(counter.read_text())+1 if counter.exists() else 1
+counter.write_text(str(n))
+if n==1: raise SystemExit(1)
+(home/'healthy').write_text('ready')
+while not (home/'exit').exists(): time.sleep(0.01)
+raise SystemExit(1)
+"#;
+    let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+    let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+    config.drain_timeout = Duration::from_millis(100);
+    let claim =
+        claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("test PID claim")?;
+    let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+    let mut state = supervisor.subscribe();
+    let (stop, rx) = watch::channel(false);
+    let task = tokio::spawn(async move { supervisor.run(rx).await });
+    let _abort = AbortOnDrop(task.abort_handle());
+    wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+    assert_eq!(wait_for_file(&home.path().join("healthy")).await?, "ready");
+    sleep(Duration::from_secs(31)).await;
+    fs::write(home.path().join("exit"), "exit")?;
+    wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+    assert_eq!(
+        *state.borrow(),
+        BackendStatus::Backoff {
+            delay: Duration::from_secs(1)
+        }
+    );
+    stop.send(true)?;
+    assert_eq!(
+        timeout(Duration::from_secs(5), task).await???,
+        SupervisorExit::Stopped
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn exited_backend_leaves_no_process_group_descendant() -> Result<()> {
+    for code in [1, 78, 0] {
+        let home = TempDir::new()?;
+        let script = format!(
+            r#"import os,pathlib,subprocess,sys,time
+home=pathlib.Path(os.environ['GOBBY_HOME'])
+if (home/'first').exists():
+    os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
+    raise SystemExit(0)
+(home/'first').write_text('first')
+child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(600)'])
+(home/'descendant').write_text(str(child.pid))
+while not (home/'exit').exists(): time.sleep(0.01)
+if {code}==0:
+    import json,time
+    (home/'shutdown_intent_active.json').write_text(json.dumps({{'source':'test','intent':'restart','timestamp':time.time()}}))
+raise SystemExit({code})
+"#
+        );
+        let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
+        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        config.drain_timeout = Duration::from_millis(100);
+        let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+            .context("test PID claim")?;
+        let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+        let mut state = supervisor.subscribe();
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let pid: i32 = wait_for_file(&home.path().join("descendant"))
+            .await?
+            .parse()?;
+        let first_backend = state.borrow().clone();
+        fs::write(home.path().join("exit"), "exit")?;
+        if code == 78 {
+            wait_for_status(&mut state, |s| matches!(s, BackendStatus::Refused { .. })).await?;
+        } else if code == 1 {
+            wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+        } else {
+            wait_for_status(&mut state, |s| {
+                matches!(s, BackendStatus::Starting { .. }) && s != &first_backend
+            })
+            .await?;
+        }
+        if code != 78 {
+            stop.send(true)?;
+        }
+        timeout(Duration::from_secs(5), task).await???;
+        timeout(Duration::from_secs(5), async {
+            loop {
+                // SAFETY: signal zero observes only the PID written by this test's backend.
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    break;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .context("descendant survived leader exit")?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn python_written_shutdown_marker_is_a_golden() -> Result<()> {
     let home = TempDir::new()?;
     let raw = include_bytes!("../../../tests/fixtures/shutdown_intent_restart.json");
@@ -379,6 +488,9 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
         let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);

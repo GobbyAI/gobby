@@ -19,11 +19,14 @@ import ssl
 import subprocess
 import sys
 from collections.abc import Generator
+from functools import partial
 from pathlib import Path
 
 import httpx
 import psutil
+import psycopg
 import pytest
+import yaml
 
 from gobby.cli.install_setup_impeccable import _publish_launcher, _publish_stamp
 from gobby.cli.utils_process import is_port_available
@@ -37,6 +40,8 @@ from tests.e2e.conftest import (
     authenticated_daemon_client,
     authenticated_daemon_request,
     daemon_health_unavailable,
+    link_operator_srt,
+    native_daemon_command,
     prepare_daemon_env,
     spawn_daemon_instance,
     terminate_process_tree,
@@ -238,11 +243,14 @@ class TestDaemonRestart:
         env = prepare_daemon_env(home_dir=gobby_home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(gobby_home)
+        command = native_daemon_command(
+            env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        )
 
         # Start first daemon
         with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                command,
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -274,7 +282,7 @@ class TestDaemonRestart:
 
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    command,
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
@@ -313,29 +321,16 @@ class TestDaemonMultipleInstances:
     def test_second_start_on_same_port_fails(self, daemon_instance: DaemonInstance) -> None:
         """Verify starting a second daemon on same ports fails gracefully."""
         import subprocess
-        import sys
 
         # Try to start another daemon on same ports
         with open(os.devnull, "w") as devnull:
             process2 = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "gobby.runner",
-                    "--config",
-                    str(daemon_instance.config_path),
-                ],
+                daemon_instance.command,
                 stdout=devnull,
                 stderr=devnull,
                 stdin=subprocess.DEVNULL,
                 cwd=str(daemon_instance.project_dir),
-                env={
-                    **os.environ,
-                    "GOBBY_CONFIG": str(daemon_instance.config_path),
-                    "ANTHROPIC_API_KEY": "",
-                    "OPENAI_API_KEY": "",
-                    "GEMINI_API_KEY": "",
-                },
+                env=daemon_instance.env,
                 start_new_session=True,
             )
 
@@ -420,9 +415,10 @@ def _real_cli_env(config_path: Path) -> dict[str, str]:
     managed_tools = Path.home() / ".gobby" / "tools"
     if not managed_tools.is_dir():
         pytest.skip("gobby start needs the managed SRT and Impeccable installs")
-    shutil.copytree(managed_tools, gobby_home / "tools", symlinks=True)
+    link_operator_srt(gobby_home)
     # Impeccable's launcher embeds its home, so activate the copy for this one.
     impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
+    shutil.copytree(managed_tools / "impeccable" / IMPECCABLE_RELEASE.version, impeccable)
     _publish_launcher(gobby_home, impeccable)
     _publish_stamp(gobby_home)
     return env
@@ -458,12 +454,15 @@ def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[
     gobby_home = config_path.parent
     env = _daemon_env(config_path)
     log_dir = gobby_home / "logs"
+    command = native_daemon_command(
+        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+    )
     with (
         open(log_dir / "daemon.log", "a") as log_f,
         open(log_dir / "daemon_error.log", "a") as err_f,
     ):
         process = subprocess.Popen(
-            [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+            command,
             stdout=log_f,
             stderr=err_f,
             stdin=subprocess.DEVNULL,
@@ -474,19 +473,19 @@ def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[
     return process
 
 
-def _front_door_child(runner_pid: int) -> psutil.Process:
-    """The runner's `gdaemon serve` child, which owns the public ports."""
+def _backend_child(owner_pid: int) -> psutil.Process:
+    """The native owner's Python backend on private ports."""
     children: list[psutil.Process] = []
 
     def find() -> bool:
         children[:] = [
             child
-            for child in psutil.Process(runner_pid).children()
-            if Path(child.cmdline()[0]).name == "gdaemon" and child.cmdline()[1:] == ["serve"]
+            for child in psutil.Process(owner_pid).children()
+            if "gobby.runner" in child.cmdline()
         ]
         return len(children) == 1
 
-    wait_for_condition(find, timeout=10.0, description="gdaemon front door child")
+    wait_for_condition(find, timeout=10.0, description="native Python backend child")
     return children[0]
 
 
@@ -508,11 +507,62 @@ def _ports_free(*ports: int) -> bool:
     return all(is_port_available(port, "127.0.0.1") for port in ports)
 
 
+def _runtime_authority(config_path: Path) -> tuple[int, str]:
+    from gobby.deployment import deployment_token
+
+    bootstrap = yaml.safe_load((config_path.parent / "bootstrap.yaml").read_text())
+    with psycopg.connect(bootstrap["database_url"], autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fencing_epoch, grant_signing_secret FROM deployment_runtime WHERE deployment_token = %s",
+            (deployment_token(config_path.parent),),
+        ).fetchone()
+    assert row is not None
+    return int(row[0]), str(row[1])
+
+
 class TestFrontDoor:
+    def test_backend_sigkill_and_repeated_restart_preserve_native_authority(
+        self,
+        daemon_instance: DaemonInstance,
+    ) -> None:
+        owner = psutil.Process(daemon_instance.pid)
+        backend = _backend_child(owner.pid)
+        authority = _runtime_authority(daemon_instance.config_path)
+        backend.kill()
+        wait_for_condition(
+            lambda: _gone(backend), timeout=30.0, description="killed backend reaped"
+        )
+        wait_for_daemon_health(daemon_instance.http_port, log_file=daemon_instance.log_file)
+        assert daemon_instance.is_alive()
+        assert _backend_child(owner.pid).pid != backend.pid
+        assert _runtime_authority(daemon_instance.config_path) == authority
+        for _round in range(2):
+            previous = _backend_child(owner.pid)
+            response = authenticated_daemon_request(
+                "POST",
+                f"{daemon_instance.http_url}/api/admin/restart",
+                daemon_instance.gobby_home,
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["backend_pid"] == previous.pid
+            wait_for_condition(
+                partial(_gone, previous),
+                timeout=30.0,
+                description="retiring backend reaped",
+            )
+            wait_for_daemon_health(daemon_instance.http_port, log_file=daemon_instance.log_file)
+            assert _backend_child(owner.pid).pid != previous.pid
+            assert _runtime_authority(daemon_instance.config_path) == authority
+        daemon_instance.stop()
+        daemon_instance.restart()
+        restarted_authority = _runtime_authority(daemon_instance.config_path)
+        assert restarted_authority[0] == authority[0] + 1
+        assert restarted_authority[1] != authority[1]
+
     """The runner owns a gdaemon front door on the public ports."""
 
     def test_daemon_starts_behind_front_door(self, daemon_instance: DaemonInstance) -> None:
-        child = _front_door_child(daemon_instance.pid)
+        child = _backend_child(daemon_instance.pid)
         backend_http = daemon_instance.http_port + 100
 
         public = httpx.get(f"http://127.0.0.1:{daemon_instance.http_port}/api/auth/status")
@@ -544,14 +594,14 @@ class TestFrontDoor:
         children: list[psutil.Process] = []
         try:
             wait_for_daemon_health(http_port, log_file=gobby_home / "logs" / "daemon.log")
-            children.append(_front_door_child(runner.pid))
+            children.append(_backend_child(runner.pid))
             for _round in range(2):
-                restarted = gobby("restart")
+                restarted = gobby("restart", "--full")
                 assert restarted.returncode == 0, restarted.stdout + restarted.stderr
-                # The previous runner and its gdaemon child are gone; a new pair serves.
+                # A full restart replaces the native owner and its backend.
                 assert _gone(runners[-1]) and _gone(children[-1])
                 runners.append(psutil.Process(int(pid_file.read_text().strip())))
-                children.append(_front_door_child(runners[-1].pid))
+                children.append(_backend_child(runners[-1].pid))
                 assert httpx.get(f"http://localhost:{http_port}/api/health").status_code == 200
             stopped = gobby("stop")
             assert stopped.returncode == 0, stopped.stdout + stopped.stderr
@@ -565,7 +615,7 @@ class TestFrontDoor:
                 if not _gone(process):
                     process.kill()
 
-    def test_runner_sigkill_frees_public_ports(
+    def test_native_sigkill_drains_backend_and_frees_public_ports(
         self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
     ) -> None:
         config_path, http_port, ws_port = e2e_config
@@ -574,21 +624,21 @@ class TestFrontDoor:
         descendants: list[psutil.Process] = []
         try:
             wait_for_daemon_health(http_port, log_file=config_path.parent / "logs" / "daemon.log")
-            child = _front_door_child(runner.pid)
+            child = _backend_child(runner.pid)
             descendants = psutil.Process(runner.pid).children(recursive=True)
             labels = {p.pid: _label(p) for p in descendants}
-            # gdaemon, the transcript evidence pool, and the rest may not outlive a SIGKILL.
+            # The backend, transcript evidence pool, and other descendants must drain.
             # The gterm host is exempt: it survives by design for the next daemon to adopt.
             mortal = [p for p in descendants if "gterm host" not in labels[p.pid]]
             os.kill(runner.pid, signal.SIGKILL)
             front_door = child
-            # One 5 s budget from the kill covers every descendant exit and both ports.
+            # Budget for the backend's graceful orphan drain after native EOF.
             try:
                 wait_for_condition(
                     lambda: all(_gone(p) for p in mortal) and _ports_free(http_port, ws_port),
-                    timeout=5.0,
+                    timeout=30.0,
                     interval=0.1,
-                    description="runner descendants exit and public ports free after SIGKILL",
+                    description="native descendants exit and public ports free after SIGKILL",
                 )
             except AssertionError as timed_out:
                 survivors = [labels[p.pid] for p in mortal if not _gone(p)]

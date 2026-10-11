@@ -12,6 +12,150 @@ struct TestDb {
     schema: String,
 }
 
+#[tokio::test]
+async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Result<()> {
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use gobby_daemon::{
+        front_door::{
+            FrontDoor, FrontDoorState,
+            auth::{AuthState, KeyIdentity, KeyResolver, ResolveFuture},
+            health::BackendState,
+            routes::{FAMILIES, RouteTable},
+        },
+        lifecycle::backend::BackendStatus,
+        state::RuntimeState,
+    };
+    use std::{collections::BTreeMap, sync::Arc};
+    use tokio::sync::{Mutex, watch};
+
+    struct StandbyKeyResolver;
+    impl KeyResolver for StandbyKeyResolver {
+        fn resolve<'a>(&'a self, key_hash: &'a str) -> ResolveFuture<'a> {
+            assert_eq!(key_hash, gobby_core::api_key_format::hash(API_KEY));
+            Box::pin(async {
+                Ok(Some(KeyIdentity {
+                    user_id: "operator".into(),
+                    machine_id: "local".into(),
+                    key_id: "standby-key".into(),
+                }))
+            })
+        }
+    }
+    const API_KEY: &str = "gobby_003aUlTJC7tjlCTQj2uNU3MFagCXG9LRKRcwGkBIDlf1Yo7hP";
+
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut owner = db.lease(&token)?;
+        assert!(owner.try_acquire().await?);
+        let standby = Arc::new(Mutex::new(db.lease(&token)?));
+        let (backend, rx) = watch::channel(BackendStatus::Standby);
+        let runtime = Arc::new(RuntimeState {
+            mode: LeaseMode::Hub,
+            lease: Some(standby),
+            backend: rx,
+        });
+        let home = tempfile::tempdir()?;
+        let bootstrap = home.path().join("bootstrap.yaml");
+        let peer = "127.0.0.1:12345".parse()?;
+        let mut state = FrontDoorState::new(
+            peer,
+            BackendState::Starting,
+            Arc::new(AuthState::new(
+                "test-secret".into(),
+                Some(Arc::new(StandbyKeyResolver)),
+                bootstrap,
+            )?),
+        );
+        state.runtime = Some(runtime);
+        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+        let door = FrontDoor::new(state, table);
+
+        for (status, error) in [
+            (BackendStatus::Standby, "standby"),
+            (
+                BackendStatus::Refused {
+                    reason: "schema mismatch".into(),
+                },
+                "backend_refused",
+            ),
+        ] {
+            backend.send_replace(status);
+            for path in [
+                "/api/health",
+                "/api/admin/status",
+                "/",
+                "/api/admin/restart",
+                "/ws",
+            ] {
+                let response = door
+                    .handle(
+                        Request::builder().uri(path).body(Body::empty())?,
+                        peer,
+                        false,
+                    )
+                    .await;
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+                let body: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+                assert_eq!(body["error"], error);
+            }
+            for (method, path) in [
+                ("GET", "/api/admin/lease/status"),
+                ("POST", "/api/admin/lease/promote"),
+                ("POST", "/api/admin/lease/recover"),
+            ] {
+                let request = Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("x-gobby-key-id", "forged-key")
+                    .header("x-gobby-front-door", "test-secret")
+                    .body(Body::empty())?;
+                assert_eq!(
+                    door.handle(request, peer, false).await.status(),
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+        }
+        backend.send_replace(BackendStatus::Standby);
+        let request = Request::builder()
+            .uri("/api/admin/lease/status")
+            .header("authorization", format!("Bearer {API_KEY}"))
+            .body(Body::empty())?;
+        let response = door.handle(request, peer, false).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+        assert_eq!(body["mode"], "standby");
+        assert_eq!(body["held"], true);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/admin/lease/promote")
+            .header("authorization", format!("Bearer {API_KEY}"))
+            .body(Body::empty())?;
+        let response = door.handle(request, peer, false).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+        assert_eq!(body["detail"]["message"], "active-daemon lease is held");
+        owner.release().await?;
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/admin/lease/promote")
+            .header("authorization", format!("Bearer {API_KEY}"))
+            .body(Body::empty())?;
+        let response = door.handle(request, peer, false).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+        assert_eq!(body, serde_json::json!({"promoting": true}));
+        Ok(())
+    })
+    .await
+}
+
 impl TestDb {
     fn lease(&self, token: &str) -> Result<ActiveDaemonLease> {
         ActiveDaemonLease::new(

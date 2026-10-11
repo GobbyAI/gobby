@@ -68,7 +68,10 @@ def select_test_gdaemon(
             f"{CHECKOUT_BINARY_ENV}={selector!r} is not recognized; use "
             f"{CHECKOUT_BINARY_VALUE!r} or {INSTALLED_BINARY_VALUE!r}"
         )
-    binary = repo_root / "target" / "debug" / binary_name
+    target_dir = Path(env.get("CARGO_TARGET_DIR") or "target")
+    if not target_dir.is_absolute():
+        target_dir = repo_root / target_dir
+    binary = target_dir / "debug" / binary_name
     if not binary.is_file():
         raise CheckoutBinaryError(
             f"{CHECKOUT_BINARY_ENV}={CHECKOUT_BINARY_VALUE} but {binary} does not exist; "

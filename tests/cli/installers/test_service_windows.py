@@ -1,5 +1,6 @@
 """Tests for Windows Task Scheduler service backend."""
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -21,7 +22,24 @@ from gobby.cli.installers.service_windows import (
 pytestmark = pytest.mark.unit
 
 
+def test_launcher_escapes_json_shell_metacharacters() -> None:
+    from gobby.cli.installers.service_common import _render_template
+
+    context = {
+        **_INSTALL_CONTEXT,
+        "backend_command": json.dumps([r"C:\A&B (100%)!\python.exe", "-m", "gobby.runner"]),
+    }
+    content = _render_template("gobby-launcher.cmd.j2", **context)
+    assert "setlocal DisableDelayedExpansion" in content
+    assert (
+        r'set GOBBY_BACKEND_COMMAND=[^"C:\\A^&B ^(100%%^)!\\python.exe^", ^"-m^", ^"gobby.runner^"]'
+        in content
+    )
+
+
 _INSTALL_CONTEXT = {
+    "gdaemon_executable": r"C:\Gobby\gdaemon.exe",
+    "backend_command": json.dumps([r"C:\Python313\python.exe", "-m", "gobby.runner"]),
     "python_executable": r"C:\Python313\python.exe",
     "working_directory": r"C:\Users\test",
     "mode": "installed",
@@ -63,7 +81,8 @@ class TestTemplateRendering:
         content = _render_template("gobby-launcher.cmd.j2", **_INSTALL_CONTEXT)
         assert "@echo off" in content
         assert r"C:\Python313" in content
-        assert "-m gobby.runner" in content
+        assert '"C:\\Gobby\\gdaemon.exe" serve' in content
+        assert "GOBBY_BACKEND_COMMAND=" in content
         assert r'>> "C:\Users\test\.gobby\logs\runtime.log" 2>&1' in content
         assert "--verbose" not in content
 
@@ -71,7 +90,13 @@ class TestTemplateRendering:
         """Launcher batch script includes --verbose when requested."""
         from gobby.cli.installers.service import _render_template
 
-        ctx = {**_INSTALL_CONTEXT, "verbose": True}
+        ctx = {
+            **_INSTALL_CONTEXT,
+            "verbose": True,
+            "backend_command": json.dumps(
+                [r"C:\Python313\python.exe", "-m", "gobby.runner", "--verbose"]
+            ),
+        }
         content = _render_template("gobby-launcher.cmd.j2", **ctx)
         assert "--verbose" in content
 

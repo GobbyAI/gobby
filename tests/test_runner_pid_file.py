@@ -21,7 +21,7 @@ from click.testing import CliRunner
 
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.cli._daemon_services import ServiceStartResult
-from gobby.cli.daemon import _do_stop
+from gobby.cli.daemon_lifecycle import _do_stop
 from gobby.cli.daemon_start import start
 from gobby.cli.runtime import CliRuntime
 from gobby.config.logging import LoggingSettings
@@ -416,47 +416,27 @@ async def test_run_gobby_contention_returns_before_runner_construction(
     assert "exiting cleanly" in caplog.text
 
 
-def test_main_exits_zero_on_lock_contention(tmp_path: Path) -> None:
-    """A launchd respawn losing the early claim exits 0 (no hot loop)."""
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
-    with (
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-        patch("gobby.runner._healthy_daemon_running", return_value=False),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.runner_pid_file.claim_pid_file", return_value=None),
-        patch("gobby.runner_pid_file.probe_daemon_lock", return_value=_daemon_probe()),
-        patch("asyncio.run") as mock_asyncio_run,
-        pytest.raises(SystemExit) as exc_info,
-    ):
-        main()
+def test_main_preserves_native_pid_claim(tmp_path: Path) -> None:
+    """Backend entry leaves its native owner's singleton and PID untouched."""
+    pid_file = tmp_path / "gobby.pid"
+    claim = claim_pid_file(pid_file)
+    assert claim is not None
+    original = pid_file.read_bytes()
+    observed: list[tuple[Path | None, bool]] = []
 
-    assert exc_info.value.code == 0
-    mock_asyncio_run.assert_not_called()
+    async def record_start(config_path: Path | None = None, verbose: bool = False) -> None:
+        observed.append((config_path, verbose))
 
-
-def test_main_passes_early_claim_to_run_gobby(tmp_path: Path) -> None:
-    class RecordingClaim:
-        def __init__(self) -> None:
-            self.release_count = 0
-
-        def release(self) -> None:
-            self.release_count += 1
-
-    bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
-    claim = RecordingClaim()
-    with (
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
-        patch("gobby.runner._healthy_daemon_running", return_value=False),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.runner_pid_file.claim_pid_file", return_value=claim),
-        patch("asyncio.run"),
-        patch("gobby.runner.run_gobby") as mock_run_gobby,
-    ):
-        mock_run_gobby.return_value = None
-        main()
-
-    assert mock_run_gobby.call_args.kwargs["ownership_resolution"] is claim
-    assert claim.release_count == 1
+    try:
+        with patch("gobby.runner.run_gobby", new=record_start):
+            main()
+        assert observed == [(None, False)]
+        assert pid_file.read_bytes() == original
+        assert probe_daemon_lock(pid_file).state is ProbeState.DAEMON
+        assert claim_pid_file(pid_file) is None
+    finally:
+        claim.release()
+    assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
 
 
 @pytest.mark.asyncio
@@ -929,7 +909,7 @@ class TestStartStopBarriers:
         services.assert_not_called()
         runtime.assert_not_called()
 
-    def test_direct_start_inherits_lock_fd(self, tmp_path: Path) -> None:
+    def test_direct_start_transfers_native_reservation(self, tmp_path: Path) -> None:
         services = MagicMock(return_value=ServiceStartResult("skipped", "no compose"))
         process = MagicMock(pid=4242, poll=MagicMock(return_value=None))
         config = MagicMock()
@@ -959,15 +939,18 @@ class TestStartStopBarriers:
             patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True),
             patch("gobby.cli.daemon_start._reconcile_ui_exposure"),
             patch("gobby.cli.daemon_start.has_auth_env", return_value=True),
-            patch("gobby.cli.daemon.time.sleep"),
+            patch("gobby.cli.daemon_lifecycle.time.sleep"),
         ):
             (tmp_path / "logs").mkdir()
             result = _cli_runtime().invoke(start, [])
         assert result.exit_code == 0
         assert (tmp_path / "logs" / "runtime.log").is_file()
         kwargs = popen.call_args.kwargs
-        assert "GOBBY_SINGLETON_LOCK_FD" in kwargs["env"]
-        assert kwargs.get("pass_fds")
+        assert "GOBBY_SINGLETON_LOCK_FD" not in kwargs["env"]
+        assert kwargs["env"]["GOBBY_SERVICE_LAUNCH"] == "1"
+        assert kwargs["env"]["GOBBY_SERVICE_NONCE"]
+        assert kwargs["env"]["GOBBY_BACKEND_COMMAND"]
+        assert not kwargs.get("pass_fds")
 
     def test_do_stop_refuses_maintenance_before_runtime(self, tmp_path: Path) -> None:
         pid_file = tmp_path / "gobby.pid"
@@ -976,10 +959,10 @@ class TestStartStopBarriers:
         ctx = MagicMock()
         try:
             with (
-                patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+                patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=tmp_path),
                 patch("gobby.cli.runtime.get_cli_runtime") as runtime,
-                patch("gobby.cli.daemon.get_service_status") as svc,
-                patch("gobby.cli.daemon.stop_daemon_util") as stop_util,
+                patch("gobby.cli.daemon_lifecycle.get_service_status") as svc,
+                patch("gobby.cli.daemon_lifecycle.stop_daemon_util") as stop_util,
             ):
                 ok = _do_stop(ctx, docker_flag=False)
         finally:
@@ -994,10 +977,10 @@ class TestStartStopBarriers:
         reservation = reserve_service_start(pid_file, backend="launchd")
         ctx = MagicMock()
         with (
-            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+            patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=tmp_path),
             patch("gobby.cli.runtime.get_cli_runtime") as runtime,
-            patch("gobby.cli.daemon.get_service_status") as svc,
-            patch("gobby.cli.daemon.stop_daemon_util") as stop_util,
+            patch("gobby.cli.daemon_lifecycle.get_service_status") as svc,
+            patch("gobby.cli.daemon_lifecycle.stop_daemon_util") as stop_util,
         ):
             ok = _do_stop(ctx, docker_flag=False)
         assert ok is True

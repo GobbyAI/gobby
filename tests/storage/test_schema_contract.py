@@ -6,6 +6,7 @@ import ast
 import importlib.resources
 import json
 import logging
+import os
 import re
 import subprocess
 from collections import Counter
@@ -305,7 +306,9 @@ def test_expected_identity_reports_packaged_contract_violations(
 def test_expected_identity_matches_gdaemon() -> None:
     """The packaged pin names exactly the identity this checkout's gdaemon embeds."""
     binary = select_test_gdaemon(
-        _REPO_ROOT, {CHECKOUT_BINARY_ENV: CHECKOUT_BINARY_VALUE}, native_bin_name("gdaemon")
+        _REPO_ROOT,
+        {**os.environ, CHECKOUT_BINARY_ENV: CHECKOUT_BINARY_VALUE},
+        native_bin_name("gdaemon"),
     )
     assert binary is not None
 

@@ -45,10 +45,10 @@ def test_status_names_why_a_member_identity_is_unreadable(
     _mixed_install(tmp_path, monkeypatch)
     ghook = tmp_path / "bin" / "ghook"
     ghook.write_text("#!/bin/sh\necho 'probe exploded' >&2\nexit 3\n", encoding="utf-8")
-    monkeypatch.setattr("gobby.cli.daemon.unsupported_platform_error", lambda: None)
-    monkeypatch.setattr("gobby.cli.daemon.get_gobby_home", lambda: tmp_path / "home")
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.unsupported_platform_error", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.get_gobby_home", lambda: tmp_path / "home")
     monkeypatch.setattr(
-        "gobby.cli.daemon.probe_daemon_lock",
+        "gobby.cli.daemon_lifecycle.probe_daemon_lock",
         lambda _path: SingletonProbe(state=ProbeState.ABSENT),
     )
 
@@ -65,10 +65,10 @@ def test_status_reports_mixed_installed_binary_member(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pinned, mixed = _mixed_install(tmp_path, monkeypatch)
-    monkeypatch.setattr("gobby.cli.daemon.unsupported_platform_error", lambda: None)
-    monkeypatch.setattr("gobby.cli.daemon.get_gobby_home", lambda: tmp_path / "home")
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.unsupported_platform_error", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.get_gobby_home", lambda: tmp_path / "home")
     monkeypatch.setattr(
-        "gobby.cli.daemon.probe_daemon_lock",
+        "gobby.cli.daemon_lifecycle.probe_daemon_lock",
         lambda _path: SingletonProbe(state=ProbeState.ABSENT),
     )
 
@@ -104,7 +104,7 @@ def test_restart_refuses_mixed_installed_binary_set_before_stop(
     _mixed_install(tmp_path, monkeypatch)
     stop = Mock(side_effect=AssertionError("stop must not run"))
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
-    monkeypatch.setattr("gobby.cli.daemon._do_stop", stop)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._do_stop", stop)
 
     result = CliRunner().invoke(cli, ["restart"])
 

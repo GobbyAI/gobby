@@ -184,7 +184,7 @@ def stop_daemon(
         if not quiet:
             deps._stop_step(f"Sent shutdown signal (PID: {pid})")
 
-        max_wait = 20
+        max_wait = 30
         for _ in range(max_wait * 10):
             time.sleep(0.1)
             if not bool(deps._is_process_alive(pid)):

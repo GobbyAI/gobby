@@ -11,10 +11,42 @@ from gobby.utils.status import (
     fetch_rich_status,
     format_startup_summary,
     format_status_message,
+    native_runtime_refusal,
 )
 from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("state", "reason", "expected"),
+    [
+        ("standby", None, "standby (another daemon holds the runtime lease)"),
+        ("refused", "schema mismatch", "refused (schema mismatch)"),
+        ("refused", None, "refused"),
+        ("starting", None, None),
+    ],
+)
+def test_native_runtime_refusal_reports_owner_state(
+    state: str,
+    reason: str | None,
+    expected: str | None,
+) -> None:
+    response = httpx.Response(503, json={"backend": {"state": state, "refusal": reason}})
+    assert native_runtime_refusal(response) == expected
+
+
+async def test_rich_status_preserves_native_refusal_reason() -> None:
+    response = httpx.Response(
+        503, json={"backend": {"state": "refused", "refusal": "schema mismatch"}}
+    )
+    with patch("httpx.AsyncClient.get", new=AsyncMock(return_value=response)):
+        result = await fetch_rich_status(12345)
+    assert not result.health_confirmed
+    assert result.status_failure is not None
+    assert result.health_failure is not None
+    assert result.status_failure.detail == "refused (schema mismatch)"
+    assert result.health_failure.detail == "refused (schema mismatch)"
 
 
 def _dependency(

@@ -235,11 +235,13 @@ def test_cli_restarts_against_selected_workspace_pin(
         verbose: bool,
         docker_flag: bool,
         wait: bool,
+        full: bool,
         expected_identity: dict[str, int | str],
     ) -> None:
         assert verbose is False
         assert docker_flag is False
         assert wait is True
+        assert full is True
         observed.append(expected_identity)
 
     def run_cutover(

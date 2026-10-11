@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
-from gobby.cli.daemon import _do_stop
+from gobby.cli.daemon_lifecycle import _do_stop
 from gobby.cli.runtime import CliRuntime
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.storage.hub.protocol import HubDatabase
@@ -80,15 +80,15 @@ def test_wait_timeout_refuses_shutdown() -> None:
 
 def test_stop_refuses_handoff_without_force(capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch("gobby.cli.daemon.stop_singleton_gate", return_value=("proceed", None)),
-        patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon_lifecycle.stop_singleton_gate", return_value=("proceed", None)),
+        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
         patch("gobby.cli.runtime.get_cli_runtime", return_value=MagicMock(spec=CliRuntime)),
         patch(
-            "gobby.cli.daemon.protect_pending_handoffs",
+            "gobby.cli.daemon_lifecycle.protect_pending_handoffs",
             side_effect=HandoffShutdownBlocked("unresolved #12332"),
         ),
-        patch("gobby.cli.daemon.stop_daemon_util") as stop,
-        patch("gobby.cli.daemon.service_stop") as service_stop,
+        patch("gobby.cli.daemon_lifecycle.stop_daemon_util") as stop,
+        patch("gobby.cli.daemon_lifecycle.service_stop") as service_stop,
     ):
         result = _do_stop(MagicMock(), docker_flag=False)
     assert result is False
@@ -100,15 +100,15 @@ def test_stop_refuses_handoff_without_force(capsys: pytest.CaptureFixture[str]) 
 def test_stop_force_bypasses_handoff_protection(capsys: pytest.CaptureFixture[str]) -> None:
     runtime = MagicMock(spec=CliRuntime)
     with (
-        patch("gobby.cli.daemon.stop_singleton_gate", return_value=("proceed", None)),
-        patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon_lifecycle.stop_singleton_gate", return_value=("proceed", None)),
+        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
         patch(
             "gobby.cli._daemon_handoffs.guard_handoff_shutdown",
             side_effect=HandoffShutdownBlocked("unresolved #12332"),
         ) as guard,
-        patch("gobby.cli.daemon.get_service_status", return_value={}),
-        patch("gobby.cli.daemon.stop_daemon_util", return_value=True) as stop,
+        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
+        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True) as stop,
     ):
         result = _do_stop(MagicMock(), docker_flag=False, force=True)
 
