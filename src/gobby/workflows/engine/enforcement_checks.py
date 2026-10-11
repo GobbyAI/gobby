@@ -393,16 +393,23 @@ class EnforcementCheckMixin:
     def _get_step_for_session(
         self, session_id: str
     ) -> tuple[WorkflowStep | None, AgentStepInstance | None]:
-        """Get the current step and snapshot instance for a session.
+        """Get the current installed step and execution instance for a session.
 
         Returns (step, instance) or (None, None) if no active step workflow.
         """
         if not session_id:
             return None, None
-        instance = self.instance_manager.get_for_session(session_id)
+        instance = self.instance_manager.get_active_for_session(session_id)
         if instance is None or not instance.enabled or not instance.current_step:
             return None, None
-        step = instance.snapshot.get_step(instance.current_step)
+        step = instance.workflow.get_step(instance.current_step)
+        if step is None:
+            # A removed active step must not turn a restricted seat into an unrestricted one.
+            step = WorkflowStep(
+                name=instance.current_step,
+                allowed_tools=["mcp__gobby__call_tool"],
+                allowed_mcp_tools=[],
+            )
         return step, instance
 
     def _check_agent_tool_enforcement(

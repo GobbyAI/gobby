@@ -22,9 +22,14 @@ and endpoint fields. A definition can inherit execution settings; runtime spawn
 arguments select concrete isolation.
 
 Keep reusable policy in rules and phased restrictions in steps. Step and rule
-restrictions both apply. Spawned sessions snapshot steps; changing a definition
-is not a live replacement of existing step instances. Persona changes never
-create those instances. Bundled templates are Gobby-owned; customize through a
+restrictions both apply. After definition sync, the next tool call resolves the
+installed definition (project row first, then global row) for step permissions,
+handlers, transitions, and the exit condition. The instance keeps its current
+step and variables. Its stored snapshot records activation provenance and is
+the fallback when the definition row is missing or has no `step_workflow`.
+A removed active step fails closed to capability-neutral handoff and memory
+access, plus `end_agent_run` with blockers. Persona changes never create step
+instances. Bundled templates are Gobby-owned; customize through a
 user copy/explicit override, not a bundled installed-row edit that sync replaces.
 Verify auto-export persistence when a mutation succeeds with an export warning.
 
@@ -36,4 +41,4 @@ validation failures warrant correcting the named field, not removing the gate.
 Guide: [Definition storage](../../../../../../../../docs/guides/agents.md#definition-storage)
 and [inline steps](../../../../../../../../docs/guides/agents.md#inline-step-workflows).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-10_

@@ -34,7 +34,7 @@ def get_step_status(
     if instance_manager is None:
         instance = None
     else:
-        instance = instance_manager.get_for_session(resolved_session_id)
+        instance = instance_manager.get_active_for_session(resolved_session_id)
 
     if instance is None:
         return {
@@ -50,8 +50,8 @@ def get_step_status(
         "session_id": resolved_session_id,
         "agent_name": instance.agent_name,
         "current_step": instance.current_step,
-        "steps": [step.name for step in instance.snapshot.steps],
-        "exit_condition": instance.snapshot.exit_condition,
+        "steps": [step.name for step in instance.workflow.steps],
+        "exit_condition": instance.workflow.exit_condition,
         "variables": instance.variables,
         "session_variables": session_vars,
     }

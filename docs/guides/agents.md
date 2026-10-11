@@ -74,8 +74,14 @@ writes clears the overlay; an `unchanged` receipt or refusal keeps it.
 
 On later same-seat activation, a changed content pin applies the current
 definition, stores the new pin, and reports one drift line on the next turn.
-An existing step instance keeps its current step and snapshot until that unit
-of work ends. A failed initial step-instance save is repaired by reconciliation
+After definition sync, the next tool call uses the installed definition
+(project row first, then global row) for step permissions, handlers,
+transitions, and the exit condition. The instance keeps its current step and
+variables. Its immutable snapshot records activation provenance and is the
+fallback when the definition row is missing or has no `step_workflow`.
+A removed active step fails closed to capability-neutral handoff and memory
+access, plus `end_agent_run` with blockers.
+A failed initial step-instance save is repaired by reconciliation
 on a later hook event.
 
 | Boundary | Definition and runtime continuity |
@@ -83,7 +89,7 @@ on a later hook event.
 | Compaction | Same session; reactivation by `_agent_type` preserves the seat and running step instance. A persona overlay keeps its prompt and skills. |
 | Pane resume | Reactivates the same session and preserves its running step instance, as compaction does. |
 | Staged `/clear` | The successor inherits `_agent_type` and `_agent_definition_hash`, then starts a fresh step instance at the current definition's first step. A spawned interactive seat's live run, terminal binding, and run back-pointer move to the successor; the pane's managed identity addresses that successor. |
-| Spawned-run resume | Reuses the session row and persisted launch snapshot; the spawned definition remains fixed. |
+| Spawned-run resume | Reuses the session row and persisted launch settings; step policy resolves the installed definition. |
 
 Run lifetime is separate from activation. `execution_mode` and
 `idle_ttl_seconds` affect spawned runs; activating a hand-launched pane writes
@@ -112,6 +118,8 @@ Agent definitions are stored in `agent_definitions`. An optional one-to-one
 `agent_step_workflows` child holds the nested `step_workflow` payload
 (`steps`, `variables`, `exit_condition`). Runtime sessions snapshot that
 child onto `agent_step_instances` at spawn or whole-definition activation.
+That snapshot retains activation provenance; live step policy follows the
+installed definition as described in [activation continuity](#definition-activation).
 Reconciliation restores a missing instance whenever the active definition
 declares steps, including interactive sessions without a task. A persona
 switch never creates a step instance.

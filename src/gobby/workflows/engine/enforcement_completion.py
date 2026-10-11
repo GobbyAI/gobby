@@ -398,7 +398,7 @@ class EnforcementCompletionMixin:
             for handler in new_step.on_mcp_success
         ):
             return False
-        names = [step.name for step in instance.snapshot.steps]
+        names = [step.name for step in instance.workflow.steps]
         if old_step not in names or names.index(new_step.name) <= names.index(old_step):
             return False
         bound = {**variables, **instance.variables}.get(BOUND_TASK_VARIABLE)
@@ -434,7 +434,7 @@ class EnforcementCompletionMixin:
         )
         if step is None or instance is None:
             return None
-        definition = instance.snapshot
+        definition = instance.workflow
         cas_token = (str(instance.id), instance.updated_at)
 
         # Retry a persisted exit step if its previous completion attempt failed.

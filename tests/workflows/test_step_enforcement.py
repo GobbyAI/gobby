@@ -796,8 +796,9 @@ async def test_allowed_target_resets_only_its_denial_counter(
     assert instance is not None
     snapshot = instance.snapshot.model_dump()
     snapshot["steps"][0]["allowed_tools"] = list(snapshot["steps"][0]["allowed_tools"]) + ["Edit"]
-    instance.snapshot = type(instance.snapshot).model_validate(snapshot)
-    instance_mgr.replace_for_session(instance)
+    definition = manager.get_by_name(instance.agent_name)
+    assert definition is not None
+    manager.upsert_with_steps(instance.agent_name, definition.definition_json, snapshot)
 
     allowed = await rule_engine.evaluate(
         _make_event(data={"tool_name": "Edit"}),

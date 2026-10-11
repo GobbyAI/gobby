@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_binding import release_lost_binding
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
@@ -76,20 +77,32 @@ def _get_active_step_workflow_context(
         )
         if not instance.current_step:
             continue
-        step = instance.snapshot.get_step(instance.current_step)
+        step = instance.workflow.get_step(instance.current_step)
         if step is None:
-            continue
+            if instance.current_definition is None:
+                continue
+            step = WorkflowStep(
+                name=instance.current_step,
+                description="The installed definition removed the active step.",
+                status_message=(
+                    f"The installed definition removed step '{instance.current_step}'. "
+                    "Tools are restricted to capability-neutral handoff and memory access, "
+                    "plus end_agent_run with blockers. Coordinate recovery with your lane manager."
+                ),
+                allowed_tools=["mcp__gobby__call_tool"],
+                allowed_mcp_tools=[],
+            )
 
         return StepWorkflowContext(
             workflow_name=instance.agent_name,
             current_step=instance.current_step,
             description=step.description,
             status_message=step.status_message,
-            exit_condition=instance.snapshot.exit_condition,
+            exit_condition=instance.workflow.exit_condition,
             agent_name=instance.agent_name,
             allowed_tools=step.allowed_tools,
             is_entry_step=bool(
-                instance.snapshot.steps and instance.current_step == instance.snapshot.steps[0].name
+                instance.workflow.steps and instance.current_step == instance.workflow.steps[0].name
             ),
             mcp_progress_only=bool(step.on_mcp_success)
             and not step.transitions
@@ -103,7 +116,7 @@ def _iter_active_step_instances(
     db: HubDatabase,
     session_id: str,
 ) -> Iterator[AgentStepInstance]:
-    instance = AgentStepInstanceManager(db).get_for_session(session_id)
+    instance = AgentStepInstanceManager(db).get_active_for_session(session_id)
     if instance is None or not instance.enabled:
         return
     yield instance
@@ -129,14 +142,14 @@ def first_incomplete_step_workflow(
         variables = {**session_variables, **instance.variables}
         if variables.get("step_workflow_complete") is True:
             continue
-        if not instance.snapshot.steps:
+        if not instance.workflow.steps:
             continue
 
-        if not instance.snapshot.exit_condition:
+        if not instance.workflow.exit_condition:
             return IncompleteStepWorkflow(
                 workflow_name=instance.agent_name,
                 current_step=instance.current_step or "",
-                exit_condition=instance.snapshot.exit_condition,
+                exit_condition=instance.workflow.exit_condition,
                 agent_name=instance.agent_name,
             )
 
@@ -149,12 +162,12 @@ def first_incomplete_step_workflow(
             exit_met = SafeExpressionEvaluator(
                 context=ctx,
                 allowed_funcs=build_condition_helpers(context=ctx),
-            ).evaluate(instance.snapshot.exit_condition)
+            ).evaluate(instance.workflow.exit_condition)
         except Exception as exc:
             return IncompleteStepWorkflow(
                 workflow_name=instance.agent_name,
                 current_step=instance.current_step or "",
-                exit_condition=instance.snapshot.exit_condition,
+                exit_condition=instance.workflow.exit_condition,
                 eval_error=exc,
                 agent_name=instance.agent_name,
             )
@@ -163,7 +176,7 @@ def first_incomplete_step_workflow(
             return IncompleteStepWorkflow(
                 workflow_name=instance.agent_name,
                 current_step=instance.current_step or "",
-                exit_condition=instance.snapshot.exit_condition,
+                exit_condition=instance.workflow.exit_condition,
                 agent_name=instance.agent_name,
             )
 

@@ -184,7 +184,8 @@ def derive_manifest_entries(
             if "implementation_domain" in decision:
                 raise ManifestSynthesisError(
                     f"routing decision for {section.section_id!r}: "
-                    f"implementation_domain is forbidden for category {category}; use assigned_agent"
+                    f"implementation_domain is forbidden for category {category}; "
+                    "use assigned_agent"
                 )
             agent = decision.get("assigned_agent")
             if agent is None:
