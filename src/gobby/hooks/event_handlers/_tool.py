@@ -10,6 +10,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     validate_functions_exec_wrapper,
 )
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
+from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_tool_path
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -121,6 +122,29 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _assert_edit_path_selection(self, event: HookEvent, session_id: str) -> None:
         """Reject an edit to another active claim's live checkout/path pairs."""
         data = event.data
+        edit_paths = data.get("canonical_edit_file_paths")
+        if isinstance(edit_paths, list):
+            # Sequencer recovery has repository scope but does not author a file.
+            # Permit that exemption only within this seat's own checkout.
+            cwd = Path(event.cwd).resolve() if event.cwd else current_tool_cwd(data)
+            session = self._session_manager.get(session_id) if self._session_manager else None
+            workspace = session.workspace_path if session is not None else None
+            own_cwd = Path(workspace).resolve() if isinstance(workspace, str) and workspace else cwd
+            own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
+            for path in data.get("canonical_file_paths", []):
+                if path in edit_paths:
+                    continue
+                target = resolve_tool_path(path, cwd)
+                target_root = checkout_root(target) if target is not None else None
+                if (
+                    target is None
+                    or own_root is None
+                    or (target_root is not None and target_root != own_root)
+                    or not target.is_relative_to(own_root)
+                ):
+                    raise ValueError(
+                        "Sequencer recovery outside the seat's own checkout is blocked."
+                    )
         if str(data.get("tool_name", "")).lower() not in EDIT_TOOLS and not (
             data.get("canonical_tool_kind") == "write"
             and data.get("canonical_repo_mutation") is True

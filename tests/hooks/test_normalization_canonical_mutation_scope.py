@@ -198,8 +198,8 @@ def test_git_sequencer_dynamic_directory_is_unknown(tmp_path: Path, operation: s
 def test_git_sequencer_scope_keeps_mixed_directory_edit(tmp_path: Path, wrapper: str) -> None:
     command = wrapper.format(f"git revert --quit && cp source.py {tmp_path}")
     data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
-    assert data["canonical_file_paths"] == [str(tmp_path)]
-    assert data["canonical_edit_file_paths"] == [str(tmp_path)]
+    assert data["canonical_file_paths"] == [str(tmp_path), str(tmp_path / "source.py")]
+    assert data["canonical_edit_file_paths"] == [str(tmp_path / "source.py")]
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
@@ -208,6 +208,120 @@ def test_git_sequencer_repeated_relative_directory_changes(tmp_path: Path) -> No
         "git -C first -C ../second -c core.editor=true revert --continue", tool_cwd=tmp_path
     )
     assert data["canonical_file_paths"] == [str(tmp_path / "second")]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "GIT_DIR={target}",
+        "env GIT_DIR={target}",
+        "GIT_WORK_TREE={target}",
+        "env GIT_WORK_TREE={target}",
+        "git --git-dir={target}",
+    ],
+)
+@pytest.mark.parametrize("operation", ["revert --quit", "add x.py", "restore x.py"])
+def test_explicit_git_repository_selector_never_uses_cwd(
+    tmp_path: Path, prefix: str, operation: str
+) -> None:
+    own = tmp_path / "own"
+    target = tmp_path / "other"
+    selector = prefix.format(target=target)
+    command = (
+        f"{selector} {operation}" if selector.startswith("git ") else f"{selector} git {operation}"
+    )
+    data = _invocation_metadata(command, tool_cwd=own, project_path=own)
+    assert data["canonical_repo_mutation"] is True
+    assert not any(str(own) in path for path in data.get("canonical_file_paths", []))
+    assert data.get("canonical_repo_mutation_scope_unknown") or any(
+        str(target) in path for path in data.get("canonical_file_paths", [])
+    )
+
+
+@pytest.mark.parametrize("operation", ["add x.py", "checkout -- x.py", "restore x.py"])
+def test_git_directory_option_rebases_mutation_paths(tmp_path: Path, operation: str) -> None:
+    target = tmp_path / "other"
+    data = _invocation_metadata(f"git -C {target} {operation}", tool_cwd=tmp_path)
+    assert data["canonical_file_paths"] == [str(target / "x.py")]
+
+
+@pytest.mark.parametrize("prefix", ["true &&", "git status &&", "git --no-pager", "git -c k=v"])
+def test_sequencer_scope_inherits_base_directory(tmp_path: Path, prefix: str) -> None:
+    command = (
+        f"{prefix} revert --quit" if prefix.startswith("git -") else f"{prefix} git revert --quit"
+    )
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == [str(tmp_path)]
+    assert data["canonical_edit_file_paths"] == []
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_sequencer_redirect_is_an_edit(tmp_path: Path) -> None:
+    data = _invocation_metadata("git revert --quit > out.txt", tool_cwd=tmp_path)
+    assert [tmp_path / path for path in data["canonical_edit_file_paths"]] == [tmp_path / "out.txt"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(touch x.py)",
+        "( touch x.py )",
+        "true && (touch x.py)",
+        "(touch x.py; touch y.py)",
+        "(touch 'x.py')",
+        "(echo ready # ) ignored\n touch x.py)",
+        "(cat <<'EOF'\n)\nEOF\ntouch x.py)",
+    ],
+)
+def test_parenthesized_subshell_attributes_writes(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    expected = [str(tmp_path / "x.py")]
+    if "y.py" in command:
+        expected.append(str(tmp_path / "y.py"))
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert [
+        str(tmp_path / path)
+        for path in data.get("canonical_edit_file_paths", data["canonical_file_paths"])
+    ] == expected
+
+
+@pytest.mark.parametrize("command", ["cp", "mv"])
+@pytest.mark.parametrize("destination", [".", "tests"])
+def test_file_transfer_records_exact_directory_destination(
+    tmp_path: Path, command: str, destination: str
+) -> None:
+    (tmp_path / "tests").mkdir()
+    data = _invocation_metadata(f"{command} f.py {destination}", tool_cwd=tmp_path)
+    target = tmp_path / destination / "f.py"
+    expected = [str(target)] if command == "cp" else [str(tmp_path / "f.py"), str(target)]
+    assert [str(tmp_path / path) for path in data["canonical_file_paths"]] == list(
+        dict.fromkeys(expected)
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "destination"),
+    [
+        ("cp -R docs/ tests", "tests"),
+        ("cp -R docs tests", "tests/docs"),
+        ("cp a.py tests/", "tests/a.py"),
+        ('cp "$f" tests/', "tests/"),
+        ('for f in a.py b.py; do cp "$f" tests/; done', "tests/"),
+        ("cp src/*.py tests/", "tests/"),
+        ("cp src/a?.py tests/", "tests/"),
+        ("cp -R docs/* tests/", "tests/"),
+        ("cp src/{a,b}.py tests/", "tests/"),
+    ],
+)
+def test_file_transfer_directory_scope_covers_unknown_source_basename(
+    tmp_path: Path, command: str, destination: str
+) -> None:
+    (tmp_path / "tests").mkdir()
+    data = _invocation_metadata(command, tool_cwd=tmp_path)
+    assert data["canonical_file_paths"] == [destination]
+    assert data["canonical_write_file_paths"] == [destination]
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
@@ -426,7 +540,7 @@ def test_script_run_beside_another_write_requires_a_claim(tmp_path: Path, comman
     "body",
     [
         "#!/bin/sh\necho 'touch {project}/owned.py' >> {script}\n",
-        "#!/bin/sh\ncp {scratch}/next.sh {scratch}\n",
+        "#!/bin/sh\ncp {scratch}/replacement/s.sh {scratch}\n",
         # A program unknown until it runs.
         '#!/bin/sh\n"$@"\n',
         "#!/bin/sh\n" + "echo ready\n" * 6000,
@@ -1365,7 +1479,7 @@ def test_copy_target_directory_option_is_the_write_target(tmp_path: Path, templa
 
     data = _shell_write_metadata(template.format(project=project, scratch=scratch), project)
 
-    assert data["canonical_file_paths"] == [f"{project}/dest"]
+    assert data["canonical_file_paths"] == [f"{project}/dest/src"]
     assert data["canonical_repo_mutation"] is True
 
 

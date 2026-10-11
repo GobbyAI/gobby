@@ -1088,7 +1088,7 @@ class TestToolHandlerEdgeCases:
         target = tmp_path / directory
         command = "git revert --quit" if directory == "." else f"git -C {target} revert --quit"
         if copy_file:
-            command += f" && cp foreign.py {target}"
+            command += f" && cp {tmp_path}/source/copied.py {target}"
             (target / "copied.py").write_text("copied = True\n", encoding="utf-8")
         event = make_event(
             HookEventType.AFTER_TOOL,
@@ -1102,16 +1102,80 @@ class TestToolHandlerEdgeCases:
         event.cwd = str(tmp_path)
         normalize_tool_fields(event.data)
         assert event.data["canonical_repo_mutation"] is True
-        assert event.data["canonical_file_paths"] == [str(target)]
-        assert event.data["canonical_edit_file_paths"] == ([str(target)] if copy_file else [])
+        copied = str(target / "copied.py")
+        assert event.data["canonical_file_paths"] == (
+            [str(target), copied] if copy_file else [str(target)]
+        )
+        assert event.data["canonical_edit_file_paths"] == ([copied] if copy_file else [])
 
         handlers._record_successful_file_mutation(event, session_id, is_canonical_edit=True)
 
         after = manager.get_variables(session_id)
-        expected_paths = ["owned.py", directory] if copy_file else ["owned.py"]
+        copied_relative = str(Path(directory) / "copied.py")
+        expected_paths = ["owned.py", copied_relative] if copy_file else ["owned.py"]
         assert after["task_edited_files"] == {"task-123": expected_paths}
         assert after["session_dirty_files"] == expected_paths
         assert after["task_edited_file_checkouts"] == {"task-123": {str(tmp_path): expected_paths}}
+
+    @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue", "--abort"])
+    @pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
+    @pytest.mark.parametrize("location", ["sibling", "nested"])
+    def test_foreign_sequencer_scope_is_blocked(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+        flag: str,
+        operation: str,
+        location: str,
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        own = tmp_path / "own"
+        foreign = (own if location == "nested" else tmp_path) / "foreign"
+        (own / ".git").mkdir(parents=True)
+        (foreign / ".git").mkdir(parents=True)
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git -C {foreign} {operation} {flag}", "cwd": str(own)},
+                "project_path": str(own),
+            },
+        )
+        event.cwd = str(own)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_edit_file_paths"] == []
+        with pytest.raises(ValueError, match="outside the seat's own checkout"):
+            handlers._assert_edit_path_selection(event, "session-123")
+
+    @pytest.mark.parametrize("foreign_cwd", [False, True])
+    @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue", "--abort"])
+    def test_sequencer_scope_uses_registered_workspace(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+        foreign_cwd: bool,
+        flag: str,
+    ) -> None:
+        own = tmp_path / "own"
+        foreign = tmp_path / "foreign"
+        (own / ".git").mkdir(parents=True)
+        (foreign / ".git").mkdir(parents=True)
+        mock_dependencies["session_manager"].get.return_value.workspace_path = str(own)
+        handlers = EventHandlers(**mock_dependencies)
+        cwd = foreign if foreign_cwd else own
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": f"git revert {flag}"}},
+        )
+        event.cwd = str(cwd)
+        event.data["cwd"] = str(cwd)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_edit_file_paths"] == []
+        if foreign_cwd:
+            with pytest.raises(ValueError, match="outside the seat's own checkout"):
+                handlers._assert_edit_path_selection(event, "session-123")
+        else:
+            handlers._assert_edit_path_selection(event, "session-123")
 
     def test_sequencer_scope_skips_live_edit_path_selection(
         self, mock_dependencies: dict[str, Any], tmp_path: Path

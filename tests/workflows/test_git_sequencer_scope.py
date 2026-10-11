@@ -88,6 +88,33 @@ def _event(command: str, root: Path) -> HookEvent:
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
+@pytest.mark.parametrize("flag", ["--abort", "--quit"])
+@pytest.mark.parametrize("spawned", [True, False])
+async def test_autonomous_sequencer_abort_guard(
+    temp_db: HubDatabase, tmp_path: Path, operation: str, flag: str, spawned: bool
+) -> None:
+    result = sync_rule_file(
+        temp_db,
+        get_bundled_rules_path() / "worker-safety/no-destructive-git.yaml",
+        tag="gobby",
+    )
+    assert result["success"] is True, result
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    engine = RuleEngine(temp_db)
+    response = await engine.evaluate(
+        _event(f"git {operation} {flag}", tmp_path),
+        session_id=SESSION_ID,
+        variables={"is_spawned_agent": spawned},
+    )
+    if spawned and flag == "--abort":
+        assert response.decision == "block"
+        assert "no-destructive-git" in (response.reason or "")
+    else:
+        assert response.decision != "block"
+
+
 CLAIMED_VARIABLES: dict[str, Any] = {
     "require_task_before_edit": True,
     "task_claimed": True,
@@ -99,12 +126,16 @@ CLAIMED_VARIABLES: dict[str, Any] = {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_directory", [False, True], ids=["cwd", "literal-C"])
+@pytest.mark.parametrize(
+    "prefix", ["", "true && ", "git status && ", "git --no-pager ", "git -c k=v "]
+)
 async def test_claimed_pending_revert_can_quit(
-    engine: RuleEngine, pending_worktree: tuple[Path, Path], explicit_directory: bool
+    engine: RuleEngine, pending_worktree: tuple[Path, Path], explicit_directory: bool, prefix: str
 ) -> None:
     root, revert_head = pending_worktree
     assert revert_head.exists()
     command = f"git -C {root} revert --quit" if explicit_directory else "git revert --quit"
+    command = prefix + (command.removeprefix("git ") if prefix.startswith("git -") else command)
     event = _event(command, root)
     response = await engine.evaluate(
         event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
@@ -113,6 +144,37 @@ async def test_claimed_pending_revert_can_quit(
     assert event.data["canonical_repo_mutation"] is True
     assert event.data["canonical_file_paths"] == [str(root)]
     assert not event.data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "GIT_DIR={target} git",
+        "env GIT_DIR={target} git",
+        "GIT_WORK_TREE={target} git",
+        "env GIT_WORK_TREE={target} git",
+        "git --git-dir={target}",
+    ],
+)
+@pytest.mark.parametrize(
+    "operation", ["revert --quit", "revert --skip", "revert --continue", "add x.py", "restore x.py"]
+)
+async def test_explicit_repository_selector_fails_closed(
+    engine: RuleEngine, tmp_path: Path, prefix: str, operation: str
+) -> None:
+    own = tmp_path / "own"
+    foreign = tmp_path / "other"
+    own.mkdir()
+    foreign.mkdir()
+    event = _event(f"{prefix.format(target=foreign)} {operation}", own)
+    response = await engine.evaluate(
+        event, session_id=SESSION_ID, variables=dict(CLAIMED_VARIABLES)
+    )
+    assert response.decision == "block"
+    assert "block-unresolved-scope-shell-write" in (response.reason or "")
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+    assert str(own) not in event.data.get("canonical_file_paths", [])
 
 
 @pytest.mark.asyncio
