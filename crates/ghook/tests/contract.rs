@@ -526,7 +526,7 @@ fn diagnose_json_reports_terminal_criticality_contract() -> TestResult {
         ("grok", "stop", true),
         ("claude", "Stop", true),
         ("droid", "Stop", true),
-        ("codex", "PreToolUse", false),
+        ("codex", "PreToolUse", true),
     ] {
         let noncritical =
             run_diagnose_with_dirs(home.path(), gobby_home.path(), cli, hook_type, &daemon_url)?;

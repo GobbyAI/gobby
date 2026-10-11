@@ -26,7 +26,7 @@ const PERMISSION_REQUEST_POST_TIMEOUT: Duration = Duration::from_secs(115);
 
 fn post_timeout(hook_type: &str) -> Duration {
     match hook_type {
-        "permission-request" | "PermissionRequest" => PERMISSION_REQUEST_POST_TIMEOUT,
+        "permission-request" => PERMISSION_REQUEST_POST_TIMEOUT,
         _ => POST_TIMEOUT,
     }
 }
@@ -439,14 +439,14 @@ mod tests {
             .expect("Telegram hold constant")
             .parse()
             .expect("Telegram hold seconds");
-        for hook in ["permission-request", "PermissionRequest"] {
-            let timeout = post_timeout(hook).as_secs();
-            assert!(timeout > hold, "hook client must outlast the answer window");
-            assert!(
-                timeout < 120,
-                "hook client must finish before the provider deadline"
-            );
-        }
+        let timeout = post_timeout("permission-request").as_secs();
+        assert!(timeout > hold, "hook client must outlast the answer window");
+        assert!(
+            timeout < 120,
+            "hook client must finish before the provider deadline"
+        );
+        assert_eq!(post_timeout("permission-request"), Duration::from_secs(115));
+        assert_eq!(post_timeout("PermissionRequest"), Duration::from_secs(30));
         assert_eq!(post_timeout("post-tool-use"), Duration::from_secs(30));
     }
 
