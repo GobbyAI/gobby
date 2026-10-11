@@ -247,7 +247,7 @@ describe("QuickMenu (#17016)", () => {
       y: 20,
       width: 44,
       height: 44,
-      task: makeTask({ build_state: "never_started" }),
+      task: makeTask(),
     };
 
     const { unmount } = render(
@@ -257,10 +257,6 @@ describe("QuickMenu (#17016)", () => {
         activeAction={null}
         onClose={vi.fn()}
         onAssignToMainChat={vi.fn()}
-        onBuild={vi.fn()}
-        onBuildQuick={vi.fn()}
-        onStopBuild={vi.fn()}
-        onResumeBuild={vi.fn()}
         onReleaseClaim={vi.fn()}
         onCloseTask={vi.fn()}
         onReopenTask={vi.fn()}
@@ -268,7 +264,7 @@ describe("QuickMenu (#17016)", () => {
     );
 
     expect(screen.getByRole("menu", { name: "Task actions" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "Build" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Close..." })).toBeTruthy();
 
     unmount();
 

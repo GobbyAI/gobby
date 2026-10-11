@@ -52,7 +52,6 @@ export const taskList = [
     project_id: "proj-1",
     // Build was started then stopped: allow_automation is off but the durable
     // `gobby build` lifecycle event persists, so the backend reports paused.
-    build_state: "paused",
   },
   ...Array.from({ length: 10 }, (_, index) => ({
     id: `task-${index + 1}`,
@@ -109,24 +108,6 @@ export function installResizeObserverMock(): void {
 }
 
 export function setupDefaultFetchRoutes(mockFetch: MockFetchInstance): void {
-  mockFetch.mockJsonResponse("/api/stages/registry", {
-    stages: [
-      {
-        name: "development",
-        display_label: "Development",
-        category: "implementation",
-        review_policy: "required",
-        position_hint: 10,
-      },
-      {
-        name: "operator_review",
-        display_label: "Operator Review",
-        category: "verification",
-        review_policy: "required",
-        position_hint: 20,
-      },
-    ],
-  });
   mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: taskList });
   mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
     task: {

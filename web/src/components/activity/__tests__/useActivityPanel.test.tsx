@@ -408,6 +408,25 @@ describe("useActivityPanel — tab persistence", () => {
     expect(result.current.activeTab).toBe("mcp");
   });
 
+  it.each([false, true])(
+    "falls back from a saved Stages tab (mobile=%s)",
+    (isMobile) => {
+      localStorage.setItem(TAB_KEY, "stages");
+      const { result } = renderHook(() => useActivityPanel(isMobile));
+
+      expect(ACTIVITY_PANEL_TABS.map(({ id }) => id)).not.toContain("stages");
+      expect(result.current.activeTab).toBe("sessions");
+      act(() => {
+        window.dispatchEvent(
+          new CustomEvent("gobby:show-activity-tab", {
+            detail: { tab: "stages" },
+          }),
+        );
+      });
+      expect(result.current.activeTab).toBe("sessions");
+    },
+  );
+
   it("keeps the Feedback tab as a persisted activity tab", () => {
     localStorage.setItem(TAB_KEY, "feedback");
 

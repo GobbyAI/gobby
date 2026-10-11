@@ -1,19 +1,11 @@
-import type { BuildState, GobbyTask } from "../../types/tasks";
+import type { GobbyTask } from "../../types/tasks";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
 } from "../../lib/taskState";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 
-export type TaskMenuAction =
-  | "assign"
-  | "build"
-  | "buildQuick"
-  | "stopBuild"
-  | "resumeBuild"
-  | "releaseClaim"
-  | "close"
-  | "reopen";
+export type TaskMenuAction = "assign" | "releaseClaim" | "close" | "reopen";
 
 export interface ActiveTaskAction {
   taskId: string;
@@ -34,10 +26,6 @@ interface TaskQuickMenuProps {
   activeAction: ActiveTaskAction | null;
   onClose: () => void;
   onAssignToMainChat: () => void;
-  onBuild: () => void;
-  onBuildQuick: () => void;
-  onStopBuild: () => void;
-  onResumeBuild: () => void;
   onReleaseClaim: () => void;
   onCloseTask: () => void;
   onReopenTask: () => void;
@@ -49,10 +37,6 @@ export function TaskQuickMenu({
   activeAction,
   onClose,
   onAssignToMainChat,
-  onBuild,
-  onBuildQuick,
-  onStopBuild,
-  onResumeBuild,
   onReleaseClaim,
   onCloseTask,
   onReopenTask,
@@ -61,11 +45,6 @@ export function TaskQuickMenu({
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
-  const buildState: BuildState = task.build_state ?? "never_started";
-  const showStartBuild = !isClosed && buildState === "never_started";
-  const showStopBuild = !isClosed && buildState === "running";
-  const showResumeBuild = !isClosed && buildState === "paused";
-  const showBuildControls = showStartBuild || showStopBuild || showResumeBuild;
   const items: QuickMenuItem[] = [
     {
       label: "Assign to Main Chat",
@@ -73,30 +52,6 @@ export function TaskQuickMenu({
       disabled: !chatSessionId || busy,
     },
   ];
-
-  if (showBuildControls) {
-    items.push({ type: "separator" });
-    if (showStartBuild) {
-      items.push(
-        { label: "Build", onSelect: onBuild, disabled: busy },
-        { label: "Build Quick", onSelect: onBuildQuick, disabled: busy },
-      );
-    }
-    if (showStopBuild) {
-      items.push({
-        label: "Stop Build",
-        onSelect: onStopBuild,
-        disabled: busy,
-      });
-    }
-    if (showResumeBuild) {
-      items.push({
-        label: "Resume Build",
-        onSelect: onResumeBuild,
-        disabled: busy,
-      });
-    }
-  }
 
   if (isClaimed) {
     items.push(
