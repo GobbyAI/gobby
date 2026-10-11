@@ -12,6 +12,7 @@ from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import Cursor, HubDatabase, Transaction
 from gobby.storage.session_lifecycle import session_has_retained_references
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._session_mapping_cache import invalidate_session_caches
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,7 @@ def reconcile_compact_session_activity(
 
     _notify_session_change(manager, "session_updated", current.id)
     for deleted_id in deleted_ids:
+        invalidate_session_caches(manager, deleted_id)
         _notify_session_change(manager, "session_deleted", deleted_id)
         logger.info(
             "Deleted empty compact ghost session %s after restoring explicit owner %s",

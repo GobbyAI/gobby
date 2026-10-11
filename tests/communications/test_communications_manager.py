@@ -661,6 +661,22 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
 
     sessions = SessionManager(temp_db)
     canonical, holder = _legacy_delete_target(sessions, sample_project["id"], deletion)
+    sessions.cache_session_mapping(
+        external_id=holder.external_id,
+        source=holder.source,
+        session_id=holder.id,
+        project_id=holder.project_id,
+        session_type=holder.session_type,
+    )
+    sessions._session_metadata[holder.id] = {"title": holder.title}
+    key = (holder.external_id, holder.source, holder.project_id, holder.session_type)
+    assert sessions._session_mapping[key] == holder.id
+    assert key in sessions._session_mapping_timestamps
+    changes: list[tuple[str, str]] = []
+
+    def record_change(event: str, session_id: str) -> None:
+        changes.append((event, session_id))
+
     assistant = (
         sessions.register(
             external_id="legacy-assistant",
@@ -682,10 +698,18 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
     manager.attach_conversation(channel.name, "dm:42", holder.id)
     transitions: list[SessionStatusTransition] = []
     sessions.register_status_transition_listener(transitions.append)
+    sessions.register_session_change_listener(record_change)
     with temp_db.transaction():
         _delete_legacy_target(sessions, canonical, deletion)
         assert sessions.get(holder.id) is None
         assert transitions == []
+        assert changes == []
+    assert holder.id not in sessions._session_mapping.values()
+    assert key not in sessions._session_mapping_timestamps
+    assert holder.id not in sessions._session_metadata
+    assert [event for event in changes if event[0] == "session_deleted"] == [
+        ("session_deleted", holder.id)
+    ]
     deleted = [event for event in transitions if event.status == "deleted"]
     assert len(deleted) == 1
     assert (deleted[0].session_id, deleted[0].project_id, deleted[0].seq_num) == (
