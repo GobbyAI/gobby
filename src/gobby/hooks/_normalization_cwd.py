@@ -12,8 +12,9 @@ from gobby.hooks._normalization_shell import ShellToken, _apply_cd
 class _Branch:
     kind: str
     cwd: str | None
-    changed: bool
     altered: bool = False
+    in_condition: bool = False
+    condition_altered: bool = False
 
 
 @dataclass
@@ -47,7 +48,7 @@ class ShellDirectoryState:
         if not first.quoted and first.value == "esac":
             self._close("case")
         elif not first.quoted and first.value == "case":
-            self.branches.append(_Branch("case", self.cwd, self.changed))
+            self.branches.append(_Branch("case", self.cwd))
         elif re.search(r";;(?!&)", gap):
             self._restore("case")
 
@@ -56,12 +57,28 @@ class ShellDirectoryState:
         while tokens and not tokens[0].quoted:
             word = tokens[0].value
             if word == "if":
-                self.branches.append(_Branch("if", self.cwd, self.changed))
+                self.branches.append(_Branch("if", self.cwd, in_condition=True))
             elif word in {"else", "elif"}:
                 self._restore("if")
+                if self.branches and self.branches[-1].kind == "if":
+                    branch = self.branches[-1]
+                    if branch.condition_altered:
+                        self.cwd = UNRESOLVED_DIRECTORY
+                    branch.in_condition = word == "elif"
             elif word == "fi":
                 self._close("if")
             elif word == "then":
+                if self.branches and self.branches[-1].kind == "if":
+                    branch = self.branches[-1]
+                    branch.cwd = self.cwd
+                    branch.in_condition = False
+            elif word in {"for", "while", "until"}:
+                self.branches.append(_Branch("loop", self.cwd))
+                if word == "for":
+                    break  # Keep the header for loop binding attribution.
+            elif word == "done":
+                self._close("loop")
+            elif word == "do":
                 pass
             else:
                 break
@@ -70,17 +87,25 @@ class ShellDirectoryState:
 
     def change(self, target: str | None) -> None:
         self.cwd = _apply_cd(self.cwd, target) if target is not None else UNRESOLVED_DIRECTORY
+        self.mark_changed()
+
+    def invalidate(self) -> None:
+        self.cwd = None
+        self.mark_changed()
+
+    def mark_changed(self) -> None:
+        """Keep script proof monotonic and notify every enclosing branch."""
         self.changed = True
         for branch in self.branches:
             branch.altered = True
+            branch.condition_altered |= branch.in_condition
 
     def _restore(self, kind: str) -> None:
         if self.branches and self.branches[-1].kind == kind:
             branch = self.branches[-1]
-            self.cwd, self.changed = branch.cwd, branch.changed
+            self.cwd = branch.cwd
 
     def _close(self, kind: str) -> None:
         if self.branches and self.branches[-1].kind == kind:
             branch = self.branches.pop()
             self.cwd = UNRESOLVED_DIRECTORY if branch.altered else branch.cwd
-            self.changed = branch.changed or branch.altered

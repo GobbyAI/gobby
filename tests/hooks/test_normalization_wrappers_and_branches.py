@@ -21,6 +21,77 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "if true; then pushd sub; fi; ./w.sh",
+        "if true; then false || cd sub; fi; ./w.sh",
+        "case x in x) pushd sub;; esac; ./w.sh",
+        "case x in x) false || cd sub;; esac; ./w.sh",
+        "if cd sub && false; then :; else ./w.sh; fi",
+        "if cd sub && false; then :; elif ./w.sh; then :; fi",
+    ],
+)
+def test_branch_navigation_cannot_restore_relative_script_proof(
+    tmp_path: Path, command: str
+) -> None:
+    (tmp_path / "w.sh").write_text("cat README\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub/w.sh").write_text("touch evil.py\n")
+    data = _metadata(command, tmp_path)
+    assert data["canonical_script_execution"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for d in a; do cd sub; done; touch z.py",
+        "while false; do cd sub; done; touch z.py",
+        "until true; do cd sub; done; touch z.py",
+        "while cd sub && false; do true; done; touch z.py",
+        "for d in a; do if true; then cd sub; fi; done; touch z.py",
+        "if true; then for d in a; do cd sub; done; fi; touch z.py",
+    ],
+)
+def test_loop_directory_join_does_not_assume_an_iteration(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert not data.get("canonical_file_paths")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if cd sub && false; then true; else touch g.py; fi",
+        "if cd sub && false; then true; elif touch g.py; then true; fi",
+    ],
+)
+def test_condition_navigation_does_not_attribute_else_to_entry_cwd(
+    tmp_path: Path, command: str
+) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert not data.get("canonical_file_paths")
+
+
+@pytest.mark.parametrize(
+    "loop", ["for d in a; do true", "while false; do true", "until true; do true"]
+)
+def test_directory_preserving_loop_keeps_following_write_scope(tmp_path: Path, loop: str) -> None:
+    data = _metadata(f"{loop}; done; touch z.py", tmp_path)
+    assert data["canonical_file_paths"] == ["z.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("assignment", ["FOO+=x", "a.b=1"])
+def test_env_accepts_assignment_names_outside_shell_identifier_grammar(
+    tmp_path: Path, assignment: str
+) -> None:
+    data = _metadata(f"env {assignment} touch x.py", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["x.py"]
+
+
+@pytest.mark.parametrize(
     "prefix",
     [
         "env -v -C other",

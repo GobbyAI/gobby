@@ -51,7 +51,7 @@ def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
             index += 1
         elif word.startswith("-"):
             return [UNRESOLVED_WRAPPER], ()
-        elif _ASSIGNMENT.match(word):
+        elif "=" in word:
             index += 1
         else:
             break

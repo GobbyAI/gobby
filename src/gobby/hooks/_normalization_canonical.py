@@ -272,8 +272,7 @@ def _classify_shell_command(
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
-            directory.cwd = None
-            directory.changed = True
+            directory.invalidate()
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         segment_start = min((spans_by_token[id(token)][0] for token in segment.tokens), default=0)
@@ -338,7 +337,8 @@ def _classify_shell_command(
                 "canonical_script_execution"
             ):
                 metadata.append(body_metadata)
-        directory.changed = directory.changed or not preserves_directory(parts)
+        if parts[:1] != ["for"] and not preserves_directory(parts):
+            directory.mark_changed()
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
