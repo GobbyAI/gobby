@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -68,6 +69,10 @@ export const SandboxManager = {
 def stub_runner(tmp_path: Path) -> Path:
     if shutil.which("node") is None:
         pytest.skip("node is required to execute the SRT runner")
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, os.getpriority(os.PRIO_PROCESS, 0))
+    except OSError as exc:
+        pytest.skip(f"host setpriority is unavailable in this sandbox: {exc}")
     dist = tmp_path / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "dist"
     dist.mkdir(parents=True)
     (dist / "index.js").write_text(_STUB_RUNTIME, encoding="utf-8")
