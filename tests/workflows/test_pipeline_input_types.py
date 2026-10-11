@@ -190,13 +190,13 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
         ) as resolve,
     ):
         result = CliRunner().invoke(
-            pipelines, ["run", "team-lane", "-i", "seats=researcher", "-i", "lane=3", "--json"]
+            pipelines, ["run", "team-lane", "-i", "seats=developer", "-i", "lane=3", "--json"]
         )
 
     assert result.exit_code == 1  # The isolated guard deliberately refuses the launch.
     assert len(proxy.calls) == 1
     assert proxy.calls[0]["lane"] == "3"
-    assert proxy.calls[0]["requested"] == "researcher"
+    assert proxy.calls[0]["requested"] == "developer"
     resolve.assert_called_once_with(
         mock_db,
         caller_session_id=caller,
