@@ -15,6 +15,7 @@ from gobby.hooks._normalization_canonical import (
 from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
+from gobby.hooks._normalization_shell import _substitution_end
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit
@@ -653,6 +654,39 @@ def test_shell_parser_failure_fails_closed(tmp_path: Path, parser: str) -> None:
         "canonical_repo_mutation": True,
         "canonical_repo_mutation_scope_unknown": True,
     }
+
+
+def test_nested_ansi_c_quote_cannot_hide_mutation(tmp_path: Path) -> None:
+    command = "echo \"$(echo $'\\')' ; git apply x.patch ; echo ')')\""
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("wrapper", ["echo $({})", 'echo "$({})"'])
+def test_nested_ansi_c_literal_matches_double_quoted_twin(tmp_path: Path, wrapper: str) -> None:
+    literal = _invocation_metadata(
+        wrapper.format("echo $'it\\'s'"), tool_cwd=tmp_path, project_path=tmp_path
+    )
+    twin = _invocation_metadata(
+        wrapper.format('echo "it\'s"'), tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert literal["canonical_tool_kind"] == twin["canonical_tool_kind"] == "execute"
+    assert not literal.get("canonical_repo_mutation")
+    assert literal.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "echo $'\\')' ; git apply x.patch ; echo ')')",
+        "echo $'it\\'s')",
+        'echo "$\'" )',
+    ],
+)
+def test_substitution_end_preserves_ansi_c_quotes(text: str) -> None:
+    assert _substitution_end(text, 0, False, 1) == len(text) - 1
 
 
 @pytest.mark.parametrize(

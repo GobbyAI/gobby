@@ -462,8 +462,13 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             continue
         if backtick and char == "`":
             return index
-        if quote == "'":
-            if char == quote:
+        if not quote and text.startswith("$'", index):
+            quote = "$'"
+            line.append("$'")
+            index += 2
+            continue
+        if quote in {"'", "$'"}:
+            if char == "'":
                 quote = ""
         elif text.startswith("$(", index) or char == "`":
             tick = char == "`"
