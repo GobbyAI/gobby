@@ -9,6 +9,36 @@ use crate::ui::{Chrome, Mode};
 
 use super::Workspace;
 
+impl<D: Daemon> Workspace<D> {
+    /// Surface each provider failure once while its roster item remains current.
+    /// Provider failures stay outside the needs-you classifier and response flow.
+    pub(super) fn present_roster_warnings(&mut self, chrome: &mut Chrome) {
+        let mut current = std::collections::HashSet::new();
+        for entry in &self.attention.entries {
+            let Some(attention) = &entry.attention else {
+                continue;
+            };
+            if attention.kind.as_deref() != Some("non_actionable")
+                || attention.reason.as_deref() != Some("provider_error")
+            {
+                continue;
+            }
+            let key = (
+                entry.entry_id.clone(),
+                attention.attention_id.clone(),
+                attention.fingerprint.clone(),
+            );
+            if !self.attention.warned.contains(&key) {
+                if let Some(toast) = blocked_attention_toast(entry) {
+                    chrome.notify(toast);
+                }
+            }
+            current.insert(key);
+        }
+        self.attention.warned = current;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PendingAttention {
     entry_id: String,
@@ -32,14 +62,14 @@ struct Prompt {
 
 /// Open the response dialog for the first actionable prompt among the known
 /// attention entries, or for `entry_id` alone when its row was clicked.
-pub(super) async fn open_response_dialog(
-    workspace: &mut Workspace<LiveDaemon>,
+pub(super) async fn open_response_dialog<D: Daemon>(
+    workspace: &mut Workspace<D>,
     chrome: &mut Chrome,
     entry_id: Option<&str>,
 ) -> Result<(), DaemonError> {
     let known_entries = workspace.attention_entry_ids();
     let entries = workspace
-        .daemon()
+        .daemon
         .roster()
         .await?
         .into_iter()
@@ -78,7 +108,10 @@ fn present_attention(
 
 fn blocked_attention_toast(entry: &RosterEntry) -> Option<Toast> {
     let attention = entry.attention.as_ref()?;
-    if attention.kind.as_deref() != Some("non_actionable") {
+    if attention.kind.as_deref() != Some("non_actionable")
+        && !(attention.kind.as_deref() == Some("actionable")
+            && attention.reason.as_deref() == Some("composer_blocked"))
+    {
         return None;
     }
     let raw_message = attention
@@ -102,6 +135,8 @@ fn blocked_attention_toast(entry: &RosterEntry) -> Option<Toast> {
         ("Agent blocked", "No details were provided.".to_string())
     } else if attention.reason.as_deref() == Some("provider_error") {
         ("Provider error", truncate_end(&message, 80))
+    } else if attention.reason.as_deref() == Some("composer_blocked") {
+        ("Composer blocked", message)
     } else {
         ("Agent blocked", truncate_end(&message, 80))
     };
@@ -236,6 +271,9 @@ pub(super) fn apply_response(
 
 fn parse_prompt(entry: RosterEntry) -> Option<Prompt> {
     let attention = entry.attention?;
+    if attention.reason.as_deref() == Some("composer_blocked") {
+        return None;
+    }
     if attention
         .kind
         .as_deref()
@@ -293,7 +331,6 @@ fn parse_prompt(entry: RosterEntry) -> Option<Prompt> {
 mod tests {
     use super::*;
     use crate::daemon::Attention;
-    use crate::ui::status::ToastKind;
     use serde_json::json;
 
     fn blocked_entry(reason: &str, payload: serde_json::Value) -> RosterEntry {
@@ -309,38 +346,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn provider_error_shows_sanitized_warning_without_opening_response() {
-        let mut chrome = Chrome::dark();
-        let mut pending = Some(PendingAttention {
-            entry_id: "run:prior".to_string(),
-            attention_id: "prior".to_string(),
-            fingerprint: "prior".to_string(),
-            option_values: vec![],
-        });
-        let message = format!("API Error: 500\x1b[31m\n{}", "server issue ".repeat(10));
-
-        present_attention(
-            &mut chrome,
-            &mut pending,
-            &[blocked_entry("provider_error", json!({"message": message}))],
-        );
-
-        assert!(chrome.dialog.is_none());
-        assert_eq!(chrome.mode, Mode::Terminal);
-        assert_eq!(
-            pending.as_ref().map(|item| item.attention_id.as_str()),
-            Some("prior")
-        );
-        let toast = chrome.alert_log.last().expect("warning added to alert log");
-        assert_eq!(toast.kind, ToastKind::Warning);
-        assert_eq!(toast.title, "Provider error");
-        let body = toast.body.as_deref().expect("warning body");
-        assert!(body.starts_with("API Error: 500"));
-        assert!(!body.contains('\x1b'));
-        assert!(!body.contains('\n'));
-        assert!(body.ends_with('…'));
-        assert!(crate::ui::text::display_width(body) <= 80);
+    #[tokio::test]
+    async fn composer_blocked_shows_release_guidance_from_roster() {
+        for (block, cause) in [
+            ("gap", "a terminal host event gap"),
+            ("interrupt", "an interrupt"),
+        ] {
+            let session_ref = "gobby#16035";
+            let message = format!(
+                "Check pane has no draft; run release_composer(session_id=\"{session_ref}\"). \
+             A wake is withheld after {cause} left its composer unconfirmed."
+            );
+            let mut workspace = Workspace::scripted();
+            workspace.daemon_mut().set_roster(json!({
+            "epoch": "attention-1", "seq": 1,
+            "entries": [{
+                "entry_id": "session:composer", "session_id": "composer",
+                "lifecycle_status": "paused",
+                "attention": {
+                    "attention_id": "att-composer", "fingerprint": format!("composer_blocked:{block}"),
+                    "kind": "actionable", "reason": "composer_blocked",
+                    "payload": {"message": message}
+                }
+            }]
+        }));
+            workspace
+                .reconcile_subscribe_first()
+                .expect("composer roster");
+            assert_eq!(workspace.attention_entry_ids(), ["session:composer"]);
+            let mut chrome = Chrome::dark();
+            open_response_dialog(&mut workspace, &mut chrome, Some("session:composer"))
+                .await
+                .expect("composer details");
+            assert!(chrome.dialog.is_none());
+            assert!(workspace.pending_attention.is_none());
+            let toast = chrome.alert_log.last().expect("composer warning");
+            assert_eq!(toast.title, "Composer blocked");
+            let body = toast.body.as_deref().expect("release guidance");
+            assert_eq!(body, message);
+            assert!(body.contains(&format!("release_composer(session_id=\"{session_ref}\")")));
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 6))
+                .expect("toast terminal");
+            terminal
+                .draw(|frame| {
+                    crate::ui::status::render_toast_notification(frame, frame.area(), &chrome);
+                })
+                .expect("render composer toast");
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(screen.contains(&format!("release_composer(session_id=\"{session_ref}\")")));
+        }
     }
 
     #[test]

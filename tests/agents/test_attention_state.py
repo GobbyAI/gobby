@@ -746,7 +746,7 @@ async def test_monitor_keeps_a_composer_block_item_until_the_ledger_clears(
         state="blocked",
         session_id=session.id,
         reason="composer_blocked",
-        kind="non_actionable",
+        kind="actionable",
         fingerprint="composer_blocked:gap",
         payload={"message": "release_composer"},
     )

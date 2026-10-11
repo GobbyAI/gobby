@@ -15,6 +15,7 @@ use super::super::Workspace;
 /// tab dropped once empty; a daemon tab's only unmapped, since the daemon's
 /// layout keeps the slot, which renders empty until its terminal resolves.
 pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
+    workspace.present_roster_warnings(chrome);
     let focused_pane_removed = workspace
         .focus
         .is_some_and(|pane| !workspace.panes.contains_key(&pane));
