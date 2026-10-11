@@ -135,6 +135,7 @@ def test_get_schema(cli_runner, mock_daemon_client, mock_config) -> None:
             method="POST",
             json_data={"server_name": "server1", "tool_name": "tool1"},
             timeout=30.0,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
 
 
@@ -165,6 +166,7 @@ def test_call_tool_success(cli_runner, mock_daemon_client, mock_config) -> None:
                 "arguments": {"arg1": "val1"},
             },
             timeout=30.0,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
 
 
@@ -222,6 +224,7 @@ def test_add_server_http(cli_runner, mock_daemon_client, mock_config) -> None:
                 "scope": "global",
             },
             timeout=30.0,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
 
 

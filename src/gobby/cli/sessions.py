@@ -47,7 +47,7 @@ def _call_session_tool(
         response = httpx.post(
             f"{get_daemon_url()}/api/mcp/gobby-sessions/tools/{tool_name}",
             json=arguments,
-            headers=daemon_auth_headers(),
+            headers=daemon_auth_headers() | {"X-Gobby-CLI-Internal": "1"},
             timeout=timeout,
         )
         response.raise_for_status()

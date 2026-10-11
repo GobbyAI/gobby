@@ -177,7 +177,7 @@ def test_delete_worktree_success(
     mock_httpx.assert_called_once_with(
         "http://localhost:9876/api/mcp/gobby-worktrees/tools/delete_worktree",
         json={"worktree_id": "wt-123", "force": False},
-        headers={},
+        headers={"X-Gobby-CLI-Internal": "1"},
         timeout=30.0,
     )
 

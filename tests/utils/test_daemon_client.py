@@ -14,6 +14,21 @@ AUTH_REMEDIATION = (
 )
 
 
+def test_mcp_call_marks_cli_internal_without_losing_auth() -> None:
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"success": True, "result": {"value": "hello"}}
+    with (
+        patch("gobby.utils.daemon_client.daemon_auth_headers", return_value=AUTH_HEADERS),
+        patch("gobby.utils.daemon_client.httpx.post", return_value=response) as request,
+    ):
+        client = DaemonClient(url="http://127.0.0.1:12345")
+        result = client.call_mcp_tool("gobby-boundary", "echo", {"value": "hello"})
+    assert result == {"success": True, "result": {"value": "hello"}}
+    assert request.call_args.args == ("http://127.0.0.1:12345/api/mcp/gobby-boundary/tools/echo",)
+    assert request.call_args.kwargs["headers"] == AUTH_HEADERS | {"X-Gobby-CLI-Internal": "1"}
+    assert request.call_args.kwargs["json"] == {"value": "hello"}
+
+
 def test_managed_client_refreshes_capability_before_each_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

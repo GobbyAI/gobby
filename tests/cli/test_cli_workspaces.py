@@ -372,7 +372,10 @@ def test_local_token_is_sent_and_never_echoed(daemon: _FakeDaemon) -> None:
     result = _run(nodes, ["list", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert daemon.calls[0].headers == {"Authorization": f"Bearer {TOKEN}"}
+    assert daemon.calls[0].headers == {
+        "Authorization": f"Bearer {TOKEN}",
+        "X-Gobby-CLI-Internal": "1",
+    }
     assert TOKEN not in result.output
 
 

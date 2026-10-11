@@ -494,6 +494,7 @@ class DaemonClient:
             method="POST",
             json_data=arguments,
             timeout=timeout,
+            headers={"X-Gobby-CLI-Internal": "1"},
         )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())

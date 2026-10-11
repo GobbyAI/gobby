@@ -49,6 +49,10 @@ class SessionContext:
 _current_session_context: contextvars.ContextVar[SessionContext | None] = contextvars.ContextVar(
     "current_session_context", default=None
 )
+# HTTP CLI calls preserve agent policy while omitting context-economy discovery rules.
+cli_internal_request: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "cli_internal_request", default=False
+)
 _current_agent_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_agent_run_id", default=None
 )
