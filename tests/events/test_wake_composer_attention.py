@@ -131,6 +131,7 @@ async def test_ring_overflow_resume_marks_the_gap_and_names_the_seat_and_valve(
     assert item.kind == "actionable"
     assert item.fingerprint == "composer_blocked:gap"
     message = str(item.payload["message"])
+    assert message.startswith("Check pane has no draft; run release_composer(")
     assert seat.session.ref in message
     assert "release_composer" in message
     assert len(seat.notifications) == 1

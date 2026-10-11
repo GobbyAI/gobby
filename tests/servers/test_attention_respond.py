@@ -342,6 +342,47 @@ def test_respond_routes_through_coordinator_with_cas(
     assert runtime.write_log == [("text", "1\n")]
 
 
+def test_composer_block_cannot_be_answered_or_retired(temp_db: HubDatabase) -> None:
+    manager = _manager(temp_db)
+    blocked = manager.transition(
+        "session:session-1",
+        state="blocked",
+        session_id="session-1",
+        reason="composer_blocked",
+        kind="actionable",
+        fingerprint=PromptDetector(DETECTION_REGISTRY, "claude").pane_fingerprint(
+            "composer blocked"
+        ),
+        payload={"message": "release_composer"},
+    ).current
+    assert blocked is not None
+    capture_calls = 0
+    injection_calls = 0
+
+    async def capture() -> str:
+        nonlocal capture_calls
+        capture_calls += 1
+        return APPROVAL_PROMPT
+
+    async def inject(_pane: AttentionPane, _answer: AttentionAnswer) -> None:
+        nonlocal injection_calls
+        injection_calls += 1
+
+    with _client(manager, capture=capture, injector=inject) as client:
+        rejected = client.post(
+            f"/api/attention/{blocked.entry_id}/respond",
+            json=_request(blocked, {"key": "escape"}),
+        )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"]["code"] == "not_actionable"
+    assert capture_calls == 0
+    assert injection_calls == 0
+    retained = manager.get(blocked.entry_id)
+    assert retained is not None
+    assert retained.state == "blocked"
+    assert retained.attention_id == blocked.attention_id
+
+
 def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:
     manager = _manager(temp_db)
     detector = PromptDetector(DETECTION_REGISTRY, "claude")

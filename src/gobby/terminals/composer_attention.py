@@ -67,9 +67,8 @@ async def sync_composer_attention(
         payload={
             "label": "Composer blocked",
             "message": (
-                f"A wake for {ref} is withheld: {_CAUSES[block]} left its composer "
-                "unconfirmed. Check the pane holds no draft, then run gobby-sessions "
-                f'release_composer(session_id="{ref}").'
+                f'Check pane has no draft; run release_composer(session_id="{ref}"). '
+                f"A wake is withheld after {_CAUSES[block]} left its composer unconfirmed."
             ),
         },
         expected_attention_id=current.attention_id if current is not None else None,

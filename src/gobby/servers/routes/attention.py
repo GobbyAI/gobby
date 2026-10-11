@@ -363,7 +363,7 @@ def create_attention_router(
                 if current is None:
                     raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
                 _require_current_identity(current, request)
-                if current.kind != "actionable":
+                if current.kind != "actionable" or current.reason == "composer_blocked":
                     raise HTTPException(status_code=409, detail={"code": "not_actionable"})
                 _validate_option_membership(current, request.answer)
 

@@ -135,6 +135,8 @@ fn blocked_attention_toast(entry: &RosterEntry) -> Option<Toast> {
         ("Agent blocked", "No details were provided.".to_string())
     } else if attention.reason.as_deref() == Some("provider_error") {
         ("Provider error", truncate_end(&message, 80))
+    } else if attention.reason.as_deref() == Some("composer_blocked") {
+        ("Composer blocked", message)
     } else {
         ("Agent blocked", truncate_end(&message, 80))
     };
@@ -346,36 +348,59 @@ mod tests {
 
     #[tokio::test]
     async fn composer_blocked_shows_release_guidance_from_roster() {
-        let mut workspace = Workspace::scripted();
-        workspace.daemon_mut().set_roster(json!({
+        for (block, cause) in [
+            ("gap", "a terminal host event gap"),
+            ("interrupt", "an interrupt"),
+        ] {
+            let session_ref = "gobby#16035";
+            let message = format!(
+                "Check pane has no draft; run release_composer(session_id=\"{session_ref}\"). \
+             A wake is withheld after {cause} left its composer unconfirmed."
+            );
+            let mut workspace = Workspace::scripted();
+            workspace.daemon_mut().set_roster(json!({
             "epoch": "attention-1", "seq": 1,
             "entries": [{
                 "entry_id": "session:composer", "session_id": "composer",
                 "lifecycle_status": "paused",
                 "attention": {
-                    "attention_id": "att-composer", "fingerprint": "composer_blocked:gap",
+                    "attention_id": "att-composer", "fingerprint": format!("composer_blocked:{block}"),
                     "kind": "actionable", "reason": "composer_blocked",
-                    "payload": {"message": "Check the pane, then run release_composer."}
+                    "payload": {"message": message}
                 }
             }]
         }));
-        workspace
-            .reconcile_subscribe_first()
-            .expect("composer roster");
-        assert_eq!(workspace.attention_entry_ids(), ["session:composer"]);
-        let mut chrome = Chrome::dark();
-        open_response_dialog(&mut workspace, &mut chrome, Some("session:composer"))
-            .await
-            .expect("composer details");
-        assert!(chrome.dialog.is_none());
-        assert!(workspace.pending_attention.is_none());
-        let toast = chrome.alert_log.last().expect("composer warning");
-        assert_eq!(toast.title, "Agent blocked");
-        assert!(toast
-            .body
-            .as_deref()
-            .expect("release guidance")
-            .contains("release_composer"));
+            workspace
+                .reconcile_subscribe_first()
+                .expect("composer roster");
+            assert_eq!(workspace.attention_entry_ids(), ["session:composer"]);
+            let mut chrome = Chrome::dark();
+            open_response_dialog(&mut workspace, &mut chrome, Some("session:composer"))
+                .await
+                .expect("composer details");
+            assert!(chrome.dialog.is_none());
+            assert!(workspace.pending_attention.is_none());
+            let toast = chrome.alert_log.last().expect("composer warning");
+            assert_eq!(toast.title, "Composer blocked");
+            let body = toast.body.as_deref().expect("release guidance");
+            assert_eq!(body, message);
+            assert!(body.contains(&format!("release_composer(session_id=\"{session_ref}\")")));
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 6))
+                .expect("toast terminal");
+            terminal
+                .draw(|frame| {
+                    crate::ui::status::render_toast_notification(frame, frame.area(), &chrome);
+                })
+                .expect("render composer toast");
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(screen.contains(&format!("release_composer(session_id=\"{session_ref}\")")));
+        }
     }
 
     #[test]
