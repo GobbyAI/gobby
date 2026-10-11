@@ -371,6 +371,46 @@ def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
     return bool(positional) if pattern_from_option else len(positional) > 1
 
 
+def _grep_is_recursive(parts: list[str]) -> bool:
+    """Recognize recursion flags without treating option operands as flags."""
+    arguments = iter(parts[1:])
+    for part in arguments:
+        if part == "--":
+            break
+        if part in {"--recursive", "--dereference-recursive"}:
+            return True
+        if part.startswith("--"):
+            if part in {
+                "--regexp",
+                "--file",
+                "--max-count",
+                "--after-context",
+                "--before-context",
+                "--context",
+                "--directories",
+                "--devices",
+                "--binary-files",
+                "--label",
+                "--include",
+                "--exclude",
+                "--exclude-from",
+                "--exclude-dir",
+                "--group-separator",
+            }:
+                next(arguments, None)
+            continue
+        if not part.startswith("-"):
+            continue
+        for index, option in enumerate(part[1:], start=1):
+            if option in "rR":
+                return True
+            if option in "efmABCdD":
+                if index == len(part) - 1:
+                    next(arguments, None)
+                break
+    return False
+
+
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
     def is_path_operand(candidate: str) -> bool:
         return _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
