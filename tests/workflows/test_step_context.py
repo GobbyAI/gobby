@@ -39,6 +39,7 @@ def _instance(
         variables=variables or {},
         enabled=enabled,
         snapshot=snapshot or _snapshot([step], None),
+        workflow=snapshot or _snapshot([step], None),
     )
 
 
@@ -49,7 +50,7 @@ def _patch_step_instance(
     session_variables: dict[str, object] | None = None,
 ) -> None:
     instance_manager = MagicMock()
-    instance_manager.get_for_session.return_value = instance
+    instance_manager.get_active_for_session.return_value = instance
     variable_manager = MagicMock()
     variable_manager.get_variables.return_value = session_variables or {}
     monkeypatch.setattr(

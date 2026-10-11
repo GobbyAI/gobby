@@ -39,6 +39,7 @@ class AgentStepInstance(BaseModel):
     agent_name: str
     agent_step_workflow_id: str | None = None
     snapshot: AgentStepWorkflowBody
+    current_definition: AgentStepWorkflowBody | None = Field(default=None, exclude=True)
     enabled: bool = True
     current_step: str | None = None
     step_entered_at: datetime | None = None
@@ -48,6 +49,11 @@ class AgentStepInstance(BaseModel):
     context_injected: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+    @property
+    def workflow(self) -> AgentStepWorkflowBody:
+        """The installed workflow for execution; snapshot retains activation provenance."""
+        return self.current_definition if self.current_definition is not None else self.snapshot
 
 
 def build_step_instance(
@@ -172,6 +178,23 @@ class AgentStepInstanceManager:
         if row is None:
             return None
         return _stored_instance(row)
+
+    def get_active_for_session(self, session_id: str) -> AgentStepInstance | None:
+        """Resolve current policy without replacing the seat's execution state."""
+        from gobby.workflows.agent_resolver import resolve_agent
+        from gobby.workflows.variable_defaults import resolve_session_project_id
+
+        instance = self.get_for_session(session_id)
+        if instance is None or not instance.enabled:
+            return instance
+        definition = resolve_agent(
+            instance.agent_name,
+            self.db,
+            project_id=resolve_session_project_id(self.db, session_id),
+        )
+        if definition is not None and definition.step_workflow is not None:
+            instance.current_definition = definition.step_workflow
+        return instance
 
     def save(
         self,

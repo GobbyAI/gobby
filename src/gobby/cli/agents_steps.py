@@ -62,7 +62,7 @@ def _echo_evaluation(result: dict[str, Any], json_format: bool) -> None:
 def list_agent_steps(session_id: str | None, json_format: bool) -> None:
     """Show the agent-step instance for a session."""
     resolved = resolve_session_id(session_id)
-    instance = AgentStepInstanceManager(require_cli_database()).get_for_session(resolved)
+    instance = AgentStepInstanceManager(require_cli_database()).get_active_for_session(resolved)
     if instance is None:
         if json_format:
             click.echo(json_dumps({"session_id": resolved, "has_instance": False}, indent=2))
@@ -70,14 +70,14 @@ def list_agent_steps(session_id: str | None, json_format: bool) -> None:
             click.echo(f"No agent-step instance for session {resolved}")
         return
 
-    steps = [step.name for step in instance.snapshot.steps]
+    steps = [step.name for step in instance.workflow.steps]
     payload = {
         "session_id": resolved,
         "has_instance": True,
         "agent_name": instance.agent_name,
         "current_step": instance.current_step,
         "steps": steps,
-        "exit_condition": instance.snapshot.exit_condition,
+        "exit_condition": instance.workflow.exit_condition,
         "variables": instance.variables,
     }
     if json_format:
@@ -87,8 +87,8 @@ def list_agent_steps(session_id: str | None, json_format: bool) -> None:
     click.echo(f"Agent: {instance.agent_name}")
     click.echo(f"Current step: {instance.current_step}")
     click.echo(f"Steps: {', '.join(steps)}")
-    if instance.snapshot.exit_condition:
-        click.echo(f"Exit: {instance.snapshot.exit_condition}")
+    if instance.workflow.exit_condition:
+        click.echo(f"Exit: {instance.workflow.exit_condition}")
     if instance.variables:
         click.echo("Variables:")
         for name, value in sorted(instance.variables.items()):

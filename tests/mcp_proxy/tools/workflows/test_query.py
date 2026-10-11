@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.step_instances import AgentStepInstance
 from tests.workflows.step_instance_fixtures import make_step_instance
 
@@ -23,7 +24,7 @@ def _make_mocks(
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
     instance_manager = MagicMock()
-    instance_manager.get_for_session.return_value = instance
+    instance_manager.get_active_for_session.return_value = instance
 
     session_var_manager = MagicMock()
     session_var_manager.get_variables.return_value = session_variables or {}
@@ -38,7 +39,7 @@ def _make_mocks(
 class TestGetStepStatus:
     """Tests for get_step_status against the typed instance."""
 
-    def test_returns_snapshot_status(self) -> None:
+    def test_returns_current_definition_status(self) -> None:
         from gobby.mcp_proxy.tools.workflows._query import get_step_status
 
         instance = make_step_instance(
@@ -47,6 +48,9 @@ class TestGetStepStatus:
             current_step="work",
             variables={"session_task": "task-uuid"},
             steps=["work", "done"],
+        )
+        instance.current_definition = AgentStepWorkflowBody.model_validate(
+            {"steps": [{"name": "work"}, {"name": "review"}], "exit_condition": "vars.done"}
         )
         mocks = _make_mocks(instance=instance, session_variables={"counter": 5})
 
@@ -61,7 +65,8 @@ class TestGetStepStatus:
         assert result["has_workflow"] is True
         assert result["agent_name"] == "auto-task"
         assert result["current_step"] == "work"
-        assert result["steps"] == ["work", "done"]
+        assert result["steps"] == ["work", "review"]
+        assert result["exit_condition"] == "vars.done"
         assert result["variables"] == {"session_task": "task-uuid"}
         assert result["session_variables"] == {"counter": 5}
 

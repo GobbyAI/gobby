@@ -103,10 +103,10 @@ def test_agents_steps_reads_agent_step_instance(runner: CliRunner) -> None:
     instance = MagicMock()
     instance.agent_name = "analyst"
     instance.current_step = "research"
-    instance.snapshot.steps = [MagicMock(name="research"), MagicMock(name="write")]
-    instance.snapshot.steps[0].name = "research"
-    instance.snapshot.steps[1].name = "write"
-    instance.snapshot.exit_condition = "done"
+    instance.workflow.steps = [MagicMock(name="research"), MagicMock(name="write")]
+    instance.workflow.steps[0].name = "research"
+    instance.workflow.steps[1].name = "write"
+    instance.workflow.exit_condition = "done"
     instance.variables = {"topic": "storage"}
 
     with (
@@ -114,13 +114,13 @@ def test_agents_steps_reads_agent_step_instance(runner: CliRunner) -> None:
         patch("gobby.cli.agents_steps.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.agents_steps.AgentStepInstanceManager") as manager_cls,
     ):
-        manager_cls.return_value.get_for_session.return_value = instance
+        manager_cls.return_value.get_active_for_session.return_value = instance
         result = runner.invoke(cli, ["agents", "steps", "--session", "sess-1"])
 
     assert result.exit_code == 0
     assert "analyst" in result.output
     assert "research" in result.output
-    manager_cls.return_value.get_for_session.assert_called_once_with("sess-1")
+    manager_cls.return_value.get_active_for_session.assert_called_once_with("sess-1")
 
 
 def test_agents_check_wraps_evaluate_agent_definition(runner: CliRunner) -> None:

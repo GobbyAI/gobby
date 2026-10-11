@@ -55,7 +55,7 @@ def release_lost_binding(
     The session's ``claimed_tasks`` projection gates the task read, so a binding
     the session still holds costs no query.
     """
-    snapshot = instance.snapshot
+    snapshot = instance.workflow
     binding = _binding_step_index(snapshot)
     names = [step.name for step in snapshot.steps]
     if binding is None or instance.current_step not in names:
