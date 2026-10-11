@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -18,6 +18,7 @@ from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.models import ChannelCapabilities, ChannelConfig, CommsMessage
+from gobby.communications.rate_limiter import TokenBucketRateLimiter
 
 pytestmark = pytest.mark.unit
 
@@ -213,14 +214,48 @@ async def test_exhausted_retries_raises(mock_sleep: AsyncMock, adapter: Concrete
 async def test_429_exhausted_retries_raises(
     mock_sleep: AsyncMock, adapter: ConcreteAdapter
 ) -> None:
+    rate_limit_callback = MagicMock()
+    adapter.set_rate_limit_callback(rate_limit_callback)
     rate_limited = _make_response(429)
     factory = AsyncMock(return_value=rate_limited)
 
     with pytest.raises(httpx.HTTPStatusError):
         await adapter._retry_request(factory, max_retries=1)
 
-    # 429 retries all attempts including the last, then raises
+    # Both 429 attempts notify backoff before the final response raises.
     assert factory.await_count == 2
+    assert rate_limit_callback.call_args_list == [call(1.0, False), call(2.0, False)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_retries", [0, 3])
+@patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock)
+async def test_telegram_long_retry_after_sets_channel_backoff_before_raise(
+    mock_sleep: AsyncMock, max_retries: int
+) -> None:
+    adapter = TelegramAdapter()
+    limiter = TokenBucketRateLimiter()
+    notifications: list[tuple[float, bool]] = []
+
+    def on_rate_limit(duration: float, is_global: bool) -> None:
+        notifications.append((duration, is_global))
+        limiter.set_backoff("telegram-channel", duration)
+
+    adapter.set_rate_limit_callback(on_rate_limit)
+    response = httpx.Response(
+        429,
+        json={"ok": False, "parameters": {"retry_after": 1000}},
+        request=httpx.Request("POST", "https://example.invalid/sendMessage"),
+    )
+    factory = AsyncMock(return_value=response)
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        await adapter._retry_request(factory, max_retries=max_retries)
+
+    assert error.value.response is response
+    assert notifications == [(1000.0, False)]
+    assert not limiter.check("telegram-channel")
+    factory.assert_awaited_once()
+    mock_sleep.assert_not_awaited()
 
 
 _UNSENT = [

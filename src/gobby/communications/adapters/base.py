@@ -321,18 +321,21 @@ class BaseChannelAdapter(ABC):
             last_response = response
 
             if response.status_code == 429:
-                if attempt >= max_retries:
-                    break
                 delay = backoff_base * (2**attempt)  # default fallback
                 parsed_retry_after = self.retry_after_delay(response)
                 if parsed_retry_after is not None:
-                    if parsed_retry_after > _MAX_RETRY_AFTER_DELAY_SECONDS:
-                        # Leave long waits to the durable delivery ledger rather
-                        # than holding a request beyond its delivery lease.
-                        response.raise_for_status()
                     delay = parsed_retry_after
                 if self._rate_limit_callback is not None:
                     self._rate_limit_callback(delay, False)
+                if attempt >= max_retries:
+                    break
+                if (
+                    parsed_retry_after is not None
+                    and parsed_retry_after > _MAX_RETRY_AFTER_DELAY_SECONDS
+                ):
+                    # Leave long waits to the durable delivery ledger rather
+                    # than holding a request beyond its delivery lease.
+                    response.raise_for_status()
                 logger.warning(
                     "%s rate limited (429), retrying in %.1fs (attempt %d/%d)",
                     self.channel_type,
