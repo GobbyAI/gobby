@@ -1,19 +1,14 @@
-"""Fixed textgen cwd and stale Claude project-dir purge (#20450)."""
+"""Fixed and per-call text generation working directories."""
 
 from __future__ import annotations
 
-import os
-import time
 from pathlib import Path
 
 import pytest
 
-from gobby.agents.trust import encode_claude_project_path
 from gobby.llm.textgen_cwd import (
-    _gobby_textgen_project_slug_fragment,
     fixed_textgen_cwd,
     neutral_textgen_cwd,
-    purge_textgen_project_dirs,
 )
 
 pytestmark = pytest.mark.unit
@@ -29,82 +24,14 @@ class TestFixedTextgenCwd:
             assert first.is_dir()
             assert first == tmp_path / ".gobby" / "tmp" / "textgen"
 
-    def test_fixed_slug_never_matches_purge_marker(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        with fixed_textgen_cwd() as fixed:
-            assert "gobby-textgen-" not in encode_claude_project_path(fixed)
-        with neutral_textgen_cwd() as per_call:
-            assert "gobby-textgen-" in encode_claude_project_path(per_call)
 
-
-class TestPurgeTextgenProjectDirs:
-    def _make_dir(self, root: Path, name: str, *, age_seconds: float) -> Path:
-        target = root / name
-        target.mkdir()
-        (target / "transcript.jsonl").write_text("{}")
-        stamp = time.time() - age_seconds
-        os.utime(target, (stamp, stamp))
-        return target
-
-    def test_purges_encoded_temp_path_with_underscore_and_space(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr("gobby.llm.textgen_cwd.tempfile.gettempdir", lambda: "/tmp/foo_bar baz")
-        old_textgen = self._make_dir(
-            tmp_path, "-tmp-foo-bar-baz-gobby-textgen-abc123", age_seconds=7200
-        )
-        young_textgen = self._make_dir(
-            tmp_path, "-tmp-foo-bar-baz-gobby-textgen-def456", age_seconds=60
-        )
-        unrelated = self._make_dir(tmp_path, "-tmp-foo-bar-baz-another-project", age_seconds=7200)
-
-        assert purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0) == 1
-
-        assert not old_textgen.exists()
-        assert young_textgen.exists()
-        assert unrelated.exists()
-
-    def test_removes_only_old_marker_dirs(self, tmp_path: Path) -> None:
-        fragment = _gobby_textgen_project_slug_fragment()
-        old_textgen = self._make_dir(tmp_path, f"{fragment}abc123", age_seconds=7200)
-        young_textgen = self._make_dir(tmp_path, f"{fragment}def456", age_seconds=60)
-        real_project = self._make_dir(tmp_path, "-Users-josh-Projects-gobby", age_seconds=7200)
-        fixed_slug = self._make_dir(tmp_path, "-Users-josh--gobby-tmp-textgen", age_seconds=7200)
-        unrelated = self._make_dir(tmp_path, "my-gobby-textgen-notes", age_seconds=7200)
-
-        removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0)
-
-        assert removed == 1
-        assert not old_textgen.exists()
-        assert young_textgen.exists()
-        assert real_project.exists()
-        assert fixed_slug.exists()
-        assert unrelated.exists()
-
-    def test_respects_max_dirs_bound(self, tmp_path: Path) -> None:
-        for index in range(5):
-            self._make_dir(
-                tmp_path,
-                f"{_gobby_textgen_project_slug_fragment()}{index}",
-                age_seconds=7200,
-            )
-
-        removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0, max_dirs=3)
-
-        assert removed == 3
-        leftover = [entry.name for entry in tmp_path.iterdir()]
-        assert len(leftover) == 2
-
-    def test_retains_old_dir_when_prefix_is_not_at_start(self, tmp_path: Path) -> None:
-        fragment = _gobby_textgen_project_slug_fragment()
-        unrelated = self._make_dir(tmp_path, f"unrelated{fragment}abc123", age_seconds=7200)
-
-        removed = purge_textgen_project_dirs(tmp_path, older_than_seconds=3600.0)
-
-        assert removed == 0
-        assert unrelated.exists()
-
-    def test_missing_root_returns_zero(self, tmp_path: Path) -> None:
-        assert purge_textgen_project_dirs(tmp_path / "absent") == 0
+def test_neutral_cwd_removes_per_call_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    with neutral_textgen_cwd() as cwd:
+        assert cwd.parent == tmp_path
+        artifact = cwd / "output.txt"
+        artifact.write_text("generated output")
+        assert artifact.read_text() == "generated output"
+    assert not cwd.exists()

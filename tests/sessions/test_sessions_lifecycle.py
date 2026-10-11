@@ -1205,9 +1205,6 @@ class TestBackgroundLoops:
     def isolate_home_cleanup(
         self, manager: SessionLifecycleManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            "gobby.sessions.lifecycle.purge_textgen_project_dirs", MagicMock(return_value=0)
-        )
         monkeypatch.setattr(manager, "_cleanup_prompt_files", MagicMock())
 
     @pytest.mark.asyncio
@@ -1372,7 +1369,6 @@ class TestPromptFileCleanup:
 
         with (
             patch.object(manager, "_cleanup_prompt_files", cleanup_prompt_files),
-            patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)),
             patch("asyncio.sleep", stop_after_one_pass),
         ):
             await manager._expire_loop()
@@ -1380,7 +1376,6 @@ class TestPromptFileCleanup:
         assert calls == [
             "_sweep_shared_rows",
             "_cleanup_prompt_files",
-            "purge_textgen_project_dirs",
         ]
 
 
@@ -2326,12 +2321,12 @@ def _record_steps(manager: SessionLifecycleManager, *names: str) -> list[str]:
     return calls
 
 
-def _recording_purge(calls: list[str]) -> Callable[[], int]:
-    def purge() -> int:
-        calls.append("purge_textgen_project_dirs")
+def _recording_prompt_cleanup(calls: list[str]) -> Callable[[], int]:
+    def cleanup() -> int:
+        calls.append("_cleanup_prompt_files")
         return 0
 
-    return purge
+    return cleanup
 
 
 class TestMachineLocalLifecycle:
@@ -2349,12 +2344,11 @@ class TestMachineLocalLifecycle:
             )
         calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
 
-        with patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)):
+        with patch.object(manager, "_cleanup_prompt_files", _recording_prompt_cleanup(calls)):
             await manager.start(machine_local_only=True)
             try:
                 await _until(
-                    lambda: {"_process_pending_transcripts", "purge_textgen_project_dirs"}
-                    <= set(calls)
+                    lambda: {"_process_pending_transcripts", "_cleanup_prompt_files"} <= set(calls)
                 )
                 assert manager._kg_queue_task is None
             finally:
@@ -2363,7 +2357,7 @@ class TestMachineLocalLifecycle:
         assert SHARED_ROW_STEPS.isdisjoint(calls)
 
     @pytest.mark.asyncio
-    async def test_machine_local_maintenance_cleans_prompt_files_and_textgen_dirs(
+    async def test_machine_local_maintenance_cleans_prompt_files(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
         calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
@@ -2373,15 +2367,10 @@ class TestMachineLocalLifecycle:
         stale = time.time() - 7200
         os.utime(stale_prompt, (stale, stale))
 
-        with (
-            patch("tempfile.gettempdir", return_value=str(tmp_path)),
-            patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)),
-        ):
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
             await manager.start(machine_local_only=True)
             try:
-                await _until(
-                    lambda: not stale_prompt.exists() and "purge_textgen_project_dirs" in calls
-                )
+                await _until(lambda: not stale_prompt.exists())
             finally:
                 await manager.stop()
 
@@ -2393,11 +2382,11 @@ class TestMachineLocalLifecycle:
     ) -> None:
         calls = _record_steps(manager, *SHARED_ROW_STEPS, "_process_pending_transcripts")
 
-        with patch.object(lifecycle_mod, "purge_textgen_project_dirs", _recording_purge(calls)):
+        with patch.object(manager, "_cleanup_prompt_files", _recording_prompt_cleanup(calls)):
             await manager.start()
             try:
-                await _until(lambda: "purge_textgen_project_dirs" in calls)
+                await _until(lambda: "_cleanup_prompt_files" in calls)
             finally:
                 await manager.stop()
 
-        assert calls.index("_expire_stale_sessions") < calls.index("purge_textgen_project_dirs")
+        assert calls.index("_expire_stale_sessions") < calls.index("_cleanup_prompt_files")

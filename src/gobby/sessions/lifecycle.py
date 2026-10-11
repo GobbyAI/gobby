@@ -20,7 +20,6 @@ from gobby.config.features import KnowledgeGraphQueueConfig
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
-from gobby.llm.textgen_cwd import purge_textgen_project_dirs
 from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
 from gobby.storage.hook_receipts import retire_expired_session_hook_effects
@@ -177,13 +176,6 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 await self._sweep_shared_rows(active)
 
             await asyncio.to_thread(self._cleanup_prompt_files)
-            try:
-                removed = await asyncio.to_thread(purge_textgen_project_dirs)
-                if removed:
-                    logger.info("Purged %d stale textgen Claude project dirs", removed)
-            except Exception as e:
-                logger.error("Error purging textgen project dirs: %s", e)
-
             try:
                 await asyncio.sleep(active.session_lifecycle.expire_check_interval_minutes * 60)
             except asyncio.CancelledError:
