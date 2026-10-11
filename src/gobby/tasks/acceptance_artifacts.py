@@ -639,7 +639,7 @@ _JS_CONSTANT_RE = re.compile(
 _JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 _JS_LITERAL_RE = re.compile(
     r"(?P<prefix>(?:^|[=(,:;!&|?{}>\[+*%~^-]|"
-    r"\b(?:return|throw|case|yield|void|typeof|delete|in|instanceof|await))\s*)/(?![/*])"
+    r"\b(?:return|throw|case|yield|void|typeof|delete|in|instanceof|await))\s*)/(?![/*>])"
     r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*|" + _TEXT_LITERAL_PATTERN,
     re.MULTILINE | re.DOTALL,
 )

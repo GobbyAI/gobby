@@ -177,6 +177,32 @@ def test_typescript_jsx_closing_tags_preserve_test_body(tmp_path: Path) -> None:
     assert len(result.tests) == 1
 
 
+def test_typescript_self_closing_jsx_map_preserves_assertion() -> None:
+    source = """it("list", () => {
+  render(<ul>{items.map((i) => <Item key={i} />)}</ul>);
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+});"""
+    body = artifacts_module._extract_braced_test_body(source, "list", "list.test.tsx")
+    test = AcceptanceTest("list.test.tsx::list", "list.test.tsx", "list", body)
+    assert artifacts_module._test_body_findings(test) == []
+
+
+def test_typescript_self_closing_jsx_keeps_body_boundary() -> None:
+    source = 'it("three", () => { render(<Foo bar={1} />); }); const z = /q/;'
+    body = artifacts_module._extract_braced_test_body(source, "three", "three.test.tsx")
+    assert body == 'it("three", () => { render(<Foo bar={1} />); }'
+
+
+def test_typescript_self_closing_jsx_preserves_same_line_assertion() -> None:
+    test = AcceptanceTest(
+        "foo.test.tsx::feature",
+        "foo.test.tsx",
+        "feature",
+        "render(<Foo a={x} />); expect(url).toMatch(/b/);",
+    )
+    assert artifacts_module._test_body_findings(test) == []
+
+
 @pytest.mark.parametrize("extension", [".TS", ".JS", ".TSX"])
 def test_javascript_uppercase_suffix_uses_regex_masking(extension: str) -> None:
     path = f"regex.test{extension}"
