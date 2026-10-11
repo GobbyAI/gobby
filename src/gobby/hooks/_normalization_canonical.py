@@ -276,7 +276,7 @@ def _classify_shell_command(
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         if case_depth and index + 1 < len(segments):
             next_gap = command[segment_end : spans_by_token[id(segments[index + 1].tokens[0])][0]]
-            if ";&" in next_gap:
+            if ";&" in next_gap and not next_gap.lstrip().startswith("&"):
                 next_separator = ";"
         raw_parts = shell_token_values(segment.tokens)
         in_pipeline = (
