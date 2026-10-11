@@ -397,7 +397,7 @@ class ProcessorUsageMixin:
             snapshot: ContextUsageSnapshot | None = None
             for msg in reversed(messages):
                 window = self._message_context_window(msg) or session_window
-                model = msg.model if isinstance(msg.model, str) and msg.model else session_model
+                model = reconcile_observed_model(session_model, msg.model)
                 if msg.context_used_tokens is not None:
                     snapshot = ContextUsageSnapshot.from_reported_occupancy(
                         source=normalized_source,
