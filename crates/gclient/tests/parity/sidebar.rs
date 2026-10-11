@@ -181,7 +181,10 @@ impl Board {
                 // typed roster carries it; the entry id alone does not.
                 let agent = self.agent_mut(name);
                 agent.state = RowState::Attention;
-                agent.attention = Some(Attention::default());
+                agent.attention = Some(Attention {
+                    kind: Some("actionable".to_string()),
+                    ..Default::default()
+                });
             }
             RowState::Working | RowState::Unseen => {
                 let pane = self
