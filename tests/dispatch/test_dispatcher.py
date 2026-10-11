@@ -105,6 +105,23 @@ def stable_test_uuid(label: str) -> str:
     return str(uuid.uuid5(STABLE_TEST_UUID_NAMESPACE, f"gobby:test:{label}"))
 
 
+def _install_project_merge_agent(db: HubDatabase, project_id: str) -> None:
+    """Keep dispatcher coverage independent of the retired bundled agent."""
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+
+    AgentDefinitionManager(db).create(
+        name="merge-orchestrator",
+        project_id=project_id,
+        source="project",
+        definition_json=make_agent_definition(
+            name="merge-orchestrator",
+            description="Test-local PR and merge executor",
+            surfaces=["spawn"],
+            prompts={"agent": "Run the assigned test stage."},
+        ).model_dump_json(),
+    )
+
+
 def _task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -4689,7 +4706,14 @@ def test_build_context_loads_stage_registry_and_bundled_agents(
     context = cast(_DispatchContext, dispatcher.build_context(temp_db, task))
 
     assert context.stage_registry["pr"].default_agent == "merge-orchestrator"
+    assert context.agents["developer"].enabled is True
+    assert context.agent_definitions["developer"].spawn_capable is True
+    assert "merge-orchestrator" not in context.agents
+
+    _install_project_merge_agent(temp_db, sample_project["id"])
+    context = cast(_DispatchContext, dispatcher.build_context(temp_db, task))
     assert context.agents["merge-orchestrator"].enabled is True
+    assert context.agents["merge-orchestrator"].project_id == sample_project["id"]
     assert context.agent_definitions["merge-orchestrator"].spawn_capable is True
 
 
@@ -4733,6 +4757,7 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     from gobby.dispatch import dispatcher
 
     sync_bundled_agents(temp_db)
+    _install_project_merge_agent(temp_db, sample_project["id"])
     task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
     spawned: list[str] = []
 
@@ -4760,6 +4785,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     from gobby.dispatch import dispatcher
 
     sync_bundled_agents(temp_db)
+    _install_project_merge_agent(temp_db, sample_project["id"])
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         project_id=sample_project["id"],

@@ -1,25 +1,13 @@
-"""End-to-end integration test for the merge-orchestrator's primitives.
+"""Integration tests for merge-landscape primitives against real git state.
 
-Spins up a real git repository with three worktrees in distinct states:
-  - wt-trivial: a clean branch that will merge into main without conflict
-  - wt-conflict: a branch that edits the same line as main, predicting a conflict
-  - wt-orphan: a worktree with an orphaned MERGE_HEAD planted manually
-
-Then exercises the merge-landscape tools the orchestrator drives during
-its survey phase (analyze_merge_landscape, predict_conflicts,
-inspect_merge_state) against real git state. Asserts each scenario is
-detected correctly so that the orchestrator's planning step would receive
-faithful inputs in production.
-
-The full LLM-driven agent dispatch loop (claim → load_skill → survey →
-plan → execute → report) is deferred to the gobby-build e2e flow once
-dispatcher rule 9 (#12725) lands. This test covers the surface area the
-orchestrator interacts with via gobby-merge MCP tools.
+A repository with clean, conflicting and orphaned-merge worktrees exercises
+analyze_merge_landscape, predict_conflicts and inspect_merge_state.
 """
 
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -28,7 +16,6 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.worktrees import Worktree
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.worktrees.git import WorktreeGitManager
 
 pytestmark = [pytest.mark.integration]
@@ -118,8 +105,8 @@ def merge_campaign_repo(tmp_path: Path) -> dict[str, object]:
             base_branch="main",
             agent_session_id=None,
             status="active",
-            created_at="2026-04-28T00:00:00Z",
-            updated_at="2026-04-28T00:00:00Z",
+            created_at=datetime(2026, 4, 28, tzinfo=UTC),
+            updated_at=datetime(2026, 4, 28, tzinfo=UTC),
             merged_at=None,
             merge_state="pending" if id_ == "wt-orphan" else None,
         )
@@ -144,7 +131,9 @@ def registry(merge_campaign_repo: dict[str, object]) -> InternalToolRegistry:
     worktree_manager.resolve_reference.side_effect = lambda ref: ref
     worktree_manager.get.side_effect = lambda wid: worktrees.get(wid)
 
-    git_manager = WorktreeGitManager(merge_campaign_repo["repo_path"])
+    repo_path = merge_campaign_repo["repo_path"]
+    assert isinstance(repo_path, Path)
+    git_manager = WorktreeGitManager(repo_path)
 
     registry = InternalToolRegistry(name="gobby-merge", description="test")
     register_merge_landscape_tools(
@@ -233,80 +222,3 @@ async def test_inspect_merge_state_detects_orphaned_merge_head(
     assert conflict_result["success"] is True
     assert conflict_result["state"] == "clean"
     assert conflict_result["has_merge_head"] is False
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
-    """The merge-orchestrator agent definition parses and exposes the expected steps."""
-    import yaml
-
-    yaml_path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml"
-    )
-    assert yaml_path.exists(), f"merge-orchestrator.yaml missing at {yaml_path}"
-    data = yaml.safe_load(yaml_path.read_text())
-
-    assert data["name"] == "merge-orchestrator"
-    step_names = [s["name"] for s in data["step_workflow"]["steps"]]
-    assert step_names == [
-        "claim",
-        "load_skill",
-        "survey",
-        "plan",
-        "execute",
-        "report",
-        "terminate",
-    ]
-    # Contract: orchestrator runs on Codex and never gets isolation (it
-    # dispatches workers; doesn't edit code itself).
-    assert data["provider"] == "codex"
-    assert data["model"] == "gpt-5.6-sol"
-    assert data["checkout_mode"] == "none"
-
-    plan_step = next(step for step in data["step_workflow"]["steps"] if step["name"] == "plan")
-    assert "gobby-agents:list_agent_runs" in plan_step["allowed_mcp_tools"]
-    assert "gobby-agents:list_running_agents" in plan_step["allowed_mcp_tools"]
-
-    execute_step = next(
-        step for step in data["step_workflow"]["steps"] if step["name"] == "execute"
-    )
-    handlers = execute_step["on_mcp_success"]
-    no_resolution_handlers = [
-        handler
-        for handler in handlers
-        if handler.get("server") == "gobby-merge"
-        and handler.get("tool") == "inspect_merge_state"
-        and "not tool_output.get('active_resolution_id')" in handler.get("when", "")
-    ]
-    assert any(
-        handler.get("variable") == "post_worker_merge_status_checked"
-        for handler in no_resolution_handlers
-    )
-    assert any(
-        handler.get("variable") == "no_progress_merge_status_count"
-        and "tool_output.get('can_resume')" in handler.get("when", "")
-        for handler in no_resolution_handlers
-    )
-
-    context = {
-        "vars": {"merge_worker_completed": True},
-        "tool_output": {
-            "active_resolution_id": None,
-            "can_resume": True,
-            "conflicted_files": ["src/example.py"],
-            "state": "merging",
-        },
-    }
-    evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
-    for handler in no_resolution_handlers:
-        assert evaluator.evaluate(handler["when"])
-    signature_handler = next(
-        handler
-        for handler in no_resolution_handlers
-        if handler.get("variable") == "last_merge_status_signature"
-    )
-    assert (
-        evaluator.evaluate_value(signature_handler["value"])
-        == "no-active-resolution:merging:['src/example.py']"
-    )

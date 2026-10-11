@@ -179,7 +179,6 @@ def test_bundled_rules_do_not_use_the_removed_task_status_helper() -> None:
 def test_bundled_merge_assets_do_not_reference_removed_lifecycle_tools() -> None:
     source = source_texts(
         (
-            "src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml",
             "src/gobby/install/shared/workflows/agents/merge-worker.yaml",
             "src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md",
         )

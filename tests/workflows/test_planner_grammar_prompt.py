@@ -65,7 +65,6 @@ def test_reference_contract_4_2_2() -> None:
         "plan-adversary-taskless-old": ("plan/review", "review"),
         "plan-enhancer-old": ("plan/enhancement", "You are advisory only"),
         "plan-enhancer-taskless-old": ("plan/enhancement", "You are advisory only"),
-        "merge-orchestrator": ("build/coordination", "merge"),
         "epic-reviewer": ("review/epic", "Discovery Brief"),
         "developer": ("development/obligations", "test-driven-development"),
         "default": ("skills/loading", "gobby-skills"),

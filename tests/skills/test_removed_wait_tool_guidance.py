@@ -16,10 +16,6 @@ WAKE_DRIVEN_GUIDANCE = (
         SKILLS_DIR / "gobby/references/source-control/merge-campaigns.md", id="merge-expert"
     ),
     pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),
-    pytest.param(
-        WORKFLOWS_DIR / "agents/merge-orchestrator.yaml",
-        id="merge-orchestrator",
-    ),
 )
 REVIEW_DISPATCH_GUIDANCE = (
     pytest.param(SKILLS_DIR / "gobby/references/review/epic.md", id="review"),

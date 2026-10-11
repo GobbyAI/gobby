@@ -19,8 +19,8 @@ state means no merge/cherry-pick/rebase marker, not a clean working tree.
 2. Plan recovery first, then task dependencies, fewer target conflicts, smaller
    diffs and freshness. Record each workspace, action and focused verification
    command. Preserve isolated test guards; never substitute a full test suite.
-3. Dispatch the installed `merge-worker` for one workspace, or coordinate a
-   campaign with `merge-orchestrator`. Inspect their installed definitions first.
+3. Dispatch the installed `merge-worker` for one workspace. Inspect its installed
+   definition first.
    Put target/source and verification instructions in the prompt; use actual
    `spawn_agent` fields such as `task_id`, `worktree_id` or `clone_id`. There are
    no `assigned_task_id`, `target_branch` or arbitrary variable-bag spawn fields.
