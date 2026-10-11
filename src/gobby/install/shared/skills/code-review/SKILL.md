@@ -127,13 +127,14 @@ Batch large changes by shared rule group and diff size. Do not stop at the first
 high-severity finding. Coverage is mandatory: every previewed entry ends reviewed
 or explicitly skipped.
 
-To confirm a finding at runtime without a task, keep the probe out of shell
-heredocs. A stdin `python - <<EOF` body that imports a private name or uses
-reflection, dunders, `sys.modules`, or a non-literal write target counts as a
-repository write of unknown scope, and Gobby blocks it on purpose. Write the
-probe with the structured Write tool into your session scratchpad, then run it
-as a file operand: `uv run python <scratchpad>/probe.py`. You can also run an
-existing test with `GOBBY_TEST_PROTECT=1` against the isolated test hub.
+To confirm a finding at runtime without a task, run an existing test with
+`GOBBY_TEST_PROTECT=1` against the isolated test hub, or use `uv run python -c`
+for a small read-only probe with public functions and literal inputs. Keep
+probes out of shell heredocs; avoid private imports, reflection, dunders,
+`sys.modules`, and writes. The code-reviewer seat is read-only: do not use
+Write or create scratchpad probe files. If confirmation needs a file or a
+mutation, send the author the exact probe and expected result to run under
+their claimed task, then review the evidence.
 
 ### 5. Findings
 
