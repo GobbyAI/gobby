@@ -311,6 +311,23 @@ def test_validate_covers_artifact_referenced_by_behavior_substring() -> None:
     assert result.status == "valid"
 
 
+def test_validate_covers_behavior_referenced_without_backticks() -> None:
+    item = _item(
+        "A1.1",
+        artifact_kind=ArtifactKind.behavior,
+        artifact_ref="run `x y` to store",
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        'behavior: "run x y to store"',
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
 def test_validate_covers_behavior_referenced_by_path() -> None:
     item = _item(
         "A1.1",
