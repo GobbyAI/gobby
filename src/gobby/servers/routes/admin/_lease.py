@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -31,6 +33,25 @@ def _active_work_blockers(runner: GobbyRunner) -> dict[str, int]:
 
 def register_lease_routes(router: APIRouter, server: HTTPServer) -> None:
     """Register cooperative handoff; gdaemon owns status, promote, and recover."""
+
+    if os.name == "nt":
+        from gobby.daemon_lease import ActiveDaemonLease
+
+        @router.get("/lease/status")
+        async def lease_status() -> dict[str, object]:
+            runner = server.get_runner()
+            if runner is None or not isinstance(runner.daemon_lease, ActiveDaemonLease):
+                raise HTTPException(status_code=503, detail="runner unavailable")
+            status = await server.run_db(runner.daemon_lease.status)
+            return {"mode": "active", **asdict(status)}
+
+        @router.post("/lease/promote")
+        async def promote() -> dict[str, object]:
+            return {"promoting": False, "mode": "active"}
+
+        @router.post("/lease/recover")
+        async def recover() -> None:
+            raise HTTPException(status_code=409, detail="lease owner is already active")
 
     @router.post("/lease/handoff")
     async def handoff(background_tasks: BackgroundTasks) -> dict[str, str]:

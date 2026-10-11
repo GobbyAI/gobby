@@ -23,6 +23,7 @@ use routes::RouteTable;
 /// Shared state for one listener: its backend target and the proxy client.
 #[derive(Clone)]
 pub struct FrontDoorState {
+    #[cfg(unix)]
     pub runtime: Option<Arc<crate::state::RuntimeState>>,
     pub target: SocketAddr,
     pub backend_state: BackendState,
@@ -37,6 +38,7 @@ impl FrontDoorState {
         auth: Arc<auth::AuthState>,
     ) -> Self {
         Self {
+            #[cfg(unix)]
             runtime: None,
             target,
             backend_state,
@@ -70,7 +72,10 @@ impl FrontDoor {
         https: bool,
     ) -> Response<Body> {
         observe_peer(request.headers_mut(), peer, https);
-        let mut state = self.state.clone();
+        let state = self.state.clone();
+        #[cfg(unix)]
+        let mut state = state;
+        #[cfg(unix)]
         if let Some(runtime) = &state.runtime {
             if crate::lease::admin_api::is_route(request.uri().path()) {
                 if let Err(response) = state.auth.authenticate(request.headers_mut()).await {
@@ -92,7 +97,7 @@ impl FrontDoor {
                         "state": "refused", "refusal": reason, "target": state.target.to_string()
                     }}),
                 ),
-                _ if runtime.standby().await => Some(serde_json::json!({
+                _ if runtime.standby() => Some(serde_json::json!({
                     "error": "standby", "status": "unavailable", "state": "standby", "backend": {
                         "state": "standby", "target": state.target.to_string()
                     }

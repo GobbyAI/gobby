@@ -269,16 +269,41 @@ fn crash_backoff_caps_at_thirty_seconds() {
 }
 
 #[tokio::test]
+async fn terminal_drain_marker_reaches_runtime_owner() -> Result<()> {
+    database_case(async |db| {
+        for (intent, expected) in [("stop", SupervisorExit::StopTerminals), ("restart", SupervisorExit::RestartTerminals)] {
+            let home = TempDir::new()?;
+            let script = format!("import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({{'intent':'{intent}','timestamp':time.time(),'details':{{'drain_terminals':True}}}})); raise SystemExit(0)");
+            let mut supervisor = db.supervisor(home.path(), &script).await?;
+            let (stop, rx) = watch::channel(false);
+            assert_eq!(timeout(Duration::from_secs(5), supervisor.run(rx.clone())).await??, expected);
+            if expected == SupervisorExit::RestartTerminals {
+                assert!(home.path().join("gobby.pid").exists(), "host restart lost native PID ownership");
+                stop.send(true)?;
+                assert_eq!(supervisor.run(rx).await?, SupervisorExit::Stopped);
+            } else {
+                assert!(!home.path().join("gobby.pid").exists());
+            }
+        }
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
 async fn healthy_backend_resets_crash_backoff() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let home = TempDir::new()?;
-    let script = r#"import os,pathlib,time
+    let control = tokio::net::UnixListener::bind(home.path().join("exit.sock"))?;
+    let script = r#"import os,pathlib,socket
 home=pathlib.Path(os.environ['GOBBY_HOME'])
 counter=home/'runs'
 n=int(counter.read_text())+1 if counter.exists() else 1
 counter.write_text(str(n))
 if n==1: raise SystemExit(1)
-(home/'healthy').write_text('ready')
-while not (home/'exit').exists(): time.sleep(0.01)
+control=socket.socket(socket.AF_UNIX)
+control.connect(str(home/'exit.sock'))
+control.sendall(b'ready')
+control.recv(1)
 raise SystemExit(1)
 "#;
     let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
@@ -292,9 +317,14 @@ raise SystemExit(1)
     let task = tokio::spawn(async move { supervisor.run(rx).await });
     let _abort = AbortOnDrop(task.abort_handle());
     wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
-    assert_eq!(wait_for_file(&home.path().join("healthy")).await?, "ready");
-    sleep(Duration::from_secs(31)).await;
-    fs::write(home.path().join("exit"), "exit")?;
+    let (mut control, _) = timeout(Duration::from_secs(5), control.accept()).await??;
+    let mut ready = [0; 5];
+    timeout(Duration::from_secs(5), control.read_exact(&mut ready)).await??;
+    assert_eq!(&ready, b"ready");
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::time::resume();
+    control.write_all(b"x").await?;
     wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
     assert_eq!(
         *state.borrow(),
@@ -312,18 +342,22 @@ raise SystemExit(1)
 
 #[tokio::test]
 async fn exited_backend_leaves_no_process_group_descendant() -> Result<()> {
+    use tokio::io::AsyncWriteExt;
     for code in [1, 78, 0] {
         let home = TempDir::new()?;
+        let control = tokio::net::UnixListener::bind(home.path().join("exit.sock"))?;
         let script = format!(
-            r#"import os,pathlib,subprocess,sys,time
+            r#"import os,pathlib,socket,subprocess,sys
 home=pathlib.Path(os.environ['GOBBY_HOME'])
 if (home/'first').exists():
     os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
     raise SystemExit(0)
 (home/'first').write_text('first')
-child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(600)'])
+child=subprocess.Popen([sys.executable,'-c','import signal; signal.pause()'])
 (home/'descendant').write_text(str(child.pid))
-while not (home/'exit').exists(): time.sleep(0.01)
+control=socket.socket(socket.AF_UNIX)
+control.connect(str(home/'exit.sock'))
+control.recv(1)
 if {code}==0:
     import json,time
     (home/'shutdown_intent_active.json').write_text(json.dumps({{'source':'test','intent':'restart','timestamp':time.time()}}))
@@ -344,7 +378,8 @@ raise SystemExit({code})
             .await?
             .parse()?;
         let first_backend = state.borrow().clone();
-        fs::write(home.path().join("exit"), "exit")?;
+        let (mut control, _) = timeout(Duration::from_secs(5), control.accept()).await??;
+        control.write_all(b"x").await?;
         if code == 78 {
             wait_for_status(&mut state, |s| matches!(s, BackendStatus::Refused { .. })).await?;
         } else if code == 1 {
@@ -360,12 +395,13 @@ raise SystemExit({code})
         }
         timeout(Duration::from_secs(5), task).await???;
         timeout(Duration::from_secs(5), async {
+            let mut poll = tokio::time::interval(Duration::from_millis(20));
             loop {
                 // SAFETY: signal zero observes only the PID written by this test's backend.
                 if unsafe { libc::kill(pid, 0) } != 0 {
                     break;
                 }
-                sleep(Duration::from_millis(20)).await;
+                poll.tick().await;
             }
         })
         .await

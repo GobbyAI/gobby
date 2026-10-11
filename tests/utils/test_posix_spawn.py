@@ -83,6 +83,12 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
+    "runner_windows_restart.py::spawn_restart_helper": (
+        "Windows-only legacy restart handoff; Windows subprocess creation does not fork"
+    ),
+    "runner_windows_restart.py::restart_after_exit": (
+        "Windows-only helper process, after the daemon has exited"
+    ),
     "cli/install_setup_impeccable.py::_detect_node": (
         "`gobby install` only; the daemon calls just inspect_impeccable_installation"
     ),

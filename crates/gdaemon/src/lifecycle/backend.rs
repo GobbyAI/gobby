@@ -39,6 +39,14 @@ pub enum SupervisorExit {
     Stopped,
     LeaseLost,
     Refused,
+    StopTerminals,
+    RestartTerminals,
+}
+
+impl SupervisorExit {
+    pub fn drains_terminals(self) -> bool {
+        matches!(self, Self::StopTerminals | Self::RestartTerminals)
+    }
 }
 
 pub struct BackendConfig {
@@ -130,12 +138,15 @@ impl BackendSupervisor {
         // through lease loss and sticky refusal; release it on stop or error.
         if !matches!(
             result,
-            Ok(SupervisorExit::Refused | SupervisorExit::LeaseLost)
+            Ok(SupervisorExit::Refused
+                | SupervisorExit::LeaseLost
+                | SupervisorExit::RestartTerminals)
         ) {
             self.pid_claim.take();
             self.state.send_replace(BackendStatus::Stopped);
         }
         let release = match &self.lease {
+            _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
             Some(lease) => lease.lock().await.release().await,
             None => Ok(()),
         };
@@ -182,6 +193,10 @@ impl BackendSupervisor {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
                         backend.drain(self.config.drain_timeout).await?;
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+                        if matches!(markers.after_exit(now).await?, Some(Intent::StopTerminals | Intent::RestartTerminals)) {
+                            return Ok(SupervisorExit::StopTerminals);
+                        }
                         return Ok(SupervisorExit::Stopped);
                     }
                     status = backend.child.wait() => break status?,
@@ -201,9 +216,6 @@ impl BackendSupervisor {
             if started_at.elapsed() >= Duration::from_secs(30) {
                 crashes = 0;
             }
-            if shutdown_requested(shutdown) {
-                return Ok(SupervisorExit::Stopped);
-            }
             if status.code() == Some(78) {
                 let reason = backend.last_line.borrow().clone();
                 self.state.send_replace(BackendStatus::Refused {
@@ -216,8 +228,23 @@ impl BackendSupervisor {
                 return Ok(SupervisorExit::Refused);
             }
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
-            match markers.after_exit(now).await? {
+            let intent = markers.after_exit(now).await?;
+            if shutdown_requested(shutdown) {
+                return Ok(
+                    if matches!(
+                        intent,
+                        Some(Intent::StopTerminals | Intent::RestartTerminals)
+                    ) {
+                        SupervisorExit::StopTerminals
+                    } else {
+                        SupervisorExit::Stopped
+                    },
+                );
+            }
+            match intent {
                 Some(Intent::Stop) => return Ok(SupervisorExit::Stopped),
+                Some(Intent::StopTerminals) => return Ok(SupervisorExit::StopTerminals),
+                Some(Intent::RestartTerminals) => return Ok(SupervisorExit::RestartTerminals),
                 Some(Intent::Restart) => {
                     crashes = 0;
                     continue;

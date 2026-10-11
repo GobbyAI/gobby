@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 import threading
 from collections.abc import Callable, Mapping
@@ -17,6 +18,7 @@ from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
     GrantPresenter,
+    admission_required,
     bearer_matches_grant,
     identity_headers_match,
     match_grant_route,
@@ -288,6 +290,19 @@ class AuthService:
             rejection = self._legacy_rejection(request)
             if rejection is not None:
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
+            if (
+                os.name == "nt"
+                and admission_required(
+                    str(request.scope.get("method", "GET")), request_path(request)
+                )
+                and not (
+                    self._lease_live is not None
+                    and self._lease_live()
+                    and self._effect_fence is not None
+                    and self._effect_fence.serving
+                )
+            ):
+                return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
             identity = self.verified_front_door_identity(request)
             return AuthDecision(
                 allowed=True,
@@ -333,6 +348,17 @@ class AuthService:
             )
             if isinstance(presented, AuthDecision):
                 return presented
+        if (
+            os.name == "nt"
+            and grant_route.effectful
+            and not (
+                self._lease_live is not None
+                and self._lease_live()
+                and self._effect_fence is not None
+                and self._effect_fence.serving
+            )
+        ):
+            return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
         return AuthDecision(
             allowed=True,
             principal=presented.principal,
@@ -404,10 +430,6 @@ class AuthService:
     @property
     def effect_fence(self) -> EffectFence | None:
         return self._effect_fence
-
-    def _effectful_allowed(self) -> bool:
-        # The native owner admits requests only while it holds authority.
-        return True
 
     def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
         """Return identity claims only for a valid run-scoped agent request."""

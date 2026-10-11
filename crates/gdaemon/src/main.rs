@@ -53,7 +53,13 @@ enum SchemaCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    let verifying = matches!(
+        &cli.command,
+        Command::Schema {
+            command: SchemaCommand::Verify
+        }
+    );
+    let result = match cli.command {
         Command::Schema {
             command: SchemaCommand::Version { json },
         } => print_schema_identity(json),
@@ -70,8 +76,46 @@ fn main() -> Result<()> {
             command: SchemaCommand::SweepTestSchemas { age_hours },
         } => sweep_test_schemas(age_hours),
         Command::Serve => gobby_daemon::serve::run(),
+    };
+    if let Err(error) = &result
+        && verifying
+        && transient_schema_failure(error)
+    {
+        eprintln!("{error}");
+        std::process::exit(75);
+    }
+    result
+}
+
+fn transient_schema_failure(error: &anyhow::Error) -> bool {
+    if error.is::<SchemaConnectUnavailable>() {
+        return true;
+    }
+    error
+        .downcast_ref::<deadpool_postgres::tokio_postgres::Error>()
+        .is_some_and(|error| {
+            error.is_closed()
+                || error.code().is_none_or(|code| {
+                    code.code().starts_with("08")
+                        || matches!(code.code(), "57P01" | "57P02" | "57P03")
+                })
+        })
+}
+
+#[derive(Debug)]
+struct SchemaConnectUnavailable(String);
+
+impl std::fmt::Display for SchemaConnectUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to connect to the Gobby PostgreSQL hub at {}",
+            self.0
+        )
     }
 }
+
+impl std::error::Error for SchemaConnectUnavailable {}
 
 fn sweep_test_schemas(age_hours: u64) -> Result<()> {
     let age_seconds =
@@ -169,12 +213,8 @@ fn plan_schema(schema: Option<&str>) -> Result<()> {
 
 fn verify_schema() -> Result<()> {
     let database_url = resolve_database_url()?;
-    let mut client = connect_readwrite(&database_url).map_err(|_| {
-        anyhow::anyhow!(
-            "failed to connect to the Gobby PostgreSQL hub at {}",
-            redact_database_url(&database_url)
-        )
-    })?;
+    let mut client = connect_readwrite(&database_url)
+        .map_err(|_| SchemaConnectUnavailable(redact_database_url(&database_url)))?;
     let schema = client
         .query_one("SELECT current_schema()", &[])?
         .get::<_, Option<String>>(0)

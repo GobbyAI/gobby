@@ -28,6 +28,8 @@ class BackendBind:
 
 
 def backend_bind(bootstrap: BootstrapConfig) -> BackendBind:
+    if os.name == "nt" and "GOBBY_SUPERVISOR_FD" not in os.environ:
+        return BackendBind(bootstrap.bind_host, bootstrap.daemon_port, bootstrap.websocket_port)
     if bootstrap.front_door.enabled or "GOBBY_SUPERVISOR_FD" in os.environ:
         http, ws = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)
         return BackendBind("127.0.0.1", http, ws)

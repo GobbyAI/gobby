@@ -12,9 +12,10 @@ use anyhow::{Context, Result};
 use axum::body::Body;
 use gobby_core::bootstrap::{
     DEFAULT_BIND_HOST, DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT, FrontDoorBootstrap,
-    HubDatabaseBootstrap, RouteBackend, backend_ports, bootstrap_path,
-    read_hub_database_bootstrap_file,
+    HubDatabaseBootstrap, RouteBackend, read_hub_database_bootstrap_file,
 };
+#[cfg(unix)]
+use gobby_core::bootstrap::{backend_ports, bootstrap_path};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -24,10 +25,16 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 
-use crate::front_door::auth::{AuthState, KeyResolver, PostgresKeyResolver};
+use crate::front_door::auth::AuthState;
+#[cfg(unix)]
+use crate::front_door::auth::{KeyResolver, PostgresKeyResolver};
 use crate::front_door::health::BackendState;
-use crate::front_door::routes::{FAMILIES, RouteTable, unimplemented_families};
-use crate::front_door::{FrontDoor, FrontDoorState, tls};
+#[cfg(unix)]
+use crate::front_door::routes::unimplemented_families;
+use crate::front_door::routes::{FAMILIES, RouteTable};
+#[cfg(unix)]
+use crate::front_door::tls;
+use crate::front_door::{FrontDoor, FrontDoorState};
 
 /// How long an accepted connection may take to send its first byte and, for
 /// TLS, finish the handshake before it is dropped.
@@ -43,6 +50,7 @@ pub struct PublicListener {
 }
 
 /// Entry point for `gdaemon serve`. Builds a tokio runtime for this subcommand only.
+#[cfg(unix)]
 pub fn run() -> Result<()> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use rand::RngCore;
@@ -121,6 +129,14 @@ pub fn run() -> Result<()> {
     })
 }
 
+#[cfg(not(unix))]
+pub fn run() -> Result<()> {
+    anyhow::bail!(
+        "gdaemon serve is unsupported on Windows; launch the Python daemon with gobby start"
+    )
+}
+
+#[cfg(unix)]
 async fn owner_run(
     state: Arc<crate::state::RuntimeState>,
     supervisor: crate::lifecycle::backend::BackendSupervisor,
@@ -221,7 +237,16 @@ pub async fn serve(
     auth: Arc<AuthState>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    serve_with_runtime(listeners, routes, tls, auth, None, shutdown).await
+    serve_with_runtime(
+        listeners,
+        routes,
+        tls,
+        auth,
+        #[cfg(unix)]
+        None,
+        shutdown,
+    )
+    .await
 }
 
 async fn serve_with_runtime(
@@ -229,7 +254,7 @@ async fn serve_with_runtime(
     routes: &BTreeMap<String, RouteBackend>,
     tls: Option<Arc<ServerConfig>>,
     auth: Arc<AuthState>,
-    runtime: Option<Arc<crate::state::RuntimeState>>,
+    #[cfg(unix)] runtime: Option<Arc<crate::state::RuntimeState>>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
@@ -238,8 +263,12 @@ async fn serve_with_runtime(
     let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();
     for PublicListener { listener, backend } in listeners {
-        let mut state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
-        state.runtime = runtime.clone();
+        let state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
+        #[cfg(unix)]
+        let state = FrontDoorState {
+            runtime: runtime.clone(),
+            ..state
+        };
         let table = RouteTable::new(FAMILIES, routes, &state);
         accept_loops.spawn(accept(
             listener,
@@ -329,6 +358,7 @@ where
         .await;
 }
 
+#[cfg(unix)]
 async fn shutdown_signal() {
     #[cfg(unix)]
     {

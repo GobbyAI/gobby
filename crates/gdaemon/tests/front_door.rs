@@ -272,7 +272,7 @@ impl KeyResolver for FailedResolver {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn resolver_error_is_503_and_missing_secret_refuses_start() {
+async fn resolver_error_is_503_and_missing_authority_refuses_start() {
     let front_door = authenticated_front_door(refused_addr().await, Arc::new(FailedResolver));
     let request = Request::builder()
         .uri("/api/mcp/servers")
@@ -321,7 +321,10 @@ async fn resolver_error_is_503_and_missing_secret_refuses_start() {
         }
         let output = command.output().expect("serve refusal");
         assert!(!output.status.success(), "serve accepted {secret:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("GOBBY_FRONT_DOOR_SECRET"));
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("runtime ownership requires bootstrap database_url")
+        );
     }
 }
 
@@ -945,9 +948,21 @@ struct ServeChild {
 #[cfg(unix)]
 impl Drop for ServeChild {
     fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
+        stop_native_fixture(&mut self.process);
     }
+}
+
+#[cfg(unix)]
+fn stop_native_fixture(process: &mut std::process::Child) {
+    if !matches!(process.try_wait(), Ok(Some(_))) {
+        // SAFETY: this is the owned, unreaped fixture process.
+        unsafe { libc::kill(process.id() as i32, libc::SIGTERM) };
+        // Native backend settlement preserves its 17-second process-group grace.
+        if wait_for_exit(process, Duration::from_secs(30)).is_none() {
+            let _ = process.kill();
+        }
+    }
+    let _ = process.wait();
 }
 
 /// Spawn `gdaemon serve` on a fresh public pair with the pipe's read end as stdin,
@@ -971,7 +986,7 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     std::fs::write(
         home.path().join("bootstrap.yaml"),
         format!(
-            "bind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
+            "datastore_mode: remote\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
             ports[0], ports[1]
         ),
     )
@@ -980,6 +995,7 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     command
         .arg("serve")
         .env("GOBBY_HOME", home.path())
+        .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
         .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
         .env_remove("GOBBY_PARENT_FD")
         .stdin(Stdio::from(reader));
@@ -1025,7 +1041,7 @@ fn wait_for_exit(
 
 #[cfg(unix)]
 #[test]
-fn parent_fd_eof_stops_serve() {
+fn native_owner_survives_parent_eof_and_frees_ports_on_stop() {
     // Without GOBBY_PARENT_FD there is no watch: EOF on the same pipe changes nothing.
     let (reader, writer) = std::io::pipe().expect("pipe");
     let (mut unwatched, ports) = spawn_serve(None, reader);
@@ -1038,11 +1054,21 @@ fn parent_fd_eof_stops_serve() {
     assert!(std::net::TcpStream::connect(("127.0.0.1", ports[0])).is_ok());
     drop(unwatched);
 
-    // With it, the owner's end closing stops serve cleanly and frees both public ports.
+    // The native owner no longer inherits a Python parent's lifecycle.
     let (reader, writer) = std::io::pipe().expect("pipe");
     let (mut watched, ports) = spawn_serve(Some("0"), reader);
     drop(writer);
-    let status = wait_for_exit(&mut watched.process, TIMEOUT).expect("serve ignored parent EOF");
+    assert_eq!(
+        wait_for_exit(&mut watched.process, Duration::from_millis(500)),
+        None
+    );
+    // SAFETY: signal only the owned test child, whose PID remains unreaped.
+    assert_eq!(
+        unsafe { libc::kill(watched.process.id() as i32, libc::SIGTERM) },
+        0
+    );
+    let status = wait_for_exit(&mut watched.process, Duration::from_secs(30))
+        .expect("serve ignored SIGTERM after backend settlement budget");
     assert!(status.success(), "serve exited with {status}");
     for port in ports {
         assert!(
@@ -1669,8 +1695,7 @@ struct TlsServe(std::process::Child);
 #[cfg(unix)]
 impl Drop for TlsServe {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop_native_fixture(&mut self.0);
     }
 }
 
@@ -1681,10 +1706,16 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
     use std::process::{Command, Stdio};
 
     let log = home.join(log);
+    // TLS transport tests need native node ownership, without a hub lease.
+    let bootstrap = home.join("bootstrap.yaml");
+    let content = std::fs::read_to_string(&bootstrap).expect("read bootstrap");
+    std::fs::write(&bootstrap, format!("datastore_mode: remote\n{content}"))
+        .expect("node bootstrap");
     let mut child = TlsServe(
         Command::new(env!("CARGO_BIN_EXE_gdaemon"))
             .arg("serve")
             .env("GOBBY_HOME", home)
+            .env("GOBBY_BACKEND_COMMAND", r#"["/bin/sleep","600"]"#)
             .env("GOBBY_FRONT_DOOR_SECRET", "test-front-door-secret")
             .env_remove("GOBBY_PARENT_FD")
             .stdin(Stdio::null())

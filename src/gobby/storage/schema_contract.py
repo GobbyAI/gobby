@@ -134,6 +134,8 @@ def _run_gdaemon(
         detail = (
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
+        if result.returncode == 75:
+            raise SchemaContractError(f"gdaemon {action} temporarily unavailable: {detail}")
         raise SchemaVerifyRefusal(f"gdaemon {action} failed: {detail}. {remedy}")
     return result.stdout
 

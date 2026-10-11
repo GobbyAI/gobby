@@ -9,4 +9,4 @@ set "GOBBY_SERVICE_NONCE={{ nonce_home }}\gobby.pid.service-nonce"
 {% if gobby_home %}
 set "GOBBY_HOME={{ gobby_home }}"
 {% endif %}
-"{{ gdaemon_executable }}" serve >> "{{ runtime_log_file }}" 2>&1
+"{{ python_executable }}" -m gobby.runner{% if verbose %} --verbose{% endif %} >> "{{ runtime_log_file }}" 2>&1

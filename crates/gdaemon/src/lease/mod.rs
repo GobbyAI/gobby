@@ -4,6 +4,7 @@
 //! operation is bounded; failure discards the dedicated session and its fence.
 //! Fences must never be cached by consumers beyond the owner's live authority.
 
+#[cfg(unix)]
 pub mod admin_api;
 pub mod standby;
 

@@ -239,6 +239,20 @@ def test_apply_reports_database_identity_failure_without_leaking_database_url(
     assert database_url not in str(exc.value)
 
 
+@pytest.mark.parametrize("returncode", [1, 75])
+def test_verify_distinguishes_refusal_from_connection_failure(
+    monkeypatch: pytest.MonkeyPatch, returncode: int
+) -> None:
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(
+        "gobby.utils.spawn.run",
+        Mock(return_value=subprocess.CompletedProcess([], returncode, stdout="", stderr="failure")),
+    )
+    with pytest.raises(schema_contract.SchemaContractError) as exc:
+        schema_contract.verify_schema("postgresql://isolated/test")
+    assert isinstance(exc.value, schema_contract.SchemaVerifyRefusal) is (returncode != 75)
+
+
 def test_sweep_reports_embedded_and_database_versions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

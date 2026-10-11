@@ -212,14 +212,16 @@ def _launch_direct_runner(
 
     _step(f"Ports available (HTTP: {http_port}, WS: {ws_port})")
 
-    native_bin = resolve_native_bin("gdaemon")
-    if native_bin is None:
-        _step("gdaemon is missing; reinstall the managed native binary set", error=True)
-        sys.exit(1)
-    cmd = [native_bin, "serve"]
     backend_command = [sys.executable, "-m", "gobby.runner"]
     if verbose:
         backend_command.append("--verbose")
+    cmd = backend_command
+    if os.name != "nt":
+        native_bin = resolve_native_bin("gdaemon")
+        if native_bin is None:
+            _step("gdaemon is missing; reinstall the managed native binary set", error=True)
+            sys.exit(1)
+        cmd = [native_bin, "serve"]
 
     if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex")):
         click.secho(

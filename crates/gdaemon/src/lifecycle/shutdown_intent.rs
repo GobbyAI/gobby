@@ -12,6 +12,8 @@ use std::{
 pub enum Intent {
     Stop,
     Restart,
+    StopTerminals,
+    RestartTerminals,
 }
 
 pub struct IntentMarker {
@@ -65,14 +67,19 @@ impl IntentMarker {
             return Ok(None);
         }
         self.consumed.insert(digest);
-        Ok(Some(
-            if record.get("intent").and_then(Value::as_str) == Some("restart") {
-                Intent::Restart
-            } else {
-                // Python treats maintenance and unknown intents as a stop for this owner.
-                Intent::Stop
-            },
-        ))
+        let restart = record.get("intent").and_then(Value::as_str) == Some("restart");
+        let drain = record
+            .get("details")
+            .and_then(|details| details.get("drain_terminals"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        // Python treats maintenance and unknown intents as a stop for this owner.
+        Ok(Some(match (restart, drain) {
+            (false, false) => Intent::Stop,
+            (true, false) => Intent::Restart,
+            (false, true) => Intent::StopTerminals,
+            (true, true) => Intent::RestartTerminals,
+        }))
     }
 
     async fn read(&self) -> io::Result<Option<Vec<u8>>> {

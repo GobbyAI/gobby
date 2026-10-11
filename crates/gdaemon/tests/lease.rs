@@ -12,6 +12,7 @@ struct TestDb {
     schema: String,
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Result<()> {
     use axum::{
@@ -50,11 +51,14 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
         let token = Uuid::new_v4().to_string();
         let mut owner = db.lease(&token)?;
         assert!(owner.try_acquire().await?);
-        let standby = Arc::new(Mutex::new(db.lease(&token)?));
+        let standby = db.lease(&token)?;
+        let lease_state = Some(standby.subscribe());
+        let standby = Arc::new(Mutex::new(standby));
         let (backend, rx) = watch::channel(BackendStatus::Standby);
         let runtime = Arc::new(RuntimeState {
             mode: LeaseMode::Hub,
             lease: Some(standby),
+            lease_state,
             backend: rx,
         });
         let home = tempfile::tempdir()?;
@@ -69,9 +73,23 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
                 bootstrap,
             )?),
         );
-        state.runtime = Some(runtime);
+        state.runtime = Some(runtime.clone());
         let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
         let door = FrontDoor::new(state, table);
+
+        // Slow lease I/O must not stall health or other standby refusals.
+        let guard = runtime.lease.as_ref().expect("standby lease").lock().await;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            door.handle(
+                Request::builder().uri("/api/health").body(Body::empty())?,
+                peer,
+                false,
+            ),
+        )
+        .await?;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(guard);
 
         for (status, error) in [
             (BackendStatus::Standby, "standby"),

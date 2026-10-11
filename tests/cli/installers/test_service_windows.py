@@ -81,7 +81,7 @@ class TestTemplateRendering:
         content = _render_template("gobby-launcher.cmd.j2", **_INSTALL_CONTEXT)
         assert "@echo off" in content
         assert r"C:\Python313" in content
-        assert '"C:\\Gobby\\gdaemon.exe" serve' in content
+        assert '"C:\\Python313\\python.exe" -m gobby.runner' in content
         assert "GOBBY_BACKEND_COMMAND=" in content
         assert r'>> "C:\Users\test\.gobby\logs\runtime.log" 2>&1' in content
         assert "--verbose" not in content

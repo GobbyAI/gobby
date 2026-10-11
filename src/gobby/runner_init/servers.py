@@ -548,7 +548,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
         local_machine_id=lease.machine_id,
         effect_fence=fence,
         clock=lambda: int(time.time()),
-        front_door_secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
+        front_door_secret=(os.environ.get("GOBBY_FRONT_DOOR_SECRET") if os.name != "nt" else None),
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

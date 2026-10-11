@@ -462,7 +462,7 @@ def restart(
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
 
-    if not full and not docker_flag and expected_identity is None:
+    if os.name != "nt" and not full and not docker_flag and expected_identity is None:
         result = _restart_backend(ctx, force=force, wait=wait, drain_terminals=drain_terminals)
         if result is not None:
             if not result:

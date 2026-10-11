@@ -231,6 +231,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                 task.add_done_callback(server._background_tasks.discard)
                 shutdown_initiated = True
 
+            if os.name == "nt":
+                from gobby.runner_windows_restart import spawn_restart_helper
+
+                await asyncio.to_thread(spawn_restart_helper, os.getpid(), server.port)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             return {

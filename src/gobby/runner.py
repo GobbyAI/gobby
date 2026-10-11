@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from gobby.config.runtime import ConfigRuntime
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.config.terminals import TerminalConfig
+    from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.coordination_waits import CoordinationWaitService
     from gobby.events.wake import WakeDispatcher
@@ -171,7 +172,7 @@ class GobbyRunner:
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
     code_index_bm25_verification: dict[str, Any] | None
-    daemon_lease: RuntimeLeaseView | None
+    daemon_lease: RuntimeLeaseView | ActiveDaemonLease | None
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
@@ -386,6 +387,7 @@ async def run_gobby(
 
     from gobby.cli.utils import get_gobby_home
     from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
+    from gobby.daemon_lease import ActiveDaemonLease
     from gobby.deployment import deployment_token
     from gobby.runner_backend import watch_supervisor
     from gobby.runner_init import StartRefusal
@@ -400,6 +402,12 @@ async def run_gobby(
     if ownership_resolution is None:
         if "GOBBY_SUPERVISOR_FD" in os.environ:
             ownership_resolution = SupervisedPidOwnership()
+        elif os.name == "nt":
+            from gobby.runner_windows import claim_windows_pid
+
+            ownership_resolution = claim_windows_pid(get_gobby_home() / "gobby.pid")
+            if ownership_resolution is None:
+                return
         else:
             # Contained runners retain isolated PID cleanup. Native backends
             # inherit only the liveness pipe, never the PID lock.
@@ -408,7 +416,7 @@ async def run_gobby(
                 holder = probe_daemon_lock(get_gobby_home() / "gobby.pid")
                 logger.info("Contained runner blocked by %s; exiting cleanly", holder)
                 return
-    lease: RuntimeLeaseView | None = None
+    lease: RuntimeLeaseView | ActiveDaemonLease | None = None
     runner: GobbyRunner | None = None
     watcher: asyncio.Task[None] | None = None
     startup_task = asyncio.current_task()
@@ -438,10 +446,23 @@ async def run_gobby(
             logger.warning("Could not create break-glass credential", exc_info=True)
         if bootstrap.run_mode() != "node":
             assert database_url is not None
-            lease = RuntimeLeaseView(
-                database_url, machine_id=require_machine_id(), deployment_token=deployment_token()
-            )
-            await asyncio.to_thread(lease.bind)
+            if os.name == "nt":
+                from gobby.runner_windows import acquire_windows_lease
+
+                lease = ActiveDaemonLease(
+                    database_url,
+                    machine_id=require_machine_id(),
+                    deployment_token=deployment_token(),
+                )
+                if not await acquire_windows_lease(lease, bootstrap):
+                    return
+            else:
+                lease = RuntimeLeaseView(
+                    database_url,
+                    machine_id=require_machine_id(),
+                    deployment_token=deployment_token(),
+                )
+                await asyncio.to_thread(lease.bind)
         from gobby.providers.version_gate import probe_and_publish_agy_support
 
         await probe_and_publish_agy_support()
@@ -450,7 +471,12 @@ async def run_gobby(
         from gobby.runner_init.servers import _bind_runtime_grants
 
         _bind_runtime_grants(runner.http_server, runner)
-        await runner.run(ownership_resolution=ownership_resolution)
+        if isinstance(lease, ActiveDaemonLease):
+            from gobby.runner_windows import run_windows_backend
+
+            await run_windows_backend(runner, lease, ownership_resolution)
+        else:
+            await runner.run(ownership_resolution=ownership_resolution)
     finally:
         if watcher is not None:
             watcher.cancel()
@@ -575,8 +601,9 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         os.environ.pop(name, None)
 
     # Native startup consumed the one-shot reservation before spawning us.
-    for name in ("GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE", "GOBBY_SINGLETON_LOCK_FD"):
-        os.environ.pop(name, None)
+    if os.name != "nt":
+        for name in ("GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE", "GOBBY_SINGLETON_LOCK_FD"):
+            os.environ.pop(name, None)
 
     # Must precede any torch import (torch is lazy, voice-only): PyTorch's
     # default MPS high watermark is 1.7x Metal's recommended working set,

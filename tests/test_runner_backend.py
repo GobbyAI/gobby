@@ -3,6 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +13,12 @@ from gobby.runner_backend import BackendBind, backend_bind, watch_supervisor
 from gobby.shutdown_intent import ShutdownIntent
 
 pytestmark = pytest.mark.unit
+
+
+def test_windows_keeps_python_public_bind() -> None:
+    bootstrap = BootstrapConfig(bind_host="0.0.0.0", daemon_port=20000, websocket_port=20001)
+    with patch("gobby.runner_backend.os", SimpleNamespace(name="nt", environ={})):
+        assert backend_bind(bootstrap) == BackendBind("0.0.0.0", 20000, 20001)
 
 
 @pytest.mark.parametrize("supervised", [False, True])

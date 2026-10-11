@@ -4,7 +4,7 @@
 //! never create a second mode parser or a database lease for a node.
 
 use crate::{
-    lease::ActiveDaemonLease,
+    lease::{ActiveDaemonLease, LeaseState},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
         pid_file::claim_from_environment,
@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, watch};
 pub struct RuntimeState {
     pub mode: RunMode,
     pub lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+    pub lease_state: Option<watch::Receiver<LeaseState>>,
     pub backend: watch::Receiver<BackendStatus>,
 }
 
@@ -31,6 +32,7 @@ impl RuntimeState {
         let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
             return Ok(None);
         };
+        let mut lease_state = None;
         let lease = match bootstrap.mode {
             RunMode::Node => None,
             mode => {
@@ -40,12 +42,9 @@ impl RuntimeState {
                     .context("native runtime ownership requires bootstrap database_url")?;
                 let machine = gobby_core::machine::read_machine_id_from_home(home)?;
                 let token = gobby_core::grant::deployment_token(home);
-                Some(Arc::new(Mutex::new(ActiveDaemonLease::new(
-                    database_url,
-                    &machine,
-                    &token,
-                    mode,
-                )?)))
+                let lease = ActiveDaemonLease::new(database_url, &machine, &token, mode)?;
+                lease_state = Some(lease.subscribe());
+                Some(Arc::new(Mutex::new(lease)))
             }
         };
         let mut config = BackendConfig::from_environment(home)?;
@@ -56,6 +55,7 @@ impl RuntimeState {
         let state = Arc::new(Self {
             mode: bootstrap.mode,
             lease,
+            lease_state,
             backend: supervisor.subscribe(),
         });
         Ok(Some((state, supervisor)))
@@ -94,9 +94,12 @@ impl RuntimeState {
             }
             let services = crate::state_services::ActiveServices::start(&bootstrap, &home).await?;
             let outcome = supervisor.run(shutdown.clone()).await;
-            services.stop().await?;
+            let drain = outcome
+                .as_ref()
+                .is_ok_and(|outcome| outcome.drains_terminals());
+            services.stop(drain).await?;
             match outcome? {
-                SupervisorExit::Stopped => return Ok(()),
+                SupervisorExit::Stopped | SupervisorExit::StopTerminals => return Ok(()),
                 SupervisorExit::Refused => {
                     // Refusal is sticky and keeps the machine claim, but releases
                     // database ownership. Only a full process restart retries.
@@ -107,17 +110,19 @@ impl RuntimeState {
                     }
                     return Ok(());
                 }
-                SupervisorExit::Standby | SupervisorExit::LeaseLost => {}
+                SupervisorExit::Standby
+                | SupervisorExit::LeaseLost
+                | SupervisorExit::RestartTerminals => {}
             }
         }
     }
 
-    pub async fn standby(&self) -> bool {
+    pub fn standby(&self) -> bool {
         if matches!(*self.backend.borrow(), BackendStatus::Refused { .. }) {
             return false;
         }
-        match &self.lease {
-            Some(lease) => lease.lock().await.fence().is_none(),
+        match &self.lease_state {
+            Some(state) => *state.borrow() != LeaseState::Active,
             None => false,
         }
     }
