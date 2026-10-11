@@ -239,8 +239,21 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+    from tests.fixtures.agent_definitions import make_agent_definition
 
     sync_bundled_agents(temp_db)
+    AgentDefinitionManager(temp_db).create(
+        name="merge-orchestrator",
+        project_id=sample_project["id"],
+        source="project",
+        definition_json=make_agent_definition(
+            name="merge-orchestrator",
+            description="Test-local PR and merge executor",
+            surfaces=["spawn"],
+            prompts={"agent": "Run the assigned test stage."},
+        ).model_dump_json(),
+    )
     manager = LocalTaskManager(temp_db)
     parent = manager.create_task(
         project_id=sample_project["id"],

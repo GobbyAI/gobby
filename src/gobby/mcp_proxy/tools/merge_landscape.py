@@ -1,9 +1,8 @@
 """
 Internal MCP tools for surveying the merge landscape across worktrees.
 
-These tools answer "what's
-unmerged, what will conflict, what state is each worktree in," and they
-provide the surgical primitives (cherry-pick, subset merge, post-merge
+These tools answer "what's unmerged, what will conflict, what state is each worktree in,"
+and provide the surgical primitives (cherry-pick, subset merge, post-merge
 verification) needed to drive a merge campaign.
 
 All tools are registered onto the existing `gobby-merge` registry via
@@ -138,7 +137,8 @@ def register_merge_landscape_tools(
         read_only=True,
         description=(
             "List unmerged worktrees with branch, base, divergence stats, files "
-            "touched, last commit time, and the originating task ref. Used to survey a merge campaign before planning."
+            "touched, last commit time, and the originating task ref. "
+            "Used to survey a merge campaign before planning."
         ),
     )
     async def analyze_merge_landscape(project_id: str | None = None) -> dict[str, Any]:

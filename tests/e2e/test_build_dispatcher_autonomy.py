@@ -135,9 +135,22 @@ class MiniBuildHarness:
     async def install(self) -> None:
         from gobby.agents.sync import sync_bundled_agents
         from gobby.skills.sync import sync_bundled_skills
+        from gobby.storage.definitions.agents import AgentDefinitionManager
+        from tests.fixtures.agent_definitions import make_agent_definition
 
         sync_bundled_skills(self.db)
         sync_bundled_agents(self.db)
+        AgentDefinitionManager(self.db).create(
+            name="merge-orchestrator",
+            project_id=self.project_id,
+            source="project",
+            definition_json=make_agent_definition(
+                name="merge-orchestrator",
+                description="Test-local PR and merge executor",
+                surfaces=["spawn"],
+                prompts={"agent": "Run the assigned test stage."},
+            ).model_dump_json(),
+        )
         StageRegistryLoader().sync(self.db)
 
         async def run_inline(func: object, *args: object, **kwargs: object) -> object:
