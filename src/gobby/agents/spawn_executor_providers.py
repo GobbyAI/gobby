@@ -114,8 +114,39 @@ async def _prepare_provider_sandbox(
     env: dict[str, str],
 ) -> SandboxLaunch | SpawnResult:
     try:
+        sandbox_config = request.sandbox_config
+        if (
+            sandbox_config is not None
+            and sandbox_config.enabled
+            and request.project_path is not None
+            and request.session_manager is not None
+            and request.machine_id is not None
+        ):
+            from gobby.storage.project_checkouts import require_root
+            from gobby.utils.project_context import get_project_sandbox_config
+
+            main_root = Path(
+                await asyncio.to_thread(
+                    require_root,
+                    request.session_manager._storage.db,
+                    request.project_id,
+                    request.machine_id,
+                )
+            ).resolve()
+            main_config = await asyncio.to_thread(get_project_sandbox_config, main_root)
+            # Reviewers run from the candidate worktree but may validate the
+            # main manifest. Admit only its explicitly declared nextest store.
+            nextest_store = str(main_root / ".nextest")
+            if (
+                main_config is not None
+                and nextest_store in main_config.extra_write_paths
+                and nextest_store not in sandbox_config.extra_write_paths
+            ):
+                sandbox_config = sandbox_config.model_copy(
+                    update={"extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]}
+                )
         config = _sandbox_config_for_spawn(
-            request.sandbox_config,
+            sandbox_config,
             env,
             agent_name=request.agent_name,
             project_path=request.project_path,

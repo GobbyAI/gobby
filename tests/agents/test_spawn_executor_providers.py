@@ -1,13 +1,15 @@
+import json
 import logging
 import tomllib
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents import spawn_executor_codex
-from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
@@ -15,7 +17,7 @@ from gobby.agents.spawn_executor_providers import (
     prepare_codex_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
+from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError, render_srt_settings
 from tests.agents.prepared_spawn import prepared_spawn
 
 
@@ -39,6 +41,56 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         prepared_spawn=spawn_context,
     )
     return request, spawn_context, run_manager
+
+
+@pytest.mark.parametrize("declared_store", [True, False])
+@pytest.mark.asyncio
+async def test_close_reviewer_policy_grants_only_declared_main_nextest_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared_store: bool
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    main = tmp_path / "main"
+    lane = tmp_path / "lane"
+    for root, grants in (
+        (main, [".gobby/tmp", ".nextest"] if declared_store else [".gobby/tmp"]),
+        (lane, [".gobby/tmp", ".nextest"]),
+    ):
+        (root / ".gobby").mkdir(parents=True)
+        (root / ".gobby/project.json").write_text(
+            json.dumps({"id": "project", "sandbox": {"extra_write_paths": grants}})
+        )
+    request, spawn_context, _ = _sandbox_request()
+    manager = MagicMock()
+    request.session_manager = manager
+    request.machine_id = "machine"
+    request.project_path = str(lane)
+    request.cwd = str(lane)
+    request.agent_name = "task-close-reviewer"
+    request.resume_metadata_json = {}
+    lookup = MagicMock(return_value=str(main))
+    monkeypatch.setattr("gobby.storage.project_checkouts.require_root", lookup)
+    captured_writes: list[str] = []
+
+    async def launch(
+        *, config: SandboxConfig, workspace_path: str, env: dict[str, str], **_kwargs: object
+    ) -> SandboxLaunch:
+        paths = await compute_sandbox_paths(config, workspace_path, provider="codex", env=env)
+        settings = render_srt_settings(paths)
+        captured_writes.extend(settings["filesystem"]["allowWrite"])
+        return SandboxLaunch(backend="srt", enforced=True)
+
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", launch)
+    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+
+    assert isinstance(result, SandboxLaunch)
+    lookup.assert_called_once_with(manager._storage.db, "project", "machine")
+    assert (str(main / ".nextest") in captured_writes) is declared_store
+    assert str(main) not in captured_writes
+    assert str(main / ".gobby/tmp") not in captured_writes
+    assert str(lane / ".nextest") in captured_writes
+    persisted = SandboxConfig.model_validate(request.resume_metadata_json["sandbox_config"])
+    assert (str(main / ".nextest") in persisted.extra_write_paths) is declared_store
 
 
 @pytest.mark.asyncio
