@@ -40,7 +40,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "lane-manager whose run recorded that lane, and omitted workspace, lane_pane and "
             "worktree from live state, and omitted lane_columns and "
             "lane_rows from the gclient window showing the workspace; explicit values, "
-            "names and UUIDs override. "
+            "names and UUIDs override. Launches without a developer seat require worktree=. "
             "Ambiguous state refuses with candidates. On success it returns the checked "
             "seats and resolved launch inputs."
         ),
@@ -68,6 +68,12 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             caller_session_id = ctx.resolve_session_id(caller_ref)
             resolved: dict[str, Any] = {}
             if lane is not None:
+                if worktree is None and "developer" not in {
+                    seat.strip() for seat in requested.split(",")
+                }:
+                    raise RunbookSeatRefusal(
+                        "team-lane launches without a developer seat require worktree="
+                    )
                 leases = ctx.lease_registry_resolver() if ctx.lease_registry_resolver else None
                 resolved = asdict(
                     resolve_team_launch_inputs(

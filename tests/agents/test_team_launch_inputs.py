@@ -490,13 +490,21 @@ def test_foreign_pane_does_not_override_workspace(lane_env: LaneEnv) -> None:
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])
-def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguous: bool) -> None:
+@pytest.mark.parametrize(
+    "seat,explicit_worktree",
+    [("developer", False), ("code-reviewer", False), ("code-reviewer", True)],
+)
+def test_registered_guard_resolves_two_input_command(
+    lane_env: LaneEnv, ambiguous: bool, seat: str, explicit_worktree: bool
+) -> None:
     """The real guard must resolve before a spawn step can render launch arguments."""
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((get_bundled_pipelines_path() / "team-lane.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(seats="researcher", lane="3")
+    inputs.update(seats=seat, lane="3")
+    if explicit_worktree:
+        inputs["worktree"] = lane_env.worktree
     executions = LocalPipelineExecutionManager(lane_env.db, lane_env.project)
     execution = executions.create_execution(
         "team-lane", inputs_json=json.dumps(inputs), project_id=lane_env.project
@@ -511,8 +519,8 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     executions.update_execution_session(execution.id, child.id)
     executions.update_execution_status(execution.id, ExecutionStatus.RUNNING)
     AgentDefinitionManager(lane_env.db).create(
-        name="researcher",
-        definition_json={"name": "researcher", "version": "1.0"},
+        name=seat,
+        definition_json={"name": seat, "version": "1.0"},
         project_id=lane_env.project,
     )
     if ambiguous:
@@ -520,6 +528,16 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
         extra.mkdir()
         assert run_git_command(["git", "init", "--quiet"], extra) == ""
         LocalWorktreeManager(lane_env.db).create(lane_env.project, "lane-3-other", str(extra))
+    if explicit_worktree:
+        tree = LocalWorktreeManager(lane_env.db).get(lane_env.worktree)
+        assert tree is not None
+        sessions.register(
+            external_id="live-developer",
+            machine_id=AGENT_TEST_MACHINE_ID,
+            source="codex",
+            project_id=lane_env.project,
+            workspace_path=tree.worktree_path,
+        )
     renderer = StepRenderer(TemplateEngine())
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot"}
     guard = definition.steps[0].mcp
@@ -536,7 +554,15 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
     )
     with session_context_for_test(child.id):
         result = registry.call_sync("check_runbook_seats", arguments)
-    if ambiguous:
+    if seat == "code-reviewer" and not explicit_worktree:
+        assert result["success"] is False
+        assert result["error_code"] == "runbook_seat_refused"
+        assert "worktree=" in result["error"]
+        assert (
+            LocalAgentRunManager(lane_env.db).get_active_run_for_worktree(lane_env.worktree) is None
+        )
+        return
+    if ambiguous and not explicit_worktree:
         assert result["success"] is False
         assert "worktree" in result["error"] and "lane-3-other" in result["error"]
         assert (
@@ -544,9 +570,12 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
         )
         return
     assert result["success"] is True, result
-    assert {key: result[key] for key in resolve(lane_env)} == resolve(lane_env)
+    expected = (
+        resolve(lane_env, worktree=lane_env.worktree) if explicit_worktree else resolve(lane_env)
+    )
+    assert {key: result[key] for key in expected} == expected
     context["steps"]["guard"] = {"output": result}
-    step = next(step for step in definition.steps if step.id == "researcher")
+    step = next(step for step in definition.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
     launch = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert launch["worktree_id"] == lane_env.worktree
@@ -555,7 +584,7 @@ def test_registered_guard_resolves_two_input_command(lane_env: LaneEnv, ambiguou
         205,
         59,
     )
-    assert "researcher seat for lane 3" in launch["prompt"]
+    assert f"{seat.replace('-', ' ')} seat for lane 3" in launch["prompt"]
     assert result["report_to"] in launch["prompt"]
 
 
