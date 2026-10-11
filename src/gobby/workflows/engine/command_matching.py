@@ -554,7 +554,7 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
         elif ch == '"':
             j = i + 1
             while j < n and command[j] != '"':
-                j += 2 if command[j] == "\\" else 1
+                j = min(j + (2 if command[j] == "\\" else 1), n)
             span = command[i + 1 : j]
             if "$(" not in span and "`" not in span:
                 for k in range(i + 1, j):
