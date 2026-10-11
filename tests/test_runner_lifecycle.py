@@ -2789,18 +2789,15 @@ class TestRunGobbyFunction:
             front_door=FrontDoorConfig(enabled=False),
         )
         lease = MagicMock()
-        lease.try_acquire.return_value = True
 
         with (
             patch("gobby.runner.GobbyRunner") as mock_runner_cls,
             patch(
                 "gobby.config.bootstrap.load_bootstrap", return_value=bootstrap
             ) as mock_load_bootstrap,
-            patch("gobby.daemon_lease.ActiveDaemonLease", return_value=lease) as mock_lease_cls,
             patch(
-                "gobby.daemon_lease_control.monitor_active_lease",
-                new_callable=AsyncMock,
-            ) as mock_monitor_lease,
+                "gobby.runtime_grants.lease_view.RuntimeLeaseView", return_value=lease
+            ) as mock_lease_cls,
             patch("gobby.storage.schema_contract.verify_schema") as mock_verify_schema,
             patch(
                 "gobby.utils.machine_id.require_machine_id", return_value="machine-id"
@@ -2849,9 +2846,8 @@ class TestRunGobbyFunction:
                 deployment_token="deadbeefdeadbeef",
             )
             mock_verify_schema.assert_called_once_with("postgresql://test")
-            assert lease.try_acquire.call_count == 1
-            assert mock_monitor_lease.await_count == 1
-            assert lease.release.call_count == 1
+            lease.bind.assert_called_once_with()
+            lease.release.assert_called_once_with()
 
     def test_runner_construction_failure_rolls_back_storage(self) -> None:
         database = MagicMock()
@@ -2924,14 +2920,22 @@ class TestMainFunction:
 
                 assert exc_info.value.code == 1
 
-    def test_main_exits_cleanly_when_daemon_already_running(self) -> None:
-        """Test that main exits with code 0 when a healthy daemon is already running."""
-        with self._mock_bootstrap():
-            with patch("gobby.runner._healthy_daemon_running", return_value=True):
-                with pytest.raises(SystemExit) as exc_info:
-                    main()
+    def test_main_exits_cleanly_when_daemon_already_running(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A contained backend returns cleanly when the native owner holds the PID lock."""
+        caplog.set_level(logging.INFO, logger="gobby.runner")
+        with (
+            patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,
+            patch("gobby.runner_pid_file.probe_daemon_lock", return_value="daemon") as probe,
+            patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
+        ):
+            main()
 
-                assert exc_info.value.code == 0
+        assert "Contained runner blocked by daemon; exiting cleanly" in caplog.text
+        claim.assert_called_once()
+        probe.assert_called_once_with(claim.call_args.args[0])
+        load_bootstrap.assert_not_called()
 
 
 class TestAgentEventBroadcasting:
@@ -4660,14 +4664,19 @@ class TestMainFunctionExtended:
             mock_asyncio_run.assert_called_once()
         assert mock_asyncio_run.call_count == 1
 
-    def test_main_exits_when_daemon_running(self) -> None:
-        """Test that main() exits with code 0 when daemon already running."""
+    def test_main_exits_when_daemon_running(self, caplog: pytest.LogCaptureFixture) -> None:
+        """PID ownership, rather than a public health probe, blocks duplicate backends."""
+        caplog.set_level(logging.INFO, logger="gobby.runner")
         with (
-            patch("gobby.runner._healthy_daemon_running", return_value=True),
-            pytest.raises(SystemExit) as exc_info,
+            patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,
+            patch("gobby.runner_pid_file.probe_daemon_lock", return_value="daemon") as probe,
+            patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
         ):
             main()
-        assert exc_info.value.code == 0
+        assert "Contained runner blocked by daemon; exiting cleanly" in caplog.text
+        claim.assert_called_once()
+        probe.assert_called_once_with(claim.call_args.args[0])
+        load_bootstrap.assert_not_called()
 
     def test_main_handles_keyboard_interrupt(self) -> None:
         """Test that main() handles KeyboardInterrupt gracefully."""
@@ -5628,7 +5637,7 @@ async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() ->
 def test_main_refuses_linked_worktree_before_bootstrap(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A linked-worktree source tree exits 1 before bootstrap or the singleton claim (#21031)."""
+    """A linked-worktree source tree exits 78 before bootstrap or the singleton claim."""
     refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
     with (
         patch("gobby.utils.dev.worktree_daemon_refusal", return_value=refusal),
@@ -5638,18 +5647,20 @@ def test_main_refuses_linked_worktree_before_bootstrap(
     ):
         main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 78
     assert refusal in capsys.readouterr().err
     load_bootstrap.assert_not_called()
     run_gobby.assert_not_called()
 
 
-def test_disabled_front_door_on_public_bind_refuses_before_bind(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_disabled_front_door_on_public_bind_refuses_before_bind(tmp_path: Path) -> None:
     """A disabled front door on a public bind_host would serve plaintext Python publicly."""
     files_home = tmp_path / "files"
     files_home.mkdir()
     bootstrap_path = tmp_path / "bootstrap.yaml"
     bootstrap_path.write_text(
+        "database_url: postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test\n"
         "bind_host: 100.64.0.10\n"
         "front_door:\n"
         "  enabled: false\n"
@@ -5661,20 +5672,23 @@ def test_disabled_front_door_on_public_bind_refuses_before_bind(tmp_path: Path) 
     bootstrap_path.chmod(0o600)
     forbidden = AssertionError("a refused bootstrap must not reach the health probe or a bind")
     with (
-        patch("gobby.utils.dev.worktree_daemon_refusal", return_value=None),
-        patch("gobby.runner._healthy_daemon_running", side_effect=forbidden) as probe,
-        patch("gobby.runner.run_gobby", side_effect=forbidden) as run_gobby,
+        patch("gobby.storage.schema_contract.verify_schema", side_effect=forbidden) as verify,
+        patch("gobby.runtime_grants.lease_view.RuntimeLeaseView", side_effect=forbidden) as lease,
+        patch("gobby.runner.GobbyRunner.create", side_effect=forbidden) as create,
         patch("gobby.runner_lifecycle.run_daemon", side_effect=forbidden) as run_daemon,
         pytest.raises(BootstrapConfigError) as refused,
     ):
-        main(config_path=bootstrap_path)
+        await run_gobby(
+            config_path=bootstrap_path, ownership_resolution=FailOpenPidOwnership("test")
+        )
 
     assert str(refused.value) == (
         "front_door.enabled: false requires a loopback bind_host (got '100.64.0.10'); "
         "set bind_host to a loopback address, or enable the front door"
     )
-    probe.assert_not_called()
-    run_gobby.assert_not_called()
+    verify.assert_not_called()
+    lease.assert_not_called()
+    create.assert_not_called()
     run_daemon.assert_not_called()
 
 
@@ -5705,7 +5719,7 @@ def test_main_refuses_a_worktree_package_without_override(
     ):
         main()
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 78
     assert str(worktree) in capsys.readouterr().err
     load_bootstrap.assert_not_called()
 
@@ -5715,21 +5729,19 @@ def test_main_override_env_lets_a_worktree_package_start(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """GOBBY_ALLOW_WORKTREE_DAEMON=1 passes the guard and reaches the health probe (#21031)."""
+    """GOBBY_ALLOW_WORKTREE_DAEMON=1 passes the guard and reaches backend startup."""
     _worktree, package = _worktree_package(tmp_path)
     monkeypatch.setenv("GOBBY_ALLOW_WORKTREE_DAEMON", "1")
-    stub = MagicMock(daemon_port=8765, bind_host="localhost")
     with (
         patch("gobby.__file__", str(package / "__init__.py")),
-        patch("gobby.config.bootstrap.load_bootstrap", return_value=stub) as load_bootstrap,
-        patch("gobby.runner._healthy_daemon_running", return_value=True),
-        pytest.raises(SystemExit) as exc_info,
+        patch("gobby.config.bootstrap.load_bootstrap") as load_bootstrap,
+        patch("gobby.runner.run_gobby", new_callable=AsyncMock) as start_backend,
     ):
         main()
 
-    assert exc_info.value.code == 0
-    assert "already healthy" in capsys.readouterr().err
-    load_bootstrap.assert_called_once()
+    start_backend.assert_awaited_once_with(config_path=None, verbose=False)
+    assert capsys.readouterr().err == ""
+    load_bootstrap.assert_not_called()
 
 
 class TestRuleDispositionStartup:
