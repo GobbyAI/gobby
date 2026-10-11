@@ -3,10 +3,11 @@
 import asyncio
 import logging
 from concurrent.futures import Future
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.communications.manager import CommunicationsManager
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.sessions.processor_lifecycle import SessionFlushResult
@@ -78,11 +79,34 @@ class CompletedTurns:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
         self.done = asyncio.Event()
+        self.communications_manager: MagicMock | None = MagicMock(spec=CommunicationsManager)
+        self.communications_manager.has_transcript_mirror_attachment.return_value = True
 
     async def complete_turn(self, session_id: str, text: str | None) -> SessionFlushResult:
         self.calls.append((session_id, text))
         self.done.set()
         return SessionFlushResult(flushed=True)
+
+
+@pytest.mark.parametrize("manager_present", [True, False])
+async def test_unattached_completion_never_schedules_mirror(
+    event_handlers: EventHandlers, manager_present: bool
+) -> None:
+    turns = CompletedTurns()
+    if manager_present:
+        assert turns.communications_manager is not None
+        turns.communications_manager.has_transcript_mirror_attachment.return_value = False
+    else:
+        turns.communications_manager = None
+    event_handlers._event_loop = asyncio.get_running_loop()
+    event_handlers._message_processor_resolver = lambda: turns
+    event = make_event(HookEventType.STOP, metadata={"_platform_session_id": "session"})
+    event.turn_disposition = "completed"
+    with patch("gobby.hooks.event_handlers._agent.asyncio.run_coroutine_threadsafe") as schedule:
+        response = event_handlers.handle_stop(event)
+    assert response.decision == "allow"
+    schedule.assert_not_called()
+    assert turns.calls == []
 
 
 @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.AFTER_AGENT])

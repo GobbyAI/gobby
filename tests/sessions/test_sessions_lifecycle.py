@@ -1201,6 +1201,15 @@ class TestSessionLifecycleManager:
 class TestBackgroundLoops:
     """Tests for infinite background loops."""
 
+    @pytest.fixture(autouse=True)
+    def isolate_home_cleanup(
+        self, manager: SessionLifecycleManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "gobby.sessions.lifecycle.purge_textgen_project_dirs", MagicMock(return_value=0)
+        )
+        monkeypatch.setattr(manager, "_cleanup_prompt_files", MagicMock())
+
     @pytest.mark.asyncio
     async def test_expire_loop_runs_and_calls_delegate(
         self, manager: SessionLifecycleManager
@@ -1212,7 +1221,7 @@ class TestBackgroundLoops:
         manager._expire_stale_sessions = AsyncMock(return_value=0)
 
         # Mock sleep to run once then stop loop
-        async def side_effect_sleep(seconds):
+        async def side_effect_sleep(seconds: float) -> None:
             manager._running = False  # Stop after first sleep
             return
 
@@ -1234,7 +1243,7 @@ class TestBackgroundLoops:
 
         manager._process_pending_transcripts = AsyncMock(return_value=0)
 
-        async def side_effect_sleep(seconds):
+        async def side_effect_sleep(seconds: float) -> None:
             manager._running = False
             return
 
@@ -1259,7 +1268,7 @@ class TestBackgroundLoops:
         # Log error is called
         with patch("gobby.sessions.lifecycle.logger.error") as mock_logger:
 
-            async def side_effect_sleep(seconds):
+            async def side_effect_sleep(seconds: float) -> None:
                 manager._running = False
                 return
 

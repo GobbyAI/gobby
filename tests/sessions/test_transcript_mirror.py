@@ -222,6 +222,27 @@ def attached(temp_db: HubDatabase) -> tuple[CommunicationsManager, str, AsyncMoc
     return manager, session.id, adapter.send_message
 
 
+@pytest.mark.parametrize(
+    "state", ["attached", "unattached", "detached", "disabled", "other-channel"]
+)
+def test_mirror_attachment_requires_live_enabled_telegram(
+    attached: tuple[CommunicationsManager, str, AsyncMock], state: str
+) -> None:
+    manager, session_id, _send = attached
+    channel = manager.get_channel_by_name("mirror-test")
+    assert channel is not None
+    if state == "unattached":
+        session_id = "other-session"
+    elif state == "detached":
+        assert manager.clear_conversation_target(channel.name, "dm:42", session_id)
+    elif state == "disabled":
+        channel.enabled = False
+    elif state == "other-channel":
+        channel.channel_type = "slack"
+    manager._channel_by_name[channel.name] = channel
+    assert manager.has_transcript_mirror_attachment(session_id) is (state == "attached")
+
+
 def processor(temp_db: HubDatabase, manager: CommunicationsManager) -> SessionMessageProcessor:
     return SessionMessageProcessor(temp_db, communications_manager=manager)
 

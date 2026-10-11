@@ -299,6 +299,15 @@ class CommunicationsManager:
             except Exception:
                 logger.warning("Transcript delivery retry failed for %s", message.id, exc_info=True)
 
+    def has_transcript_mirror_attachment(self, session_id: str) -> bool:
+        """Whether a live, enabled Telegram attachment can receive this session's text."""
+        return any(
+            channel.channel_type == "telegram"
+            and channel.enabled
+            and self.attached_destination(channel.id, session_id) is not None
+            for channel in tuple(self._channel_by_name.values())
+        )
+
     async def mirror_session_message(self, session_id: str, message_id: str, content: str) -> None:
         """Mirror completed transcript text to a session's live Telegram attachment."""
         for channel in tuple(self._channel_by_name.values()):

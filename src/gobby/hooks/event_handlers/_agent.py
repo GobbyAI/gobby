@@ -627,6 +627,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
         loop = self._event_loop
         if not isinstance(session_id, str) or not processor or not loop or not loop.is_running():
             return
+        communications = processor.communications_manager
+        if communications is None or not communications.has_transcript_mirror_attachment(
+            session_id
+        ):
+            return
         expected = event.data.get("last_assistant_message")
         future = asyncio.run_coroutine_threadsafe(
             processor.complete_turn(session_id, expected if isinstance(expected, str) else None),
