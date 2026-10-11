@@ -30,8 +30,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
-from gobby.agents.constants import sandbox_agent_cache_dir
-from gobby.paths import get_gobby_home
+from gobby.agents.constants import agent_home_cache_root, sandbox_agent_cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ def _project_cache_root(project_id: str) -> Path:
         limit=_PROJECT_COMPONENT_LENGTH,
         fallback="unknown-project",
     )
-    return get_gobby_home() / "cache" / "cargo-target-v2" / safe_id
+    return agent_home_cache_root() / "cargo-target-v2" / safe_id
 
 
 def _legacy_cargo_target_dir(project_id: str) -> Path:
@@ -66,7 +65,7 @@ def _legacy_cargo_target_dir(project_id: str) -> Path:
         limit=_PROJECT_COMPONENT_LENGTH,
         fallback="unknown-project",
     )
-    return get_gobby_home() / "cache" / "cargo-target" / safe_id
+    return agent_home_cache_root() / "cargo-target" / safe_id
 
 
 def _checkout_component(checkout: Path) -> str:
@@ -191,9 +190,9 @@ def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
     if not (checkout / "Cargo.toml").is_file():
         return False
     target = checkout / "target"
-    desired = checkout_cargo_target_dir(checkout, project_id)
-    legacy = _legacy_cargo_target_dir(project_id)
     try:
+        desired = checkout_cargo_target_dir(checkout, project_id)
+        legacy = _legacy_cargo_target_dir(project_id)
         if target.is_symlink():
             destination = os.readlink(target)
             if destination == str(desired):
@@ -210,8 +209,8 @@ def link_checkout_cargo_target(checkout: Path, project_id: str) -> bool:
         else:
             desired.mkdir(parents=True, exist_ok=True)
             _replace_target_symlink(target, desired)
-    except OSError:
-        logger.warning("Failed to link %s to %s", target, desired, exc_info=True)
+    except (OSError, ValueError):
+        logger.warning("Failed to link Cargo target for %s", checkout, exc_info=True)
         return False
     exclude_checkout_target(checkout)
     return True

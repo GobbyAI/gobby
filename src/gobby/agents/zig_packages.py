@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from gobby.paths import get_gobby_home
+from gobby.agents.constants import agent_home_cache_root
 
 ZIG_PACKAGES = "p"
 _ZIG_TARBALL_SUFFIX = ".tar.gz"
@@ -32,7 +32,7 @@ def unsandboxed_zig_cache_dir() -> Path:
     It sits beside the sandbox cache rather than under it: sandboxed runs keep
     their own mirror and never write this one.
     """
-    return get_gobby_home() / "cache" / "zig-packages"
+    return agent_home_cache_root() / "zig-packages"
 
 
 def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> None:
