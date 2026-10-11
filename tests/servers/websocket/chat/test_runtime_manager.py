@@ -826,6 +826,7 @@ async def _collect_codex_backend_events(
     transcript_path: Path | None = None,
     transcript_lines: list[str] | None = None,
     is_connected: bool = True,
+    previous_turn_id: str | None = None,
 ) -> tuple[list[Any], CodexManagedChatSession]:
     handlers: dict[str, list[Any]] = {}
 
@@ -854,6 +855,7 @@ async def _collect_codex_backend_events(
     session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
     session._connected = True
     session._thread_id = "thread-1"
+    session._turn_id = previous_turn_id
     if transcript_path is not None:
         transcript_path.write_text("", encoding="utf-8")
         session._transcript_path = str(transcript_path)
@@ -1516,6 +1518,143 @@ class TestCodexBackend:
 
         assert "".join(event.content for event in events if isinstance(event, TextChunk)) == answer
         assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_completed_commentary_tail_precedes_tool_and_final_answer(
+        self, tmp_path: Path
+    ) -> None:
+        commentary = "I'll check the logs."
+        final_answer = "Final answer."
+        tool_item = {
+            "id": "tool-1",
+            "type": "mcpToolCall",
+            "mcpToolCall": {"server": "gobby-tasks", "tool": "get_task", "arguments": "{}"},
+        }
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "itemId": "c1", "delta": "I'll check the"},
+                ),
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"id": "c1", "type": "agentMessage", "text": commentary},
+                    },
+                ),
+                ("item/started", {"threadId": "thread-1", "item": tool_item}),
+                ("item/completed", {"threadId": "thread-1", "item": tool_item}),
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "itemId": "f1", "delta": final_answer},
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ],
+            transcript_path=tmp_path / "codex.jsonl",
+            transcript_lines=[
+                json.dumps(
+                    {
+                        "timestamp": "2026-10-10T14:08:47.459Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "id": item_id,
+                            "content": [{"type": "output_text", "text": text}],
+                        },
+                    }
+                )
+                for item_id, text in [("c1", commentary), ("f1", final_answer)]
+            ],
+        )
+
+        tool_index = next(i for i, event in enumerate(events) if isinstance(event, ToolCallEvent))
+        assert (
+            "".join(event.content for event in events[:tool_index] if isinstance(event, TextChunk))
+            == commentary
+        )
+        assert (
+            "".join(event.content for event in events[tool_index:] if isinstance(event, TextChunk))
+            == final_answer
+        )
+
+    @pytest.mark.asyncio
+    async def test_completion_drains_already_queued_reply_tail(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "turnId": "turn-1", "itemId": "f1", "delta": "Scope"},
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+                (
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "itemId": "f1",
+                        "delta": " includes the whole answer.",
+                    },
+                ),
+            ]
+        )
+
+        assert "".join(event.content for event in events if isinstance(event, TextChunk)) == (
+            "Scope includes the whole answer."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_new_turn_deltas_are_not_filtered_by_previous_turn_id(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "itemId": "f1",
+                        "delta": "New reply.",
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "previous-turn"}),
+            ],
+            previous_turn_id="previous-turn",
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk))
+            == "New reply."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_prefetched_foreign_turn_deltas_are_filtered_after_start_reply(self) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "turnId": "foreign-turn", "delta": "Wrong turn."},
+                ),
+                (
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "itemId": "f1",
+                        "delta": "New reply.",
+                    },
+                ),
+                ("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"}),
+            ]
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk))
+            == "New reply."
+        )
 
     @pytest.mark.asyncio
     async def test_send_message_recovers_tool_and_usage_from_codex_transcript(

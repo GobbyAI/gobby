@@ -117,8 +117,10 @@ async def stream_codex_turn(
 
     event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
     turn_completed = asyncio.Event()
+    completion_params: dict[str, Any] = {}
     saw_text_output = False
     streamed_text_by_item: dict[str, str] = {}
+    last_text_item_id: str | None = None
     tool_calls_count = 0
     started_tool_call_ids: set[str] = set()
     completed_tool_call_ids: set[str] = set()
@@ -129,6 +131,19 @@ async def stream_codex_turn(
     transcript_offset = await session._get_transcript_offset()
     session._reset_before_tool_state()
     turn_parameters = cast(dict[str, Any], dict(request_parameters or {}))
+
+    def _recover_item_text(item_id: str, content: str) -> TextChunk | None:
+        nonlocal saw_text_output, last_text_item_id
+        streamed_text = streamed_text_by_item.get(item_id, "")
+        if not content.startswith(streamed_text):
+            return None
+        missing_text = content[len(streamed_text) :]
+        streamed_text_by_item[item_id] = content
+        last_text_item_id = item_id
+        if not missing_text:
+            return None
+        saw_text_output = True
+        return TextChunk(content=missing_text)
 
     def _remember_record_usage(record: ParsedMessage | ParsedToolEvent) -> None:
         nonlocal latest_transcript_context_window, latest_transcript_usage
@@ -142,12 +157,13 @@ async def stream_codex_turn(
             latest_transcript_context_window = context_window
 
     def _start_tool_event(tool_event_data: dict[str, Any]) -> ToolCallEvent | None:
-        nonlocal tool_calls_count
+        nonlocal tool_calls_count, last_text_item_id
         tool_call_id = str(tool_event_data["tool_call_id"])
         if not tool_call_id or tool_call_id in started_tool_call_ids:
             return None
         started_tool_call_ids.add(tool_call_id)
         tool_calls_count += 1
+        last_text_item_id = None
         return ToolCallEvent(
             tool_call_id=tool_call_id,
             tool_name=str(tool_event_data["tool_name"]),
@@ -187,9 +203,12 @@ async def stream_codex_turn(
             return [start_event] if start_event is not None else []
         return _complete_tool_events(tool_event_data)
 
-    def _matches(params: dict[str, Any]) -> bool:
+    def _matches_thread(params: dict[str, Any]) -> bool:
         thread_id = params.get("threadId")
-        if isinstance(thread_id, str) and session._thread_id and thread_id != session._thread_id:
+        return not isinstance(thread_id, str) or thread_id == session._thread_id
+
+    def _matches(params: dict[str, Any]) -> bool:
+        if not _matches_thread(params):
             return False
         turn_id = params.get("turnId")
         if isinstance(turn_id, str) and session._turn_id and turn_id != session._turn_id:
@@ -206,7 +225,8 @@ async def stream_codex_turn(
         return True
 
     def _enqueue(method: str, params: dict[str, Any]) -> None:
-        if _matches(params):
+        # The new turn ID is unknown until turn/start returns; filter it when consuming.
+        if _matches_thread(params):
             event_queue.put_nowait((method, params))
 
     event_methods = [
@@ -233,11 +253,11 @@ async def stream_codex_turn(
             effort=session.reasoning_effort,
             **turn_parameters,
         )
-        session._turn_id = turn.id or session._turn_id
+        session._turn_id = turn.id or None
         session._acknowledge_prompt_delivery()
         turn_deadline = asyncio.get_running_loop().time() + _CODEX_TURN_TIMEOUT_SECONDS
 
-        while not turn_completed.is_set():
+        while not turn_completed.is_set() or not event_queue.empty():
             if not client.is_connected:
                 raise RuntimeError("Codex app-server disconnected before turn completed")
             poll_deadline = min(turn_deadline, asyncio.get_running_loop().time() + 0.1)
@@ -251,12 +271,16 @@ async def stream_codex_turn(
                     ) from None
                 continue
 
+            if not _matches(params):
+                continue
+
             if method in {"agent/messageDelta", "item/agentMessage/delta"}:
                 delta = _extract_codex_delta(params)
                 if delta:
                     saw_text_output = True
                     item_id = params.get("itemId")
                     if isinstance(item_id, str):
+                        last_text_item_id = item_id
                         streamed_text_by_item[item_id] = (
                             streamed_text_by_item.get(item_id, "") + delta
                         )
@@ -264,6 +288,15 @@ async def stream_codex_turn(
                 continue
 
             if method == "item/completed":
+                item = params.get("item")
+                if isinstance(item, dict) and item.get("type") == "agentMessage":
+                    item_id = item.get("id")
+                    text = item.get("text")
+                    if isinstance(item_id, str) and isinstance(text, str):
+                        recovered = _recover_item_text(item_id, text)
+                        if recovered is not None:
+                            yield recovered
+                    continue
                 tool_event_data = codex_tool_event_data(
                     params,
                     dynamic_exec_correlator=dynamic_exec_correlator,
@@ -336,9 +369,9 @@ async def stream_codex_turn(
                 continue
 
             if method == "thread/closed":
-                session._turn_id = None
                 if turn_completed.is_set():
                     continue
+                session._turn_id = None
                 raise RuntimeError("Codex thread closed before turn completed")
 
             if method == "turn/failed":
@@ -348,56 +381,62 @@ async def stream_codex_turn(
 
             if method == "turn/completed":
                 turn_completed.set()
-                usage = params.get("usage", {})
-                if not isinstance(usage, dict):
-                    usage = {}
-                transcript_records = await session._get_transcript_records_since(transcript_offset)
-                transcript_assistant_text: list[str] = []
-                for record in transcript_records:
-                    for event in _events_from_transcript_record(record):
-                        yield event
-                    if (
-                        isinstance(record, ParsedMessage)
-                        and record.role == "assistant"
-                        and isinstance(record.content, str)
-                        and record.content.strip()
-                    ):
-                        transcript_assistant_text.append(record.content.strip())
-                        streamed_text = streamed_text_by_item.get(record.message_id or "")
-                        if streamed_text is not None and record.content.startswith(streamed_text):
-                            missing_text = record.content[len(streamed_text) :]
-                            if missing_text:
-                                yield TextChunk(content=missing_text)
-                                streamed_text_by_item[record.message_id or ""] = record.content
-
-                normalized_usage = prefer_codex_usage(
-                    normalize_codex_usage(usage),
-                    latest_transcript_usage,
-                )
-                session._turn_id = None
-                if not saw_text_output:
-                    fallback_text = "\n\n".join(transcript_assistant_text)
-                    if not fallback_text:
-                        fallback_text = await session._get_transcript_assistant_text_since(
-                            transcript_offset
-                        )
-                    if fallback_text:
-                        yield TextChunk(content=fallback_text)
-
-                context_window = (
-                    latest_transcript_context_window or session._resolve_context_window()
-                )
-                yield DoneEvent(
-                    tool_calls_count=tool_calls_count,
-                    input_tokens=normalized_usage["input_tokens"],
-                    output_tokens=normalized_usage["output_tokens"],
-                    cache_read_input_tokens=normalized_usage["cache_read_input_tokens"],
-                    cache_creation_input_tokens=normalized_usage["cache_creation_input_tokens"],
-                    total_input_tokens=normalized_usage["total_input_tokens"],
-                    context_window=context_window,
-                    sdk_session_id=session.sdk_session_id,
-                )
+                completion_params = params
                 continue
+
+        usage = completion_params.get("usage", {})
+        if not isinstance(usage, dict):
+            usage = {}
+        transcript_records = await session._get_transcript_records_since(transcript_offset)
+        transcript_assistant_text: list[str] = []
+        final_record: ParsedMessage | None = None
+        for record in transcript_records:
+            for event in _events_from_transcript_record(record):
+                yield event
+            if (
+                isinstance(record, ParsedMessage)
+                and record.role == "assistant"
+                and isinstance(record.content, str)
+                and record.content.strip()
+            ):
+                transcript_assistant_text.append(record.content.strip())
+                final_record = record
+
+        if (
+            final_record is not None
+            and last_text_item_id is not None
+            and final_record.message_id == last_text_item_id
+            and isinstance(final_record.content, str)
+        ):
+            recovered = _recover_item_text(last_text_item_id, final_record.content)
+            if recovered is not None:
+                yield recovered
+
+        normalized_usage = prefer_codex_usage(
+            normalize_codex_usage(usage),
+            latest_transcript_usage,
+        )
+        session._turn_id = None
+        if not saw_text_output:
+            fallback_text = "\n\n".join(transcript_assistant_text)
+            if not fallback_text:
+                fallback_text = await session._get_transcript_assistant_text_since(
+                    transcript_offset
+                )
+            if fallback_text:
+                yield TextChunk(content=fallback_text)
+
+        context_window = latest_transcript_context_window or session._resolve_context_window()
+        yield DoneEvent(
+            tool_calls_count=tool_calls_count,
+            input_tokens=normalized_usage["input_tokens"],
+            output_tokens=normalized_usage["output_tokens"],
+            cache_read_input_tokens=normalized_usage["cache_read_input_tokens"],
+            cache_creation_input_tokens=normalized_usage["cache_creation_input_tokens"],
+            total_input_tokens=normalized_usage["total_input_tokens"],
+            context_window=context_window,
+            sdk_session_id=session.sdk_session_id,
+        )
     except asyncio.CancelledError as cancel_exc:
         active_turn_id = session._turn_id
         if active_turn_id:
