@@ -277,13 +277,16 @@ async fn terminal_drain_marker_reaches_runtime_owner() -> Result<()> {
             let mut supervisor = db.supervisor(home.path(), &script).await?;
             let (stop, rx) = watch::channel(false);
             assert_eq!(timeout(Duration::from_secs(5), supervisor.run(rx.clone())).await??, expected);
+            let pid_file = home.path().join("gobby.pid");
             if expected == SupervisorExit::RestartTerminals {
-                assert!(home.path().join("gobby.pid").exists(), "host restart lost native PID ownership");
+                assert!(claim_pid_file(&pid_file, Role::Daemon)?.is_none(), "host restart lost native PID ownership");
                 stop.send(true)?;
                 assert_eq!(supervisor.run(rx).await?, SupervisorExit::Stopped);
-            } else {
-                assert!(!home.path().join("gobby.pid").exists());
             }
+            // The PID artifact persists; a fresh claim proves that stop released ownership.
+            let successor = claim_pid_file(&pid_file, Role::Daemon)?
+                .context("stopped supervisor retained native PID ownership")?;
+            drop(successor);
         }
         Ok(())
     }).await
