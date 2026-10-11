@@ -327,6 +327,11 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
     post_sandbox_started = start_spawn_phase()
     if launch.enforced and launch.backend == "srt":
         cmd.extend(["--settings", '{"sandbox": {"enabled": false}}'])
+        if request.agent_name == "task-close-reviewer":
+            # Reviews use Gobby skills, not account sync or CLI background housekeeping.
+            # Nonessential traffic also disables feature flags that enable account sync.
+            env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+            env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"] = "1"
     cmd.extend(launch.provider_args)
     cmd.extend(request.provider_args)
     if request.prompt:
