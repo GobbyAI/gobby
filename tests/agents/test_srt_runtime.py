@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Coroutine, Iterator
@@ -845,6 +846,44 @@ def test_emit_cli_shim_execs_wrapped_argv_and_passes_sdk_args(tmp_path: Path) ->
     assert body.count("exec") == 1
     launch.cleanup_cli_shim()
     assert not shim.exists()
+
+
+def test_cli_shim_scrubs_token_inherited_from_sdk_parent(tmp_path: Path) -> None:
+    runner = tmp_path / "runner.py"
+    runner.write_text(
+        "import os, sys\nargv = sys.argv[sys.argv.index('--') + 1:]\nos.execv(argv[0], argv)\n",
+        encoding="utf-8",
+    )
+    launch = SandboxLaunch(
+        backend="srt",
+        enforced=True,
+        node_path=sys.executable,
+        runner_path=str(runner),
+        policy_path="/dummy/policy.json",
+        violation_path="/dummy/violations.jsonl",
+        provider_executable=sys.executable,
+        provider_env={},
+    )
+    shim = launch.emit_cli_shim(
+        command=[
+            sys.executable,
+            "-c",
+            "import os, sys; print('GOBBY_AGENT_API_TOKEN' in os.environ); print(sys.argv[1])",
+        ],
+        directory=tmp_path,
+    )
+    try:
+        result = subprocess.run(
+            [str(shim), "sdk-argument"],
+            env={"PATH": os.environ.get("PATH", ""), "GOBBY_AGENT_API_TOKEN": "dummy-token"},
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        assert result.stdout.splitlines() == ["False", "sdk-argument"]
+    finally:
+        launch.cleanup_cli_shim()
 
 
 def test_compose_sandbox_subprocess_merges_identity_then_provider_env() -> None:

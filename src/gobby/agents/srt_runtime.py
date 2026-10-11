@@ -164,7 +164,7 @@ class SandboxLaunch:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"gobby-srt-shim-{os.getpid()}-{uuid.uuid4().hex}.sh"
         quoted = " ".join(shlex.quote(part) for part in wrapped)
-        script = f'#!/bin/sh\nexec {quoted} "$@"\n'
+        script = f'#!/bin/sh\nunset GOBBY_AGENT_API_TOKEN\nexec {quoted} "$@"\n'
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:

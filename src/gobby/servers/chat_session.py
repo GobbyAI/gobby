@@ -372,6 +372,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             self._sandbox_launch = launch
             cli_path = str(shim)
             env = {**identity_env, **launch.provider_env}
+            env.pop("GOBBY_AGENT_API_TOKEN", None)
             settings_path = await materialize_claude_settings_async(
                 base_settings_path=_HEADLESS_SETTINGS,
                 config=SandboxConfig(enabled=False),

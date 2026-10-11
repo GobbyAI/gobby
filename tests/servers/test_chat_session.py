@@ -825,8 +825,9 @@ class TestShimLaunchContract:
 
     @pytest.mark.asyncio
     async def test_start_under_srt_points_sdk_at_shim(
-        self, session: ChatSession, tmp_path: Path
+        self, session: ChatSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "dummy-sdk-parent-token")
         session.sandbox_config = SandboxConfig(enabled=True, backend="srt")
         session.db_session_id = "db-shim"
         session.project_path = str(tmp_path)
@@ -842,6 +843,8 @@ class TestShimLaunchContract:
         assert captured["prepare"]["env"]["GOBBY_SESSION_ID"] == "db-shim"
         assert captured["env"]["TMPDIR"] == str(tmp_path / "srt-tmp")
         assert captured["env"]["GOBBY_SESSION_ID"] == "db-shim"
+        assert "GOBBY_AGENT_API_TOKEN" not in captured["env"]
+        assert "dummy-sdk-parent-token" not in captured["env"].values()
         assert int(captured["env"]["MCP_TIMEOUT"]) >= 120000
         assert captured["setting_sources"] == []
         settings = json.loads(Path(captured["settings"]).read_text(encoding="utf-8"))
