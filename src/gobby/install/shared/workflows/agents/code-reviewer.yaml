@@ -177,6 +177,7 @@ step_workflow:
         - "gobby-tasks:get_task_diff"
         - "gobby-results:get_tool_result"
         - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
       transitions:
         - to: verdict
           when: "vars.verdict_ready"

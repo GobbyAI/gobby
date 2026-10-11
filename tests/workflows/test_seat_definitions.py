@@ -111,7 +111,7 @@ ROOT_PANE_EXCLUDES = ["name:block-update-task"]
 # claim reports, so a relaunched seat can reach its Lane Manager before work.
 WAITING_STEPS = {
     "developer": {"load_skills", "claim", "submit"},
-    "code-reviewer": {"load_skills", "await", "verdict"},
+    "code-reviewer": {"load_skills", "await", "review", "verdict"},
     "log-monitor": {"tick", "report"},
     "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
