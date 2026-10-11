@@ -263,6 +263,34 @@ async def test_fast_forward_lands_exact_candidate(case: LandingCase) -> None:
     assert manager.get_messages(case.reviewer) == []
 
 
+@pytest.mark.parametrize("different_reviewer", [False, True])
+async def test_landing_replays_original_receipt_across_reviewers(
+    case: LandingCase, different_reviewer: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/replay.md": "land once"})
+    task = case.reviewed(sha)
+    caller = case.delegator if different_reviewer else case.reviewer
+    if different_reviewer:
+        case.approve(task, sha, author=caller)
+
+    first = await case.land(task, sha)
+    [original] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
+    manager = InterSessionMessageManager(case.db)
+    original_messages = manager.get_messages(case.claimant)
+    original_tip = case.git("rev-parse", "trunk")
+
+    replay = await case.land(task, sha, caller=caller)
+
+    assert replay["receipt_id"] == original.id == first["receipt_id"]
+    assert replay["already_landed"] is True
+    assert replay["landed_by_session_id"] == case.reviewer
+    assert first["already_landed"] is False
+    assert first["landed_by_session_id"] == case.reviewer
+    assert [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING] == [original]
+    assert manager.get_messages(case.claimant) == original_messages
+    assert case.git("rev-parse", "trunk") == original_tip
+
+
 async def test_reports_every_missing_approval_at_once(case: LandingCase) -> None:
     files = {"src/gobby/cli/entry.py": "candidate", "docs/line\nbreak.md": "candidate"}
     sha = case.candidate("lane", files)
@@ -402,6 +430,7 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
     task = case.task()
     case.link(task, sha)
     case.approve(task, sha)
+    case.approve(task, sha, author=case.delegator)
     original_run = daemon_git.run
     writing = asyncio.Event()
     release = asyncio.Event()
@@ -439,7 +468,9 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
         try:
             await asyncio.wait_for(writing.wait(), timeout=5)
             freezing = asyncio.create_task(freeze_during_landing())
-            second = asyncio.create_task(case.land(task, sha), name="landing-2")
+            second = asyncio.create_task(
+                case.land(task, sha, caller=case.delegator), name="landing-2"
+            )
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(second_branch_read.wait(), timeout=0.1)
             with pytest.raises(TimeoutError):
@@ -448,7 +479,9 @@ async def test_concurrent_landings_serialize_and_release_lock(case: LandingCase)
             release.set()
         first_result, second_result = await asyncio.gather(first, second)
         assert (await freezing)["success"] is True
-    assert first_result == second_result
+    assert second_result == {**first_result, "already_landed": True}
+    assert first_result["already_landed"] is False
+    assert first_result["landed_by_session_id"] == case.reviewer
     assert first_result["landed"] is True
     assert writes == 1
     with patch("gobby.tasks.land_commit._paths", side_effect=RuntimeError("probe")):
@@ -1235,7 +1268,8 @@ async def test_merge_landing_replay_preserves_retest_obligation(case: LandingCas
     landed_foreign_a = await case.land(case.reviewed(foreign_a, "Foreign A"), foreign_a)
 
     assert first["mode"] == "merge"
-    assert replay == first
+    assert replay == {**first, "already_landed": True}
+    assert first["already_landed"] is False
     assert replay["retest_required"] is True
     assert "focused verification commands" in replay["retest_procedure"]
     assert pending["receipt_pending"] is True
