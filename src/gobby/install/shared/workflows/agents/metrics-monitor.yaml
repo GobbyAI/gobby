@@ -89,8 +89,11 @@ step_workflow:
         Execute loads through mcp__gobby__call_tool. Load brevity with get_skill,
         then the two exact gobby observability references with get_skill_file.
         Fetch its schema first with get_tool_schema in a separate outer result.
+        call_tool("gobby-skills", "get_skill", {"name": "brevity"})
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": <reference path>})
         Follow page.next_cursor with only cursor until null for every load.
-        Native Skill and app tools bypass Gobby's skill tracking.
+        The native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - "mcp__gobby__call_tool"
         - "mcp__gobby__list_mcp_servers"
@@ -124,7 +127,13 @@ step_workflow:
         Prometheus curl commands in your definition. After both reports wait with
         wait_for_coordination(owner_session=<Orchestrator>, reply=true, timeout=600),
         except for the first tick. Record tick_window and tick_done with top-level
-        set_variable(scope="step"). Reload skills through the Gobby MCP proxy.
+        set_variable(scope="step"). Reload skills through mcp__gobby__call_tool:
+        call_tool("gobby-skills", "get_skill", {"name": <plain name>}) or
+        call_tool("gobby-skills", "get_skill_file", {"name": <skill>, "path": <reference path>}).
+        Fetch the get_skill_file schema first with get_tool_schema in a separate
+        outer result. Follow page.next_cursor with only cursor until null.
+        The native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - "Bash"
         - "mcp__gobby__call_tool"
