@@ -142,7 +142,8 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
     return str(cache_dir)
 
 
-def _agent_home_cache_root() -> Path:
+def agent_home_cache_root() -> Path:
+    """Return the absolute home cache root shared by agent cache derivations."""
     home = get_gobby_home()
     if not home.is_absolute():
         raise ValueError("GOBBY_HOME must be absolute for agent caches")
@@ -160,7 +161,7 @@ def shared_agent_cargo_home_dir() -> Path:
     build into their own target rather than the operator's. Sandboxed runs never
     write it: they build from ``sandbox_agent_cache_dir`` instead.
     """
-    return _agent_home_cache_root() / "cargo-home"
+    return agent_home_cache_root() / "cargo-home"
 
 
 def sandbox_agent_cache_dir() -> Path:
@@ -171,7 +172,7 @@ def sandbox_agent_cache_dir() -> Path:
     Cargo home and their own checkout's target, so no unsandboxed build may read
     or execute anything below this root.
     """
-    return _agent_home_cache_root() / "sandbox"
+    return agent_home_cache_root() / "sandbox"
 
 
 def get_agent_cargo_home_dir(session_id: str) -> str:

@@ -39,6 +39,23 @@ def cargo_checkout(tmp_path: Path) -> Path:
     return checkout
 
 
+@pytest.mark.parametrize("root", [".", "gobby", "relative-home"])
+def test_relative_home_cannot_create_checkout_target_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cargo_checkout: Path, root: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", root)
+
+    assert link_checkout_cargo_target(cargo_checkout, "project") is False
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        ensure_agent_cargo_target_dir(cargo_checkout, "project")
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        unsandboxed_zig_cache_dir()
+
+    assert list(tmp_path.iterdir()) == [cargo_checkout]
+    assert list(cargo_checkout.iterdir()) == [cargo_checkout / "Cargo.toml"]
+
+
 def test_checkout_dir_is_deterministic_under_project_cache(
     gobby_home: Path, cargo_checkout: Path
 ) -> None:
