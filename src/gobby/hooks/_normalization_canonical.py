@@ -13,8 +13,15 @@ from gobby.hooks._inline_interpreter_classifier import (
 from gobby.hooks._normalization_bindings import (
     _literal_assignment_bindings,
     _loop_binding_variable_is_stable,
+    _raw_shell_word_is_literal,
 )
-from gobby.hooks._normalization_git import classify_git_mutation, git_environment_parts
+from gobby.hooks._normalization_compound import case_arm_tokens, process_substitution_bodies
+from gobby.hooks._normalization_env import env_directory_operands
+from gobby.hooks._normalization_git import (
+    classify_git_mutation,
+    exported_git_selector,
+    git_environment_parts,
+)
 from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
     _gate_rewritable_scripts,
@@ -172,13 +179,14 @@ def _normalize_shell_tool_metadata(
     shell's directory; after that they fail closed. A top-level call grants the
     script-read budget its nested calls share.
     """
-    if depth:
-        return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
-    budget = _script_reads_left.set(SCRIPT_READ_BUDGET)
+    selectors = exported_git_selector.set(exported_git_selector.get() if depth else False)
+    budget = _script_reads_left.set(SCRIPT_READ_BUDGET) if not depth else None
     try:
         return _classify_shell_command(command, cwd=cwd, depth=depth, base_cwd=base_cwd)
     finally:
-        _script_reads_left.reset(budget)
+        if budget is not None:
+            _script_reads_left.reset(budget)
+        exported_git_selector.reset(selectors)
 
 
 def _classify_shell_command(
@@ -203,12 +211,28 @@ def _classify_shell_command(
         for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
     }
     persistent_cwd = cwd
+    spans_by_token = dict(zip((id(token) for token in tokens), scan.spans, strict=True))
+    case_depth = 0
+    pending_case_pattern = False
+    previous_end = 0
     directory_changed = False
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
+        start = spans_by_token[id(segment.tokens[0])][0]
+        gap = command[previous_end:start]
+        previous_end = spans_by_token[id(segment.tokens[-1])][1]
+        arm_tokens, case_depth, pending_case_pattern = case_arm_tokens(
+            segment.tokens,
+            case_depth=case_depth,
+            new_arm=pending_case_pattern or ";;" in gap or ";&" in gap,
+        )
+        owner_tokens, process_bodies = process_substitution_bodies(
+            arm_tokens, spans_by_token, command
+        )
+        segment = replace(segment, tokens=owner_tokens)
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
@@ -225,7 +249,30 @@ def _classify_shell_command(
         )
         leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
+        if parts[:1] == ["export"] and any(
+            word.split("=", 1)[0] in {"GIT_DIR", "GIT_WORK_TREE"} for word in parts[1:]
+        ):
+            exported_git_selector.set(True)
+        env_directories = env_directory_operands(raw_parts)
+        segment_cwd = persistent_cwd
+        if env_directories and segment_cwd is None and not directory_changed and base_cwd:
+            segment_cwd = str(base_cwd)
+        for directory in env_directories:
+            segment_cwd = _apply_cd(segment_cwd, directory)
+        if any(
+            not _raw_shell_word_is_literal(word)
+            for word in env_directory_operands(list(source_parts))
+        ):
+            segment_cwd = "$GOBBY_UNRESOLVED_ENV_DIRECTORY"
         segment_base = None if directory_changed or starts_elsewhere(parts) else base_cwd
+        if env_directories:
+            segment_base = Path(segment_cwd) if segment_cwd else None
+        for body in process_bodies:
+            metadata.append(
+                _classify_shell_segment_without_redirection(
+                    ["sh", "-c", body], persistent_cwd, depth=depth, base_cwd=base_cwd
+                )
+            )
         directory_changed = directory_changed or not preserves_directory(parts)
         if not parts:
             metadata.append(
@@ -241,7 +288,11 @@ def _classify_shell_command(
 
         cd_target = _literal_cd_target(parts)
         if cd_target is not None:
-            if not in_pipeline and segment.separator_before in {None, "&&", ";", "\n"}:
+            if (
+                not env_directories
+                and not in_pipeline
+                and segment.separator_before in {None, "&&", ";", "\n"}
+            ):
                 persistent_cwd = _apply_cd(persistent_cwd, cd_target)
             metadata.append(
                 _ShellSegmentMetadata(
@@ -277,6 +328,7 @@ def _classify_shell_command(
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
                     base_cwd=segment_base,
+                    invocation_cwd=segment_cwd,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
@@ -341,9 +393,11 @@ def _classify_shell_segment(
     depth: int = 0,
     piped_stdin: bool = False,
     base_cwd: Path | None = None,
+    invocation_cwd: str | None = None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
+    cwd = invocation_cwd if invocation_cwd is not None else cwd
 
     # Classify the base command without redirection operators/targets so a
     # redirect target never masquerades as a positional file argument.

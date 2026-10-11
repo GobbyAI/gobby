@@ -19,6 +19,99 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("wrapper", ["env -C other", "env --chdir=other"])
+@pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
+def test_env_directory_rebases_git_scope(tmp_path: Path, wrapper: str, operation: str) -> None:
+    data = _invocation_metadata(
+        f"{wrapper} git {operation}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    target = tmp_path / "other"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == [
+        str(target / "x.py") if operation.startswith("add") else str(target)
+    ]
+
+
+@pytest.mark.parametrize("selector", ["GIT_DIR", "GIT_WORK_TREE"])
+@pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
+@pytest.mark.parametrize("wrapper", ["{}", "sh -c '{}'"])
+def test_exported_git_selector_never_falls_back_to_cwd(
+    tmp_path: Path, selector: str, operation: str, wrapper: str
+) -> None:
+    data = _invocation_metadata(
+        f"export {selector}=/other && {wrapper.format('git ' + operation)}", tool_cwd=tmp_path
+    )
+    assert data["canonical_repo_mutation"] is True
+    assert data.get("canonical_file_paths", []) == []
+    ordinary = _invocation_metadata("git add x.py", tool_cwd=tmp_path)
+    assert ordinary["canonical_file_paths"] == [str(tmp_path / "x.py")]
+
+
+def test_env_directory_named_git_cannot_hide_repository_selector(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "env -C git GIT_DIR=/other git add x.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths", []) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in (x) touch c.py;; esac",
+        "case x in x) touch c.py;; y) touch d.py;; esac",
+        "case x in x|y) touch c.py;; esac",
+        "case x in x) (touch c.py);; esac",
+        "cat <(touch c.py)",
+        "cat <(cd other && touch c.py)",
+        "cat >(touch c.py)",
+    ],
+)
+def test_compound_bodies_attribute_writes(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    expected = "other/c.py" if "cd other" in command else "c.py"
+    assert data["canonical_repo_mutation"] is True
+    assert expected in data["canonical_file_paths"]
+
+
+@pytest.mark.parametrize("source", ["~user", "~", "~+", "~-"])
+def test_tilde_copy_source_keeps_directory_scope(tmp_path: Path, source: str) -> None:
+    data = _invocation_metadata(f"cp -R {source} tests/", tool_cwd=tmp_path)
+    assert data["canonical_file_paths"] == ["tests/"]
+
+
+def test_env_directory_does_not_rebase_parent_redirect_or_substitution(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "env -C other cat <(touch p.py) > out.py; touch next.py",
+        tool_cwd=tmp_path,
+        project_path=tmp_path,
+    )
+    assert set(data["canonical_file_paths"]) == {"p.py", "out.py", "next.py"}
+
+
+@pytest.mark.parametrize("directory", ["$D", "~user", "*"])
+def test_dynamic_env_directory_fails_closed(tmp_path: Path, directory: str) -> None:
+    data = _invocation_metadata(
+        f"env -C {directory} git add x.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_repo_mutation"] is True
+    assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("wrapper", ["env -C other env -C child", "X=1 command env -C other"])
+def test_nested_env_directory_changes_rebase_git(tmp_path: Path, wrapper: str) -> None:
+    data = _invocation_metadata(f"{wrapper} git add x.py", tool_cwd=tmp_path)
+    target = tmp_path / ("other/child/x.py" if "child" in wrapper else "other/x.py")
+    assert data["canonical_file_paths"] == [str(target)]
+
+
+@pytest.mark.parametrize("command", ["echo 'cat <(touch p.py)'", "cat '<(touch p.py)'"])
+def test_quoted_process_substitution_text_is_not_a_write(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert not data.get("canonical_repo_mutation")
+
+
 @pytest.mark.parametrize(
     "command",
     [

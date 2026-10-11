@@ -125,6 +125,34 @@ CLAIMED_VARIABLES: dict[str, Any] = {
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wrapper", ["env -C {root}", "env --chdir={root}"])
+@pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
+@pytest.mark.parametrize("claimed", [False, True])
+async def test_env_git_writes_obey_task_claim_gate(
+    temp_db: HubDatabase,
+    engine: RuleEngine,
+    tmp_path: Path,
+    wrapper: str,
+    operation: str,
+    claimed: bool,
+) -> None:
+    result = sync_rule_file(
+        temp_db,
+        get_bundled_rules_path() / "task-enforcement/require-task-before-edit.yaml",
+        tag="gobby",
+    )
+    assert result["success"] is True, result
+    temp_db.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
+    event = _event(f"{wrapper.format(root=tmp_path)} git {operation}", tmp_path)
+    variables = {**CLAIMED_VARIABLES, "task_claimed": claimed}
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+    assert event.data["canonical_repo_mutation"] is True
+    assert response.decision == ("allow" if claimed else "block"), response.reason
+    if not claimed:
+        assert "require-task-before-edit" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("explicit_directory", [False, True], ids=["cwd", "literal-C"])
 @pytest.mark.parametrize(
     "prefix", ["", "true && ", "git status && ", "git --no-pager ", "git -c k=v "]
