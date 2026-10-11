@@ -21,7 +21,7 @@ _NEUTRAL_TEXTGEN_CWD_PREFIX = "gobby-textgen-"
 
 # Claude Code slugs a cwd path into a ~/.claude/projects dir name by replacing
 # every character outside ASCII letters and digits with '-', so per-call temp cwds appear as
-# '...-T-gobby-textgen---<suffix>'. The fixed cwd below deliberately avoids the
+# '...-T-gobby-textgen-<suffix>'. The fixed cwd below deliberately avoids the
 # trailing '-' marker so the purge can never match it.
 _TEXTGEN_PROJECT_DIR_MARKER = "gobby-textgen-"
 _FIXED_TEXTGEN_DIRNAME = "textgen"
