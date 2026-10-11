@@ -2,7 +2,7 @@
 
 This is a low-level module: it must NOT import ``gobby.llm.claude`` or the
 ``gobby.ai`` text-generation adapters, because both of those import this helper.
-Keeping it dependency-free avoids an ``llm.claude -> ai.adapters -> llm.claude``
+Keeping it free of provider adapters avoids an ``llm.claude -> ai.adapters -> llm.claude``
 import cycle.
 """
 
@@ -15,22 +15,20 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+from gobby.agents.trust import encode_claude_project_path
+
 _NEUTRAL_TEXTGEN_CWD_PREFIX = "gobby-textgen-"
 
 # Claude Code slugs a cwd path into a ~/.claude/projects dir name by replacing
-# separators with '-', so per-call temp cwds appear there as
-# '...-T-gobby-textgen---<suffix>'. The fixed cwd below deliberately avoids the
+# every character outside ASCII letters and digits with '-', so per-call temp cwds appear as
+# '...-T-gobby-textgen-<suffix>'. The fixed cwd below deliberately avoids the
 # trailing '-' marker so the purge can never match it.
 _TEXTGEN_PROJECT_DIR_MARKER = "gobby-textgen-"
 _FIXED_TEXTGEN_DIRNAME = "textgen"
 
 
-def _claude_project_slug(path: Path) -> str:
-    return str(path).replace("/", "-").replace(".", "-")
-
-
 def _gobby_textgen_project_slug_fragment() -> str:
-    return _claude_project_slug(Path(tempfile.gettempdir()) / _NEUTRAL_TEXTGEN_CWD_PREFIX)
+    return encode_claude_project_path(Path(tempfile.gettempdir()) / _NEUTRAL_TEXTGEN_CWD_PREFIX)
 
 
 @contextlib.contextmanager
