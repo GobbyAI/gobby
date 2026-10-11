@@ -1147,6 +1147,36 @@ class TestToolHandlerEdgeCases:
         with pytest.raises(ValueError, match="outside the seat's own checkout"):
             handlers._assert_edit_path_selection(event, "session-123")
 
+    @pytest.mark.parametrize("foreign_cwd", [False, True])
+    @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue", "--abort"])
+    def test_sequencer_scope_uses_registered_workspace(
+        self,
+        mock_dependencies: dict[str, Any],
+        tmp_path: Path,
+        foreign_cwd: bool,
+        flag: str,
+    ) -> None:
+        own = tmp_path / "own"
+        foreign = tmp_path / "foreign"
+        (own / ".git").mkdir(parents=True)
+        (foreign / ".git").mkdir(parents=True)
+        mock_dependencies["session_manager"].get.return_value.workspace_path = str(own)
+        handlers = EventHandlers(**mock_dependencies)
+        cwd = foreign if foreign_cwd else own
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": f"git revert {flag}"}},
+        )
+        event.cwd = str(cwd)
+        event.data["cwd"] = str(cwd)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_edit_file_paths"] == []
+        if foreign_cwd:
+            with pytest.raises(ValueError, match="outside the seat's own checkout"):
+                handlers._assert_edit_path_selection(event, "session-123")
+        else:
+            handlers._assert_edit_path_selection(event, "session-123")
+
     def test_sequencer_scope_skips_live_edit_path_selection(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:

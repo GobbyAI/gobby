@@ -90,8 +90,16 @@ def _file_transfer_paths(
         or destination.endswith("/")
         or (probe.is_absolute() and probe.is_dir())
     )
+    # BSD cp copies a trailing-slash source's contents directly into the destination.
+    # A dynamic basename is likewise covered only by the whole destination directory.
     destinations = (
-        [posixpath.join(destination, posixpath.basename(source.rstrip("/"))) for source in sources]
+        [
+            destination
+            if source.endswith("/")
+            or _contains_unexpanded_shell_reference(posixpath.basename(source))
+            else posixpath.join(destination, posixpath.basename(source))
+            for source in sources
+        ]
         if is_directory
         else [destination]
     )

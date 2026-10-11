@@ -127,7 +127,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
             # Sequencer recovery has repository scope but does not author a file.
             # Permit that exemption only within this seat's own checkout.
             cwd = Path(event.cwd).resolve() if event.cwd else current_tool_cwd(data)
-            own_root = (checkout_root(cwd) or cwd) if cwd is not None else None
+            session = self._session_manager.get(session_id) if self._session_manager else None
+            workspace = session.workspace_path if session is not None else None
+            own_cwd = Path(workspace).resolve() if isinstance(workspace, str) and workspace else cwd
+            own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
             for path in data.get("canonical_file_paths", []):
                 if path in edit_paths:
                     continue

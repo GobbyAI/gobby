@@ -301,6 +301,25 @@ def test_file_transfer_records_exact_directory_destination(
     )
 
 
+@pytest.mark.parametrize(
+    ("command", "destination"),
+    [
+        ("cp -R docs/ tests", "tests"),
+        ("cp -R docs tests", "tests/docs"),
+        ('cp "$f" tests/', "tests/"),
+        ('for f in a.py b.py; do cp "$f" tests/; done', "tests/"),
+    ],
+)
+def test_file_transfer_directory_scope_covers_unknown_source_basename(
+    tmp_path: Path, command: str, destination: str
+) -> None:
+    (tmp_path / "tests").mkdir()
+    data = _invocation_metadata(command, tool_cwd=tmp_path)
+    assert data["canonical_file_paths"] == [destination]
+    assert data["canonical_write_file_paths"] == [destination]
+    assert not data.get("_canonical_repo_mutation_scope_unknown")
+
+
 @pytest.mark.parametrize("wrapper", ["{}", "bash -c '{}'"])
 @pytest.mark.parametrize(
     "command",
