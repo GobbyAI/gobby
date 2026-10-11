@@ -1561,6 +1561,41 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "delta,completed_texts,expected",
+        [
+            ("Hello wor", ["Hello world"], "Hello world"),
+            (
+                "Done. Checking logs.",
+                ["Done. Checking logs.", "Done."],
+                "Done. Checking logs.Done.",
+            ),
+        ],
+    )
+    async def test_send_message_consumes_unkeyed_text_in_item_order(
+        self, delta: str, completed_texts: list[str], expected: str
+    ) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [("item/agentMessage/delta", {"threadId": "thread-1", "delta": delta})]
+            + [
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"id": f"item-{i}", "type": "agentMessage", "text": text},
+                    },
+                )
+                for i, text in enumerate(completed_texts)
+            ]
+            + [("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"})]
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk)) == expected
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("answer_length", [700, 9000])
     @pytest.mark.parametrize("complete_delta", [False, True])
     async def test_send_message_recovers_missing_delta_tail(

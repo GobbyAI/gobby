@@ -134,14 +134,15 @@ async def stream_codex_turn(
     turn_parameters = cast(dict[str, Any], dict(request_parameters or {}))
 
     def _recover_item_text(item_id: str, content: str) -> TextChunk | None:
-        nonlocal saw_text_output, last_text_item_id
-        if (
-            item_id not in streamed_text_by_item
-            and unkeyed_delta_text
-            and content in unkeyed_delta_text
-        ):
-            return None
+        nonlocal saw_text_output, last_text_item_id, unkeyed_delta_text
         streamed_text = streamed_text_by_item.get(item_id, "")
+        if item_id not in streamed_text_by_item and unkeyed_delta_text:
+            if unkeyed_delta_text.startswith(content):
+                unkeyed_delta_text = unkeyed_delta_text[len(content) :]
+                streamed_text = content
+            elif content.startswith(unkeyed_delta_text):
+                streamed_text = unkeyed_delta_text
+                unkeyed_delta_text = ""
         if not content.startswith(streamed_text):
             return None
         missing_text = content[len(streamed_text) :]
