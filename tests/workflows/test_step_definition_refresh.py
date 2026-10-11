@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from gobby.agents.sync import sync_bundled_agents
+from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.apply_agent_definition import (
     build_definition_changes,
@@ -77,6 +77,108 @@ def seat_ids(hub_db: HubDatabase) -> tuple[str, str]:
         (session_id, session_id, "21000000-0000-4000-8000-000000000001", "claude", project_id),
     )
     return session_id, project_id
+
+
+@pytest.mark.parametrize("recreate_engine", [False, True], ids=["reload-cache", "recreated-engine"])
+@pytest.mark.asyncio
+async def test_reloaded_reviewer_ends_only_on_terminal_event(
+    hub_db: HubDatabase, tmp_path: Path, recreate_engine: bool, seat_ids: tuple[str, str]
+) -> None:
+    session_id, _ = seat_ids
+    current = AgentDefinitionBody.model_validate(
+        yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
+    )
+    current.workflows.rule_selectors.include = []
+    original = current.model_copy(deep=True)
+    assert original.step_workflow is not None
+    verdict = next(step for step in original.step_workflow.steps if step.name == "verdict")
+    for handler in verdict.on_mcp_success:
+        handler["when"] = (
+            "('VERDICT=BOUNCE' in str(tool_input.get('content')) or "
+            "'EVENT=LANDED' in str(tool_input.get('content'))) "
+            "and str(vars.candidate_task) in str(tool_input.get('content'))"
+        )
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    template = agents_dir / "code-reviewer.yaml"
+    template.write_text(yaml.safe_dump(original.model_dump(mode="json")), encoding="utf-8")
+    instance_mgr = AgentStepInstanceManager(hub_db)
+    variables = {"candidate_task": "#42", "candidate_received": True, "verdict_ready": True}
+    with (
+        patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir),
+        patch(
+            "gobby.sync_registry.SYNC_TARGETS",
+            [("agents", "gobby.agents.sync", "sync_bundled_agents")],
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+            return_value={"synced": 0, "errors": []},
+        ),
+    ):
+        assert sync_bundled_agents(hub_db)["errors"] == []
+        row = AgentDefinitionManager(hub_db).get_by_name(original.name)
+        assert row is not None
+        instance = build_step_instance(
+            original,
+            session_id=session_id,
+            step_workflow_id=row.step_workflow_id,
+            current_step="verdict",
+            variables=variables,
+        )
+        instance.step_action_count = 3
+        instance.total_action_count = 7
+        instance_mgr.save(instance)
+        before = instance.model_dump()
+        engine = RuleEngine(hub_db)
+        installed = resolve_agent(original.name, hub_db)
+        assert installed is not None and installed.step_workflow == original.step_workflow
+        template.write_text(yaml.safe_dump(current.model_dump(mode="json")), encoding="utf-8")
+        synced = reload_cache(MagicMock(), db=hub_db)
+        assert synced["success"] is True, synced
+        installed = resolve_agent(current.name, hub_db)
+        assert installed is not None and installed.step_workflow == current.step_workflow
+
+    if recreate_engine:
+        engine = RuleEngine(hub_db)
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-agents",
+                "tool_name": "send_message",
+                "arguments": {
+                    "content": "EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND "
+                    "NOTE=No VERDICT=BOUNCE needed; EVENT=LANDED follows"
+                },
+            },
+            "tool_output": {"success": True},
+        },
+    )
+    await engine.evaluate(event, session_id=session_id, variables={})
+    retained = instance_mgr.get_for_session(session_id)
+    assert retained is not None
+    assert retained.current_step == "verdict"
+    assert retained.variables == before["variables"]
+    assert retained.snapshot == instance.snapshot
+    assert retained.id == instance.id
+    assert retained.step_entered_at == instance.step_entered_at
+    assert retained.step_action_count == instance.step_action_count
+    assert retained.total_action_count == instance.total_action_count
+
+    event.data["tool_input"]["arguments"]["content"] = (
+        "EVENT=LANDED TASK=#42 SHA=abc RECEIPT=receipt RETEST=PASS"
+    )
+    await engine.evaluate(event, session_id=session_id, variables={})
+    completed = instance_mgr.get_for_session(session_id)
+    assert completed is not None and completed.current_step == "await"
+    assert completed.variables["candidate_received"] is False
+    assert completed.variables["verdict_ready"] is False
+    assert completed.variables["candidate_task"] is None
+    assert completed.snapshot == instance.snapshot and completed.id == instance.id
 
 
 @pytest.mark.parametrize("recreate_engine", [False, True], ids=["reload-cache", "recreated-engine"])
