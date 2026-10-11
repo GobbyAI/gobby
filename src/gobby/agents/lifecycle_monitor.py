@@ -434,7 +434,7 @@ class AgentLifecycleMonitor:
         """
         from gobby.agents.recovery_state import is_recovery_protected
 
-        runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
+        runs = self._agent_run_manager.list_active_for_machine_summary(require_machine_id())
         return [r for r in runs if r.terminal_id and not is_recovery_protected(r)]
 
     async def expire_terminal_run_sessions(self) -> int:

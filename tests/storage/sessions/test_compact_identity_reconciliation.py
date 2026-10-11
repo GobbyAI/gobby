@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -371,18 +370,29 @@ def test_compact_resolution_uses_marker_and_exact_terminal_process(
         terminal_context={**TERMINAL_CONTEXT, "parent_create_time": 1785221538.0},
     )
 
-    resolution = resolve_compact_continuation(
-        temp_db,
-        source="claude",
-        terminal_context=dict(TERMINAL_CONTEXT),
+    large_body = "x" * (4 * 1024 * 1024)
+    temp_db.execute(
+        "UPDATE sessions SET summary_markdown = %s, original_prompt = %s WHERE id = %s",
+        (large_body, large_body, canonical_id),
     )
+    with patch.object(temp_db, "fetchall", wraps=temp_db.fetchall) as scan:
+        resolution = resolve_compact_continuation(
+            temp_db,
+            source="claude",
+            terminal_context=dict(TERMINAL_CONTEXT),
+        )
 
+    query = scan.call_args.args[0]
+    assert "s.*" not in query
+    assert "summary_markdown" not in query
+    assert "original_prompt" not in query
     assert not resolution.ambiguous
     assert resolution.session is not None
     assert resolution.session.id == canonical_id
     stored = manager.get(canonical_id)
     assert stored is not None
     assert resolution.session.ref == stored.ref
+    assert resolution.session == stored
 
 
 def test_ambiguous_marked_terminal_process_matches_return_no_session(
@@ -453,19 +463,20 @@ def test_newer_process_session_supersedes_an_expired_compact_marker(
 def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -> None:
     db = MagicMock()
     db.fetchall.return_value = [
-        {"id": "newer", "compact_marker": "compact"},
-        {"id": "older", "compact_marker": "compact"},
+        {
+            "id": "newer",
+            "status": "awaiting_handoff",
+            "terminal_context": '{"pid": 1}',
+            "compact_marker": "compact",
+        },
+        {
+            "id": "older",
+            "status": "awaiting_handoff",
+            "terminal_context": '{"pid": 1}',
+            "compact_marker": "compact",
+        },
     ]
-    candidates = [
-        SimpleNamespace(id="newer", status="awaiting_handoff", terminal_context={"pid": 1}),
-        SimpleNamespace(id="older", status="awaiting_handoff", terminal_context={"pid": 1}),
-    ]
-
     with (
-        patch(
-            "gobby.sessions.compact_identity.Session.from_row",
-            side_effect=candidates,
-        ),
         patch(
             "gobby.sessions.compact_identity.terminal_process_contexts_match",
             return_value=True,

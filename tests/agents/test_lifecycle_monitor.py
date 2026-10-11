@@ -273,14 +273,8 @@ def test_monitor_ignores_other_machines_runs(
         machine_id=LOCAL_MACHINE_ID,
         terminal_id="gobby-local",
     )
-    remote = replace(
-        _metadata_run(_rid("machine-remote"), None),
-        machine_id=REMOTE_MACHINE_ID,
-        terminal_id="gobby-remote",
-    )
     run_manager = MagicMock()
-    run_manager.list_active_for_machine.return_value = [local, remote]
-    run_manager.list_active_for_machine.return_value = [local]
+    run_manager.list_active_for_machine_summary.return_value = [local]
     monkeypatch.setattr(
         lifecycle_monitor_module,
         "require_machine_id",
@@ -296,7 +290,7 @@ def test_monitor_ignores_other_machines_runs(
     )
 
     assert [run.id for run in monitor._get_active_terminal_runs()] == [local.id]
-    run_manager.list_active_for_machine.assert_called_once_with(LOCAL_MACHINE_ID)
+    run_manager.list_active_for_machine_summary.assert_called_once_with(LOCAL_MACHINE_ID)
 
 
 def test_monitor_without_tmux_config_uses_defaults(temp_db: HubDatabase) -> None:
@@ -1305,9 +1299,11 @@ async def test_changed_draft_does_not_renew_expired_grace_window(
 
     assert [first, changed] == [0, 1]
     cleanup_agent.assert_awaited_once_with(
-        run,
+        ANY,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+    assert cleanup_agent.await_args is not None
+    assert cleanup_agent.await_args.args[0].id == run.id
 
 
 @pytest.mark.asyncio
@@ -1370,9 +1366,11 @@ async def test_unchanged_draft_past_grace_cleans_up_once(
 
     assert [first, expired, duplicate] == [0, 1, 0]
     cleanup_agent.assert_awaited_once_with(
-        run,
+        ANY,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+    assert cleanup_agent.await_args is not None
+    assert cleanup_agent.await_args.args[0].id == run.id
     inc_counter.assert_called_once_with("agent_lifecycle_autonomous_stuck_detected_total", 1)
     assert len(runtime.snapshot_calls) == 1
     assert run.id not in monitor._draft_grace_observations
@@ -1550,9 +1548,11 @@ async def test_xhigh_draft_grace_uses_scaled_idle_window(
 
     assert [first, scaled_window, expired] == [0, 0, 1]
     cleanup_agent.assert_awaited_once_with(
-        run,
+        ANY,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+    assert cleanup_agent.await_args is not None
+    assert cleanup_agent.await_args.args[0].id == run.id
 
 
 async def test_stagnant_run_at_fresh_post_compaction_prompt_is_stopped_not_woken(
@@ -1582,9 +1582,11 @@ async def test_stagnant_run_at_fresh_post_compaction_prompt_is_stopped_not_woken
 
     assert handled == 1
     cleanup_agent.assert_awaited_once_with(
-        run,
+        ANY,
         terminal_payload="autonomous stuck: No progress events for 634 seconds",
     )
+    assert cleanup_agent.await_args is not None
+    assert cleanup_agent.await_args.args[0].id == run.id
     assert runtime.write_log == []
 
 
@@ -5341,7 +5343,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         run_db=executor.run,
         terminal_services=_fake_terminal_services(temp_db),
     )
-    original_list_active = agent_run_manager.list_active_for_machine
+    original_list_active = agent_run_manager.list_active_for_machine_summary
 
     list_active_started = threading.Event()
     release_list_active = threading.Event()
@@ -5354,7 +5356,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     try:
         with (
             patch.object(
-                agent_run_manager, "list_active_for_machine", side_effect=slow_list_active
+                agent_run_manager, "list_active_for_machine_summary", side_effect=slow_list_active
             ),
         ):
 
@@ -5809,7 +5811,12 @@ class TestReapDaemonStopOrphans:
         )
         no_tmux = _metadata_run(_rid("no-tmux-run"), None)
         run_manager = MagicMock()
-        run_manager.list_active_for_machine.return_value = [live, fenced, provisional, no_tmux]
+        run_manager.list_active_for_machine_summary.return_value = [
+            live,
+            fenced,
+            provisional,
+            no_tmux,
+        ]
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=run_manager,
