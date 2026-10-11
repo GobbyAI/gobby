@@ -228,7 +228,11 @@ def test_case_pattern_terminator_unterminated_arm_does_not_raise(tmp_path: Path)
             "project_path": str(tmp_path),
         }
     )
-    assert data["canonical_tool_kind"] in {"read", "write", "execute"}
+    assert (
+        data["canonical_tool_kind"],
+        data.get("canonical_repo_mutation"),
+        data.get("canonical_repo_mutation_scope_unknown"),
+    ) == ("write", True, True)
 
 
 @pytest.mark.parametrize(
@@ -2549,6 +2553,11 @@ def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: 
     [
         ("case x in x) cd sub;& d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub;;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub  # go\n;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub  # go\n;;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub & ;& d) touch e.py;; esac", "e.py"),
+        ("case x in x) cd sub & # bg\n;& d) touch e.py;; esac", "e.py"),
+        ("case x in x) cd sub  # a & b\n;& d) touch e.py;; esac", "sub/e.py"),
         ("cd sub & touch x.py", "x.py"),
     ],
 )
