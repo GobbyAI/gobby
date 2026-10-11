@@ -803,7 +803,8 @@ async def test_completed_text_sends_once_after_rollback_and_restart_replay(
     )
     restored_manager._channel_by_name = dict(manager._channel_by_name)
     restored_manager._adapters = dict(manager._adapters)
-    restored_manager._restore_telegram_targets()
+    for restored_channel in restored_manager._channel_by_name.values():
+        await restored_manager._restore_telegram_targets(restored_channel)
     restarted = processor(temp_db, restored_manager)
     await restarted._process_parsed_batch(session_id, batch)
     send.assert_awaited_once()

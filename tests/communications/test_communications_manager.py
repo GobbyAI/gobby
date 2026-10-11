@@ -443,6 +443,33 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_restore_lookup_failure_still_starts_polling(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+) -> None:
+    manager, channel, holder, adapter = operator_telegram
+    channel.config_json["telegram_agent_targets"] = {"dm:42": holder.id, "dm:43": "other"}
+    manager._channel_init_errors[channel.name] = "previous startup error"
+
+    def lookup(session_id: str) -> None:
+        if session_id == holder.id:
+            raise RuntimeError("temporary session lookup failure")
+
+    with (
+        patch.object(manager._session_store, "get", side_effect=lookup) as get_session,
+        patch.object(manager._lifecycle, "init_adapter", AsyncMock(return_value=adapter)),
+        patch.object(manager._lifecycle, "_start_polling_if_needed") as start_polling,
+    ):
+        assert await manager._lifecycle.activate_channel(channel) is adapter
+
+    assert get_session.call_count == 2
+    start_polling.assert_called_once_with(channel.name, channel, adapter)
+    assert channel.name not in manager._channel_init_errors
+    assert manager._adapters[channel.name] is adapter
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_resume_during_fallback_does_not_clear_target_or_send_notice(
     operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],

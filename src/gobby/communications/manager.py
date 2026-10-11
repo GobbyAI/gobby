@@ -184,11 +184,14 @@ class CommunicationsManager:
                 self._managed_telegram_targets.add(key)
                 restored_session_ids.add(session_id)
         for session_id in restored_session_ids:
-            session = await asyncio.to_thread(self._session_store.get, session_id)
-            if session is not None:
-                await self.handle_session_status_transition(
-                    SessionStatusTransition.from_session(session)
-                )
+            try:
+                session = await asyncio.to_thread(self._session_store.get, session_id)
+                if session is not None:
+                    await self.handle_session_status_transition(
+                        SessionStatusTransition.from_session(session)
+                    )
+            except Exception:
+                logger.exception("Failed to reconcile restored Telegram target %s", session_id)
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
