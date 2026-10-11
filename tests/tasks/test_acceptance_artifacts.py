@@ -120,6 +120,45 @@ def test_javascript_assertion_requires_executable_matcher(body: str) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        r"expect(url).toMatch(/^https?:\/\//);",
+        r"const pattern = /^https?:\/\//; expect(url).toEqual(expected);",
+        r"expect(url).toMatch(/[}/]/);",
+        "expect(total / count).toEqual(expected);",
+    ],
+)
+def test_javascript_regex_preserves_executable_assertions(tmp_path: Path, body: str) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / "regex.test.ts").write_text(
+        f'it("checks regex", () => {{ {body} }});\n', encoding="utf-8"
+    )
+    sha = _commit(repo, "regex assertion fixture")
+    result = evaluate_acceptance_artifacts(
+        criteria="test: `regex.test.ts::checks regex`", repo_path=str(repo), commit_shas=[sha]
+    )
+    assert result.passed, result.findings
+    assert len(result.tests) == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "const patterns = [/expect(actual).toEqual(expected)/];",
+        "const pattern = value + /expect(actual).toEqual(expected)/;",
+        "const pattern = value * /expect(actual).toEqual(expected)/;",
+        "const pattern = value < /expect(actual).toEqual(expected)/;",
+        "throw /expect(actual).toEqual(expected)/;",
+    ],
+)
+def test_javascript_regex_text_never_earns_assertion_credit(body: str) -> None:
+    test = AcceptanceTest("regex.test.ts::feature", "regex.test.ts", "feature", body)
+    assert artifacts_module._test_body_findings(test) == [
+        f"{test.reference}: contains no executable assertion or panic expectation"
+    ]
+
+
 @pytest.mark.parametrize("prefix", ["- TDD cycle:", "Named test:"])
 def test_unlabeled_test_reference_is_not_silently_dropped(prefix: str) -> None:
     reference = "tests/x_test.py::test_a"

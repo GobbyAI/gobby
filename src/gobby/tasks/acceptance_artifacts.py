@@ -470,11 +470,13 @@ def _mask_code(code: str, path: str) -> str:
 
     Equal literals share a token, so placebo checks still see `assert_eq!("a", "a")`.
     """
-    literal_re = _RUST_LITERAL_RE if _is_rust(path) else _TEXT_LITERAL_RE
+    literal_re = _literal_regex(path)
     tokens: dict[str, str] = {}
 
     def replace(match: re.Match[str]) -> str:
         text = match.group(0)
+        if match.groupdict().get("prefix") is not None:
+            return match.group("prefix") + "regex_literal"
         if text.startswith(("//", "/*")):
             return " "
         if text.startswith("`") and "${" in text:
@@ -483,6 +485,19 @@ def _mask_code(code: str, path: str) -> str:
         return tokens.setdefault(text, f'"s{len(tokens)}"')
 
     return literal_re.sub(replace, code)
+
+
+def _literal_regex(path: str) -> re.Pattern[str]:
+    if _is_rust(path):
+        return _RUST_LITERAL_RE
+    return _JS_LITERAL_RE if Path(path).suffix in _JS_EXTENSIONS else _TEXT_LITERAL_RE
+
+
+def _literal_spans(source: str, path: str) -> list[tuple[int, int]]:
+    return [
+        (match.start() + len(match.groupdict().get("prefix") or ""), match.end())
+        for match in _literal_regex(path).finditer(source)
+    ]
 
 
 def _same_file_helper_bodies(source: str, path: str, symbol: str, body: str) -> tuple[str, ...]:
@@ -554,8 +569,7 @@ def _extract_braced_test_body(source: str, symbol: str, path: str) -> str:
         rf"""(?m)^[ \t]*(?:it|test)(?:\.[A-Za-z]+)?\(\s*(['"]){escaped}\1""",
     )
     # A declaration that starts inside a comment or literal is text, not code.
-    literal_re = _RUST_LITERAL_RE if _is_rust(path) else _TEXT_LITERAL_RE
-    text_spans = [literal.span() for literal in literal_re.finditer(source)]
+    text_spans = _literal_spans(source, path)
     matches = [
         match
         for pattern in patterns
@@ -587,8 +601,14 @@ def _include_symbol_attributes(source: str, declaration_start: int) -> int:
 
 def _matching_brace_end(source: str, opening: int, path: str) -> int:
     scan_re = _RUST_BRACE_SCAN_RE if _is_rust(path) else _TEXT_BRACE_SCAN_RE
+    text_spans = []
+    if Path(path).suffix in _JS_EXTENSIONS:
+        scan_re = re.compile(r"[{}]")
+        text_spans = _literal_spans(source, path)
     depth = 0
     for match in scan_re.finditer(source, opening):
+        if any(start <= match.start() < end for start, end in text_spans):
+            continue
         if match.group(0) == "{":
             depth += 1
         elif match.group(0) == "}":
@@ -612,10 +632,12 @@ _JS_MATCHER_RE = re.compile(r"\s*(?:\.\s*(?:not|resolves|rejects)\s*)*\.\s*[A-Za
 _JS_CONSTANT_RE = re.compile(
     r'(?:true|false|null|undefined|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?|"s\d+")'
 )
-_JS_REGEX_LITERAL_RE = re.compile(
-    r"(?P<prefix>(?:^|[=(,:;!&|?{}>]|\breturn)\s*)/(?![/*])"
-    r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*",
-    re.MULTILINE,
+_JS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+_JS_LITERAL_RE = re.compile(
+    r"(?P<prefix>(?:^|[=(,:;!&|?{}>\[+*%~<^-]|"
+    r"\b(?:return|throw|case|yield|void|typeof|delete|in|instanceof|await))\s*)/(?![/*])"
+    r"(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+/[a-z]*|" + _TEXT_LITERAL_PATTERN,
+    re.MULTILINE | re.DOTALL,
 )
 
 
@@ -637,7 +659,6 @@ def _javascript_test_findings(test: AcceptanceTest) -> list[str]:
     has_placebo = False
     for source in (test.body, *test.helpers):
         code = _mask_code(source, test.path)
-        code = _JS_REGEX_LITERAL_RE.sub(r"\g<prefix>regex_literal", code)
         for match in _JS_ASSERTION_RE.finditer(code):
             if re.search(r"\bfunction\s*\*?\s*$", code[: match.start()]):
                 continue
