@@ -17,6 +17,7 @@ from typing import cast
 
 import httpx
 
+from gobby.prompts.rendering import log_invisible_counts, strip_invisible_unicode
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
 
 logger = logging.getLogger(__name__)
@@ -454,7 +455,8 @@ class GitHubTopicProvider(HubProvider):
             response.raise_for_status()
             if len(response.content) > MAX_SKILL_FILE_BYTES:
                 raise ItemUnavailable("item_unavailable")
-            content = response.content.decode("utf-8")
+            content, counts = strip_invisible_unicode(response.content.decode("utf-8"))
+            log_invisible_counts(counts, "GitHub topic skill")
             name = PurePosixPath(record.path).name
             details = HubSkillDetails(
                 slug=record.item_id,

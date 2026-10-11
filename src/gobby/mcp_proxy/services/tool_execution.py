@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, cast
 
+from mcp.types import CallToolResult
+
 from gobby.hooks.tool_error_tracker import track_proxy_outcome
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.services.output_repair import maybe_repair_output
@@ -19,6 +21,11 @@ from gobby.mcp_proxy.services.server_resolution import (
     resolve_server,
 )
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
+from gobby.prompts.rendering import (
+    clean_untrusted_value,
+    log_invisible_counts,
+    strip_invisible_unicode,
+)
 from gobby.utils.session_refs import try_resolve_session_field
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -702,6 +709,18 @@ async def _execute_tool(
         result = await service._mcp_manager.call_tool(
             manager_id, tool_name=tool_name, arguments=arguments, **call_kwargs
         )
+        if not server_name.startswith("gobby-"):
+            payload = (
+                result.model_dump(mode="json") if isinstance(result, CallToolResult) else result
+            )
+            cleaned, counts = clean_untrusted_value(payload)
+            log_invisible_counts(counts, "third-party MCP")
+            if counts.total:
+                result = (
+                    CallToolResult.model_validate(cleaned)
+                    if isinstance(result, CallToolResult)
+                    else cleaned
+                )
         return result
 
     except Exception as e:
@@ -713,6 +732,9 @@ async def _execute_tool(
             )
         else:
             error_message = str(e)
+        if not server_name.startswith("gobby-"):
+            error_message, counts = strip_invisible_unicode(error_message)
+            log_invisible_counts(counts, "third-party MCP error")
         is_argument_error = service._is_argument_error(error_message)
         log_failure = logger.debug if is_argument_error else logger.warning
         log_failure("Tool call failed: %s/%s: %s", server_name, tool_name, error_message)
