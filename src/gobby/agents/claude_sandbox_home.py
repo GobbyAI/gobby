@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,7 +41,20 @@ def prepare_claude_reviewer_home(
         if not isinstance(source, dict):
             raise ValueError("Claude global configuration must be an object")
         if isinstance(servers := source.get("mcpServers"), dict):
-            seed["mcpServers"] = servers
+            # User helpers run from CLAUDE_CONFIG_DIR; keep their original cwd.
+            user_servers = {}
+            for name, server in servers.items():
+                if (
+                    isinstance(server, dict)
+                    and isinstance(helper := server.get("headersHelper"), str)
+                    and helper
+                ):
+                    server = {
+                        **server,
+                        "headersHelper": f"cd {shlex.quote(str(host_config.resolve()))} && (\n{helper}\n)",
+                    }
+                user_servers[name] = server
+            seed["mcpServers"] = user_servers
         projects = source.get("projects", {})
         project = projects.get(workspace, {}) if isinstance(projects, dict) else {}
         if isinstance(project, dict) and isinstance(servers := project.get("mcpServers"), dict):

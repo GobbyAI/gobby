@@ -1,5 +1,6 @@
 import json
 import logging
+import subprocess
 import tomllib
 from dataclasses import replace
 from pathlib import Path
@@ -258,6 +259,60 @@ async def test_claude_reviewer_spawn_preserves_user_mcp_without_workspace_config
         "gobby": server
     }
     assert record.call_args.kwargs["env"]["CLAUDE_CONFIG_DIR"] == str(private)
+
+
+@pytest.mark.parametrize("configured_home", [False, True])
+def test_claude_reviewer_user_headers_helper_keeps_original_config_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured_home: bool
+) -> None:
+    home = tmp_path / "host's home"
+    host = home / ("alternate config" if configured_home else ".claude")
+    host.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for directory, value in ((host, "user-fixture"), (workspace, "local-fixture")):
+        (directory / "headers.json").write_text(json.dumps({"X-Fixture": value}), encoding="utf-8")
+        script = directory / "headers.sh"
+        script.write_text("#!/bin/sh\ncat headers.json\n", encoding="utf-8")
+        script.chmod(0o700)
+    env = {"CLAUDE_CONFIG_DIR": str(host)} if configured_home else {}
+    global_config = host / ".claude.json" if configured_home else home / ".claude.json"
+    helper = {"type": "http", "url": "https://fixture.invalid", "headersHelper": "./headers.sh"}
+    global_config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {"user": helper, "empty": {"headersHelper": ""}},
+                "projects": {str(workspace): {"mcpServers": {"local": helper}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = prepare_claude_reviewer_home(
+        tmp_path / "cache", env, workspace=str(workspace), auto_approve=True
+    )
+
+    private = Path(state.environment["CLAUDE_CONFIG_DIR"])
+    seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
+    user_command = seed["mcpServers"]["user"]["headersHelper"]
+    local_command = seed["projects"][str(workspace)]["mcpServers"]["local"]["headersHelper"]
+    assert local_command == "./headers.sh"
+    assert seed["mcpServers"]["empty"]["headersHelper"] == ""
+    for command, cwd, value in (
+        (user_command, private, "user-fixture"),
+        (local_command, workspace, "local-fixture"),
+    ):
+        result = subprocess.run(
+            ["/bin/sh", "-c", command],
+            cwd=cwd,
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        assert json.loads(result.stdout) == {"X-Fixture": value}
 
 
 @pytest.mark.parametrize("linked_path", ["settings", "global", "projects", "transcript"])
