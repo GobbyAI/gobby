@@ -61,6 +61,10 @@ from gobby.hooks._normalization_paths import (
     _structured_write_paths,
     extract_structured_mutation_paths,
 )
+from gobby.hooks._normalization_pipeline import (
+    _is_neutral_echo_segment,
+    _is_read_only_pipeline_stage,
+)
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
     _pipeline_filter_output_line_bound,
@@ -100,7 +104,6 @@ from gobby.hooks._python_pipeline_classifier import (
     _classify_python_pipeline_evidence,
     _classify_python_source_evidence,
     _inline_interpreter_parts,
-    _is_read_only_python_pipeline,
     _PythonExecutionClassification,
     _PythonMutationEvidence,
 )
@@ -131,24 +134,8 @@ from gobby.hooks.shell_execution import (
 )
 
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
-_GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
-    {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
-)
-# Characters in echo arguments that imply command substitution rather than a plain marker.
-_ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
 # Script bodies the current top-level command may still read; none outside one.
 _script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
-
-
-def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
-    if not parts:
-        return False
-    if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
-        return False
-    cmd = shell_command_name(parts[0])
-    if cmd == "sed" and _has_sed_inplace_option(parts):
-        return False
-    return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
 
 
 def _stdin_program_interpreter(parts: list[str]) -> str | None:
@@ -170,15 +157,6 @@ def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
     if any(flag in {"-c", "-e", "--eval", "-m"} or flag.startswith("--eval=") for flag in args):
         return False
     return "-" in args or not any(not arg.startswith("-") for arg in args)
-
-
-def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool:
-    """Return True for side-effect-free ``echo`` segments used as output markers."""
-    if not parts or shell_command_name(parts[0]) != "echo":
-        return False
-    if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
-        return False
-    return not any(ch in part for part in parts[1:] for ch in _ECHO_UNSAFE_CHARS)
 
 
 def _normalize_shell_tool_metadata(
