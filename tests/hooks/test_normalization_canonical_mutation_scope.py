@@ -21,6 +21,29 @@ from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $$'\\' ; git apply x.patch ; echo '\\'",
+        "echo $(echo $$'\\') ; git apply x.patch ; echo ')'\\'",
+        "echo $$'\\'' ; git apply x.patch ; echo \\'",
+    ],
+)
+def test_dollar_pair_quote_write_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("command", ["echo $$'.txt'", "echo \\$$'\\''", "echo $$$'it\\'s'"])
+def test_dollar_pair_quote_literals_stay_non_write(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
 @pytest.mark.parametrize("wrapper", ["env -C other", "env --chdir=other"])
 @pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
 def test_env_directory_rebases_git_scope(tmp_path: Path, wrapper: str, operation: str) -> None:

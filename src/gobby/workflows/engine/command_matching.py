@@ -38,7 +38,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Literal
 
-from gobby.hooks._ansi_c import SHELL_DIALECTS
+from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
+from gobby.hooks._normalization_compound import case_arm_tokens
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -522,6 +523,10 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
     i, n = 0, len(command)
     while i < n:
         ch = command[i]
+        try:
+            ansi_c = opens_ansi_c_quote(command, i)
+        except ValueError:
+            return command
         if ch == "\\":
             i += 2
         elif ch == "#" and (i == 0 or command[i - 1] in " \t\n;|&()"):
@@ -529,7 +534,7 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
             # text inside it is prose, so a quote there must not open a span.
             end = command.find("\n", i)
             i = n if end < 0 else end
-        elif command.startswith("$'", i):
+        elif ansi_c:
             # ANSI-C `$'...'`: a backslash escapes the next character.
             end = i + 2
             while end < n and command[end] != "'":
@@ -609,7 +614,20 @@ def _subjects(
     # A quoted substitution's redirects follow its word with spans inside it,
     # so a segment's text runs from its earliest start to its latest end.
     raw: list[str] = []
+    arms: list[str | None] = []
+    case_depth = 0
+    pending = False
+    previous_end = 0
     for segment in segments:
+        tokens = scan.tokens[segment.first : segment.last + 1]
+        start = scan.spans[segment.first][0]
+        gap = command[previous_end:start]
+        previous_end = scan.spans[segment.last][1]
+        kept, case_depth, pending = case_arm_tokens(
+            tokens, case_depth=case_depth, new_arm=pending or ";;" in gap or ";&" in gap
+        )
+        while kept and not kept[0].quoted and kept[0].value in {"case", "esac"}:
+            kept, case_depth, pending = case_arm_tokens(kept, case_depth=case_depth, new_arm=False)
         segment_spans = scan.spans[segment.first : segment.last + 1]
         cursor = min(start for start, _ in segment_spans)
         end = max(end for _, end in segment_spans)
@@ -620,12 +638,25 @@ def _subjects(
                 cursor = min(heredoc.end, end)
         parts.append(command[cursor:end])
         raw.append("".join(parts))
+        arm_text = None
+        if kept and len(kept) < len(tokens):
+            first = next(index for index, token in enumerate(tokens) if token is kept[0])
+            cursor = scan.spans[segment.first + first][0]
+            parts = []
+            for heredoc in scan.heredocs:
+                if cursor <= heredoc.start < end:
+                    parts.append(command[cursor : heredoc.start])
+                    cursor = min(heredoc.end, end)
+            parts.append(command[cursor:end])
+            arm_text = "".join(parts)
+        arms.append(arm_text)
     subjects: list[str] = []
-    for text, segment in zip(raw, segments, strict=True):
-        if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
-            subjects.append(text)
-        else:
-            subjects.extend(_resolve_substitutions(text, depth, correlations))
+    for text, arm_text, segment in zip(raw, arms, segments, strict=True):
+        for candidate in [text] if arm_text is None else [text, arm_text]:
+            if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
+                subjects.append(candidate)
+            else:
+                subjects.extend(_resolve_substitutions(candidate, depth, correlations))
     for heredoc in scan.heredocs:
         owner = next(
             index
@@ -704,7 +735,11 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
             continue
-        if not quote and subject.startswith("$'", index):
+        try:
+            ansi_c = not quote and opens_ansi_c_quote(subject, index)
+        except ValueError:
+            return [subject]
+        if ansi_c:
             quote = "$"
             out.append("$'")
             correlated.append("$'")

@@ -12,7 +12,7 @@ import shlex
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
+from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
@@ -145,7 +145,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append("__gobby_expansion__")
             index = end + 1
             continue
-        if not data and not quote and command.startswith("$'", index):
+        if not data and not quote and opens_ansi_c_quote(command, index):
             # ANSI-C `$'...'` ("$" state): a backslash escapes the next character.
             quote = "$"
             output.append("$'")

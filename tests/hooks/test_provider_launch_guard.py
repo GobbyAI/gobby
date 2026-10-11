@@ -19,6 +19,22 @@ from gobby.workflows.sync_rules import sync_rule_file
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $$'\\' ; codex exec hi ; echo '\\'",
+        "echo $$'\\'' ; codex exec hi ; echo \\'",
+        "echo $(echo $$'\\') ; codex exec hi ; echo ')'\\'",
+    ],
+)
+def test_dollar_pair_quote_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+def test_dollar_pair_quote_literal_allows_provider_guard() -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": "echo $$'.txt'"})
+
+
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
 @pytest.mark.parametrize(
     "options",

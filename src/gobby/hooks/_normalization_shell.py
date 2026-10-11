@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape
+from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c_quote
 from gobby.hooks._normalization_env import strip_shell_wrappers
 from gobby.hooks._normalization_paths import _append_unique_path
 
@@ -254,7 +254,7 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             index += 1
             continue
 
-        if char == "'" or command.startswith("$'", index):
+        if char == "'" or opens_ansi_c_quote(command, index):
             # ANSI-C `$'...'` decodes C escapes (gobby.hooks._ansi_c).
             begin(index)
             quoted = True
@@ -462,7 +462,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             continue
         if backtick and char == "`":
             return index
-        if not quote and text.startswith("$'", index):
+        if not quote and opens_ansi_c_quote(text, index):
             quote = "$'"
             line.append("$'")
             index += 2
