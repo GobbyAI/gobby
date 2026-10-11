@@ -1009,6 +1009,7 @@ class TestSpawnAgentStepVariables:
             "gobby:references/development/obligations.md",
             "restraint",
             "gobby:references/tasks/overview.md",
+            "code-review",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
@@ -1050,6 +1051,7 @@ class TestSpawnAgentStepVariables:
             "gobby:references/development/obligations.md",
             "restraint",
             "gobby:references/tasks/overview.md",
+            "code-review",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]
