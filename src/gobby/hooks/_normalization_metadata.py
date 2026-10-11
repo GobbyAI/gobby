@@ -167,12 +167,21 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         resolvable = [
             path for path in item.paths if not _path_is_unresolved(path, item.literal_path_root)
         ]
-        if (
-            item.extra
-            and item.extra.get("canonical_code_navigation_action")
-            and len(resolvable) != len(item.paths)
-        ):
-            navigation_scope_unknown = True
+        if item.extra and item.extra.get("canonical_code_navigation_action"):
+            for path in item.paths:
+                if not _path_is_unresolved(path, item.literal_path_root):
+                    continue
+                reference = _plain_loop_binding_reference(
+                    path, item.shell_words, item.shell_raw_words
+                )
+                if reference and reference[0] in loop_bindings:
+                    variable, suffix = reference
+                    for bound_path in loop_bindings[variable]:
+                        resolved_path = bound_path + suffix
+                        if resolved_path not in paths:
+                            paths.append(resolved_path)
+                else:
+                    navigation_scope_unknown = True
         unresolved_mutation_paths = (
             [path for path in item.paths if _path_is_unresolved(path, item.literal_path_root)]
             if item.repo_mutation
