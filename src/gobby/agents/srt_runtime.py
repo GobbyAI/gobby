@@ -7,7 +7,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -30,6 +29,7 @@ from gobby.agents.sandbox_policy import (
     assert_sensitive_path_contract,
     canonical_path,
     managed_execution_root,
+    policy_subtree_prefix,
     prepare_sandbox_run_paths,
     previous_run_write_paths,
     sandbox_cache_path,
@@ -520,15 +520,6 @@ _SRT_DEFAULT_WRITE_PATHS = (
     "~/.npm/_logs",
     "~/.claude/debug",
 )
-_GLOB_START = re.compile(r"[*?\[{]")
-
-
-def _subtree_prefix(entry: str) -> str:
-    """Return the slash-terminated directory a policy path or glob can match within."""
-    match = _GLOB_START.search(entry)
-    if match:
-        entry = entry[: match.start()].rpartition("/")[0]
-    return entry.rstrip("/") + "/"
 
 
 def _effective_deny_write(allow_write: list[str], deny_write: list[str]) -> list[str]:
@@ -542,12 +533,12 @@ def _effective_deny_write(allow_write: list[str], deny_write: list[str]) -> list
     # SRT grants each default by its realpath (normalizePathForSandbox); allow_write
     # is already canonical.
     grants = [
-        _subtree_prefix(path)
+        policy_subtree_prefix(path)
         for path in {*defaults, *map(os.path.realpath, defaults), *allow_write}
     ]
     kept = []
     for deny in deny_write:
-        prefix = _subtree_prefix(deny)
+        prefix = policy_subtree_prefix(deny)
         if any(prefix.startswith(grant) or grant.startswith(prefix) for grant in grants):
             kept.append(deny)
     return kept
@@ -773,8 +764,12 @@ async def prepare_sandbox_launch(
     managed_root = managed_execution_root().resolve()
     own_root = run_paths.root.resolve()
     for allowed_path in (*paths.read_paths, *paths.write_paths):
-        allowed = Path(allowed_path).resolve(strict=False)
-        if allowed.is_relative_to(managed_root) and not allowed.is_relative_to(own_root):
+        allowed = Path(policy_subtree_prefix(allowed_path)).resolve(strict=False)
+        is_glob = any(char in allowed_path for char in "*?[{")
+        if managed_root.is_relative_to(allowed) or (
+            allowed.is_relative_to(managed_root)
+            and (is_glob or not allowed.is_relative_to(own_root))
+        ):
             raise SrtRuntimeError("Sandbox grants cannot expose another managed execution")
     if config.backend == "srt" and sys.platform == "linux":
         # bwrap masks denied temp roots before executing SRT's seccomp helper.
