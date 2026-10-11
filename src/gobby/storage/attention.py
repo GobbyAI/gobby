@@ -178,6 +178,7 @@ class AttentionRosterRow:
     terminal_id: str | None
     terminal: AttentionRosterTerminal | None
     task_title: str | None = None
+    definition_title: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
@@ -217,6 +218,9 @@ class AttentionRosterRow:
             terminal_id=str(terminal_id) if terminal_id is not None else None,
             terminal=terminal,
             task_title=str(row["task_title"]) if row.get("task_title") is not None else None,
+            definition_title=(
+                str(row["definition_title"]) if row.get("definition_title") is not None else None
+            ),
         )
 
 
@@ -293,7 +297,7 @@ class AttentionStateManager:
                 'run' AS roster_kind,
                 run.id::text AS source_id,
                 run.child_session_id::text AS session_id,
-                run.status AS lifecycle_status,
+                COALESCE(child.status, run.status) AS lifecycle_status,
                 run.task_id::text AS task_id,
                 CASE
                     WHEN task.id IS NULL THEN NULL
@@ -313,8 +317,17 @@ class AttentionStateManager:
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
                 terminal.locator AS terminal_locator,
-                task.title AS task_title
+                task.title AS task_title,
+                COALESCE(
+                    CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
+                         THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
+                    CASE WHEN jsonb_typeof(run.resume_metadata_json->'placement'->'title') = 'string'
+                         THEN NULLIF(BTRIM(run.resume_metadata_json->'placement'->>'title'), '') END,
+                    NULLIF(BTRIM(run.agent_name), '')
+                ) AS definition_title
             FROM agent_runs run
+            LEFT JOIN sessions child ON child.id = run.child_session_id
+            LEFT JOIN session_variables seat ON seat.session_id = child.id
             LEFT JOIN tasks task ON task.id = run.task_id
             LEFT JOIN LATERAL (
                 SELECT stage.stage_name
@@ -353,8 +366,15 @@ class AttentionStateManager:
                 terminal.host_epoch AS terminal_host_epoch,
                 terminal.session_name AS terminal_session_name,
                 terminal.locator AS terminal_locator,
-                claimed.title AS task_title
+                claimed.title AS task_title,
+                COALESCE(
+                    CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
+                         THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
+                    CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
+                         THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
+                ) AS definition_title
             FROM sessions session
+            LEFT JOIN session_variables seat ON seat.session_id = session.id
             LEFT JOIN LATERAL (
                 SELECT candidate.*
                 FROM terminals candidate

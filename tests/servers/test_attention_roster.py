@@ -34,6 +34,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
@@ -819,6 +820,100 @@ def _live_roster_entry(temp_db: HubDatabase, entry_id: str) -> dict[str, Any]:
     assert response.status_code == 200
     entries = {entry["entry_id"]: entry for entry in response.json()["entries"]}
     return cast(dict[str, Any], entries[entry_id])
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["active", "paused", "awaiting_input", "awaiting_approval", "awaiting_handoff", "interrupted"],
+)
+def test_running_roster_projects_child_lifecycle_and_seat_title(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    status: str,
+) -> None:
+    child = session_manager.register(
+        external_id=f"roster-child-{status}",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    SessionVariableManager(temp_db).set_variable(child.id, "_definition_title", "Lane 1 Developer")
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="developer",
+    )
+    manager.start(run.id)
+    session_manager.update_session_status(child.id, status)
+
+    entry = _live_roster_entry(temp_db, f"run:{run.id}")
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        require_machine_id(), live_session_statuses=(status,)
+    )
+    session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
+
+    assert entry["lifecycle_status"] == status
+    assert entry["definition_title"] == "Lane 1 Developer"
+    assert session_row.definition_title == "Lane 1 Developer"
+    stored_run = manager.get(run.id)
+    assert stored_run is not None
+    assert stored_run.status == "running"
+
+
+def test_roster_without_child_falls_back_to_run_lifecycle_and_definition(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    parent = session_manager.register(
+        external_id="roster-uninitialized-parent",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=parent.id, provider="codex", prompt="test", agent_name="developer"
+    )
+
+    entry = _live_roster_entry(temp_db, f"run:{run.id}")
+
+    assert entry["lifecycle_status"] == run.status
+    assert entry["definition_title"] == "developer"
+
+
+def test_roster_recovers_older_seat_titles_without_definition_title_variable(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    child = session_manager.register(
+        external_id="roster-legacy-seat",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    SessionVariableManager(temp_db).set_variable(child.id, "_agent_type", "developer")
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=child.id,
+        child_session_id=child.id,
+        provider="codex",
+        prompt="test",
+        agent_name="developer",
+        resume_metadata_json={"placement": {"title": "Lane 1 Developer"}},
+    )
+
+    entry = _live_roster_entry(temp_db, f"run:{run.id}")
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        require_machine_id(), live_session_statuses=(child.status,)
+    )
+    session_row = next(row for row in rows if row.kind == "session" and row.session_id == child.id)
+
+    assert entry["definition_title"] == "Lane 1 Developer"
+    assert session_row.definition_title == "developer"
 
 
 def test_roster_run_entries_carry_the_task_title(

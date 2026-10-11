@@ -306,9 +306,14 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             let session_title = session
                 .and_then(|(_, session)| session.title.clone())
                 .filter(|name| !name.is_empty());
-            let agent_definition_name = run
-                .and_then(|(_, run)| run.agent_name.clone())
-                .filter(|name| !name.is_empty());
+            let agent_definition_name = entry
+                .definition_title
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .or_else(|| {
+                    run.and_then(|(_, run)| run.agent_name.clone())
+                        .filter(|name| !name.trim().is_empty())
+                });
             let name = session_title
                 .or_else(|| agent_definition_name.clone())
                 .or_else(|| {
@@ -498,7 +503,10 @@ pub fn agent_state(entry: &RosterEntry, pane: Option<&Pane>) -> RowState {
         .as_ref()
         .and_then(|terminal| terminal.state.as_deref());
     resolve_state(
-        entry.attention.is_some(),
+        entry
+            .attention
+            .as_ref()
+            .is_some_and(|attention| attention.kind.as_deref() == Some("actionable")),
         is_orphaned(terminal_state),
         entry.lifecycle_status.as_deref(),
         pane,
@@ -514,7 +522,10 @@ pub fn is_orphaned(terminal_state: Option<&str>) -> bool {
 /// so `row_state` tracks pane flags that changed after the last rebuild.
 pub fn agent_row_state(agent: &AgentEntry, pane: Option<&Pane>) -> RowState {
     resolve_state(
-        agent.attention.is_some(),
+        agent
+            .attention
+            .as_ref()
+            .is_some_and(|attention| attention.kind.as_deref() == Some("actionable")),
         is_orphaned(agent.terminal_state.as_deref()),
         agent.lifecycle_status.as_deref(),
         pane,
@@ -527,14 +538,17 @@ fn resolve_state(
     lifecycle_status: Option<&str>,
     pane: Option<&Pane>,
 ) -> RowState {
-    if blocked {
+    if blocked
+        || lifecycle_status
+            .is_some_and(|status| matches!(status, "awaiting_input" | "awaiting_approval"))
+    {
         return RowState::Attention;
     }
     if orphaned {
         return RowState::Orphaned;
     }
-    // Held is a run someone paused on purpose. An agent awaiting input,
-    // approval or a handoff sits at its prompt and reads by its pane.
+    // Coordination and handoff waits stay quiet; human input and approval
+    // above are attention even before a screen detector finds a prompt.
     if lifecycle_status == Some("paused") {
         return RowState::Paused;
     }
@@ -656,7 +670,7 @@ impl<D: Daemon> Workspace<D> {
         self.attention
             .entries
             .iter()
-            .filter(|entry| entry.attention.is_some())
+            .filter(|entry| agent_state(entry, None) == RowState::Attention)
             .map(|entry| entry.entry_id.clone())
             .collect()
     }
