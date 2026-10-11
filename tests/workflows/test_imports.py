@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import shutil
 from collections.abc import Iterator
@@ -183,6 +184,57 @@ def test_project_scan_skips_non_file_entries_and_syncs_remaining_definitions(
     if entry == "valid-yaml-link":
         linked = manager.get_by_name("linked", project_id=project.id)
         assert linked is not None and linked.deleted_at is None
+
+
+@pytest.mark.parametrize("failure", ["symlink-loop", "permission", "io-error"])
+def test_entry_stat_errors_allow_sibling_sync_without_retirement(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    project_path = tmp_path / "stat-errors"
+    project = isolated_checkout_factory(temp_db, "stat-errors", root=project_path).project
+    root = project_path / ".gobby" / "workflows"
+    stale_path = root / "pipelines" / "retired.yaml"
+    _write_pipeline(stale_path, "retired")
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+    sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+    manager = PipelineDefinitionManager(temp_db)
+    stale = manager.get_by_name("retired", project_id=project.id)
+    assert stale is not None
+    stale_path.unlink()
+    _write_pipeline(stale_path.parent / "present.yaml", "present")
+    variable_path = root / "variables" / "sibling.yaml"
+    variable_path.parent.mkdir()
+    variable_path.write_text(yaml.safe_dump({"type": "variable", "name": "sibling", "value": 1}))
+    blocked = stale_path.parent / "blocked.yaml"
+    if failure == "symlink-loop":
+        blocked.symlink_to(blocked)
+    else:
+        _write_pipeline(blocked, "blocked")
+        original_stat = Path.stat
+
+        def fail_stat(entry: Path, *, follow_symlinks: bool = True) -> stat_result:
+            if entry == blocked:
+                error = errno.EACCES if failure == "permission" else errno.EIO
+                raise OSError(error, "unreadable entry metadata")
+            return original_stat(entry, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", fail_stat)
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["synced"] == 2
+    assert len(result["errors"]) == 1
+    assert str(blocked) in result["errors"][0]
+    assert result["orphaned"] == 0
+    assert manager.get(stale.id).deleted_at is None
+    assert manager.get_by_name("present", project_id=project.id) is not None
+    assert SessionVariableDefaultManager(temp_db).get_by_name("sibling", project_id=project.id)
 
 
 @pytest.mark.parametrize(

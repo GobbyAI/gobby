@@ -290,12 +290,14 @@ def sync_imported_workflows(
         on_disk: set[tuple[str, str]] = set()
         scan_complete = True
         try:
-            paths = _iter_kind_yaml(root)
+            paths, scan_errors = _iter_kind_yaml(root)
         except OSError as exc:
             message = f"Failed to scan imported workflows {root}: {exc}"
             logger.warning(message)
             errors.append(message)
             continue
+        errors.extend(scan_errors)
+        scan_complete = not scan_errors
         for path in paths:
             try:
                 sync_imported_workflow_file(db, path, scope_id, on_disk=on_disk)
@@ -327,9 +329,10 @@ def sync_imported_workflows(
     return {"synced": synced, "orphaned": orphaned, "errors": errors}
 
 
-def _iter_kind_yaml(root: Path) -> list[Path]:
-    """Yield YAML files under per-kind workflow subdirectories."""
+def _iter_kind_yaml(root: Path) -> tuple[list[Path], list[str]]:
+    """Collect YAML files and entry errors under per-kind workflow subdirectories."""
     paths: list[Path] = []
+    errors: list[str] = []
     for kind in _KIND_SUBDIRS:
         kind_dir = root / kind
         try:
@@ -346,4 +349,8 @@ def _iter_kind_yaml(root: Path) -> list[Path]:
                     paths.append(path)
             except (FileNotFoundError, NotADirectoryError):
                 continue
-    return paths
+            except OSError as exc:
+                message = f"Failed to scan imported workflow entry {path}: {exc}"
+                logger.warning(message)
+                errors.append(message)
+    return paths, errors
