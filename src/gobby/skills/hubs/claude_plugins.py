@@ -10,10 +10,11 @@ import ipaddress
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.skills.hubs._streaming import read_limited_utf8
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
 from gobby.skills.limits import MAX_SKILL_MD_BYTES
@@ -175,7 +176,9 @@ class ClaudePluginsProvider(HubProvider):
                 )
                 response.raise_for_status()
                 result: dict[str, Any] = response.json()
-                return result
+                cleaned, counts = clean_untrusted_value(result)
+                log_invisible_counts(counts, "Claude Plugins API metadata")
+                return cast(dict[str, Any], cleaned)
             except httpx.HTTPStatusError as e:
                 logger.error("claude-plugins.dev API error: %s", e.response.status_code)
                 raise RuntimeError(f"claude-plugins.dev API error: {e.response.status_code}") from e

@@ -1,7 +1,7 @@
 """Tests for HubProvider ABC and related dataclasses."""
 
 from abc import ABC
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -13,6 +13,49 @@ from gobby.skills.hubs.base import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("kind", [HubSkillInfo, HubSkillDetails])
+def test_hub_metadata_strips_hidden_characters(kind: type[HubSkillInfo]) -> None:
+    hidden = "\u202e\U000e0061"
+    skill = kind(
+        slug="sample" + hidden,
+        display_name="Sample" + hidden,
+        description="Instructions" + hidden,
+        version="1.0" + hidden,
+        hub_name="hub",
+    )
+    if isinstance(skill, HubSkillDetails):
+        skill = HubSkillDetails(
+            slug="sample" + hidden,
+            display_name="Sample" + hidden,
+            description="Instructions" + hidden,
+            version="1.0" + hidden,
+            hub_name="hub",
+            latest_version="2.0" + hidden,
+            versions=["1.0" + hidden, "2.0" + hidden],
+        )
+    result = skill.to_dict()
+    assert result["slug"] == "sample"
+    assert result["display_name"] == "Sample"
+    assert result["description"] == "Instructions"
+    assert result["version"] == "1.0"
+    if isinstance(skill, HubSkillDetails):
+        assert result["latest_version"] == "2.0"
+        assert result["versions"] == ["1.0", "2.0"]
+
+
+def test_download_metadata_strips_hidden_characters() -> None:
+    result = DownloadResult(
+        success=False, slug="sample", error="Failed\u202e\U000e0061", version="1\u202e\U000e0061"
+    ).to_dict()
+    assert result["error"] == "Failed"
+    assert result["version"] == "1"
+
+
+def test_hub_description_none_is_preserved() -> None:
+    skill = HubSkillInfo("sample", "Sample", cast(str, None), "hub")
+    assert skill.to_dict()["description"] is None
 
 
 class TestHubProvider:

@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from mcp import ClientSession
+from mcp.types import CallToolResult
 
 from gobby.mcp_proxy.client_manager import (
     connections,
@@ -32,6 +33,7 @@ from gobby.mcp_proxy.models import (
 )
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 from gobby.mcp_proxy.transports.factory import create_transport_connection
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.storage.secrets import SecretStore
 
 OAuthAuthorizer = Callable[[MCPServerConfig, SecretStore], Awaitable[None]]
@@ -269,7 +271,7 @@ class MCPClientManager:
     ) -> Any:
         self._lazy_connector.start_request(server_id)
         try:
-            return await invocation.call_tool(
+            result = await invocation.call_tool(
                 self,
                 server_id,
                 tool_name,
@@ -277,6 +279,20 @@ class MCPClientManager:
                 timeout,
                 session_id,
                 logger,
+            )
+            # Every connection managed here is external; internal registries
+            # dispatch separately. This also protects direct HTTP/WS fallbacks.
+            payload = (
+                result.model_dump(mode="json") if isinstance(result, CallToolResult) else result
+            )
+            cleaned, counts = clean_untrusted_value(payload)
+            log_invisible_counts(counts, "third-party MCP")
+            if not counts.total:
+                return result
+            return (
+                CallToolResult.model_validate(cleaned)
+                if isinstance(result, CallToolResult)
+                else cleaned
             )
         finally:
             self._lazy_connector.finish_request(server_id)
