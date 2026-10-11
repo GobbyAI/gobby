@@ -230,6 +230,7 @@ def _classify_shell_command(
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
+    directory.prepare_groups(segments)
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
@@ -268,7 +269,7 @@ def _classify_shell_command(
             ),
         )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
-        in_pipeline = segment.separator_before == "|" or next_separator == "|"
+        in_pipeline = directory.pipeline_stage(segment.separator_before, next_separator)
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             directory.invalidate()
         raw_parts = shell_token_values(segment.tokens)
@@ -352,7 +353,7 @@ def _classify_shell_command(
             if (
                 not env_directories
                 and not in_pipeline
-                and segment.separator_before in {None, "&&", ";", "\n"}
+                and segment.separator_before in {None, "&&", ";", "\n", "|"}
             ):
                 directory.change(cd_target)
             metadata.append(

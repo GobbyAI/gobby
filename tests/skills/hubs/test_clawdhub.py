@@ -10,6 +10,32 @@ from gobby.skills.hubs.clawdhub import ClawdHubProvider
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["search", "list"])
+async def test_external_hub_metadata_is_cleaned(operation: str) -> None:
+    provider = ClawdHubProvider("clawdhub", "https://clawdhub.com")
+    provider._cli_available = True
+    provider._cli_binary = "clawhub"
+    if operation == "search":
+        with patch.object(
+            provider, "_run_cli_command", return_value="evil  v1.0.0  summary\u202e\U000e0061"
+        ):
+            results = await provider.search("evil")
+    else:
+        with patch.object(
+            provider,
+            "_run_cli_json",
+            return_value={
+                "skills": [
+                    {"slug": "evil", "name": "evil", "description": "summary\u202e\U000e0061"}
+                ]
+            },
+        ):
+            results = await provider.list_skills()
+    assert len(results) == 1
+    assert results[0].description == "summary"
+
+
 class TestClawdHubProvider:
     """Tests for ClawdHubProvider class."""
 

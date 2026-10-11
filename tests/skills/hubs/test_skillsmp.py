@@ -12,6 +12,30 @@ from gobby.skills.hubs.skillsmp import SkillsMPProvider
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+async def test_search_cleans_external_metadata() -> None:
+    def response(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "skills": [
+                        {"name": "sample\u202e\U000e0061", "description": "help\u202e\U000e0061"}
+                    ]
+                }
+            },
+        )
+
+    provider = SkillsMPProvider("skillsmp", "https://skillsmp.com", auth_token="test-key")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(response))
+    with patch("gobby.skills.hubs.skillsmp.httpx.AsyncClient", return_value=client):
+        results = await provider.search("sample")
+    assert len(results) == 1
+    assert results[0].slug == "sample"
+    assert results[0].display_name == "sample"
+    assert results[0].description == "help"
+
+
 class TestSkillsMPProvider:
     """Tests for SkillsMPProvider class."""
 

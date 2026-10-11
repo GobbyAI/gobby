@@ -1,12 +1,38 @@
 """Tests for ZIP archive import support (TDD - written before implementation)."""
 
+import hashlib
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from gobby.skills.loader import SkillLoader, SkillLoadError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("load_all", [False, True])
+def test_zip_skills_are_cleaned_before_return(tmp_path: Path, load_all: bool) -> None:
+    archive = tmp_path / "skills.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name in ["first", "second"] if load_all else ["first"]:
+            bundle.writestr(
+                f"{name}/SKILL.md",
+                f"---\nname: {name}\ndescription: help\u202e\U000e0061\n---\nbody\u202e\U000e0061\n",
+            )
+            bundle.writestr(f"{name}/references/guide.md", "reference\u202e\U000e0061")
+    result = SkillLoader().load_from_zip(archive, load_all=load_all)
+    skills = result if isinstance(result, list) else [result]
+    assert len(skills) == (2 if load_all else 1)
+    for skill in skills:
+        assert skill.description == "help"
+        assert skill.content == "body"
+        assert skill.loaded_files is not None
+        assert len(skill.loaded_files) == 1
+        reference = skill.loaded_files[0]
+        assert reference.content == "reference"
+        assert reference.content_hash == hashlib.sha256(b"reference").hexdigest()
+        assert reference.size_bytes == len(b"reference")
 
 
 @pytest.fixture
