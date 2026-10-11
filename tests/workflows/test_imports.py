@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Iterator
+from os import stat_result
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +144,50 @@ def test_deleted_project_definition_is_retired(
     assert manager.get(row.id, include_deleted=True).deleted_at is not None
 
 
-@pytest.mark.parametrize("failure", ["invalid", "unreadable", "missing-checkout", "empty-checkout"])
+@pytest.mark.parametrize(
+    "entry", ["dangling-yaml", "yaml-directory", "non-directory-kind", "valid-yaml-link"]
+)
+def test_project_scan_skips_non_file_entries_and_syncs_remaining_definitions(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+) -> None:
+    project_path = tmp_path / "scan-entries"
+    project = isolated_checkout_factory(temp_db, "scan-entries", root=project_path).project
+    root = project_path / ".gobby" / "workflows"
+    present = root / "pipelines" / "present.yaml"
+    _write_pipeline(present, "present")
+    if entry == "dangling-yaml":
+        (present.parent / "broken.yaml").symlink_to(tmp_path / "missing.yaml")
+    elif entry == "yaml-directory":
+        (present.parent / "directory.yaml").mkdir()
+    elif entry == "non-directory-kind":
+        (root / "rules").write_text("not a directory")
+    else:
+        target = tmp_path / "linked.yaml"
+        _write_pipeline(target, "linked")
+        (present.parent / "linked.yaml").symlink_to(target)
+    monkeypatch.setattr(
+        "gobby.workflows.imports.get_global_workflows_dir", lambda: tmp_path / "global"
+    )
+
+    result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
+
+    assert result["errors"] == []
+    assert result["synced"] == (2 if entry == "valid-yaml-link" else 1)
+    manager = PipelineDefinitionManager(temp_db)
+    row = manager.get_by_name("present", project_id=project.id)
+    assert row is not None and row.deleted_at is None
+    if entry == "valid-yaml-link":
+        linked = manager.get_by_name("linked", project_id=project.id)
+        assert linked is not None and linked.deleted_at is None
+
+
+@pytest.mark.parametrize(
+    "failure", ["invalid", "unreadable", "unreadable-entry", "missing-checkout", "empty-checkout"]
+)
 def test_incomplete_project_scan_does_not_retire_rows(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
@@ -174,6 +218,17 @@ def test_incomplete_project_scan_does_not_retire_rows(
             return original_iterdir(directory)
 
         monkeypatch.setattr(Path, "iterdir", fail_scan)
+    elif failure == "unreadable-entry":
+        blocked = path.parent / "blocked.yaml"
+        _write_pipeline(blocked, "blocked")
+        original_stat = Path.stat
+
+        def fail_stat(entry: Path, *, follow_symlinks: bool = True) -> stat_result:
+            if entry == blocked:
+                raise PermissionError("unreadable workflow entry metadata")
+            return original_stat(entry, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", fail_stat)
     elif failure == "missing-checkout":
         project_path.rename(tmp_path / "unavailable")
     else:
@@ -182,7 +237,7 @@ def test_incomplete_project_scan_does_not_retire_rows(
     result = sync_imported_workflows(temp_db, project_path=project_path, project_id=project.id)
 
     assert result["orphaned"] == 0
-    assert bool(result["errors"]) is (failure in {"invalid", "unreadable"})
+    assert bool(result["errors"]) is (failure in {"invalid", "unreadable", "unreadable-entry"})
     assert manager.get(row.id).deleted_at is None
 
 

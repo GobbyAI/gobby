@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 
 import yaml
@@ -333,9 +334,16 @@ def _iter_kind_yaml(root: Path) -> list[Path]:
         kind_dir = root / kind
         try:
             entries = list(kind_dir.iterdir())
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             continue
         # iterdir surfaces access failures; glob suppresses them, which would
         # turn an unreadable directory into an authoritative empty scan.
-        paths.extend(sorted(path for path in entries if path.suffix in {".yaml", ".yml"}))
+        for path in sorted(entries):
+            if path.suffix not in {".yaml", ".yml"}:
+                continue
+            try:
+                if S_ISREG(path.stat().st_mode):
+                    paths.append(path)
+            except (FileNotFoundError, NotADirectoryError):
+                continue
     return paths
