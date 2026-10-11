@@ -116,6 +116,21 @@ class CoordinationWaitService:
         if row["outcome"] == "waiting":
             self._schedule(wait_id, (row["expires_at"] - utc_now()).total_seconds())
             return
+        diagnostic = {
+            "wait_id": wait_id,
+            "waiter_session_id": str(row["waiter_session_id"]),
+            "owner_session_id": str(row["owner_session_id"]),
+            "outcome": row["outcome"],
+            "completed_at": row["completed_at"],
+            "message_id": row["message_id"],
+        }
+        logger.info(
+            "Coordination wait terminal outcome: wait_id=%(wait_id)s "
+            "waiter_session_id=%(waiter_session_id)s owner_session_id=%(owner_session_id)s "
+            "outcome=%(outcome)s completed_at=%(completed_at)s message_id=%(message_id)s",
+            diagnostic,
+            extra=diagnostic,
+        )
         waiter = str(row["waiter_session_id"])
         delivery = await self.registry.wake_sessions(
             wait_id,

@@ -18,7 +18,10 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.hooks.session_lookup import SessionLookupService
 from gobby.hooks.session_types import HookSessionManager
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -94,7 +97,9 @@ def end_hold(h: CoordinationHarness, wait_id: str, ending: str) -> str:
 async def test_hold_ends_protection_before_delivery_and_delivers_once(
     harness: CoordinationHarness,
     ending: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="gobby.events.coordination_waits")
     row = start_hold(harness, ending)
     # A new manager has no process-local registration state, as after restart.
     recovered = CoordinationWaitManager(harness.db)
@@ -117,6 +122,19 @@ async def test_hold_ends_protection_before_delivery_and_delivers_once(
         assert wake.call_args is not None
         assert wake.call_args.args[2]["outcome"] == outcome
         assert not recovered.has_active_wait(harness.waiter)
+        decisions = [
+            r
+            for r in caplog.records
+            if str(r.msg).startswith("Coordination wait terminal outcome:")
+        ]
+        assert len(decisions) == 1
+        terminal = harness.row(row["id"])
+        assert decisions[0].getMessage() == (
+            f"Coordination wait terminal outcome: wait_id={row['id']} "
+            f"waiter_session_id={harness.waiter} owner_session_id={terminal['owner_session_id']} "
+            f"outcome={outcome} completed_at={terminal['completed_at']} "
+            f"message_id={terminal['message_id']}"
+        )
     finally:
         await service.stop()
 
@@ -195,11 +213,13 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
 @pytest.mark.parametrize("ending", ["reply", "reply_expiry"])
 @pytest.mark.parametrize("owner_shape", ["uuid_active", "ref_paused"])
 @pytest.mark.parametrize("ingress", ["async", "sync"])
+@pytest.mark.parametrize("registration", ["registry", "proxy"])
 async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     harness: CoordinationHarness,
     ending: str,
     owner_shape: str,
     ingress: str,
+    registration: str,
     evaluation_runtime: WorkflowEvaluationRuntime,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -226,14 +246,33 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         db=harness.db,
         completion_registry=CompletionEventRegistry(),
     )
-    project_token = set_project_context({"id": PERSONAL_PROJECT_ID})
-    try:
-        with session_context_for_test(harness.waiter):
-            registered = await registry.call(
-                "wait_for_coordination", {"owner_session": owner_ref, "reply": True}
-            )
-    finally:
-        reset_project_context(project_token)
+    if registration == "proxy":
+        internal = InternalRegistryManager()
+        internal.add_registry(registry)
+        proxy = GobbyDaemonTools(
+            mcp_manager=MCPClientManager(project_id=PERSONAL_PROJECT_ID),
+            daemon_port=0,
+            websocket_port=0,
+            start_time=0,
+            internal_manager=internal,
+            db=harness.db,
+            session_manager=sessions,
+        )
+        registered = await proxy.call_tool(
+            server_name="gobby-agents",
+            tool_name="wait_for_coordination",
+            arguments={"owner_session": owner_ref, "reply": True},
+            session_id=external_id,
+        )
+    else:
+        project_token = set_project_context({"id": PERSONAL_PROJECT_ID})
+        try:
+            with session_context_for_test(harness.waiter):
+                registered = await registry.call(
+                    "wait_for_coordination", {"owner_session": owner_ref, "reply": True}
+                )
+        finally:
+            reset_project_context(project_token)
     assert registered.get("outcome") == "waiting", registered
     assert registered["notification_registered"] is True
     assert registered["owner_session_id"] == harness.owner
@@ -285,6 +324,9 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     )
     assert lookup.resolve(event, apply_session_mutations=False) == harness.waiter
     assert event.metadata["_platform_session_id"] == harness.waiter
+    persisted = harness.row(registered["wait_id"])
+    assert persisted["waiter_session_id"] == event.metadata["_platform_session_id"]
+    assert persisted["outcome"] == "waiting"
     handler = WorkflowHookHandler(
         rule_engine=RuleEngine(harness.db),
         session_manager=sessions,
@@ -326,6 +368,11 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     assert diagnostic["active_coordination_wait_count"] == 0
     assert diagnostic["decision"] == "block"
     assert diagnostic["current_step"] == "submit"
+    assert decisions[0].getMessage() == (
+        f"Step completion stop decision: resolved_session_id={harness.waiter} "
+        f"external_session_id={external_id} has_durable_stop_wait=False "
+        "active_coordination_wait_count=0 decision=block current_step=submit"
+    )
 
 
 async def test_failed_hold_lookup_does_not_disable_watchdog(harness: CoordinationHarness) -> None:
