@@ -1113,6 +1113,39 @@ class TestToolHandlerEdgeCases:
         assert after["session_dirty_files"] == expected_paths
         assert after["task_edited_file_checkouts"] == {"task-123": {str(tmp_path): expected_paths}}
 
+    def test_sequencer_scope_skips_live_edit_path_selection(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        target = tmp_path / "nested"
+        variables = self._claimed(
+            "task-123",
+            claimed_tasks={"task-123": "#123", "other-task": "#456"},
+            task_edited_file_checkouts={"other-task": {str(tmp_path): ["nested"]}},
+        )
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git -C {target} revert --quit", "cwd": str(tmp_path)},
+                "project_path": str(tmp_path),
+            },
+        )
+        event.cwd = str(tmp_path)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_file_paths"] == [str(target)]
+        assert event.data["canonical_edit_file_paths"] == []
+        with (
+            patch("gobby.hooks.event_handlers._tool.SessionVariableManager") as manager,
+            patch.object(handlers, "_resolve_repo_edit_paths", return_value=(tmp_path, "nested")),
+        ):
+            manager.return_value.get_variables.return_value = variables
+            handlers._assert_edit_path_selection(event, "session-123")
+            # The same scope path is denied when it represents a real edit.
+            event.data["canonical_edit_file_paths"] = [str(target)]
+            with pytest.raises(ValueError, match="live-attributed to #456"):
+                handlers._assert_edit_path_selection(event, "session-123")
+
     def test_after_tool_edit_attributes_gobby_internal_files(
         self,
         mock_dependencies: dict[str, Any],

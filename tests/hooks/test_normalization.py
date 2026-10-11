@@ -2637,7 +2637,7 @@ class TestUnexpandedShellReferencePaths:
         assert "canonical_file_path" not in data
         assert "canonical_file_paths" not in data
 
-    def test_special_parameter_git_add_has_unknown_mutation_scope(self) -> None:
+    def test_special_parameter_git_add_does_not_publish_write_scope(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Bash",
             "tool_input": {"command": "git add $@"},
@@ -2647,7 +2647,8 @@ class TestUnexpandedShellReferencePaths:
 
         assert data["canonical_tool_kind"] == "execute"
         assert data["canonical_repo_mutation"] is True
-        assert data["_canonical_repo_mutation_scope_unknown"] is True
+        assert "_canonical_repo_mutation_scope_unknown" not in data
+        assert "canonical_repo_mutation_scope_unknown" not in data
         assert "canonical_file_path" not in data
         assert "canonical_file_paths" not in data
 

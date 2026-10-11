@@ -169,7 +169,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             else []
         )
         if item.repo_mutation and (
-            not item.paths
+            (item.kind == "write" and not item.paths)
             or (
                 item.extra
                 and item.extra.get("_canonical_repo_mutation_scope_unknown")
@@ -251,7 +251,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     }
     if script_bodies:
         extra["canonical_script_bodies"] = sorted(script_bodies)
-    if mutation_scope_unknown:
+    if mutation_scope_unknown and kind == "write":
         extra["_canonical_repo_mutation_scope_unknown"] = True
     if any(item.unverified_write_scope for item in active):
         extra["_canonical_repo_mutation_scope_unverified"] = True
