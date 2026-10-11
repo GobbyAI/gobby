@@ -346,7 +346,7 @@ class TestStartDaemonProcess:
 
     def test_start_bound_exceeds_gobby_start_waits(self) -> None:
         """The bound must not cut off a start that `gobby start` would still finish."""
-        from gobby.cli.daemon import DAEMON_HEALTH_TIMEOUT_SECONDS
+        from gobby.cli.daemon_lifecycle import DAEMON_HEALTH_TIMEOUT_SECONDS
         from gobby.cli.daemon_start import STARTUP_READINESS_TIMEOUT_SECONDS
         from gobby.mcp_proxy.daemon_control import DAEMON_START_TIMEOUT_SECONDS
 

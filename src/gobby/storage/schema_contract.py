@@ -24,6 +24,10 @@ class SchemaContractError(RuntimeError):
     """Raised when Python cannot safely delegate schema authority to gdaemon."""
 
 
+class SchemaVerifyRefusal(SchemaContractError):
+    """Missing verifier or completed verify failure; retry requires repair."""
+
+
 def expected_schema_identity() -> dict[str, int | str]:
     """Load and validate the release-pinned gdaemon schema identity."""
     raw = importlib.resources.files("gobby.storage").joinpath(_IDENTITY_FILE).read_text()
@@ -103,7 +107,7 @@ def _run_gdaemon(
     """
     resolved = str(binary) if binary is not None else resolve_native_bin("gdaemon")
     if resolved is None:
-        raise SchemaContractError(
+        raise SchemaVerifyRefusal(
             f"gdaemon is required to {action}; run `gobby install` to install it"
         )
 
@@ -130,7 +134,9 @@ def _run_gdaemon(
         detail = (
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
-        raise SchemaContractError(f"gdaemon {action} failed: {detail}. {remedy}")
+        if result.returncode == 75:
+            raise SchemaContractError(f"gdaemon {action} temporarily unavailable: {detail}")
+        raise SchemaVerifyRefusal(f"gdaemon {action} failed: {detail}. {remedy}")
     return result.stdout
 
 

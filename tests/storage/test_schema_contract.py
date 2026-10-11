@@ -6,6 +6,7 @@ import ast
 import importlib.resources
 import json
 import logging
+import os
 import re
 import subprocess
 from collections import Counter
@@ -238,6 +239,20 @@ def test_apply_reports_database_identity_failure_without_leaking_database_url(
     assert database_url not in str(exc.value)
 
 
+@pytest.mark.parametrize("returncode", [1, 75])
+def test_verify_distinguishes_refusal_from_connection_failure(
+    monkeypatch: pytest.MonkeyPatch, returncode: int
+) -> None:
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(
+        "gobby.utils.spawn.run",
+        Mock(return_value=subprocess.CompletedProcess([], returncode, stdout="", stderr="failure")),
+    )
+    with pytest.raises(schema_contract.SchemaContractError) as exc:
+        schema_contract.verify_schema("postgresql://isolated/test")
+    assert isinstance(exc.value, schema_contract.SchemaVerifyRefusal) is (returncode != 75)
+
+
 def test_sweep_reports_embedded_and_database_versions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -305,7 +320,9 @@ def test_expected_identity_reports_packaged_contract_violations(
 def test_expected_identity_matches_gdaemon() -> None:
     """The packaged pin names exactly the identity this checkout's gdaemon embeds."""
     binary = select_test_gdaemon(
-        _REPO_ROOT, {CHECKOUT_BINARY_ENV: CHECKOUT_BINARY_VALUE}, native_bin_name("gdaemon")
+        _REPO_ROOT,
+        {**os.environ, CHECKOUT_BINARY_ENV: CHECKOUT_BINARY_VALUE},
+        native_bin_name("gdaemon"),
     )
     assert binary is not None
 

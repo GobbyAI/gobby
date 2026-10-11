@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
-from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
+from gobby.shutdown_intent import ShutdownIntent
 from gobby.utils.git import disable_optional_git_locks
 from gobby.utils.logging import silence_http_client_loggers
 
@@ -53,8 +53,8 @@ if TYPE_CHECKING:
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
-    from gobby.runner_front_door import FrontDoorChild
     from gobby.runner_pid_file import PidOwnershipResolution
+    from gobby.runtime_grants.lease_view import RuntimeLeaseView
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.http import HTTPServer
     from gobby.servers.websocket.server import WebSocketServer
@@ -172,7 +172,7 @@ class GobbyRunner:
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
     code_index_bm25_verification: dict[str, Any] | None
-    daemon_lease: ActiveDaemonLease
+    daemon_lease: RuntimeLeaseView | ActiveDaemonLease | None
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
@@ -259,7 +259,6 @@ class GobbyRunner:
     http_server: HTTPServer
     websocket_server: WebSocketServer | None
     # Set by run_gobby when front_door.enabled; stopped before the claim is released.
-    front_door_child: FrontDoorChild | None
 
     def __init__(self, config_path: Path | None = None, verbose: bool = False):
         self._prepare_base_state()
@@ -279,6 +278,7 @@ class GobbyRunner:
         self._prepare_base_state()
         try:
             from gobby.runner_init import (
+                StartRefusal,
                 bundled_content_refusal,
                 init_startup_content,
                 open_storage_and_config,
@@ -294,7 +294,7 @@ class GobbyRunner:
             # The refusal asks Git, so it runs off the loop, ahead of every bundled
             # publish (#22829).
             if refusal := await asyncio.to_thread(bundled_content_refusal, self):
-                raise RuntimeError(refusal)
+                raise StartRefusal(refusal)
             await _run_blocking_startup_phase(init_startup_content, self)
             startup_snapshot = await self.config_runtime.start()
             from gobby.runner_init.storage import bootstrap_overlaid_config
@@ -321,7 +321,6 @@ class GobbyRunner:
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
         self.http_bound_at_ms: int | None = None
-        self.front_door_child = None
 
     def _initialize_storage(self, config_path: Path | None, verbose: bool) -> None:
         from gobby.runner_init import init_storage_and_config
@@ -384,168 +383,115 @@ async def run_gobby(
     verbose: bool = False,
     ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
+    from contextlib import suppress
+
     from gobby.cli.utils import get_gobby_home
     from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
     from gobby.daemon_lease import ActiveDaemonLease
-    from gobby.daemon_lease_control import (
-        LeaseLoss,
-        StandbyLeaseControl,
-        monitor_active_lease,
-        serve_standby_until_promotion,
-    )
     from gobby.deployment import deployment_token
-    from gobby.runner_front_door import FrontDoorChild, backend_bind
-    from gobby.runner_pid_file import (
-        SERVICE_LAUNCH_ENV,
-        ProbeState,
-        adopt_inherited_claim,
-        claim_pid_file,
-        convert_or_acquire_service_claim,
-        probe_daemon_lock,
-    )
-    from gobby.storage.schema_contract import verify_schema
+    from gobby.runner_backend import watch_supervisor
+    from gobby.runner_init import StartRefusal
+    from gobby.runner_pid_file import SupervisedPidOwnership, claim_pid_file, probe_daemon_lock
+    from gobby.runtime_grants.lease_view import RuntimeLeaseView
+    from gobby.storage.schema_contract import SchemaVerifyRefusal, verify_schema
     from gobby.utils.break_glass import ensure_break_glass_credential
-    from gobby.utils.local_token import (
-        bind_daemon_bootstrap,
-        daemon_bootstrap_path,
-    )
+    from gobby.utils.local_token import bind_daemon_bootstrap, daemon_bootstrap_path
     from gobby.utils.machine_id import require_machine_id
 
-    bind_daemon_bootstrap(
-        resolve_bootstrap_path(str(config_path) if config_path is not None else None)
-    )
+    bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
     if ownership_resolution is None:
-        pid_file = get_gobby_home() / "gobby.pid"
-        if os.environ.get(SERVICE_LAUNCH_ENV) == "1":
-            ownership_resolution = convert_or_acquire_service_claim(pid_file)
+        if "GOBBY_SUPERVISOR_FD" in os.environ:
+            ownership_resolution = SupervisedPidOwnership()
+        elif os.name == "nt":
+            from gobby.runner_windows import claim_windows_pid
+
+            ownership_resolution = claim_windows_pid(get_gobby_home() / "gobby.pid")
+            if ownership_resolution is None:
+                return
         else:
-            inherited = adopt_inherited_claim(pid_file)
-            if inherited is not None:
-                ownership_resolution = inherited
-            else:
-                ownership_resolution = claim_pid_file(pid_file)
-        if ownership_resolution is None:
-            owner = probe_daemon_lock(pid_file)
-            if owner.state is ProbeState.DAEMON:
-                logger.info(
-                    "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
-                    pid_file,
-                    owner.pid or "unknown",
-                )
-            else:
-                logger.info(
-                    "PID file %s is held (%s, PID %s); exiting before initialization",
-                    pid_file,
-                    owner.state.value,
-                    owner.pid or "unknown",
-                )
-            return
-
-    bootstrap = load_bootstrap(
-        str(config_path) if config_path is not None else None,
-        resolve_database_url=True,
-    )
-    database_url = bootstrap.database_url
-    if database_url is None:
-        raise RuntimeError("bootstrap database_url is required for active-daemon ownership")
-
-    lease = ActiveDaemonLease(
-        database_url,
-        machine_id=require_machine_id(),
-        deployment_token=deployment_token(),
-    )
+            # Contained runners retain isolated PID cleanup. Native backends
+            # inherit only the liveness pipe, never the PID lock.
+            ownership_resolution = claim_pid_file(get_gobby_home() / "gobby.pid")
+            if ownership_resolution is None:
+                holder = probe_daemon_lock(get_gobby_home() / "gobby.pid")
+                logger.info("Contained runner blocked by %s; exiting cleanly", holder)
+                return
+    lease: RuntimeLeaseView | ActiveDaemonLease | None = None
     runner: GobbyRunner | None = None
-    front_door: FrontDoorChild | None = None
+    watcher: asyncio.Task[None] | None = None
+    startup_task = asyncio.current_task()
+
+    def supervisor_gone() -> None:
+        if runner is not None:
+            runner.request_shutdown(ShutdownIntent.STOP)
+        elif startup_task is not None:
+            startup_task.cancel()
+
     try:
-        await asyncio.to_thread(verify_schema, database_url)
+        watcher = asyncio.create_task(watch_supervisor(supervisor_gone), name="supervisor-liveness")
+        bootstrap = load_bootstrap(
+            str(config_path) if config_path else None, resolve_database_url=True
+        )
+        database_url = bootstrap.database_url
+        if database_url is None and bootstrap.run_mode() != "node":
+            raise RuntimeError("bootstrap database_url is required for runtime authority")
+        if database_url is not None:
+            try:
+                await asyncio.to_thread(verify_schema, database_url)
+            except SchemaVerifyRefusal as exc:
+                raise StartRefusal(str(exc)) from exc
         try:
             await asyncio.to_thread(ensure_break_glass_credential, daemon_bootstrap_path().parent)
         except Exception:
-            logger.warning(
-                "Could not create break-glass credential at %s; "
-                "if the existing file is damaged, remove it and restart to recreate it",
-                daemon_bootstrap_path().parent / "break_glass",
-            )
-        # gdaemon takes the public ports before this runner binds the backend pair
-        # (standby included), so either launch path gets the same child.
-        front_door = FrontDoorChild.from_bootstrap(
-            bootstrap,
-            daemon_bootstrap_path().parent,
-        )
-        if front_door is not None:
-            await asyncio.to_thread(front_door.start)
-            front_door.arm_respawn()
-        backend = backend_bind(bootstrap)
-        if not await asyncio.to_thread(lease.try_acquire):
-            promotion_requested = asyncio.Event()
-            control = StandbyLeaseControl(
-                lease=lease,
-                database_url=database_url,
-                front_door_secret=front_door.secret if front_door is not None else None,
-                promotion_requested=promotion_requested,
-                schema_verifier=verify_schema,
-            )
-            promoted = await serve_standby_until_promotion(
-                control,
-                host=backend.host,
-                port=backend.http_port,
-            )
-            if not promoted:
-                return
+            logger.warning("Could not create break-glass credential", exc_info=True)
+        if bootstrap.run_mode() != "node":
+            assert database_url is not None
+            if os.name == "nt":
+                from gobby.runner_windows import acquire_windows_lease
 
+                lease = ActiveDaemonLease(
+                    database_url,
+                    machine_id=require_machine_id(),
+                    deployment_token=deployment_token(),
+                )
+                if not await acquire_windows_lease(lease, bootstrap):
+                    return
+            else:
+                lease = RuntimeLeaseView(
+                    database_url,
+                    machine_id=require_machine_id(),
+                    deployment_token=deployment_token(),
+                )
+                await asyncio.to_thread(lease.bind)
         from gobby.providers.version_gate import probe_and_publish_agy_support
 
         await probe_and_publish_agy_support()
         runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
-        active = runner
-        active.daemon_lease = lease
-        active.front_door_child = front_door
+        runner.daemon_lease = lease
         from gobby.runner_init.servers import _bind_runtime_grants
-        from gobby.servers.lease_fence import drain_effect_fence
 
-        _bind_runtime_grants(active.http_server, active)
+        _bind_runtime_grants(runner.http_server, runner)
+        if isinstance(lease, ActiveDaemonLease):
+            from gobby.runner_windows import run_windows_backend
 
-        def _on_lease_invalidation() -> None:
-            drain_effect_fence(getattr(active.http_server, "effect_fence", None))
-
-        def _on_lease_loss(loss: LeaseLoss) -> None:
-            write_shutdown_intent(
-                loss.reason,
-                ShutdownIntent.STOP,
-                details=loss.shutdown_details(),
-            )
-            active.request_shutdown(ShutdownIntent.STOP)
-
-        lease_monitor_stop = asyncio.Event()
-        async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(
-                monitor_active_lease(
-                    lease,
-                    stop=lease_monitor_stop,
-                    on_loss=_on_lease_loss,
-                    on_invalidation=_on_lease_invalidation,
-                ),
-                name="active-daemon-lease-monitor",
-            )
-            try:
-                await active.run(ownership_resolution=ownership_resolution)
-            finally:
-                lease_monitor_stop.set()
+            await run_windows_backend(runner, lease, ownership_resolution)
+        else:
+            await runner.run(ownership_resolution=ownership_resolution)
     finally:
+        if watcher is not None:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
         if runner is not None:
             from gobby.servers.lease_fence import drain_effect_fence
 
             drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
-        if front_door is not None:
-            drain_terminals = bool(getattr(runner, "_drain_terminals_on_shutdown", False))
-            if drain_terminals and runner is not None:
-                front_door.stop(
-                    drain_terminals=True,
-                    drain_grace_seconds=runner.terminal_host_config.shutdown_grace_seconds,
-                )
-            else:
-                front_door.stop()
-        lease.release()
+        if lease is not None:
+            lease.release()
+        if not isinstance(ownership_resolution, SupervisedPidOwnership):
+            from gobby.runner_maintenance import cleanup_pid_file
+
+            cleanup_pid_file()
         ownership_resolution.release()
 
 
@@ -654,6 +600,11 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     for name in (*IDENTITY_ENV_VARS, GOBBY_AGENT_API_TOKEN):
         os.environ.pop(name, None)
 
+    # Native startup consumed the one-shot reservation before spawning us.
+    if os.name != "nt":
+        for name in ("GOBBY_SERVICE_LAUNCH", "GOBBY_SERVICE_NONCE", "GOBBY_SINGLETON_LOCK_FD"):
+            os.environ.pop(name, None)
+
     # Must precede any torch import (torch is lazy, voice-only): PyTorch's
     # default MPS high watermark is 1.7x Metal's recommended working set,
     # which lets unified-memory allocations balloon past physical RAM.
@@ -671,84 +622,21 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
 
     if refusal := worktree_daemon_refusal():
         print(refusal, file=sys.stderr)
-        sys.exit(1)
+        sys.exit(78)
 
-    # Fast guard: if a healthy daemon is already serving on our port, exit
-    # cleanly so launchd (KeepAlive.SuccessfulExit=false) won't respawn us.
-    from gobby.config.bootstrap import load_bootstrap
-
-    bootstrap = load_bootstrap(str(config_path) if config_path else None)
-    if _healthy_daemon_running(bootstrap.daemon_port, bootstrap.bind_host):
-        print(
-            f"Gobby daemon already healthy on port {bootstrap.daemon_port}, exiting.",
-            file=sys.stderr,
-        )
-        sys.exit(0)
-
-    # Claim the singleton lock before any subsystem init: a launchd respawn
-    # racing a live daemon must lose here and exit 0 so
-    # KeepAlive.SuccessfulExit=false never hot-loops it.
-    from gobby.cli.utils import get_gobby_home
-    from gobby.runner_pid_file import (
-        SERVICE_LAUNCH_ENV,
-        SERVICE_NONCE_ENV,
-        ProbeState,
-        SingletonError,
-        adopt_inherited_claim,
-        claim_pid_file,
-        convert_or_acquire_service_claim,
-        probe_daemon_lock,
-    )
-
-    pid_file = get_gobby_home() / "gobby.pid"
-    ownership_resolution: PidOwnershipResolution | None = None
-    try:
-        if os.environ.get(SERVICE_LAUNCH_ENV) == "1":
-            ownership_resolution = convert_or_acquire_service_claim(pid_file)
-        else:
-            inherited = adopt_inherited_claim(pid_file)
-            ownership_resolution = inherited or claim_pid_file(pid_file)
-    except SingletonError as exc:
-        print(f"Gobby daemon lock {pid_file} failed closed: {exc}", file=sys.stderr)
-        sys.exit(1)
-    # The service marker admits only this process; a runner started from any
-    # daemon child must take the ordinary start path.
-    os.environ.pop(SERVICE_LAUNCH_ENV, None)
-    os.environ.pop(SERVICE_NONCE_ENV, None)
-    if ownership_resolution is None:
-        owner = probe_daemon_lock(pid_file)
-        if owner.state is ProbeState.DAEMON:
-            print(
-                f"Gobby daemon lock {pid_file} is held by PID {owner.pid or 'unknown'}, exiting.",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"Gobby daemon lock {pid_file} is held ({owner.state.value}, "
-                f"PID {owner.pid or 'unknown'}), exiting.",
-                file=sys.stderr,
-            )
-        sys.exit(0)
+    from gobby.runner_init import StartRefusal
 
     try:
-        assert ownership_resolution is not None
-        asyncio.run(
-            run_gobby(
-                config_path=config_path,
-                verbose=verbose,
-                ownership_resolution=ownership_resolution,
-            )
-        )
+        asyncio.run(run_gobby(config_path=config_path, verbose=verbose))
     except KeyboardInterrupt:
         sys.exit(0)
-    except Exception as e:
-        logger.exception("Fatal error: %s", e)
+    except StartRefusal as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(78)
+    except Exception as exc:
+        logger.exception("Fatal error: %s", exc)
         sys.exit(1)
     finally:
-        # run_daemon releases the claim during shutdown; release() is
-        # idempotent, so this only matters when asyncio.run never ran it.
-        if ownership_resolution is not None:
-            ownership_resolution.release()
         _force_exit_after_expired_settlement()
 
 

@@ -4,7 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from gobby.cli.daemon import _do_stop, _services_start
+from gobby.cli.daemon import _services_start
+from gobby.cli.daemon_lifecycle import _do_stop
 from gobby.cli.daemon_start import _start_dependency_errors
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from gobby.config.app import DaemonConfig
@@ -28,7 +29,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
     config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
 
     with (
-        patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.daemon_start.collect_dependency_report") as collect_dependencies,
         patch("gobby.cli.daemon_start.required_dependency_errors", return_value=[]),
     ):
@@ -44,11 +45,11 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
     runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
     with (
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
-        patch("gobby.cli.daemon.get_service_status", return_value={}),
-        patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
-        patch("gobby.cli.daemon.protect_pending_handoffs"),
-        patch("gobby.cli.daemon.stop_daemon_util", return_value=True),
-        patch("gobby.cli.daemon._services_stop") as services_stop,
+        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
+        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon_lifecycle.protect_pending_handoffs"),
+        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True),
+        patch("gobby.cli.daemon_lifecycle._services_stop") as services_stop,
     ):
         assert _do_stop(MagicMock(), docker_flag=True)
     services_stop.assert_not_called()
@@ -61,11 +62,11 @@ def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
 
     with (
         patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
-        patch("gobby.cli.daemon.get_service_status", return_value={}),
-        patch("gobby.cli.daemon.fetch_protected_runs", return_value=[]),
-        patch("gobby.cli.daemon.protect_pending_handoffs"),
-        patch("gobby.cli.daemon.stop_daemon_util", return_value=True) as stop_daemon,
-        patch("gobby.cli.daemon._services_stop") as services_stop,
+        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
+        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon_lifecycle.protect_pending_handoffs"),
+        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True) as stop_daemon,
+        patch("gobby.cli.daemon_lifecycle._services_stop") as services_stop,
         patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")),
     ):
         assert _do_stop(MagicMock(), docker_flag=True, shutdown_intent="restart")

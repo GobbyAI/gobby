@@ -83,11 +83,11 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
-    "cli/daemon_start.py::_launch_direct_runner": (
-        "own session and pass_fds for the runner claim; `gobby start` only"
+    "runner_windows_restart.py::spawn_restart_helper": (
+        "Windows-only legacy restart handoff; Windows subprocess creation does not fork"
     ),
-    "runner_front_door.py::FrontDoorChild._popen": (
-        "own session and pass_fds for the gdaemon liveness pipe; once per start or respawn"
+    "runner_windows_restart.py::restart_after_exit": (
+        "Windows-only helper process, after the daemon has exited"
     ),
     "cli/install_setup_impeccable.py::_detect_node": (
         "`gobby install` only; the daemon calls just inspect_impeccable_installation"
@@ -135,35 +135,15 @@ _MUST_FORK = {
     "cli/install_setup_gdaemon.py::_probe_identity": "`gobby install` only",
     "cli/install_setup_gdaemon.py::_probe_version": "`gobby install` only",
     "cli/install_setup_srt.py::_install_srt_runtime": "`gobby install` only",
-    "cli/installers/falkor.py::_install_falkordb_locked": "`gobby install` only",
-    "cli/installers/falkor.py::_wait_for_health_async": "`gobby install` only",
     "cli/installers/tmux_config.py::_apply_to_running_server": "`gobby install` only",
     "cli/installers/docker_guard.py::<module>": (
         "an identity reference that recognizes the real runner; never called"
     ),
-    "cli/_daemon_services.py::_run_compose_command": "managed services of `gobby start`/`stop` only",
-    "cli/_daemon_services.py::_run_compose_up": "managed services of `gobby start` only",
-    "cli/_daemon_services.py::_stop_managed_services_locked": "managed services of `gobby stop` only",
-    "cli/_daemon_services.py::_terminate_compose_process": (
-        "managed services of `gobby start`/`stop` only"
-    ),
-    "cli/datastores.py::_snapshot_compose_running": "`gobby datastores expose` only",
-    "cli/datastores.py::_tailscale_ipv4_addresses": "`gobby datastores expose` only",
     "cli/utils_ui.py::spawn_ui_server": (
         "own session: the UI dev server outlives the daemon; once per start in UI dev mode"
     ),
-    "ui_exposure.py::_run_json": "tailscale for the start, ui, install and uninstall commands only",
-    "ui_exposure.py::_run_mutation": (
-        "tailscale for the start, ui, install and uninstall commands only"
-    ),
     "runner_gate.py::acquire_runner_gate": (
         "own session, apart from the terminal's signals; once per start, before the daemon grows"
-    ),
-    "servers/routes/admin/_lifecycle.py::_run_direct_restart_helper": (
-        "own session: the restart helper outlives the daemon it stops"
-    ),
-    "servers/routes/admin/_lifecycle.py::_spawn_restart_helper": (
-        "own session: the restart helper outlives the daemon it stops"
     ),
     "servers/websocket/chat/backends/agy.py::AgyWebChatBackend.attach_session": (
         "own session with live ACP pipes: detach killpg()s agy's children; once per chat attach"

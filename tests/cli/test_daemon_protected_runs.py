@@ -225,12 +225,12 @@ def test_clear_protected_runs_wait_gives_up_past_a_shorter_own_timeout() -> None
     )
 
 
-@patch("gobby.cli.daemon._services_stop")
-@patch("gobby.cli.daemon.stop_daemon_util")
-@patch("gobby.cli.daemon.service_stop")
-@patch("gobby.cli.daemon.get_service_status")
-@patch("gobby.cli.daemon.fetch_protected_runs", return_value=[RUN])
-@patch("gobby.cli.daemon.stop_singleton_gate", return_value=("continue", None))
+@patch("gobby.cli.daemon_lifecycle._services_stop")
+@patch("gobby.cli.daemon_lifecycle.stop_daemon_util")
+@patch("gobby.cli.daemon_lifecycle.service_stop")
+@patch("gobby.cli.daemon_lifecycle.get_service_status")
+@patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[RUN])
+@patch("gobby.cli.daemon_lifecycle.stop_singleton_gate", return_value=("continue", None))
 @patch("gobby.cli.runtime.CliRuntime.require_config")
 @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
 def test_stop_wait_refused_on_expiry_stops_nothing(

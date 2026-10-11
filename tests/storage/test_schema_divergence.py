@@ -309,7 +309,7 @@ def _config_accessors_by_function(source: str) -> dict[str, set[str]]:
 
 
 def test_observability_commands_read_config_without_applying_schema() -> None:
-    daemon_source = Path("src/gobby/cli/daemon.py").read_text(encoding="utf-8")
+    daemon_source = Path("src/gobby/cli/daemon_lifecycle.py").read_text(encoding="utf-8")
     health_source = Path("src/gobby/cli/daemon_health.py").read_text(encoding="utf-8")
 
     daemon_accessors = _config_accessors_by_function(daemon_source)
@@ -402,13 +402,13 @@ def _live_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     def probe(_path: object) -> SimpleNamespace:
         return SimpleNamespace(state=ProbeState.DAEMON, pid=4321)
 
-    monkeypatch.setattr("gobby.cli.daemon.probe_daemon_lock", probe)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.probe_daemon_lock", probe)
     monkeypatch.setattr("gobby.cli.daemon_health.probe_daemon_lock", probe)
-    monkeypatch.setattr("gobby.cli.daemon._read_pid_file", lambda: 4321)
-    monkeypatch.setattr("gobby.cli.daemon._is_process_alive", lambda _pid: True)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._read_pid_file", lambda: 4321)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._is_process_alive", lambda _pid: True)
     monkeypatch.setattr("gobby.cli.daemon_health._is_process_alive", lambda _pid: True)
-    monkeypatch.setattr("gobby.cli.daemon.get_port_listener_pid", lambda _port: 4321)
-    monkeypatch.setattr("gobby.cli.daemon.get_service_status", dict)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.get_port_listener_pid", lambda _port: 4321)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.get_service_status", dict)
 
 
 @pytest.mark.parametrize("gated", _gate_cases(), indirect=True)
@@ -554,6 +554,7 @@ def _restart_preflight(
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", lambda: None)
 
     stopped: list[str] = []
 
@@ -561,7 +562,7 @@ def _restart_preflight(
         stopped.append(shutdown_intent)
         return False
 
-    monkeypatch.setattr("gobby.cli.daemon._do_stop", record_stop)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._do_stop", record_stop)
     return stopped
 
 
@@ -613,7 +614,7 @@ def test_restart_proceeds_when_the_hub_merely_owes_a_migration(
 
     assert result.exit_code == 1, result.output
     assert "Refusing to restart" not in result.output
-    assert stopped == ["restart"]
+    assert stopped == ["stop"]
 
 
 def test_restart_proceeds_when_the_installed_identity_is_unreadable(
@@ -628,7 +629,7 @@ def test_restart_proceeds_when_the_installed_identity_is_unreadable(
 
     assert result.exit_code == 1, result.output
     assert "Refusing to restart" not in result.output
-    assert stopped == ["restart"]
+    assert stopped == ["stop"]
 
 
 def test_schema_apply_refusal_is_silent_without_a_readable_hub(

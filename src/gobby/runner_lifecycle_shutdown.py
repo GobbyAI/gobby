@@ -23,6 +23,7 @@ from gobby.runner_http_shutdown import (
     force_terminate_uvicorn_http_server_under_cancellation,
     settle_uvicorn_http_server,
 )
+from gobby.runner_pid_file import PidOwnershipResolution, SupervisedPidOwnership
 from gobby.runner_shutdown_storage import (
     _shutdown_database_concurrency,
     _shutdown_database_concurrency_under_cancellation,
@@ -773,6 +774,7 @@ async def shutdown_daemon_services(
     reap_remaining_child_processes: ReapChildProcesses,
     shutdown_telemetry: Callable[[], None],
     cleanup_pid_file: Callable[[], None],
+    ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
     """Run graceful shutdown within the CLI's process-termination deadline."""
     host = getattr(runner, "terminal_host_manager", None)
@@ -879,7 +881,9 @@ async def shutdown_daemon_services(
         except Exception as e:
             logger.warning("PID file cleanup failed: %s", e)
         finally:
-            if shutdown_intent is not ShutdownIntent.RESTART:
+            if shutdown_intent is not ShutdownIntent.RESTART and not isinstance(
+                ownership_resolution, SupervisedPidOwnership
+            ):
                 try:
                     get_shutdown_marker_path().unlink()
                 except FileNotFoundError:

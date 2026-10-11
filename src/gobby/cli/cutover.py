@@ -12,7 +12,7 @@ import click
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
-from gobby.cli.daemon import restart
+from gobby.cli.daemon_lifecycle import restart
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.runtime import get_cli_runtime
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
@@ -246,6 +246,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
                 restart,
                 verbose=False,
                 docker_flag=False,
+                full=True,
                 wait=True,
                 expected_identity=expected_identity,
             )

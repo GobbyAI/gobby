@@ -28,6 +28,33 @@ from gobby.cli.installers.service_common import service_unit_has_launch_env
 pytestmark = pytest.mark.unit
 
 
+def test_native_plist_path_validation_decodes_xml(tmp_path: Path) -> None:
+    from gobby.cli.installers.service import _validate_plist_paths
+    from gobby.cli.installers.service_common import _render_template
+
+    directory = tmp_path / "A&B"
+    directory.mkdir()
+    binary = directory / "gdaemon"
+    binary.touch()
+    plist = tmp_path / "daemon.plist"
+    plist.write_text(
+        _render_template(
+            "com.gobby.daemon.plist.j2",
+            gdaemon_executable=str(binary),
+            backend_command="[]",
+            working_directory=str(directory),
+            home_dir=str(tmp_path),
+            path_env=str(directory),
+            runtime_log_file=str(directory / "runtime.log"),
+            gobby_home=str(tmp_path),
+            verbose=False,
+        )
+    )
+    assert _validate_plist_paths(plist) == []
+    binary.unlink()
+    assert _validate_plist_paths(plist) == [f"Daemon executable not found: {binary}"]
+
+
 # ---------------------------------------------------------------------------
 # Template rendering
 # ---------------------------------------------------------------------------
@@ -41,6 +68,8 @@ class TestTemplateRendering:
         content = _render_template(
             "com.gobby.daemon.plist.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
@@ -52,7 +81,8 @@ class TestTemplateRendering:
         assert "<plist" in content
         assert f"<string>{LAUNCHD_LABEL}</string>" in content
         assert content.count("<string>/tmp/runtime.log</string>") == 2
-        assert "<string>/usr/bin/python3</string>" in content
+        assert "<string>/usr/bin/gdaemon</string>" in content
+        assert "<string>serve</string>" in content
         assert "<key>RunAtLoad</key>" in content
         assert "<key>KeepAlive</key>" in content
         assert "--verbose" not in content
@@ -62,6 +92,8 @@ class TestTemplateRendering:
         content = _render_template(
             "com.gobby.daemon.plist.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner", "--verbose"]',
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
@@ -69,13 +101,15 @@ class TestTemplateRendering:
             gobby_home="",
             verbose=True,
         )
-        assert "<string>--verbose</string>" in content
+        assert "--verbose" in content
 
     def test_render_plist_template_with_gobby_home(self) -> None:
         """Plist template includes GOBBY_HOME when set."""
         content = _render_template(
             "com.gobby.daemon.plist.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
@@ -91,6 +125,8 @@ class TestTemplateRendering:
         content = _render_template(
             "com.gobby.daemon.plist.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
@@ -105,6 +141,8 @@ class TestTemplateRendering:
         content = _render_template(
             "gobby-daemon.service.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
@@ -117,7 +155,7 @@ class TestTemplateRendering:
         assert "[Install]" in content
         assert "StandardOutput=append:/tmp/runtime.log" in content
         assert "StandardError=append:/tmp/runtime.log" in content
-        assert "ExecStart=/usr/bin/python3 -m gobby.runner" in content
+        assert 'ExecStart="/usr/bin/gdaemon" serve' in content
         assert "Restart=on-failure" in content
         assert "WantedBy=default.target" in content
         assert "--verbose" not in content
@@ -127,6 +165,8 @@ class TestTemplateRendering:
         content = _render_template(
             "gobby-daemon.service.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner", "--verbose"]',
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
@@ -141,6 +181,8 @@ class TestTemplateRendering:
         content = _render_template(
             "gobby-daemon.service.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
@@ -154,6 +196,8 @@ class TestTemplateRendering:
         content = _render_template(
             "com.gobby.daemon.plist.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/Users/test",
             home_dir="/Users/test",
             path_env="/usr/bin:/bin",
@@ -170,6 +214,8 @@ class TestTemplateRendering:
         content = _render_template(
             "gobby-daemon.service.j2",
             python_executable="/usr/bin/python3",
+            gdaemon_executable="/usr/bin/gdaemon",
+            backend_command='["/usr/bin/python3", "-m", "gobby.runner"]',
             working_directory="/home/test",
             home_dir="/home/test",
             path_env="/usr/bin:/bin",
@@ -178,7 +224,7 @@ class TestTemplateRendering:
             verbose=False,
         )
         assert "Environment=GOBBY_SERVICE_LAUNCH=1" in content
-        assert "Environment=GOBBY_SERVICE_NONCE=/custom/gobby/home/gobby.pid.service-nonce" in (
+        assert 'Environment="GOBBY_SERVICE_NONCE=/custom/gobby/home/gobby.pid.service-nonce"' in (
             content
         )
         assert service_unit_has_launch_env(content)
@@ -189,16 +235,20 @@ class TestServiceUnitHasLaunchEnv:
         assigned = (
             "Environment=GOBBY_SERVICE_LAUNCH=1\n"
             "Environment=GOBBY_SERVICE_NONCE=/tmp/gobby.pid.service-nonce\n"
+            'Environment="GOBBY_BACKEND_COMMAND=[]"\n'
         )
         quoted = (
             'Environment="GOBBY_SERVICE_LAUNCH=1" '
-            '"GOBBY_SERVICE_NONCE=/tmp/gobby.pid.service-nonce"\n'
+            '"GOBBY_SERVICE_NONCE=/tmp/gobby.pid.service-nonce" "GOBBY_BACKEND_COMMAND=[]"\n'
         )
         comment_only = (
             "# Environment=GOBBY_SERVICE_LAUNCH=1\n# Environment=GOBBY_SERVICE_NONCE=/x\n"
         )
         description = "Description=GOBBY_SERVICE_LAUNCH and GOBBY_SERVICE_NONCE helper\n"
-        plist = "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key></plist>"
+        plist = (
+            "<plist><key>GOBBY_SERVICE_LAUNCH</key><key>GOBBY_SERVICE_NONCE</key>"
+            "<key>GOBBY_BACKEND_COMMAND</key></plist>"
+        )
 
         assert service_unit_has_launch_env(assigned)
         assert service_unit_has_launch_env(quoted)
@@ -601,6 +651,8 @@ class TestMacOSInstall:
         mock_plist_path.return_value = plist_file
         mock_ctx.return_value = {
             "python_executable": "/usr/bin/python3",
+            "gdaemon_executable": "/usr/bin/gdaemon",
+            "backend_command": '["/usr/bin/python3", "-m", "gobby.runner"]',
             "working_directory": "/Users/test",
             "mode": "installed",
             "home_dir": "/Users/test",
@@ -641,6 +693,8 @@ class TestMacOSInstall:
         mock_plist_path.return_value = plist_file
         mock_ctx.return_value = {
             "python_executable": "/usr/bin/python3",
+            "gdaemon_executable": "/usr/bin/gdaemon",
+            "backend_command": '["/usr/bin/python3", "-m", "gobby.runner"]',
             "working_directory": "/Users/test",
             "mode": "installed",
             "home_dir": "/Users/test",
@@ -789,6 +843,8 @@ class TestMacOSEnable:
         mock_plist_path.return_value = plist_file
         mock_context.return_value = {
             "python_executable": "/usr/bin/python3",
+            "gdaemon_executable": "/usr/bin/gdaemon",
+            "backend_command": '["/usr/bin/python3", "-m", "gobby.runner"]',
             "working_directory": "/Users/test",
             "home_dir": "/Users/test",
             "path_env": "/usr/bin:/bin",
@@ -1099,6 +1155,8 @@ class TestLinuxInstall:
         mock_unit_path.return_value = unit_file
         mock_ctx.return_value = {
             "python_executable": "/usr/bin/python3",
+            "gdaemon_executable": "/usr/bin/gdaemon",
+            "backend_command": '["/usr/bin/python3", "-m", "gobby.runner"]',
             "working_directory": "/home/test",
             "mode": "installed",
             "home_dir": "/home/test",

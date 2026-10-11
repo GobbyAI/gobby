@@ -679,6 +679,120 @@ def test_combined_grammar_prefixes_preserve_write_classification(
         assert grouped.get(key) == bare.get(key)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd sub || exit 1; touch y.py",
+        "cd sub || exit 1; git add x.py",
+        "cd sub || touch x.py",
+        "{ cd sub; } || touch x.py",
+        "{ cd sub; } & touch x.py",
+        "cd sub && if true; then true; fi || touch x.py",
+        "cd sub && while false; do true; done || touch x.py",
+        "cd sub && case x in x) true;; esac || touch x.py",
+        "cd sub && { true; } || touch x.py",
+        "{ cd sub; make; } || true; touch x.py",
+        "false || cd sub; touch x.py",
+        "false || cd sub && touch x.py",
+        "f() { cd sub; }; f; touch y.py",
+        "f() { cd sub; }; false || f; touch y.py",
+        "if true; then f() { cd sub; }; fi; f; touch y.py",
+        "while true; do f() { cd sub; }; break; done; f; touch y.py",
+        "{ f() { cd sub; }; }; f; touch y.py",
+        "case x in x) f() { cd sub; };; esac; f; touch y.py",
+        "function f { cd sub; }\nf\ntouch y.py",
+        "function my-f() { cd sub; }; my-f; touch y.py",
+        "f()\n{ cd sub; }\nf\ntouch y.py",
+        "f() { pushd sub; }; f; touch y.py",
+        "f() { popd; }; f; touch y.py",
+        "eval 'cd sub'; touch y.py",
+        "eval cd sub; touch y.py",
+        'eval "cd sub"; touch y.py',
+        "eval pushd sub; touch y.py",
+        "eval 'pushd sub'; touch y.py",
+        "eval 'popd'; touch y.py",
+        "eval 'cd sub'; git add x.py",
+    ],
+)
+def test_indirect_directory_changes_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "f() { cd sub; }; touch y.py",
+        "f() { echo cd; }; f; touch y.py",
+        "eval 'echo cd'; touch y.py",
+        "eval 'echo pushd'; touch y.py",
+        "eval 'echo popd'; touch y.py",
+    ],
+)
+def test_nonexecuted_directory_words_preserve_scope(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == ["y.py"]
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+@pytest.mark.parametrize(
+    ("command", "paths"),
+    [
+        ("test -f x.py || touch x.py", ["x.py"]),
+        ("mkdir -p d || exit 1; touch d/x.py", ["d", "d/x.py"]),
+        ("rm -f x.py || true; touch x.py", ["x.py"]),
+        ("false || true; touch x.py", ["x.py"]),
+        ("sleep 1 & touch x.py", ["x.py"]),
+        ("make & wait; touch x.py", ["x.py"]),
+        ("false || true; git add x.py", ["x.py"]),
+        ("sleep 1 & git add x.py", ["x.py"]),
+        ("f() { false || true; }; f; touch y.py", ["y.py"]),
+        ("if true; then false || true; fi; touch y.py", ["y.py"]),
+        ("cd sub; false || true; touch x.py", ["sub/x.py"]),
+        ("cd sub; false || touch x.py", ["sub/x.py"]),
+        ("cd sub; sleep 1 & touch x.py", ["sub/x.py"]),
+        ("if true; then\n  cd sub\n  test -f x.py || touch x.py\nfi", ["sub/x.py"]),
+        ("{ cd sub; false || true; touch x.py; }", ["sub/x.py"]),
+        ("cd sub && { false || touch x.py; }", ["sub/x.py"]),
+        ("cd sub; { true; } || touch x.py", ["sub/x.py"]),
+        ("{ cd sub; } | cat || touch x.py", ["x.py"]),
+    ],
+)
+def test_unchanged_and_or_list_preserves_directory_scope(
+    tmp_path: Path, command: str, paths: list[str]
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    resolved_paths = [
+        str(Path(path).relative_to(tmp_path)) if Path(path).is_absolute() else path
+        for path in data["canonical_file_paths"]
+    ]
+    assert resolved_paths == paths
+    assert data["canonical_repo_mutation"] is True
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+def test_directory_change_after_background_boundary_fails_closed(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "sleep 1 & cd sub; touch x.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cd sub && touch a.py || touch b.py", "{ cd sub; } && touch a.py || touch b.py"],
+)
+def test_changed_and_or_list_retains_prior_write_and_unknown_scope(
+    tmp_path: Path, command: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_file_paths"] == ["sub/a.py"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 def test_background_grammar_group_invalidates_later_scope(tmp_path: Path) -> None:
     _signature_fixture(tmp_path / "bin")
     data = _invocation_metadata(
@@ -750,6 +864,8 @@ def _signature_fixture(directory: Path) -> None:
         ("bin/tool", "tool_input", False),
         ("bash -c './bin/tool'", "event", False),
         ("./bin/tool && bin/tool | ./bin/tool", "event", False),
+        ("./bin/tool || true; ./bin/tool", "event", False),
+        ("true & ./bin/tool", "event", False),
         ("nohup ./bin/tool", "event", False),
         ("./bin/script", "event", True),
         ("./bin/tool", None, True),
@@ -1168,9 +1284,10 @@ def test_substitution_end_preserves_ansi_c_quotes(text: str) -> None:
         "builtin chdir sub; ./bin/tool",
         "c=cd; $c sub; ./bin/tool",
         "f() { cd sub; }; f; ./bin/tool",
+        "f() { cd sub; }; false || f; ./bin/tool",
+        "true & cd sub; ./bin/tool",
         "./bin/tool () cd sub; ./bin/tool; ./bin/tool",
         "{cd,./sub}; ./bin/tool",
-        "./bin/tool || true; ./bin/tool",
         # Wrappers that start the program in another directory.
         "env -C sub ./bin/tool",
         "env --chdir=sub ./bin/tool",

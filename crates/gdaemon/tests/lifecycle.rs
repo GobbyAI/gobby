@@ -42,6 +42,9 @@ impl TestDb {
             .ok_or_else(|| anyhow::anyhow!("fixture PID claim unavailable"))?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
         let mut config = BackendConfig::from_command_json(home, Some(&argv))?;
+        config
+            .environment
+            .insert("HOME".into(), home.as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
         Ok(BackendSupervisor::new(lease, claim, config))
@@ -266,6 +269,151 @@ fn crash_backoff_caps_at_thirty_seconds() {
 }
 
 #[tokio::test]
+async fn terminal_drain_marker_reaches_runtime_owner() -> Result<()> {
+    database_case(async |db| {
+        for (intent, expected) in [("stop", SupervisorExit::StopTerminals), ("restart", SupervisorExit::RestartTerminals)] {
+            let home = TempDir::new()?;
+            let script = format!("import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({{'intent':'{intent}','timestamp':time.time(),'details':{{'drain_terminals':True}}}})); raise SystemExit(0)");
+            let mut supervisor = db.supervisor(home.path(), &script).await?;
+            let (stop, rx) = watch::channel(false);
+            assert_eq!(timeout(Duration::from_secs(5), supervisor.run(rx.clone())).await??, expected);
+            let pid_file = home.path().join("gobby.pid");
+            if expected == SupervisorExit::RestartTerminals {
+                assert!(claim_pid_file(&pid_file, Role::Daemon)?.is_none(), "host restart lost native PID ownership");
+                stop.send(true)?;
+                assert_eq!(supervisor.run(rx).await?, SupervisorExit::Stopped);
+            }
+            // The PID artifact persists; a fresh claim proves that stop released ownership.
+            let successor = claim_pid_file(&pid_file, Role::Daemon)?
+                .context("stopped supervisor retained native PID ownership")?;
+            drop(successor);
+        }
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+async fn healthy_backend_resets_crash_backoff() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let home = TempDir::new()?;
+    let control = tokio::net::UnixListener::bind(home.path().join("exit.sock"))?;
+    let script = r#"import os,pathlib,socket
+home=pathlib.Path(os.environ['GOBBY_HOME'])
+counter=home/'runs'
+n=int(counter.read_text())+1 if counter.exists() else 1
+counter.write_text(str(n))
+if n==1: raise SystemExit(1)
+control=socket.socket(socket.AF_UNIX)
+control.connect(str(home/'exit.sock'))
+control.sendall(b'ready')
+control.recv(1)
+raise SystemExit(1)
+"#;
+    let argv = serde_json::to_string(&["uv", "run", "python", "-c", script])?;
+    let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+    config.drain_timeout = Duration::from_millis(100);
+    let claim =
+        claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("test PID claim")?;
+    let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+    let mut state = supervisor.subscribe();
+    let (stop, rx) = watch::channel(false);
+    let task = tokio::spawn(async move { supervisor.run(rx).await });
+    let _abort = AbortOnDrop(task.abort_handle());
+    wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+    let (mut control, _) = timeout(Duration::from_secs(5), control.accept()).await??;
+    let mut ready = [0; 5];
+    timeout(Duration::from_secs(5), control.read_exact(&mut ready)).await??;
+    assert_eq!(&ready, b"ready");
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::time::resume();
+    control.write_all(b"x").await?;
+    wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+    assert_eq!(
+        *state.borrow(),
+        BackendStatus::Backoff {
+            delay: Duration::from_secs(1)
+        }
+    );
+    stop.send(true)?;
+    assert_eq!(
+        timeout(Duration::from_secs(5), task).await???,
+        SupervisorExit::Stopped
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn exited_backend_leaves_no_process_group_descendant() -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    for code in [1, 78, 0] {
+        let home = TempDir::new()?;
+        let control = tokio::net::UnixListener::bind(home.path().join("exit.sock"))?;
+        let script = format!(
+            r#"import os,pathlib,socket,subprocess,sys
+home=pathlib.Path(os.environ['GOBBY_HOME'])
+if (home/'first').exists():
+    os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),1)
+    raise SystemExit(0)
+(home/'first').write_text('first')
+child=subprocess.Popen([sys.executable,'-c','import signal; signal.pause()'])
+(home/'descendant').write_text(str(child.pid))
+control=socket.socket(socket.AF_UNIX)
+control.connect(str(home/'exit.sock'))
+control.recv(1)
+if {code}==0:
+    import json,time
+    (home/'shutdown_intent_active.json').write_text(json.dumps({{'source':'test','intent':'restart','timestamp':time.time()}}))
+raise SystemExit({code})
+"#
+        );
+        let argv = serde_json::to_string(&["uv", "run", "python", "-c", &script])?;
+        let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        config.drain_timeout = Duration::from_millis(100);
+        let claim = claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?
+            .context("test PID claim")?;
+        let mut supervisor = BackendSupervisor::with_lease(None, claim, config);
+        let mut state = supervisor.subscribe();
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let pid: i32 = wait_for_file(&home.path().join("descendant"))
+            .await?
+            .parse()?;
+        let first_backend = state.borrow().clone();
+        let (mut control, _) = timeout(Duration::from_secs(5), control.accept()).await??;
+        control.write_all(b"x").await?;
+        if code == 78 {
+            wait_for_status(&mut state, |s| matches!(s, BackendStatus::Refused { .. })).await?;
+        } else if code == 1 {
+            wait_for_status(&mut state, |s| matches!(s, BackendStatus::Backoff { .. })).await?;
+        } else {
+            wait_for_status(&mut state, |s| {
+                matches!(s, BackendStatus::Starting { .. }) && s != &first_backend
+            })
+            .await?;
+        }
+        if code != 78 {
+            stop.send(true)?;
+        }
+        timeout(Duration::from_secs(5), task).await???;
+        timeout(Duration::from_secs(5), async {
+            let mut poll = tokio::time::interval(Duration::from_millis(20));
+            loop {
+                // SAFETY: signal zero observes only the PID written by this test's backend.
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    break;
+                }
+                poll.tick().await;
+            }
+        })
+        .await
+        .context("descendant survived leader exit")?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn python_written_shutdown_marker_is_a_golden() -> Result<()> {
     let home = TempDir::new()?;
     let raw = include_bytes!("../../../tests/fixtures/shutdown_intent_restart.json");
@@ -379,6 +527,9 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
         let argv = serde_json::to_string(&["uv", "run", "python", "-c", IGNORE_TERM])?;
         let mut config = BackendConfig::from_command_json(home.path(), Some(&argv))?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
         config.drain_timeout = Duration::from_millis(100);
         config.heartbeat_interval = Duration::from_millis(100);
         let mut supervisor = BackendSupervisor::new(lease, claim, config);
@@ -496,6 +647,68 @@ raise SystemExit(0 if n!=2 else 1)
         assert!(claim_pid_file(&home.path().join("gobby.pid"),Role::Maintenance)?.is_some(),"stop releases PID ownership");
         Ok(())
     }).await
+}
+
+#[tokio::test]
+async fn backend_stop_marker_exits_without_respawn() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); starts=home/'starts'
+with starts.open('a') as output: output.write('a')
+write_shutdown_intent('test_stop','stop',home=home)
+raise SystemExit(0)
+"#;
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "a");
+        assert!(!home.path().join("shutdown_intent_active.json").exists());
+        assert!(claim_pid_file(&home.path().join("gobby.pid"), Role::Maintenance)?.is_some());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn full_restart_marker_exits_without_respawn_and_survives_for_successor() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); starts=home/'starts'
+with starts.open('a') as output: output.write('a')
+write_shutdown_intent('cli_restart','restart',home=home,details={'restart_scope':'supervisor'})
+raise SystemExit(0)
+"#;
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "a");
+        let path = home.path().join("shutdown_intent_active.json");
+        let bytes = fs::read(&path)?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes)?["intent"],
+            "restart"
+        );
+        assert!(claim_pid_file(&home.path().join("gobby.pid"), Role::Maintenance)?.is_some());
+        let mut successor = IntentMarker::new(home.path());
+        successor.before_spawn().await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs_f64();
+        assert_eq!(successor.after_exit(now).await?, None);
+        assert_eq!(fs::read(path)?, bytes);
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]

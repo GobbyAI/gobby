@@ -47,7 +47,7 @@ def bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     envelope.chmod(0o600)
     monkeypatch.setenv("GOBBY_MANAGED_EXECUTION_ID", _EXECUTION_ID)
     monkeypatch.setenv("GOBBY_AGENT_API_TOKEN", "stale-run-capability")
-    for module in ("gobby.cli.daemon", "gobby.cli.daemon_health"):
+    for module in ("gobby.cli.daemon_lifecycle", "gobby.cli.daemon_health"):
         monkeypatch.setattr(f"{module}.get_gobby_home", lambda: tmp_path)
         monkeypatch.setattr(
             f"{module}.probe_daemon_lock",
@@ -55,8 +55,8 @@ def bootstrap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         )
         monkeypatch.setattr(f"{module}._is_process_alive", lambda _pid: True)
         monkeypatch.setattr(f"{module}.get_service_status", lambda: {"installed": False})
-    monkeypatch.setattr("gobby.cli.daemon._read_pid_file", lambda: 12345)
-    monkeypatch.setattr("gobby.cli.daemon.get_port_listener_pid", lambda _port: None)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._read_pid_file", lambda: 12345)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.get_port_listener_pid", lambda _port: None)
     return path
 
 
@@ -145,7 +145,7 @@ def test_managed_observability_needs_no_local_pid_or_operator_token(
     monkeypatch.setenv("GOBBY_DAEMON_URL", "http://127.0.0.1:61235")
     probe = MagicMock(side_effect=AssertionError("managed seat inspected daemon PID lock"))
     token = MagicMock(side_effect=AssertionError("managed seat read operator token"))
-    monkeypatch.setattr("gobby.cli.daemon.probe_daemon_lock", probe)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.probe_daemon_lock", probe)
     monkeypatch.setattr("gobby.cli.daemon_health.probe_daemon_lock", probe)
     monkeypatch.setattr("gobby.utils.local_token.read_local_api_token", token)
 
@@ -179,7 +179,7 @@ def test_status_and_health_under_runtime_role_unchanged(
         MagicMock(return_value=MagicMock(diverged=False)),
     )
     monkeypatch.setattr(
-        "gobby.cli.daemon.fetch_rich_status",
+        "gobby.cli.daemon_lifecycle.fetch_rich_status",
         AsyncMock(return_value=RichStatusProbe(api_data={"process": {}}, health_confirmed=True)),
     )
     monkeypatch.setattr("gobby.utils.deps.collect_all_deps", lambda *_args, **_kwargs: {})

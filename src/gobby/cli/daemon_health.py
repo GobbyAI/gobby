@@ -38,7 +38,10 @@ def report_managed_health(ctx: click.Context) -> None:
         ctx.exit(1)
 
     if response.status_code != 200:
-        click.echo(f"Gobby daemon: unhealthy (HTTP {response.status_code})")
+        from gobby.utils.status import native_runtime_refusal
+
+        refusal = native_runtime_refusal(response)
+        click.echo(f"Gobby daemon: {refusal or f'unhealthy (HTTP {response.status_code})'}")
         ctx.exit(1)
     try:
         payload = response.json()

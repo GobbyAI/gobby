@@ -147,7 +147,7 @@ def _daemon_url() -> str:
 
 def _daemon_already_running() -> bool:
     try:
-        from gobby.cli.daemon import _is_daemon_healthy
+        from gobby.cli.daemon_lifecycle import _is_daemon_healthy
 
         port = urlparse(_daemon_url()).port
         if port is None:

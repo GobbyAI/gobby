@@ -92,6 +92,19 @@ def test_checkout_opt_in_returns_a_fresh_debug_binary(tmp_path: Path) -> None:
     assert selected == repo / "target" / "debug" / "gdaemon"
 
 
+@pytest.mark.parametrize("relative", [False, True])
+def test_checkout_uses_cargo_target_directory(tmp_path: Path, relative: bool) -> None:
+    repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=None)
+    target = repo / "cargo-output" if relative else tmp_path / "cargo-output"
+    binary = _write(target / "debug" / "gdaemon", 2_000)
+    env = {
+        CHECKOUT_BINARY_ENV: "checkout",
+        "CARGO_TARGET_DIR": "cargo-output" if relative else str(target),
+    }
+
+    assert select_test_gdaemon(repo, env, "gdaemon") == binary
+
+
 def test_checkout_opt_in_rejects_a_missing_binary(tmp_path: Path) -> None:
     repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=None)
 

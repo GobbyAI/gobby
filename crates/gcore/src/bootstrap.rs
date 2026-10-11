@@ -41,6 +41,8 @@ const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct HubDatabaseBootstrap {
+    pub mode: RunMode,
+    pub hub_daemon_url: Option<String>,
     pub database_url: Option<String>,
     pub api_key: Option<String>,
     pub daemon_url: Option<String>,
@@ -48,6 +50,15 @@ pub struct HubDatabaseBootstrap {
     pub daemon_port: u16,
     pub websocket_port: u16,
     pub front_door: FrontDoorBootstrap,
+}
+
+/// The native lifecycle and node relay share this bootstrap-derived mode.
+/// A remote datastore always selects node mode, matching Python's BootstrapConfig.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunMode {
+    Standalone,
+    Hub,
+    Node,
 }
 
 impl std::fmt::Debug for HubDatabaseBootstrap {
@@ -216,6 +227,16 @@ pub fn parse_hub_database_bootstrap(
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
     let front_door = parse_front_door(map.get("front_door"), &bind_host)?;
     Ok(Some(HubDatabaseBootstrap {
+        mode: match optional_string_field(map, "datastore_mode")?.as_deref() {
+            Some("remote") => RunMode::Node,
+            None | Some("local") => match map.get("hub") {
+                None | Some(serde_yaml::Value::Bool(false)) => RunMode::Standalone,
+                Some(serde_yaml::Value::Bool(true)) => RunMode::Hub,
+                _ => anyhow::bail!("bootstrap hub must be a boolean"),
+            },
+            _ => anyhow::bail!("bootstrap datastore_mode must be local or remote"),
+        },
+        hub_daemon_url: optional_string_field(map, "hub_daemon_url")?,
         database_url: optional_string_field(map, "database_url")?,
         api_key: optional_string_field(map, "api_key")?,
         daemon_url: optional_string_field(map, "daemon_url")?,

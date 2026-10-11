@@ -1,4 +1,4 @@
-//! Native backend ownership; deliberately not connected to production serve.
+//! Native backend supervision for the runtime owner.
 
 use super::{
     pid_file::PidFileClaim,
@@ -13,12 +13,13 @@ use std::{
     os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::AsyncReadExt,
     process::{Child, Command},
-    sync::watch,
+    sync::{Mutex, watch},
     task::JoinHandle,
     time::{Instant, interval, sleep_until, timeout},
 };
@@ -38,6 +39,14 @@ pub enum SupervisorExit {
     Stopped,
     LeaseLost,
     Refused,
+    StopTerminals,
+    RestartTerminals,
+}
+
+impl SupervisorExit {
+    pub fn drains_terminals(self) -> bool {
+        matches!(self, Self::StopTerminals | Self::RestartTerminals)
+    }
 }
 
 pub struct BackendConfig {
@@ -80,7 +89,7 @@ impl BackendConfig {
 }
 
 pub struct BackendSupervisor {
-    lease: ActiveDaemonLease,
+    lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
@@ -88,6 +97,14 @@ pub struct BackendSupervisor {
 
 impl BackendSupervisor {
     pub fn new(lease: ActiveDaemonLease, pid_claim: PidFileClaim, config: BackendConfig) -> Self {
+        Self::with_lease(Some(Arc::new(Mutex::new(lease))), pid_claim, config)
+    }
+
+    pub fn with_lease(
+        lease: Option<Arc<Mutex<ActiveDaemonLease>>>,
+        pid_claim: PidFileClaim,
+        config: BackendConfig,
+    ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
         Self {
             lease,
@@ -110,18 +127,29 @@ impl BackendSupervisor {
         if self.pid_claim.is_none() {
             return Ok(SupervisorExit::Stopped);
         }
-        if self.lease.fence().is_none() {
+        if let Some(lease) = &self.lease
+            && lease.lock().await.fence().is_none()
+        {
             return Ok(SupervisorExit::Standby);
         }
         let result = self.supervise(&mut shutdown).await;
         // release takes the dedicated connection before awaiting, so failures and
-        // cancellation cannot retain the advisory lock. Always release the PID on
-        // stop/loss/error, but retain it in the sticky refused state.
-        if !matches!(result, Ok(SupervisorExit::Refused)) {
+        // cancellation cannot retain the advisory lock. Keep the machine claim
+        // through lease loss and sticky refusal; release it on stop or error.
+        if !matches!(
+            result,
+            Ok(SupervisorExit::Refused
+                | SupervisorExit::LeaseLost
+                | SupervisorExit::RestartTerminals)
+        ) {
             self.pid_claim.take();
             self.state.send_replace(BackendStatus::Stopped);
         }
-        let release = self.lease.release().await;
+        let release = match &self.lease {
+            _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
+            Some(lease) => lease.lock().await.release().await,
+            None => Ok(()),
+        };
         match result {
             Err(error) => {
                 if let Err(release_error) = release {
@@ -149,7 +177,7 @@ impl BackendSupervisor {
             if shutdown_requested(shutdown) {
                 return Ok(SupervisorExit::Stopped);
             }
-            if let Err(error) = self.lease.heartbeat().await {
+            if let Err(error) = self.heartbeat().await {
                 eprintln!("backend lease lost: {error:#}");
                 return Ok(SupervisorExit::LeaseLost);
             }
@@ -158,17 +186,22 @@ impl BackendSupervisor {
                 return Ok(SupervisorExit::Stopped);
             }
             let mut backend = BackendChild::spawn(&self.config)?;
+            let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
             let status: ExitStatus = loop {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
                         backend.drain(self.config.drain_timeout).await?;
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+                        if matches!(markers.after_exit(now).await?, Some(Intent::StopTerminals | Intent::RestartTerminals)) {
+                            return Ok(SupervisorExit::StopTerminals);
+                        }
                         return Ok(SupervisorExit::Stopped);
                     }
                     status = backend.child.wait() => break status?,
                     _ = heartbeats.tick() => {
-                        if let Err(error) = self.lease.heartbeat().await {
+                        if let Err(error) = self.heartbeat().await {
                             eprintln!("backend lease lost: {error:#}");
                             backend.drain(self.config.drain_timeout).await?;
                             return Ok(SupervisorExit::LeaseLost);
@@ -176,9 +209,12 @@ impl BackendSupervisor {
                     }
                 }
             };
+            // The leader may exit while descendants retain sockets or stderr.
+            // Retain process-group ownership through reaping, including exit 78.
+            backend.kill_group()?;
             backend.finish_stderr().await;
-            if shutdown_requested(shutdown) {
-                return Ok(SupervisorExit::Stopped);
+            if started_at.elapsed() >= Duration::from_secs(30) {
+                crashes = 0;
             }
             if status.code() == Some(78) {
                 let reason = backend.last_line.borrow().clone();
@@ -192,8 +228,23 @@ impl BackendSupervisor {
                 return Ok(SupervisorExit::Refused);
             }
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
-            match markers.after_exit(now).await? {
+            let intent = markers.after_exit(now).await?;
+            if shutdown_requested(shutdown) {
+                return Ok(
+                    if matches!(
+                        intent,
+                        Some(Intent::StopTerminals | Intent::RestartTerminals)
+                    ) {
+                        SupervisorExit::StopTerminals
+                    } else {
+                        SupervisorExit::Stopped
+                    },
+                );
+            }
+            match intent {
                 Some(Intent::Stop) => return Ok(SupervisorExit::Stopped),
+                Some(Intent::StopTerminals) => return Ok(SupervisorExit::StopTerminals),
+                Some(Intent::RestartTerminals) => return Ok(SupervisorExit::RestartTerminals),
                 Some(Intent::Restart) => {
                     crashes = 0;
                     continue;
@@ -209,7 +260,7 @@ impl BackendSupervisor {
                     _ = shutdown_signal(shutdown) => return Ok(SupervisorExit::Stopped),
                     _ = sleep_until(deadline) => break,
                     _ = heartbeats.tick() => {
-                        if let Err(error) = self.lease.heartbeat().await {
+                        if let Err(error) = self.heartbeat().await {
                             eprintln!("backend lease lost: {error:#}");
                             return Ok(SupervisorExit::LeaseLost);
                         }
@@ -217,6 +268,13 @@ impl BackendSupervisor {
                 }
             }
         }
+    }
+
+    async fn heartbeat(&self) -> Result<()> {
+        if let Some(lease) = &self.lease {
+            lease.lock().await.heartbeat().await?;
+        }
+        Ok(())
     }
 }
 
@@ -239,7 +297,7 @@ async fn shutdown_signal(shutdown: &mut watch::Receiver<bool>) {
 
 struct BackendChild {
     child: Child,
-    group: i32,
+    group: Option<i32>,
     _liveness: std::io::PipeWriter,
     stderr: JoinHandle<io::Result<()>>,
     last_line: watch::Receiver<String>,
@@ -255,7 +313,6 @@ impl BackendChild {
             .args(&config.command[1..])
             .envs(&config.environment)
             .env("GOBBY_HOME", &config.home)
-            .env("HOME", &config.home)
             .env_remove("GOBBY_SINGLETON_LOCK_FD")
             .env_remove("GOBBY_PARENT_FD")
             .env("GOBBY_SUPERVISOR_FD", read_fd.to_string())
@@ -306,7 +363,7 @@ impl BackendChild {
         });
         Ok(Self {
             child,
-            group,
+            group: Some(group),
             _liveness: writer,
             stderr,
             last_line,
@@ -324,6 +381,7 @@ impl BackendChild {
 
     async fn drain(&mut self, deadline: Duration) -> Result<()> {
         if !self.signal_owned_group(libc::SIGTERM)? {
+            self.group = None;
             self.child.wait().await?;
             self.finish_stderr().await;
             return Ok(());
@@ -332,14 +390,17 @@ impl BackendChild {
         // cannot be reused for an unrelated group even if a launcher exits
         // before its TERM-ignoring descendant. Then kill and reap the command.
         sleep_until(Instant::now() + deadline).await;
-        self.signal_owned_group(libc::SIGKILL)?;
+        self.kill_group()?;
         timeout(Duration::from_secs(5), self.child.wait()).await??;
         self.finish_stderr().await;
         Ok(())
     }
 
     fn signal_owned_group(&mut self, signal: i32) -> io::Result<bool> {
-        match signal_group(self.group, signal) {
+        let Some(group) = self.group else {
+            return Ok(false);
+        };
+        match signal_group(group, signal) {
             // Darwin reports EPERM for an all-zombie group. Only accept that
             // completion after verifying our leader has exited; never suppress
             // a permission error while the owned leader is still running.
@@ -353,14 +414,18 @@ impl BackendChild {
             result => result,
         }
     }
+
+    fn kill_group(&mut self) -> io::Result<()> {
+        self.signal_owned_group(libc::SIGKILL)?;
+        self.group = None;
+        Ok(())
+    }
 }
 
 impl Drop for BackendChild {
     fn drop(&mut self) {
         self.stderr.abort();
-        if self.child.id().is_some()
-            && let Err(error) = self.signal_owned_group(libc::SIGKILL)
-        {
+        if let Err(error) = self.kill_group() {
             eprintln!("backend group cleanup: {error}");
         }
     }

@@ -18,6 +18,7 @@ from gobby.mcp_proxy.models import (
     TemplateValuesInvalidError,
 )
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 LOGGER = logging.getLogger("gobby.mcp.manager")
@@ -49,13 +50,18 @@ def load_tools_from_db(
         tools = mcp_db_manager.get_cached_tools(server_id)
         if not tools:
             return None
-        return [
+        briefs = [
             {
                 "name": tool.name,
-                "brief": truncate_tool_brief(tool.description),
+                "brief": tool.description,
             }
             for tool in tools
         ]
+        for brief in briefs:
+            description, counts = clean_untrusted_value(brief["brief"])
+            log_invisible_counts(counts, "external MCP cached brief")
+            brief["brief"] = truncate_tool_brief(description)
+        return briefs
     except Exception as exc:
         logger.warning("Failed to load cached tools for '%s': %s", server_id, exc)
         return None

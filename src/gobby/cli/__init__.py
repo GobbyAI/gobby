@@ -18,9 +18,9 @@ from .runtime import CliRuntime
 # bridge) does not pay every command group's import cost before answering initialize.
 _COMMAND_SOURCES: dict[str, tuple[str, str]] = {
     "start": ("daemon_start", "start"),
-    "stop": ("daemon", "stop"),
-    "restart": ("daemon", "restart"),
-    "status": ("daemon", "status"),
+    "stop": ("daemon_lifecycle", "stop"),
+    "restart": ("daemon_lifecycle", "restart"),
+    "status": ("daemon_lifecycle", "status"),
     "health": ("daemon_health", "health"),
     "lease": ("daemon_lease", "lease"),
     "datastores": ("datastores", "datastores"),

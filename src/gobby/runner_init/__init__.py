@@ -7,6 +7,7 @@ from gobby.runner_init.orchestration import init_orchestration
 from gobby.runner_init.servers import init_servers
 from gobby.runner_init.services import init_services
 from gobby.runner_init.storage import (
+    StartRefusal,
     bundled_content_refusal,
     init_runtime_capacity,
     init_startup_content,
@@ -15,6 +16,7 @@ from gobby.runner_init.storage import (
 )
 
 __all__ = [
+    "StartRefusal",
     "bundled_content_refusal",
     "init_hub_database",
     "init_orchestration",

@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, cast
 
+import psutil
+
 from gobby.runner_pid_record import (
     RECORD_VERSION,
     RESERVATION_AGE_BOUND_SECONDS,
@@ -172,7 +174,15 @@ class FailOpenPidOwnership:
         """Match the ownership contract when no PID-file claim exists."""
 
 
-PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership
+@dataclass(frozen=True)
+class SupervisedPidOwnership:
+    """The native supervisor owns the claim; the backend never releases it."""
+
+    def release(self) -> None:
+        """The supervisor alone owns the descriptor and PID record."""
+
+
+PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership | SupervisedPidOwnership
 
 _CURRENT_CLAIM: PidFileClaim | None = None
 
@@ -220,15 +230,16 @@ def _read_pid(pid_file: Path) -> int | None:
 
 
 def _pid_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+    if pid <= 0:
         return False
-    except PermissionError:
+    try:
+        # An exited owner may remain unreaped by its external launcher. Its PID
+        # still answers kill(0), but it has released every singleton descriptor.
+        return bool(psutil.Process(pid).status() != psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
         return True
-    except OSError as exc:
-        return exc.errno == errno.EPERM
-    return True
 
 
 def _open_lock(lock_path: Path) -> int:

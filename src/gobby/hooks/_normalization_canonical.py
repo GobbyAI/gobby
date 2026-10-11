@@ -276,8 +276,7 @@ def _classify_shell_command(
         )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         in_pipeline = directory.pipeline_stage(segment.separator_before, next_separator)
-        if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
-            directory.invalidate()
+        directory.sequence_separator(segment.separator_before)
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
         substitution_bodies = [
@@ -359,9 +358,12 @@ def _classify_shell_command(
             if (
                 not env_directories
                 and not in_pipeline
-                and segment.separator_before in {None, "&&", ";", "\n", "|"}
+                and segment.separator_before in {None, "&&", ";", "\n", "|", "||", "&"}
+                and (
+                    segment.separator_before not in {"||", "&"} or next_separator not in {"|", "&"}
+                )
             ):
-                directory.change(cd_target)
+                directory.change(None if segment.separator_before in {"||", "&"} else cd_target)
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -407,6 +409,7 @@ def _classify_shell_command(
                 ),
             )
         )
+        directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))

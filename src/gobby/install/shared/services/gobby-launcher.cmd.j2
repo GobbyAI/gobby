@@ -1,6 +1,8 @@
 @echo off
+setlocal DisableDelayedExpansion
 set "PATH={{ path_env }}"
 set "HOME={{ home_dir }}"
+set GOBBY_BACKEND_COMMAND={{ backend_command|cmd_env }}
 set "GOBBY_SERVICE_LAUNCH=1"
 {% set nonce_home = gobby_home if gobby_home else home_dir + "\\.gobby" %}
 set "GOBBY_SERVICE_NONCE={{ nonce_home }}\gobby.pid.service-nonce"

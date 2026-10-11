@@ -1306,7 +1306,7 @@ class TestCanonicalToolMetadata:
         ]
 
     @pytest.mark.parametrize("separator", [" || ", " & "])
-    def test_exec_command_pipeline_keeps_uncertain_separator_cwd_reset(
+    def test_exec_command_pipeline_keeps_uncertain_separator_scope_unresolved(
         self, separator: str
     ) -> None:
         data: dict[str, Any] = {
@@ -1321,7 +1321,7 @@ class TestCanonicalToolMetadata:
         normalize_tool_fields(data)
 
         assert data["canonical_tool_kind"] == "search"
-        assert data["canonical_file_paths"] == ["scratch/before.txt", "after.txt"]
+        assert data["canonical_file_paths"] == ["scratch/before.txt"]
 
     def test_exec_command_compound_cd_rebases_newline_sed_path(self) -> None:
         data: dict[str, Any] = {

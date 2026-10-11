@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import uvicorn
 
 from gobby.app_context import clear_app_context
-from gobby.runner_front_door import backend_bind
+from gobby.runner_backend import backend_bind
 from gobby.runner_gate import acquire_runner_gate
 from gobby.runner_lifecycle_agents import _recover_agent_runs_after_restart
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -29,7 +29,11 @@ from gobby.runner_lifecycle_startup import (
     _log_subsystem_init_result,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
-from gobby.runner_pid_file import FailOpenPidOwnership, PidOwnershipResolution
+from gobby.runner_pid_file import (
+    FailOpenPidOwnership,
+    PidOwnershipResolution,
+    SupervisedPidOwnership,
+)
 from gobby.shutdown_intent import clear_active_shutdown_intent
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.telemetry import shutdown_telemetry
@@ -135,10 +139,8 @@ async def run_daemon(
 
     def cleanup_owned_pid_file() -> None:
         try:
-            # The public ports must be free before the claim admits another runner.
-            if runner.front_door_child is not None:
-                runner.front_door_child.stop()
-            cleanup_pid_file()
+            if not isinstance(ownership_resolution, SupervisedPidOwnership):
+                cleanup_pid_file()
         finally:
             ownership_resolution.release()
 
@@ -304,10 +306,6 @@ async def run_daemon(
 
             while not runner._shutdown_requested:
                 await asyncio.sleep(0.5)
-            # Every shutdown path passes here; the child reap below must not respawn it.
-            if runner.front_door_child is not None:
-                runner.front_door_child.disarm()
-
             server_failure = server_task.result() if unexpected_server_exit.is_set() else None
 
             await shutdown_daemon_services(
@@ -320,6 +318,7 @@ async def run_daemon(
                 reap_remaining_child_processes=_reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_owned_pid_file,
+                ownership_resolution=ownership_resolution,
             )
             if unexpected_server_exit.is_set():
                 from gobby.runner import _healthy_daemon_running

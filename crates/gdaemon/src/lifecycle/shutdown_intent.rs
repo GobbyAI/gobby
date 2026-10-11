@@ -12,6 +12,8 @@ use std::{
 pub enum Intent {
     Stop,
     Restart,
+    StopTerminals,
+    RestartTerminals,
 }
 
 pub struct IntentMarker {
@@ -65,14 +67,34 @@ impl IntentMarker {
             return Ok(None);
         }
         self.consumed.insert(digest);
-        Ok(Some(
-            if record.get("intent").and_then(Value::as_str) == Some("restart") {
-                Intent::Restart
-            } else {
-                // Python treats maintenance and unknown intents as a stop for this owner.
-                Intent::Stop
-            },
-        ))
+        let restart = record.get("intent").and_then(Value::as_str) == Some("restart");
+        if !restart {
+            match tokio::fs::remove_file(&self.path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let drain = record
+            .get("details")
+            .and_then(|details| details.get("drain_terminals"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        // Full restart keeps the marker for health clients but retires this
+        // supervisor. The CLI starts its successor after the owner exits.
+        let restart_backend = restart
+            && record
+                .get("details")
+                .and_then(|details| details.get("restart_scope"))
+                .and_then(Value::as_str)
+                != Some("supervisor");
+        // Python treats maintenance and unknown intents as a stop for this owner.
+        Ok(Some(match (restart_backend, drain) {
+            (false, false) => Intent::Stop,
+            (true, false) => Intent::Restart,
+            (false, true) => Intent::StopTerminals,
+            (true, true) => Intent::RestartTerminals,
+        }))
     }
 
     async fn read(&self) -> io::Result<Option<Vec<u8>>> {
@@ -81,5 +103,48 @@ impl IntentMarker {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn consumed_stop_removes_marker_and_restart_retains_it() -> io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let path = home.path().join("shutdown_intent_active.json");
+        for (intent, drain, scope, expected) in [
+            ("stop", false, None, Intent::Stop),
+            ("stop", true, None, Intent::StopTerminals),
+            ("restart", false, None, Intent::Restart),
+            ("restart", true, None, Intent::RestartTerminals),
+            ("restart", false, Some("supervisor"), Intent::Stop),
+            ("restart", true, Some("supervisor"), Intent::StopTerminals),
+            ("stop", false, Some("supervisor"), Intent::Stop),
+            ("stop", true, Some("supervisor"), Intent::StopTerminals),
+        ] {
+            let mut marker = IntentMarker::new(home.path());
+            marker.before_spawn().await?;
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "intent": intent, "timestamp": 1000.0,
+                "details": {"drain_terminals": drain, "restart_scope": scope}
+            }))?;
+            tokio::fs::write(&path, &bytes).await?;
+            assert_eq!(marker.after_exit(1010.0).await?, Some(expected));
+            if intent == "restart" {
+                assert_eq!(tokio::fs::read(&path).await?, bytes);
+                let mut successor = IntentMarker::new(home.path());
+                successor.before_spawn().await?;
+                assert_eq!(successor.after_exit(1015.0).await?, None);
+                tokio::fs::remove_file(&path).await?;
+            } else {
+                assert!(
+                    !path.exists(),
+                    "consumed STOP must remove the active marker"
+                );
+            }
+        }
+        Ok(())
     }
 }
