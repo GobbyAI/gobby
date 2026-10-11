@@ -439,11 +439,12 @@ record_command_result "vitest" "$VITEST_EXIT" "$VITEST_REPORT"
 echo ""
 
 # Cargo - Rust workspace tests matching the canonical CI feature set
+# Catalog freshness runs in rust-ci's isolated PostgreSQL job.
 echo ">>> Running Cargo workspace tests..."
 CARGO_REPORT="$REPORTS_DIR/cargo-$TIMESTAMP.txt"
 CARGO_EXIT=0
 if {
-    cargo nextest run --profile ci --workspace --no-default-features &&
+    cargo nextest run --profile ci --workspace --no-default-features -E 'not binary(catalog_manifest_freshness)' &&
         cargo test --doc --workspace --no-default-features
 } 2>&1 | tee "$CARGO_REPORT"; then
     echo "✓ Cargo tests passed"

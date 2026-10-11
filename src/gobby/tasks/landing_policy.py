@@ -91,12 +91,8 @@ def missing_schema_carriers(paths: Iterable[str]) -> list[str]:
         for path in changed
     ):
         return []
-    return sorted(
-        {
-            "src/gobby/storage/schema_expected_identity.json",
-        }
-        - changed
-    )
+    identity_pin = "src/gobby/storage/schema_expected_identity.json"
+    return [] if identity_pin in changed else [identity_pin]
 
 
 def requires_project_sync(paths: Iterable[str]) -> bool:

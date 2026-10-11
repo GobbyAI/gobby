@@ -32,7 +32,8 @@ jobs:
         run: cargo clippy -p gobby-core --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo nextest run --profile ci --workspace
+        # Catalog freshness runs in rust-ci's isolated PostgreSQL job.
+        run: cargo nextest run --profile ci --workspace -E 'not binary(catalog_manifest_freshness)'
 
       - name: Run doctests
         run: cargo test --doc --workspace
