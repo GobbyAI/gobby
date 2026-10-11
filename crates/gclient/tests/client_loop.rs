@@ -60,7 +60,7 @@ use ratatui::layout::Rect;
 use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::net::UnixStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{timeout, Instant};
 
 fn websocket_requests(mock: &MockDaemon, kind: &str) -> Vec<Value> {
@@ -6611,7 +6611,13 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         .expect("one-pane title");
     let (column, row) = (indicator.x + 1, indicator.y);
 
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (frames_tx, mut frames_rx) = watch::channel(String::new());
+    let mut terminal = Terminal::new(CountingBackend {
+        inner: TestBackend::new(120, 40),
+        draws: Arc::new(AtomicUsize::new(0)),
+        frames: Some(frames_tx),
+    })
+    .expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(256);
@@ -6657,8 +6663,12 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         // Startup focus took the lease. Focus is a condition, not a button:
         // a click on it neither releases the lease nor asks again.
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        wait_for_drawn_text(&mut frames_rx, "Focused").await;
         click().await;
-        settle_live_event().await;
+        // Input follows the click in the channel. Its request proves the loop
+        // processed both mouse events before we inspect the absence of a take.
+        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
         assert!(
             lease_requests("terminal_release_control").is_empty(),
             "a click on Focused releases nothing"
@@ -6681,19 +6691,17 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
             "seq": 2
         }))
         .await;
-        settle_live_event().await;
-        // A click routes against the frame last drawn, and the loop draws on
-        // its render tick: let one pass so Read-only is on screen to click.
-        tokio::time::pause();
-        for _ in 0..9 {
-            tokio::time::advance(RENDER_TICK).await;
-            settle_live_event().await;
-        }
-        tokio::time::resume();
+        // Sending the event acknowledges the mock's write, not its application
+        // or a redraw. Wait for the actual title whose hit map the click uses.
+        wait_for_drawn_text(&mut frames_rx, "Read-only").await;
         mock.enqueue_take_control_reply(true, 2, None);
         click().await;
         wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
-        settle_live_event().await;
+        // This input can leave only after the take-back grant is applied;
+        // closing the input channel earlier can discard the queued reply.
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
+        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        assert_eq!(lease_requests("terminal_take_control").len(), 2);
         assert_eq!(
             lease_requests("terminal_take_control")[1],
             lease,
@@ -9368,9 +9376,11 @@ const SETTLE_TURNS: usize = 2_000;
 /// A `TestBackend` that counts the frames it draws. With no panes and no
 /// input the live loop draws only on its render tick, so a count that rises
 /// after a clock advance shows a tick ran after that advance.
+/// An optional watch also acknowledges rendered text before a test clicks it.
 struct CountingBackend {
     inner: TestBackend,
     draws: Arc<AtomicUsize>,
+    frames: Option<watch::Sender<String>>,
 }
 
 impl ratatui::backend::Backend for CountingBackend {
@@ -9382,6 +9392,16 @@ impl ratatui::backend::Backend for CountingBackend {
     {
         self.inner.draw(content)?;
         self.draws.fetch_add(1, Ordering::SeqCst);
+        if let Some(frames) = &self.frames {
+            let buffer = self.inner.buffer();
+            let text = buffer
+                .content()
+                .chunks(usize::from(buffer.area.width))
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            frames.send_replace(text);
+        }
         Ok(())
     }
 
@@ -9423,6 +9443,13 @@ impl ratatui::backend::Backend for CountingBackend {
     fn flush(&mut self) -> Result<(), Self::Error> {
         self.inner.flush()
     }
+}
+
+async fn wait_for_drawn_text(frames: &mut watch::Receiver<String>, text: &str) {
+    timeout(WAIT_BUDGET, frames.wait_for(|frame| frame.contains(text)))
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for drawn {text:?}"))
+        .expect("loop keeps the frame recorder open");
 }
 
 /// Drives `future` while keeping this task runnable. A paused runtime that
@@ -9543,6 +9570,7 @@ async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
     let mut terminal = Terminal::new(CountingBackend {
         inner: TestBackend::new(96, 30),
         draws: Arc::clone(&draws),
+        frames: None,
     })
     .expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
