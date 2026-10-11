@@ -1498,14 +1498,28 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
-    async def test_send_message_recovers_zero_delta_text_around_tool_call(self) -> None:
+    @pytest.mark.parametrize("unkeyed_commentary", [False, True])
+    async def test_send_message_recovers_zero_delta_text_around_tool_call(
+        self, unkeyed_commentary: bool
+    ) -> None:
         tool_item = {
             "id": "tool-1",
             "type": "mcpToolCall",
             "mcpToolCall": {"server": "gobby-tasks", "tool": "list_tasks", "arguments": "{}"},
         }
-        events, _session = await _collect_codex_backend_events(
+        commentary_deltas = (
             [
+                (
+                    "item/agentMessage/delta",
+                    {"threadId": "thread-1", "delta": "I'll check the logs."},
+                )
+            ]
+            if unkeyed_commentary
+            else []
+        )
+        events, _session = await _collect_codex_backend_events(
+            commentary_deltas
+            + [
                 (
                     "item/completed",
                     {
@@ -1543,6 +1557,41 @@ class TestCodexBackend:
                 event.content for event in events[tool_index + 1 :] if isinstance(event, TextChunk)
             )
             == "Final answer."
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "delta,completed_texts,expected",
+        [
+            ("Hello wor", ["Hello world"], "Hello world"),
+            (
+                "Done. Checking logs.",
+                ["Done. Checking logs.", "Done."],
+                "Done. Checking logs.Done.",
+            ),
+        ],
+    )
+    async def test_send_message_consumes_unkeyed_text_in_item_order(
+        self, delta: str, completed_texts: list[str], expected: str
+    ) -> None:
+        events, _session = await _collect_codex_backend_events(
+            [("item/agentMessage/delta", {"threadId": "thread-1", "delta": delta})]
+            + [
+                (
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {"id": f"item-{i}", "type": "agentMessage", "text": text},
+                    },
+                )
+                for i, text in enumerate(completed_texts)
+            ]
+            + [("turn/completed", {"threadId": "thread-1", "turnId": "turn-1"})]
+        )
+
+        assert (
+            "".join(event.content for event in events if isinstance(event, TextChunk)) == expected
         )
         assert isinstance(events[-1], DoneEvent)
 
