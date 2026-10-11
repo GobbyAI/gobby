@@ -35,7 +35,7 @@ inputs:
   worktree:
     type: string
     default: null
-    description: "Worktree branch name or UUID override; otherwise require one idle lane worktree"
+    description: "Worktree branch name or UUID; required without a developer seat, otherwise infer one idle lane worktree"
   seats:
     type: string
     default: developer
