@@ -77,6 +77,7 @@ struct AttentionState {
     seq: u64,
     entries: Vec<RosterEntry>,
     applied_seqs: Vec<u64>,
+    warned: HashSet<(String, Option<String>, Option<String>)>,
 }
 
 impl AttentionState {
@@ -86,6 +87,7 @@ impl AttentionState {
             seq: 0,
             entries: Vec::new(),
             applied_seqs: Vec::new(),
+            warned: HashSet::new(),
         }
     }
 }

@@ -697,6 +697,14 @@ offers either its options or a free-text field:
 
 The `Send` and `Cancel` buttons act as `enter` and `esc`.
 
+A blocked composer also raises the needs-you bell and counts as Attention.
+Its *respond* action shows release guidance: check that the pane has no draft,
+then release the composer as directed. It does not open an answer field.
+
+Provider failures show a warning when the roster receives a new failure.
+They leave the needs-you bell quiet and do not open a response dialog.
+Repeated redraws of the same failure do not repeat the warning.
+
 `mark seen` in the agent menu acknowledges the row's attention entry without
 opening the terminal.
 
@@ -991,4 +999,4 @@ A Ghostty tab is a plain shell and never appears here; see
 [Bringing a bare terminal in](#bringing-a-bare-terminal-in) for where
 daemon-tracked work starts.
 
-_Last verified: 2026-09-18_
+_Last verified: 2026-10-10_

@@ -260,6 +260,11 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
             true,
         ),
         ("paused", serde_json::Value::Null, false),
+        (
+            "paused",
+            json!({"kind": "actionable", "reason": "composer_blocked"}),
+            true,
+        ),
         ("awaiting_handoff", serde_json::Value::Null, false),
         ("active", serde_json::Value::Null, false),
         ("completed", serde_json::Value::Null, false),

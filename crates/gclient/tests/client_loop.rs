@@ -14504,3 +14504,79 @@ async fn a_key_typed_while_a_recovery_detaches_lands_on_the_new_attachment() {
     assert_eq!(typed[0]["attachment_id"], "attachment-2");
     mock.shutdown().await;
 }
+
+#[tokio::test]
+async fn provider_error_shows_sanitized_warning_without_opening_response() {
+    let mock = MockDaemon::start("local-token").await;
+    let message = format!("API Error: 500\x1b[31m\n{}", "server issue ".repeat(10));
+    let mut entry = json!({
+        "entry_id": "session:provider-error",
+        "session_id": "provider-error",
+        "lifecycle_status": "paused",
+        "terminal": {"terminal_id": "terminal-provider", "backend": "native"},
+        "attention": {
+            "attention_id": "att-provider",
+            "fingerprint": "error-1",
+            "kind": "non_actionable",
+            "reason": "provider_error",
+            "payload": {"message": message}
+        }
+    });
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1", "seq": 1, "entries": [entry.clone()]
+        }),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.reconcile_subscribe_first().await.expect("roster");
+    let mut chrome = Chrome::dark();
+    sync_live_chrome(&mut workspace, &mut chrome);
+
+    assert!(workspace.attention_entry_ids().is_empty());
+    assert_eq!(workspace.sidebar().agents.len(), 1);
+    assert_eq!(workspace.sidebar().agents[0].state, RowState::Paused);
+    assert_eq!(
+        gobby_client::ui::status_segments::agent_counts(&workspace).need_you,
+        0
+    );
+    assert!(chrome.dialog.is_none());
+    assert_eq!(chrome.mode, Mode::Terminal);
+    let toast = chrome.alert_log.last().expect("provider warning");
+    assert_eq!(toast.kind, gobby_client::ui::status::ToastKind::Warning);
+    assert_eq!(toast.title, "Provider error");
+    let body = toast.body.as_deref().expect("warning body");
+    assert!(body.starts_with("API Error: 500"));
+    assert!(!body.chars().any(char::is_control));
+    assert!(body.ends_with('…'));
+    assert!(gobby_client::ui::text::display_width(body) <= 80);
+
+    sync_live_chrome(&mut workspace, &mut chrome);
+    assert_eq!(chrome.alert_log.len(), 1, "redraws do not repeat warnings");
+    entry["attention"]["fingerprint"] = json!("error-2");
+    mock.enqueue(
+        "GET",
+        "/api/attention/roster",
+        200,
+        json!({
+            "epoch": "attention-1", "seq": 2, "entries": [entry]
+        }),
+    );
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("changed roster");
+    sync_live_chrome(&mut workspace, &mut chrome);
+    assert_eq!(chrome.alert_log.len(), 2, "a new failure is visible");
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close daemon");
+    mock.shutdown().await;
+}

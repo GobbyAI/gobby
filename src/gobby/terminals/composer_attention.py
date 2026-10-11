@@ -62,7 +62,7 @@ async def sync_composer_attention(
         state="blocked",
         session_id=session.id,
         reason=COMPOSER_BLOCKED_REASON,
-        kind="non_actionable",
+        kind="actionable",
         fingerprint=f"{COMPOSER_BLOCKED_REASON}:{block}",
         payload={
             "label": "Composer blocked",

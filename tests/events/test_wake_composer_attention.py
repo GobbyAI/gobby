@@ -128,7 +128,7 @@ async def test_ring_overflow_resume_marks_the_gap_and_names_the_seat_and_valve(
     assert item.state == "blocked"
     assert item.session_id == seat.session.id
     assert item.reason == "composer_blocked"
-    assert item.kind == "non_actionable"
+    assert item.kind == "actionable"
     assert item.fingerprint == "composer_blocked:gap"
     message = str(item.payload["message"])
     assert seat.session.ref in message
