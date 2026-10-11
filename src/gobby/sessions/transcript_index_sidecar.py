@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from gobby.paths import get_gobby_home
+from gobby.agents.constants import agent_home_cache_root
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.transcript_search_timing import transcript_to_thread
 from gobby.sessions.transcripts.base import TokenUsage
@@ -300,7 +300,7 @@ def _sidecar_path(path: str) -> str:
     normalized_path = os.path.abspath(path)
     cache_key = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()
     return str(
-        get_gobby_home() / "cache" / "transcript-indexes" / f"{cache_key}{INDEX_SIDECAR_SUFFIX}"
+        agent_home_cache_root() / "transcript-indexes" / f"{cache_key}{INDEX_SIDECAR_SUFFIX}"
     )
 
 
