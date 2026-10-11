@@ -7,18 +7,27 @@ from unittest.mock import Mock
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.sandbox_policy import managed_execution_root, sensitive_roots
+from gobby.agents.sandbox_policy import (
+    SRT_SETTINGS_RELATIVE_PATH,
+    assert_sensitive_path_contract,
+    managed_execution_root,
+    sensitive_roots,
+)
 from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("guard_kind", ["computed-paths", "launch"])
 @pytest.mark.parametrize("grant_kind", ["read", "write"])
-@pytest.mark.parametrize("path_kind", ["literal", "symlink", "glob"])
+@pytest.mark.parametrize(
+    "path_kind", ["literal", "symlink", "glob", "glob-ancestor", "glob-own", "glob-foreign"]
+)
 async def test_foreign_envelope_grants_fail_before_policy_render(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    guard_kind: str,
     grant_kind: str,
     path_kind: str,
 ) -> None:
@@ -37,6 +46,9 @@ async def test_foreign_envelope_grants_fail_before_policy_render(
         "literal": str(foreign),
         "symlink": str(alias / "grant.json"),
         "glob": str(managed / "*" / "grant.json"),
+        "glob-ancestor": str(managed.parent / "*" / "*" / "grant.json"),
+        "glob-own": str(own.parent / "assets" / "*.json"),
+        "glob-foreign": str(foreign.parent / "assets" / "*.json"),
     }
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -45,6 +57,9 @@ async def test_foreign_envelope_grants_fail_before_policy_render(
     provider.chmod(0o755)
     verify = Mock(side_effect=AssertionError("foreign grants reached policy rendering"))
     monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", verify)
+    if guard_kind == "launch":
+        # Exercise the launch guard independently of the earlier path contract.
+        monkeypatch.setattr("gobby.agents.sandbox_policy.assert_sensitive_path_contract", Mock())
     config = SandboxConfig(
         enabled=True,
         backend="srt",
@@ -53,7 +68,14 @@ async def test_foreign_envelope_grants_fail_before_policy_render(
         extra_write_paths=[grants[path_kind]] if grant_kind == "write" else [],
     )
 
-    with pytest.raises(SrtRuntimeError, match="another managed execution"):
+    expected_error: type[Exception]
+    if guard_kind == "computed-paths" and path_kind.startswith("glob"):
+        expected_error = ValueError
+        expected_message = "contains sensitive root"
+    else:
+        expected_error = SrtRuntimeError
+        expected_message = "another managed execution"
+    with pytest.raises(expected_error, match=expected_message):
         await prepare_sandbox_launch(
             config=config,
             provider="claude",
@@ -70,6 +92,45 @@ async def test_foreign_envelope_grants_fail_before_policy_render(
             prewarm_pre_commit_store=False,
         )
     verify.assert_not_called()
+    assert not (own.parent / SRT_SETTINGS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.parametrize("glob", ["*", "?", "[ab]", "{own,foreign}"])
+@pytest.mark.parametrize("root_kind", ["ancestor", "managed", "own"])
+def test_sensitive_contract_rejects_managed_glob_prefixes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, glob: str, root_kind: str
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    managed = managed_execution_root()
+    roots = {"ancestor": managed.parent, "managed": managed, "own": managed / "own"}
+    grant = str(roots[root_kind] / glob / "grant.json")
+
+    with pytest.raises(ValueError, match="contains sensitive root"):
+        assert_sensitive_path_contract([grant])
+
+
+def test_sensitive_contract_preserves_literal_own_and_unrelated_glob_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    own = managed_execution_root() / "own"
+    assert_sensitive_path_contract(
+        [str(own / "assets"), str(own / "cache")],
+        [str(tmp_path / "workspace" / "*.json")],
+    )
+
+
+def test_sensitive_contract_detects_glob_before_symlink_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    own = managed_execution_root() / "own"
+    own.mkdir(parents=True)
+    glob = own / "*"
+    glob.symlink_to(own, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="contains sensitive root"):
+        assert_sensitive_path_contract([str(glob)])
 
 
 def test_managed_root_denies_literal_and_resolved_home_alias(

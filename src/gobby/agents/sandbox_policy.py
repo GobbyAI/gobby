@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess  # nosec B404 # fixed local cp/chmod commands.
@@ -295,13 +296,22 @@ def sensitive_roots() -> list[str]:
     )
 
 
+def policy_subtree_prefix(entry: str) -> str:
+    """Return the slash-terminated directory a policy path or glob can match within."""
+    match = re.search(r"[*?\[{]", entry)
+    if match:
+        entry = entry[: match.start()].rpartition("/")[0]
+    return entry.rstrip("/") + "/"
+
+
 def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
     """Reject an allow entry that contains a sensitive root."""
     protected = [Path(path) for path in sensitive_roots()]
     for allowed_text in (item for paths in allow_lists for item in paths):
-        allowed = Path(allowed_text).resolve(strict=False)
+        allowed = Path(policy_subtree_prefix(allowed_text)).resolve(strict=False)
+        is_glob = any(char in allowed_text for char in "*?[{")
         for sensitive in protected:
-            if sensitive == allowed or sensitive.is_relative_to(allowed):
+            if sensitive.is_relative_to(allowed) or (is_glob and allowed.is_relative_to(sensitive)):
                 raise ValueError(f"sandbox allow path contains sensitive root: {allowed}")
 
 
