@@ -61,6 +61,8 @@ class Overlap(TypedDict):
 
 class LandingResult(TypedDict, total=False):
     landed: bool
+    already_landed: bool
+    landed_by_session_id: str
     error: str
     message: str
     blockers: list[str]
@@ -297,12 +299,23 @@ def _facts_result(sha: str, facts: dict[str, str | int | bool]) -> LandingResult
     return result
 
 
-def _receipt_result(receipt: CloseReceipt) -> LandingResult:
-    return {**_facts_result(receipt.commit_sha, receipt.facts), "receipt_id": receipt.id}
+def _receipt_result(receipt: CloseReceipt, *, already_landed: bool = True) -> LandingResult:
+    return {
+        **_facts_result(receipt.commit_sha, receipt.facts),
+        "receipt_id": receipt.id,
+        "already_landed": already_landed,
+        "landed_by_session_id": receipt.author_session_id,
+    }
 
 
 async def _record_and_notify(
-    db: HubDatabase, task: Task, caller: str, sha: str, facts: dict[str, str | int | bool]
+    db: HubDatabase,
+    task: Task,
+    caller: str,
+    sha: str,
+    facts: dict[str, str | int | bool],
+    *,
+    already_landed: bool = False,
 ) -> LandingResult:
     try:
         receipt, created = record_close_receipt(
@@ -310,8 +323,13 @@ async def _record_and_notify(
         )
     except (psycopg.Error, IndeterminateCommitError):
         # The ref already moved; a later call replays the receipt or records it from the reflog.
-        return {**_facts_result(sha, facts), "receipt_pending": True}
-    result = _receipt_result(receipt)
+        return {
+            **_facts_result(sha, facts),
+            "already_landed": already_landed,
+            "landed_by_session_id": caller,
+            "receipt_pending": True,
+        }
+    result = _receipt_result(receipt, already_landed=already_landed or not created)
     if created:
         recipients = {
             recipient
@@ -405,15 +423,14 @@ async def land_candidate(
                             "blockers": blockers,
                             "commit_sha": sha,
                         }
+                    # Landing receipts belong to the task/SHA, regardless of the replay caller.
                     for receipt in receipts:
-                        if (
-                            receipt.kind == LANDING
-                            and receipt.author_session_id == caller_session_id
-                            and receipt.commit_sha == sha
-                        ):
+                        if receipt.kind == LANDING and receipt.commit_sha == sha:
                             return _receipt_result(receipt)
                     facts = await _recover_landing(main, common, branch, tip, sha)
-                    return await _record_and_notify(db, current_task, caller_session_id, sha, facts)
+                    return await _record_and_notify(
+                        db, current_task, caller_session_id, sha, facts, already_landed=True
+                    )
                 merged = await _merge_tree(main, tip, sha)
                 tree = merged.stdout.split("\n", 1)[0]
                 paths = await _candidate_paths(main, tip, sha, tree)
