@@ -251,14 +251,6 @@ async def _prepare_managed_code_index(
         spawn_context.env_vars.update(preflight.env)
         return None
     except Exception as exc:
-        if mode == "required":
-            return SpawnResult(
-                success=False,
-                run_id=request.run_id,
-                child_session_id=spawn_context.session_id,
-                status="failed",
-                error=f"planner_code_index_unavailable:{exc}",
-            )
         warning = {
             "preflight": "code_index",
             "cwd": request.cwd,

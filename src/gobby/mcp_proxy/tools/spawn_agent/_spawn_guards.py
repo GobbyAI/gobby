@@ -305,8 +305,6 @@ async def admit_task_spawn(
     run_storage: Any,
     task_id: str | None,
     task_ref: str | None,
-    requested_agent_name: str | None,
-    parent_session_id: str,
     cleanup: Callable[[], Awaitable[None]],
 ) -> dict[str, Any] | None:
     """Check task idempotency around lease acquisition and roll back cancellation."""
@@ -319,8 +317,6 @@ async def admit_task_spawn(
             run_storage=run_storage,
             task_id=task_id,
             task_ref=task_ref,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
         )
 
     cleanup_started = False
@@ -350,9 +346,6 @@ async def admit_task_spawn(
 def active_task_spawn_blocker(
     run_storage: Any,
     task_id: str,
-    *,
-    requested_agent_name: str | None,
-    parent_session_id: str,
 ) -> Any | None:
     """Return an active run that should block spawning another agent for a task."""
     if not run_storage.has_active_run_for_task(task_id):
@@ -371,12 +364,6 @@ def active_task_spawn_blocker(
         active_runs = [active_run] if active_run is not None else []
 
     for active_run in active_runs:
-        if _is_parent_merge_orchestrator_run(
-            active_run,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
-        ):
-            continue
         return active_run
     return None
 
@@ -480,14 +467,10 @@ def active_task_response_if_blocked(
     run_storage: Any,
     task_id: str,
     task_ref: str | None,
-    requested_agent_name: str | None,
-    parent_session_id: str,
 ) -> dict[str, Any] | None:
     active_run = active_task_spawn_blocker(
         run_storage,
         task_id,
-        requested_agent_name=requested_agent_name,
-        parent_session_id=parent_session_id,
     )
     if active_run is None:
         return None
@@ -519,21 +502,3 @@ def _count_active_agents(
         params,
     )
     return int(row["count"]) if row else 0
-
-
-def _run_string_attr(run: Any, name: str) -> str | None:
-    value = getattr(run, name, None)
-    return value if isinstance(value, str) and value else None
-
-
-def _is_parent_merge_orchestrator_run(
-    run: Any,
-    *,
-    requested_agent_name: str | None,
-    parent_session_id: str,
-) -> bool:
-    return (
-        requested_agent_name == "merge-worker"
-        and _run_string_attr(run, "agent_name") == "merge-orchestrator"
-        and _run_string_attr(run, "child_session_id") == parent_session_id
-    )

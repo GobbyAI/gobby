@@ -8,14 +8,13 @@ no-op when no plan artifact is recorded.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import threading
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import psycopg
 import pytest
@@ -26,7 +25,6 @@ from gobby.tasks.expansion._plan_gate import (
     PLANNING_AGENTS,
     validate_plan_for_agent_spawn,
 )
-from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
@@ -143,22 +141,7 @@ class _FreshZeroSymbolIndex:
 
 
 def test_planning_agents_constant() -> None:
-    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer-old"})
-
-
-def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
-    tmp_path: Path,
-) -> None:
-    plan = _write_broken_plan(tmp_path / "broken.md")
-    manager = _make_task_manager_with_artifact(str(plan))
-
-    result = validate_plan_for_agent_spawn(
-        agent_name="plan-enhancer-old", task_id="t1", task_manager=manager
-    )
-
-    assert result is not None
-    assert result["success"] is False
-    assert "PlanValidationError" in result["error"]
+    assert PLANNING_AGENTS == frozenset({"plan-adversary"})
 
 
 def test_non_planning_agent_passes_through() -> None:
@@ -172,12 +155,16 @@ def test_non_planning_agent_passes_through() -> None:
 
 def test_no_task_id_passes_through() -> None:
     manager = _make_task_manager_with_artifact("/tmp/whatever.md")
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id=None, task_manager=manager)
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id=None, task_manager=manager
+    )
     assert result is None
 
 
 def test_no_task_manager_passes_through() -> None:
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=None)
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id="t1", task_manager=None
+    )
     assert result is None
 
 
@@ -189,27 +176,7 @@ def test_no_plan_artifact_passes_through() -> None:
     assert result is None
 
 
-@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer-old"])
-def test_repair_agent_spawn_receives_missing_index_diagnostics(
-    tmp_path: Path,
-    agent_name: str,
-) -> None:
-    plan = _write_clean_plan(tmp_path / "clean.md")
-    manager = _make_task_manager_with_artifact(str(plan))
-
-    result = validate_plan_for_agent_spawn(
-        agent_name=agent_name,
-        task_id="t1",
-        task_manager=manager,
-    )
-
-    assert result is not None
-    assert result["success"] is True
-    assert "prompt_append" in result
-    assert result["symbol_validation"]["status"] == "failed"
-
-
-def test_planner_spawn_against_fresh_index_passes(
+def test_plan_adversary_spawn_against_fresh_index_passes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -225,7 +192,7 @@ def test_planner_spawn_against_fresh_index_passes(
     )
 
     result = validate_plan_for_agent_spawn(
-        agent_name="planner",
+        agent_name="plan-adversary",
         task_id="t1",
         task_manager=manager,
         code_index=_FreshZeroSymbolIndex(source_path),
@@ -234,7 +201,7 @@ def test_planner_spawn_against_fresh_index_passes(
     assert result is None
 
 
-def test_planner_spawn_passes_complete_isolated_context(
+def test_plan_adversary_spawn_passes_complete_isolated_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,7 +220,7 @@ def test_planner_spawn_passes_complete_isolated_context(
     monkeypatch.setattr(plan_gate_module, "get_project_context", lambda _path: project_context)
 
     result = validate_plan_for_agent_spawn(
-        agent_name="planner",
+        agent_name="plan-adversary",
         task_id="t1",
         task_manager=manager,
         code_index=_FreshZeroSymbolIndex(
@@ -281,7 +248,7 @@ def test_plan_adversary_blocks_when_symbol_validation_cannot_run(tmp_path: Path)
     assert result["symbol_validation"]["status"] == "failed"
 
 
-@pytest.mark.parametrize("agent_name", ("planner", "plan-adversary"))
+@pytest.mark.parametrize("agent_name", ("plan-adversary",))
 def test_planning_agent_spawn_rejects_missing_plan_id(tmp_path: Path, agent_name: str) -> None:
     plan = _write_missing_plan_id(tmp_path / "missing-id.md")
     manager = _make_task_manager_with_artifact(str(plan))
@@ -296,22 +263,6 @@ def test_planning_agent_spawn_rejects_missing_plan_id(tmp_path: Path, agent_name
     assert result["validator_errors"] == result["validator_warnings"]
     assert "real **Plan ID:**" in result["validator_warnings"][0]
     assert "covers:unknown:*" in result["validator_warnings"][0]
-
-
-def test_planner_spawn_against_malformed_plan_returns_structured_failure(
-    tmp_path: Path,
-) -> None:
-    plan = _write_broken_plan(tmp_path / "broken.md")
-    manager = _make_task_manager_with_artifact(str(plan))
-
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
-
-    assert result is not None
-    assert result["success"] is False
-    assert result["error"].startswith("PlanValidationError:")
-    assert result["plan_file_path"] == str(plan)
-    assert isinstance(result["validator_errors"], list)
-    assert any("phase sections" in err for err in result["validator_errors"])
 
 
 def test_plan_adversary_spawn_against_malformed_plan_returns_structured_failure(
@@ -333,7 +284,9 @@ def test_missing_plan_file_returns_structured_failure(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist.md"
     manager = _make_task_manager_with_artifact(str(missing))
 
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id="t1", task_manager=manager
+    )
 
     assert result is not None
     assert result["success"] is False
@@ -346,7 +299,9 @@ def test_artifact_lookup_failure_passes_through(tmp_path: Path) -> None:
     manager = MagicMock()
     manager.get_artifacts = MagicMock(side_effect=RuntimeError("db error"))
 
-    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id="t1", task_manager=manager
+    )
 
     assert result is None
 
@@ -369,7 +324,7 @@ def test_transient_postgres_error_skips_plan_gate(
     caplog.set_level(logging.WARNING)
 
     result = validate_plan_for_agent_spawn(
-        agent_name="planner",
+        agent_name="plan-adversary",
         task_id="t1",
         task_manager=manager,
     )
@@ -407,78 +362,3 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     assert result == gate_failure
     assert len(gate_threads) == 1
     assert gate_threads[0] != caller_thread
-
-
-@pytest.mark.asyncio
-async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path) -> None:
-    from gobby.mcp_proxy.tools.spawn_agent._implementation import (
-        _spawn_background_tasks,
-        spawn_agent_impl,
-    )
-
-    repo_path = tmp_path / "repo"
-    repo_path.mkdir()
-    runner = MagicMock()
-    runner.can_spawn.return_value = (True, "ok", 0)
-    runner.child_session_manager = MagicMock()
-    runner.run_storage = MagicMock()
-    runner.run_storage.has_active_run_for_task.return_value = False
-    daemon_config = SimpleNamespace(
-        database_url="postgresql://user:pass@127.0.0.1/gobby",
-        bind_host="127.0.0.1",
-        daemon_port=60887,
-    )
-    spawn_result = SimpleNamespace(
-        success=True,
-        child_session_id="child-1",
-        status="running",
-        terminal_type="process",
-        terminal_id=None,
-        pid=123,
-        message="spawned",
-    )
-    gate_result = {
-        "success": True,
-        "prompt_append": "Symbol validation diagnostics:\n- [target_symbol_required] Fix scope",
-    }
-
-    with (
-        patch(
-            "gobby.tasks.expansion._plan_gate.validate_plan_for_agent_spawn",
-            return_value=gate_result,
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
-            return_value={"id": "project-1", "project_path": str(repo_path)},
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
-            return_value=prepared_spawn(
-                parent_session_id="parent-1",
-                project_id="project-1",
-            ),
-        ),
-        patch(
-            "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
-            new=AsyncMock(return_value=spawn_result),
-        ) as execute,
-    ):
-        result = await spawn_agent_impl(
-            prompt="Repair the plan",
-            runner=runner,
-            agent_lookup_name="planner",
-            parent_session_id="parent-1",
-            provider="codex",
-            checkout_mode="none",
-            daemon_config=daemon_config,
-        )
-        # The spawn phase runs as a background task; finish it while execute_spawn is patched.
-        await asyncio.gather(*_spawn_background_tasks.values())
-
-    assert result["success"] is True, result
-    await_args = execute.await_args
-    assert await_args is not None
-    spawn_request = await_args.args[0]
-    assert spawn_request.prompt == (
-        "Repair the plan\n\nSymbol validation diagnostics:\n- [target_symbol_required] Fix scope"
-    )

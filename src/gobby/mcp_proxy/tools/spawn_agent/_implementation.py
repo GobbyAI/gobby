@@ -220,9 +220,6 @@ async def spawn_agent_impl(
     if gate_result is not None:
         if not gate_result.get("success"):
             return gate_result
-        prompt_append = gate_result.get("prompt_append")
-        if isinstance(prompt_append, str):
-            prompt = f"{prompt}\n\n{prompt_append}"
     _raw_checkout_mode: str | None = checkout_mode
     if _raw_checkout_mode is None and agent_body:
         _raw_checkout_mode = agent_body.checkout_mode
@@ -635,8 +632,6 @@ async def spawn_agent_impl(
             return {"success": False, "error": config_error}
     code_index_mode = code_index_preflight_mode(
         checkout_mode=effective_checkout_mode,
-        agent_name=requested_agent_name,
-        initial_variables=initial_variables,
         task_category=task_category,
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
@@ -710,8 +705,6 @@ async def spawn_agent_impl(
         run_storage=runner.run_storage,
         task_id=resolved_task_id,
         task_ref=task_id,
-        requested_agent_name=requested_agent_name,
-        parent_session_id=parent_session_id,
         cleanup=cleanup_unattached_spawn,
     )
     if lease_response is not None:
