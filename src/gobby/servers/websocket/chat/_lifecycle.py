@@ -28,6 +28,7 @@ from gobby.hooks.receipt_effects import (
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
 from gobby.utils.machine_id import get_machine_id
+from gobby.workflows.block_audit import audit_source_block
 
 logger = logging.getLogger(__name__)
 
@@ -390,10 +391,34 @@ class ChatLifecycleMixin:
 
             return result
         except Exception as e:
-            # Defensive fail-open for web-chat lifecycle hooks. PreCompact runs
-            # on the SDK compaction path; hook failures must not abort the
-            # compaction itself or strand the active conversation.
             logger.exception("Lifecycle evaluation failed for %s: %s", event_type, e)
+            if event_type is HookEventType.BEFORE_TOOL:
+                reason = (
+                    "Workflow evaluation failed; blocking tool call for safety: "
+                    f"{type(e).__name__}: {e}"
+                )
+                log_structured_block(
+                    logger,
+                    session_id=db_session_id,
+                    event=event_type.value,
+                    tool=block_tool_name_from_event_data(event.data),
+                    source="hook",
+                    rule="hook-before-tool-safety",
+                    reason=reason,
+                )
+                await audit_source_block(
+                    workflow_handler, event, rule_id="hook-before-tool-safety", reason=reason
+                )
+                response = HookResponse(decision="block", reason=reason)
+                return {
+                    "decision": response.decision,
+                    "context": response.context,
+                    "context_parts": response.context_contributors(),
+                    "reason": response.reason,
+                    "system_message": response.system_message,
+                }
+            # PreCompact runs on the SDK compaction path; failures must not
+            # abort compaction or strand the active conversation.
             return None
 
     async def _evaluate_blocking_webhooks(
