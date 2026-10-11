@@ -300,9 +300,9 @@ pub(super) fn close_barrier(
 /// Keys for a held pane go out at once; an observed pane takes control
 /// first and delivers them once the lease is granted. A pane whose lease
 /// was lost, or whose last write's outcome is unknown, refuses them until
-/// control is taken explicitly (the scripted path's `read_only` refusal),
-/// and keys typed while a take is already pending are dropped; the status
-/// line says so in both cases.
+/// control is taken explicitly (the scripted path's `read_only` refusal).
+/// Keys typed while a take is pending are queued and flushed once control
+/// is granted.
 pub(super) fn send_live_input(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
