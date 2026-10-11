@@ -23,6 +23,61 @@ from gobby.workflows.engine.command_matching import (
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("case x in x)gem push x;; esac", id="G1"),
+        pytest.param("case x in (x)gem push x;; esac", id="G3"),
+        pytest.param("case x in x|y)gem push x;; esac", id="G4"),
+        pytest.param("case x in *)gem push x;; esac", id="G5"),
+        pytest.param("case x in x) echo ok;; y)gem push x;; esac", id="G6"),
+        pytest.param("case x in x)gem push x;;esac", id="G7"),
+        pytest.param('case x in "x")gem push x;; esac', id="G8"),
+        pytest.param("case x in x) echo ok;& y)gem push x;; esac", id="G9"),
+        pytest.param("case x in\nx)gem push x\n;;\nesac", id="G10"),
+        pytest.param("case x in x) echo ok;;& y)gem push x;; esac", id="G12"),
+        pytest.param("case x in 'x)' | y) gem push x;; esac", id="Q1"),
+        pytest.param("case x in $(echo x) | y) gem push x;; esac", id="Q2"),
+        pytest.param('case x in "x)" ) gem push x;; esac', id="Q3"),
+        pytest.param("case x in $(echo x) ) gem push x;; esac", id="Q4"),
+        pytest.param("case x in $'x)' | y) gem push x;; esac", id="Q5"),
+        pytest.param(r"case x in \) | y) gem push x;; esac", id="Q6"),
+        pytest.param('case x in "$(echo x)" | y) gem push x;; esac', id="Q7"),
+        pytest.param("case 1 in $((1)) | 2) gem push x;; esac", id="Q8"),
+        pytest.param("case x in y | 'x)' | z) gem push x;; esac", id="Q10"),
+    ],
+)
+def test_case_pattern_terminator_boundary_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("case x in x) gem push x;; esac", id="C1"),
+        pytest.param('case x in "x)") gem push x;; esac', id="C2"),
+        pytest.param(r"case x in x\)) gem push x;; esac", id="C3"),
+        pytest.param("case x in $(echo x)) gem push x;; esac", id="C4"),
+        pytest.param('case x in "$(echo x)") gem push x;; esac', id="C5"),
+        pytest.param('case x in x) echo "a)"; gem push x;; esac', id="C6"),
+        pytest.param("case x in x) echo $(echo a); gem push x;; esac", id="C7"),
+        pytest.param('case x in x | "y)") gem push x;; esac', id="C8"),
+    ],
+)
+def test_case_pattern_terminator_controls_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_case_pattern_terminator_quoted_prose_does_not_match_blocks(mask_quoted: bool) -> None:
+    assert not command_patterns_match(
+        'echo "case x in x)gem push x;; esac"', pattern=GEM_PUSH, mask_quoted=mask_quoted
+    )
+
+
 GEM_PUSH = r"(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gem\s+push\b"
 
 

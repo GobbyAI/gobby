@@ -56,12 +56,24 @@ class ShellDirectoryState:
         return (before == "|" and not self.group_entry) or after == "|"
 
     def compound_tokens(
-        self, tokens: list[ShellToken], gap: str, case_depth: int, pending: bool
+        self,
+        tokens: list[ShellToken],
+        gap: str,
+        case_depth: int,
+        pending: bool,
+        command: str,
+        spans: dict[int, tuple[int, int]],
+        raw: dict[int, str],
     ) -> tuple[list[ShellToken], int, bool]:
         self.group_entry = False
         self.case_boundary(tokens, gap)
         tokens, case_depth, pending = case_arm_tokens(
-            tokens, case_depth=case_depth, new_arm=pending or ";;" in gap or ";&" in gap
+            tokens,
+            case_depth=case_depth,
+            new_arm=pending or ";;" in gap or ";&" in gap,
+            command=command,
+            spans=spans,
+            raw=raw,
         )
         while tokens:
             tokens = self.conditional_tokens(tokens)
@@ -69,7 +81,7 @@ class ShellDirectoryState:
                 break
             self.case_boundary(tokens, "")
             tokens, case_depth, pending = case_arm_tokens(
-                tokens, case_depth=case_depth, new_arm=False
+                tokens, case_depth=case_depth, new_arm=False, command=command, spans=spans, raw=raw
             )
         return tokens, case_depth, pending
 

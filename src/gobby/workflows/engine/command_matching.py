@@ -618,16 +618,23 @@ def _subjects(
     case_depth = 0
     pending = False
     previous_end = 0
+    spans_by_token = dict(zip((id(token) for token in scan.tokens), scan.spans, strict=True))
     for segment in segments:
         tokens = scan.tokens[segment.first : segment.last + 1]
         start = scan.spans[segment.first][0]
         gap = command[previous_end:start]
         previous_end = scan.spans[segment.last][1]
         kept, case_depth, pending = case_arm_tokens(
-            tokens, case_depth=case_depth, new_arm=pending or ";;" in gap or ";&" in gap
+            tokens,
+            case_depth=case_depth,
+            new_arm=pending or ";;" in gap or ";&" in gap,
+            command=command,
+            spans=spans_by_token,
         )
         while kept and not kept[0].quoted and kept[0].value in {"case", "esac"}:
-            kept, case_depth, pending = case_arm_tokens(kept, case_depth=case_depth, new_arm=False)
+            kept, case_depth, pending = case_arm_tokens(
+                kept, case_depth=case_depth, new_arm=False, command=command, spans=spans_by_token
+            )
         segment_spans = scan.spans[segment.first : segment.last + 1]
         cursor = min(start for start, _ in segment_spans)
         end = max(end for _, end in segment_spans)
@@ -639,9 +646,8 @@ def _subjects(
         parts.append(command[cursor:end])
         raw.append("".join(parts))
         arm_text = None
-        if kept and len(kept) < len(tokens):
-            first = next(index for index, token in enumerate(tokens) if token is kept[0])
-            cursor = scan.spans[segment.first + first][0]
+        if kept and kept[0] is not tokens[0]:
+            cursor = spans_by_token[id(kept[0])][0]
             parts = []
             for heredoc in scan.heredocs:
                 if cursor <= heredoc.start < end:

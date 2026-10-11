@@ -17,9 +17,189 @@ from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _substitution_end
+from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "command,kind,mutation,unknown,paths",
+    [
+        pytest.param("case x in x)git apply x.patch;; esac", "write", True, True, None, id="G1"),
+        pytest.param("case x in (x)git apply x.patch;; esac", "write", True, True, None, id="G3"),
+        pytest.param("case x in x|y)git apply x.patch;; esac", "write", True, True, None, id="G4"),
+        pytest.param("case x in *)git apply x.patch;; esac", "write", True, True, None, id="G5"),
+        pytest.param(
+            "case x in x) echo ok;; y)git apply x.patch;; esac",
+            "write",
+            True,
+            True,
+            None,
+            id="G6",
+        ),
+        pytest.param("case x in x)git apply x.patch;;esac", "write", True, True, None, id="G7"),
+        pytest.param('case x in "x")git apply x.patch;; esac', "write", True, True, None, id="G8"),
+        pytest.param(
+            "case x in x) echo ok;& y)git apply x.patch;; esac",
+            "write",
+            True,
+            True,
+            None,
+            id="G9",
+        ),
+        pytest.param(
+            "case x in\nx)git apply x.patch\n;;\nesac",
+            "write",
+            True,
+            True,
+            None,
+            id="G10",
+        ),
+        pytest.param(
+            "case x in x) echo ok;;& y)git apply x.patch;; esac",
+            "write",
+            True,
+            True,
+            None,
+            id="G12",
+        ),
+        pytest.param(
+            "case x in 'x)' | y) git apply x.patch;; esac", "write", True, True, None, id="Q1"
+        ),
+        pytest.param(
+            "case x in $(echo x) | y) git apply x.patch;; esac", "write", True, True, None, id="Q2"
+        ),
+        pytest.param(
+            'case x in "x)" ) git apply x.patch;; esac', "write", True, True, None, id="Q3"
+        ),
+        pytest.param(
+            "case x in $(echo x) ) git apply x.patch;; esac", "write", True, True, None, id="Q4"
+        ),
+        pytest.param(
+            "case x in $'x)' | y) git apply x.patch;; esac", "write", True, True, None, id="Q5"
+        ),
+        pytest.param(
+            r"case x in \) | y) git apply x.patch;; esac", "write", True, True, None, id="Q6"
+        ),
+        pytest.param(
+            'case x in "$(echo x)" | y) git apply x.patch;; esac',
+            "write",
+            True,
+            True,
+            None,
+            id="Q7",
+        ),
+        pytest.param(
+            "case 1 in $((1)) | 2) git apply x.patch;; esac", "write", True, True, None, id="Q8"
+        ),
+        pytest.param(
+            "case x in y | 'x)' | z) git apply x.patch;; esac", "write", True, True, None, id="Q10"
+        ),
+        pytest.param("case x in x)cp a b;; esac", "write", True, None, ["b"], id="G2"),
+        pytest.param("case x in 'x)' | y)cp a b;; esac", "write", True, None, ["b"], id="Q9"),
+        pytest.param("case x in x)cat a.py;; esac", "read", None, None, ["a.py"], id="G11"),
+    ],
+)
+def test_case_pattern_terminator_boundary(
+    tmp_path: Path,
+    command: str,
+    kind: str,
+    mutation: bool | None,
+    unknown: bool | None,
+    paths: list[str] | None,
+) -> None:
+    data = normalize_tool_fields(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+    )
+    assert (
+        data.get("canonical_tool_kind"),
+        data.get("canonical_repo_mutation"),
+        data.get("canonical_repo_mutation_scope_unknown"),
+        data.get("canonical_script_execution"),
+        data.get("canonical_file_paths"),
+    ) == (kind, mutation, unknown, None, paths)
+
+
+@pytest.mark.parametrize(
+    "command,kind,mutation,unknown,paths",
+    [
+        pytest.param("case x in x) git apply x.patch;; esac", "write", True, True, None, id="C1"),
+        pytest.param(
+            'case x in "x)") git apply x.patch;; esac', "write", True, True, None, id="C2"
+        ),
+        pytest.param(
+            r"case x in x\)) git apply x.patch;; esac", "write", True, True, None, id="C3"
+        ),
+        pytest.param(
+            "case x in $(echo x)) git apply x.patch;; esac", "write", True, True, None, id="C4"
+        ),
+        pytest.param(
+            'case x in "$(echo x)") git apply x.patch;; esac', "write", True, True, None, id="C5"
+        ),
+        pytest.param(
+            'case x in x) echo "a)"; git apply x.patch;; esac', "write", True, True, None, id="C6"
+        ),
+        pytest.param(
+            "case x in x) echo $(echo a); git apply x.patch;; esac",
+            "write",
+            True,
+            True,
+            None,
+            id="C7",
+        ),
+        pytest.param(
+            'case x in x | "y)") git apply x.patch;; esac', "write", True, True, None, id="C8"
+        ),
+        pytest.param("case x in x) echo ok;; esac", "execute", None, None, None, id="C9"),
+        pytest.param("case x in x)echo ok;; esac", "execute", None, None, None, id="C10"),
+        pytest.param("case x in x) cat a.py;; esac", "read", None, None, ["a.py"], id="C11"),
+        pytest.param('case x in "x)") cat a.py;; esac', "read", None, None, ["a.py"], id="C12"),
+        pytest.param("case x in x) cp a b;; esac", "write", True, None, ["b"], id="C13"),
+        pytest.param("(cp a b)", "write", True, None, ["b"], id="C14"),
+        pytest.param(
+            'echo "case x in x)git apply x.patch;; esac"', "execute", None, None, None, id="C16"
+        ),
+        pytest.param("echo $(echo a)b", "execute", None, None, None, id="C17"),
+    ],
+)
+def test_case_pattern_terminator_controls(
+    tmp_path: Path,
+    command: str,
+    kind: str,
+    mutation: bool | None,
+    unknown: bool | None,
+    paths: list[str] | None,
+) -> None:
+    data = normalize_tool_fields(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": command, "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+    )
+    assert (
+        data.get("canonical_tool_kind"),
+        data.get("canonical_repo_mutation"),
+        data.get("canonical_repo_mutation_scope_unknown"),
+        data.get("canonical_script_execution"),
+        data.get("canonical_file_paths"),
+    ) == (kind, mutation, unknown, None, paths)
+
+
+def test_case_pattern_terminator_unterminated_arm_does_not_raise(tmp_path: Path) -> None:
+    data = normalize_tool_fields(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "case x in x)git apply x.patch", "cwd": str(tmp_path)},
+            "project_path": str(tmp_path),
+        }
+    )
+    assert data["canonical_tool_kind"] in {"read", "write", "execute"}
 
 
 @pytest.mark.parametrize("wrapper", ["sh -c", "bash -c", "zsh -c", "eval", "env sh -c"])

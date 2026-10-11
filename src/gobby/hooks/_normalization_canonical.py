@@ -243,7 +243,13 @@ def _classify_shell_command(
         segment_end = max(spans_by_token[id(token)][1] for token in segment.tokens)
         _, process_bodies = process_substitution_bodies(segment.tokens, spans_by_token, command)
         arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
-            segment.tokens, gap, case_depth, pending_case_pattern
+            segment.tokens,
+            gap,
+            case_depth,
+            pending_case_pattern,
+            command,
+            spans_by_token,
+            raw_by_token,
         )
         pattern_bodies, unreadable = case_pattern_process_bodies(
             segment.tokens, arm_tokens, spans_by_token, command

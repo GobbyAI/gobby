@@ -1,6 +1,7 @@
 """Executable case arms and process-substitution bodies from shell token spans."""
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
+from gobby.hooks._case_syntax import case_pattern_end
 from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
 
 
@@ -112,7 +113,13 @@ def case_pattern_process_bodies(
 
 
 def case_arm_tokens(
-    tokens: list[ShellToken], *, case_depth: int, new_arm: bool
+    tokens: list[ShellToken],
+    *,
+    case_depth: int,
+    new_arm: bool,
+    command: str,
+    spans: dict[int, tuple[int, int]],
+    raw: dict[int, str] | None = None,
 ) -> tuple[list[ShellToken], int, bool]:
     """Remove case header/pattern syntax; keep each arm's executable tokens."""
     parts = list(tokens)
@@ -132,10 +139,27 @@ def case_arm_tokens(
         parts = parts[keyword + 1 :]
         new_arm = True
     if case_depth and new_arm:
-        end = next(
-            (index for index, token in enumerate(parts) if token.value.endswith(")")),
-            len(parts),
-        )
-        pending = end == len(parts)
-        return parts[end + 1 :], case_depth, pending
+        if not parts:
+            return [], case_depth, True
+        start = min(spans[id(token)][0] for token in parts)
+        end = max(spans[id(token)][1] for token in parts)
+        terminator = case_pattern_end(command, start, end)
+        if terminator is None:
+            return [], case_depth, True
+        kept: list[ShellToken] = []
+        for token in parts:
+            word_start, word_end = spans[id(token)]
+            if word_start > terminator:
+                kept.append(token)
+            elif word_end > terminator + 1:
+                # Only the word crossing the boundary needs retokenization;
+                # preserve the identities and quote provenance of other words.
+                tail_start = terminator + 1
+                tail = scan_shell_command(command[tail_start:word_end])
+                for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
+                    spans[id(arm_token)] = (tail_start + left, tail_start + right)
+                    if raw is not None:
+                        raw[id(arm_token)] = command[tail_start + left : tail_start + right]
+                    kept.append(arm_token)
+        return kept, case_depth, False
     return parts, case_depth, False
