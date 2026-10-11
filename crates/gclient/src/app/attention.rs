@@ -405,20 +405,18 @@ mod tests {
 
     #[test]
     fn missing_provider_message_has_safe_blocked_fallback() {
-        let mut chrome = Chrome::dark();
-        let mut pending = None;
+        for payload in [json!({}), json!({"message": 500})] {
+            let mut workspace = Workspace::scripted();
+            workspace.attention.entries = vec![blocked_entry("provider_error", payload)];
+            let mut chrome = Chrome::dark();
 
-        present_attention(
-            &mut chrome,
-            &mut pending,
-            &[blocked_entry("provider_error", json!({"message": 500}))],
-        );
+            workspace.present_roster_warnings(&mut chrome);
 
-        assert!(chrome.dialog.is_none());
-        assert_eq!(chrome.mode, Mode::Terminal);
-        assert!(pending.is_none());
-        let toast = chrome.alert_log.last().expect("fallback warning");
-        assert_eq!(toast.title, "Agent blocked");
-        assert_eq!(toast.body.as_deref(), Some("No details were provided."));
+            assert!(chrome.dialog.is_none());
+            assert!(workspace.pending_attention.is_none());
+            let toast = chrome.alert_log.last().expect("fallback warning");
+            assert_eq!(toast.title, "Agent blocked");
+            assert_eq!(toast.body.as_deref(), Some("No details were provided."));
+        }
     }
 }
