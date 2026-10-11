@@ -40,6 +40,7 @@ from gobby.servers.routes.runtime_handshake import create_runtime_handshake_rout
 from gobby.utils.local_token import (
     derive_managed_signing_key,
     issue_agent_api_token,
+    read_managed_api_token,
     verify_agent_api_token,
 )
 from tests.runtime_grants.support import (
@@ -739,7 +740,9 @@ def test_managed_refresh_envelope_token(tmp_path: Path) -> None:
     assert launch.grant_path.is_file()
     assert launch.grant_path.stat().st_mode & 0o777 == 0o600
     assert launch.env["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == str(launch.grant_path)
-    envelope = launch.env["GOBBY_AGENT_API_TOKEN"]
+    assert "GOBBY_AGENT_API_TOKEN" not in launch.env
+    envelope = read_managed_api_token(launch.env)
+    assert envelope is not None
     claims = verify_agent_api_token(envelope, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
     assert claims.project_id == grant.principal.project_id
