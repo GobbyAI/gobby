@@ -13,6 +13,7 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
+    _prepare_claude_reviewer_state,
     _prepare_provider_sandbox,
     prepare_claude_spawn,
     prepare_codex_spawn,
@@ -56,8 +57,9 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
 )
 @pytest.mark.asyncio
 async def test_claude_srt_close_reviewer_disables_housekeeping(
-    monkeypatch: pytest.MonkeyPatch, agent_name: str, backend: str, enforced: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent_name: str, backend: str, enforced: bool
 ) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
     request, _, _ = _sandbox_request()
     request = replace(
         request,
@@ -67,6 +69,7 @@ async def test_claude_srt_close_reviewer_disables_housekeeping(
         extra_env={
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "",
             "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "0",
+            "XDG_CACHE_HOME": str(tmp_path / "run-cache"),
         },
     )
     launch = SandboxLaunch(backend=backend, enforced=enforced)
@@ -94,6 +97,100 @@ async def test_claude_srt_close_reviewer_disables_housekeeping(
     )
     assert record_launch.call_args.kwargs["env"] == plan.env
     assert plan.launch is launch
+    assert ("CLAUDE_CONFIG_DIR" in plan.env) is quiet
+    assert ("XDG_STATE_HOME" in plan.env) is quiet
+
+
+@pytest.mark.parametrize("configured_home", [False, True])
+@pytest.mark.parametrize("secure_storage", [None, "", "/explicit-auth-home"])
+def test_claude_reviewer_state_preserves_auth_and_hooks_without_copying_host_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured_home: bool,
+    secure_storage: str | None,
+) -> None:
+    home = tmp_path / "host-home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    host_config = home / ("alternate" if configured_home else ".claude")
+    host_config.mkdir(parents=True)
+    settings = host_config / "settings.json"
+    settings.write_text('{"hooks": {"Stop": []}}', encoding="utf-8")
+    settings.chmod(0o400)
+    credentials = host_config / ".credentials.json"
+    credentials.write_text("host-only-credential-sentinel", encoding="utf-8")
+    host_global = home / ".claude.json"
+    host_global.write_text('{"host_only": true}', encoding="utf-8")
+    cache = tmp_path / "run" / "cache" / "xdg-cache-home"
+    env = {"XDG_CACHE_HOME": str(cache)}
+    if configured_home:
+        env["CLAUDE_CONFIG_DIR"] = str(host_config)
+    if secure_storage is not None:
+        env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = secure_storage
+    request, _, _ = _sandbox_request()
+    request = replace(request, cwd="/workspace", auto_approve=True)
+
+    _prepare_claude_reviewer_state(request, env)
+
+    expected_auth = secure_storage
+    if expected_auth is None:
+        expected_auth = str(host_config) if configured_home else ""
+    assert env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == expected_auth
+    config = Path(env["CLAUDE_CONFIG_DIR"])
+    assert config == cache / "claude"
+    assert Path(env["XDG_STATE_HOME"]).is_relative_to(cache)
+    assert (config / "settings.json").resolve() == settings
+    assert (config / "settings.json").read_text(encoding="utf-8") == settings.read_text(
+        encoding="utf-8"
+    )
+    assert json.loads((config / ".claude.json").read_text(encoding="utf-8")) == {
+        "hasCompletedOnboarding": True,
+        "bypassPermissionsModeAccepted": True,
+    }
+    assert (config / "projects" / "-workspace").is_dir()
+    assert (config / ".claude.json").stat().st_mode & 0o777 == 0o600
+    assert not (config / ".credentials.json").exists()
+    assert credentials.read_text(encoding="utf-8") == "host-only-credential-sentinel"
+    assert host_global.read_text(encoding="utf-8") == '{"host_only": true}'
+
+
+def test_claude_reviewer_state_refuses_redirected_config_before_writing(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "run-cache"
+    cache.mkdir()
+    foreign = tmp_path / "foreign-state"
+    foreign.mkdir()
+    protected = foreign / ".claude.json"
+    protected.write_text("unchanged", encoding="utf-8")
+    (cache / "claude").symlink_to(foreign, target_is_directory=True)
+    request, _, _ = _sandbox_request()
+    env = {"XDG_CACHE_HOME": str(cache)}
+
+    with pytest.raises(FileExistsError):
+        _prepare_claude_reviewer_state(request, env)
+
+    assert protected.read_text(encoding="utf-8") == "unchanged"
+    assert "CLAUDE_CONFIG_DIR" not in env
+
+
+def test_claude_reviewer_state_does_not_seed_unapproved_workspace_trust(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "host-home")
+    request, _, _ = _sandbox_request()
+    request = replace(request, auto_approve=False)
+    env = {"XDG_CACHE_HOME": str(tmp_path / "run-cache")}
+
+    _prepare_claude_reviewer_state(request, env)
+
+    config = Path(env["CLAUDE_CONFIG_DIR"])
+    assert not (config / "projects").exists()
+    assert (
+        json.loads((config / ".claude.json").read_text(encoding="utf-8"))[
+            "bypassPermissionsModeAccepted"
+        ]
+        is False
+    )
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ spawn_executor._runtime_spawn.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,7 +45,7 @@ from gobby.agents.srt_runtime import (
     SrtRuntimeError,
     prepare_sandbox_launch,
 )
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.trust import _encode_claude_project_path, pre_approve_directory
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
@@ -285,6 +286,43 @@ async def _prepare_managed_code_index(
         return None
 
 
+def _prepare_claude_reviewer_state(request: SpawnRequest, env: dict[str, str]) -> None:
+    """Keep unavoidable CLI state writes inside the existing run cache grant."""
+    original_config = env.get("CLAUDE_CONFIG_DIR", "")
+    host_config = Path(original_config).expanduser() if original_config else Path.home() / ".claude"
+    if not host_config.is_absolute():
+        host_config = Path(request.cwd) / host_config
+    config = Path(env["XDG_CACHE_HOME"]) / "claude"
+    # Refuse a reused or redirected state directory before the daemon writes into it.
+    config.mkdir(mode=0o700, parents=True)
+    if request.auto_approve:
+        (config / "projects" / _encode_claude_project_path(request.cwd)).mkdir(
+            mode=0o700, parents=True, exist_ok=True
+        )
+    # Preserve installed hooks/settings without copying credentials or global CLI state.
+    for name in ("settings.json", "settings.local.json"):
+        source = host_config / name
+        target = config / name
+        if source.is_file() and not target.exists():
+            target.symlink_to(source.resolve())
+    global_config = config / ".claude.json"
+    global_config.write_text(
+        json.dumps(
+            {
+                "hasCompletedOnboarding": True,
+                "bypassPermissionsModeAccepted": request.auto_approve,
+            }
+        ),
+        encoding="utf-8",
+    )
+    global_config.chmod(0o600)
+    # Claude 2.1.296 separates secure storage from config; empty selects its
+    # default Keychain service, while a configured home retains its hashed service.
+    env.setdefault("CLAUDE_SECURESTORAGE_CONFIG_DIR", original_config)
+    env["CLAUDE_CONFIG_DIR"] = str(config)
+    env["XDG_STATE_HOME"] = str(config / "state")
+
+
 async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Claude"):
         return validation_error
@@ -332,6 +370,7 @@ async def prepare_claude_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spa
             # Nonessential traffic also disables feature flags that enable account sync.
             env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
             env["CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL"] = "1"
+            await asyncio.to_thread(_prepare_claude_reviewer_state, request, env)
     cmd.extend(launch.provider_args)
     cmd.extend(request.provider_args)
     if request.prompt:
