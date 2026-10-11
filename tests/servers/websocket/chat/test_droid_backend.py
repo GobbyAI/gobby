@@ -893,11 +893,12 @@ def _exit_spec_session(
 
 async def _park_on_plan_gate(session: DroidManagedChatSession) -> None:
     """Yield until the resolver has broadcast + parked on the decision gate."""
-    for _ in range(10):
-        await asyncio.sleep(0)
-        if session.has_blocking_plan_decision:
-            return
-    raise AssertionError("resolver did not park on the plan-decision gate")
+    try:
+        async with asyncio.timeout(1.0):
+            while not session.has_blocking_plan_decision:
+                await asyncio.sleep(0)
+    except TimeoutError as exc:
+        raise AssertionError("resolver did not park on the plan-decision gate") from exc
 
 
 @pytest.mark.asyncio

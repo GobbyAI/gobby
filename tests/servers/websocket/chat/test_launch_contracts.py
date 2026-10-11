@@ -761,7 +761,7 @@ class TestClaudeShimContract:
         assert shim.is_file()
         assert shim.stat().st_mode & 0o777 == 0o700
         script = shim.read_text(encoding="utf-8")
-        assert script.startswith("#!/bin/sh\nexec ")
+        assert script.startswith("#!/bin/sh\nunset GOBBY_AGENT_API_TOKEN\nexec ")
         assert script.count('"$@"') == 1
         wrapped = launch.wrap(["/usr/bin/claude"])
         run = subprocess.run(
