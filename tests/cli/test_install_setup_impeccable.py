@@ -331,6 +331,29 @@ def test_node_floor_gate(
     assert sorted(path.relative_to(home) for path in home.rglob("*")) == before
 
 
+@pytest.mark.parametrize("operation", ["install", "inspect", "remove"])
+def test_impeccable_rejects_relative_home_without_cwd_writes(
+    operation: str,
+    impeccable_runtime: tuple[Path, list[list[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, calls = impeccable_runtime
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", "stray-home")
+    operations = {
+        "install": installer.install_impeccable_cli,
+        "inspect": installer.inspect_impeccable_installation,
+        "remove": installer.remove_impeccable_runtime,
+    }
+
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        operations[operation]()
+
+    assert not (tmp_path / "stray-home").exists()
+    assert calls == []
+
+
 def test_gobby_home_override_consistency(
     impeccable_runtime: tuple[Path, list[list[str]]],
     monkeypatch: pytest.MonkeyPatch,
@@ -568,7 +591,7 @@ def test_remove_impeccable_runtime(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "configured-home"
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
     tool_root = home / "tools" / "impeccable"
     launcher = home / "bin" / "impeccable"
     stamp = home / "bin" / ".impeccable-version"
@@ -638,7 +661,7 @@ def test_native_win32_removes_degraded_cache(
         root,
         SkillScriptsOwner(root.name, "impeccable", "bundled"),
     )
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
     monkeypatch.setattr(installer, "is_native_windows", lambda: True)
 
     result = installer.remove_impeccable_runtime()
@@ -657,7 +680,7 @@ def test_crash_atomic_removal_recovers_tombstone(
     root = namespace / "crash-impeccable-id"
     root.mkdir(parents=True)
     write_skill_scripts_owner(root, SkillScriptsOwner(root.name, "impeccable", "bundled"))
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
 
     def crash(name: str) -> None:
         assert name == "root_tombstoned"
@@ -698,7 +721,7 @@ def test_remove_waits_for_orphaned_writer_group(
     stage.mkdir(parents=True)
     if writer_kind == "materializer":
         write_skill_scripts_owner(root, SkillScriptsOwner(root.name, "impeccable", "bundled"))
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
     pid_file = tmp_path / "child.pid"
     parent = subprocess.Popen(
         [
@@ -823,7 +846,7 @@ def test_cold_materializer_and_uninstall_are_linearized(
     uninstall_started = threading.Event()
     uninstall_done = threading.Event()
     errors: list[BaseException] = []
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
 
     def publish() -> None:
         try:
@@ -875,7 +898,7 @@ def test_warm_waiter_restarts_after_uninstall_deletes_root(
     acquired = threading.Event()
     release = threading.Event()
     producer_done = threading.Event()
-    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
 
     def block_after_root_lock(candidate: Path) -> list[Path]:
         if candidate == root:

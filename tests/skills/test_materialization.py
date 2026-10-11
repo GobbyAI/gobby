@@ -110,6 +110,24 @@ def _set_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.mark.asyncio
+async def test_materialization_rejects_relative_home_without_cwd_writes(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, skill = _create_skill(
+        temp_db,
+        name="relative-home-materialize",
+        files={"scripts/detect.mjs": "export const source = 'database';\n"},
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", "stray-home")
+
+    with pytest.raises(ValueError, match="GOBBY_HOME must be absolute"):
+        await materializer.SkillScriptMaterializer(temp_db).resolve(skill.name, project_id=None)
+
+    assert not (tmp_path / "stray-home").exists()
+
+
+@pytest.mark.asyncio
 async def test_materializes_from_db_bytes_only(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

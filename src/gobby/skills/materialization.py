@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, ParamSpec, Protocol, TypeVar, cast
 
-from gobby.paths import get_gobby_home
+from gobby.agents.constants import agent_home_cache_root
 from gobby.skills.parser import SkillParseError, validate_runtime_metadata
 from gobby.skills.scanner import is_external_source, scan_skill_content
 from gobby.skills.script_cache import (
@@ -281,7 +281,7 @@ async def _materialize_snapshot(
                 f"Skill '{skill.name}' failed script safety scan ({severity})"
             )
 
-    home = get_gobby_home().resolve()
+    home = agent_home_cache_root().parent.resolve()
     cache_root = skill_scripts_root(home, skill.id)
     digest = _generation_digest(payloads, runtime.normalized, external)
     generation = cache_root / digest
@@ -624,6 +624,7 @@ async def _ensure_dependencies(
     npm = shutil.which("npm")
     if npm is None:
         return False, "npm is unavailable; scripts remain usable in line-based mode"
+    browser_cache = (agent_home_cache_root() / "puppeteer").resolve()
     async with async_export_file_lock(skill_scripts_root_lock_target(cache_root)):
         if not generation.exists():
             raise SkillMaterializationError("Materialized generation disappeared")
@@ -639,7 +640,7 @@ async def _ensure_dependencies(
         try:
             await run_blocking_safely(_prepare_dependency_stage, stage, manifest, lockfile)
             env = os.environ.copy()
-            env["PUPPETEER_CACHE_DIR"] = str((get_gobby_home() / "cache" / "puppeteer").resolve())
+            env["PUPPETEER_CACHE_DIR"] = str(browser_cache)
             result = await materialization_test_support.run_owned_subprocess(
                 [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
                 cwd=stage,

@@ -18,8 +18,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.agents.constants import agent_home_cache_root
 from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
-from gobby.paths import get_gobby_home
 from gobby.skills.script_cache import (
     BROWSER_FETCH_OWNER_FILE,
     BrowserCacheReadiness,
@@ -131,7 +131,7 @@ def install_impeccable_cli() -> ImpeccableInstallResult:
         raise ImpeccableInstallError("managed Impeccable is unavailable on native Windows")
     node, node_version = _require_supported_node()
     npm = _find_npm()
-    home = get_gobby_home()
+    home = agent_home_cache_root().parent
     root = home / "tools" / "impeccable"
     pointer = root / IMPECCABLE_RELEASE.version
 
@@ -171,7 +171,7 @@ def install_impeccable_cli() -> ImpeccableInstallResult:
 
 def remove_impeccable_runtime() -> ImpeccableRemovalResult:
     """Remove Impeccable-owned managed runtime artifacts."""
-    home = get_gobby_home().resolve()
+    home = agent_home_cache_root().parent.resolve()
     tool_root = home / "tools" / "impeccable"
     namespace = skill_scripts_namespace(home)
     removed: list[Path] = []
@@ -386,7 +386,7 @@ def inspect_impeccable_installation() -> Path | None:
     """Return a fully verified installed pointer, or None when absent."""
     if is_native_windows():
         return None
-    home = get_gobby_home()
+    home = agent_home_cache_root().parent
     pointer = home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
     if not pointer.exists() and not pointer.is_symlink():
         return None
