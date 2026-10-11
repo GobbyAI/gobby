@@ -1,6 +1,7 @@
 """Skill installation and refresh sanitize before publishing stored instructions."""
 
 import hashlib
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -54,6 +55,22 @@ async def test_hub_tool_install_stores_clean_content(
     registry = create_skills_registry(temp_db, hub_manager=hub_manager)
     result = await registry.call("install_skill", {"source": "testhub:sample"})
     assert result["success"] is True, result
+    assert_clean_publication(LocalSkillManager(temp_db), result["skill_id"])
+
+
+@pytest.mark.asyncio
+async def test_zip_tool_install_stores_clean_content(
+    temp_db: HubDatabase, hidden_skill_dir: Path, tmp_path: Path
+) -> None:
+    archive = tmp_path / "sample.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path in hidden_skill_dir.rglob("*"):
+            if path.is_file():
+                bundle.write(path, path.relative_to(hidden_skill_dir.parent))
+    registry = create_skills_registry(temp_db)
+    result = await registry.call("install_skill", {"source": str(archive)})
+    assert result["success"] is True, result
+    assert result["source_type"] == "zip"
     assert_clean_publication(LocalSkillManager(temp_db), result["skill_id"])
 
 
