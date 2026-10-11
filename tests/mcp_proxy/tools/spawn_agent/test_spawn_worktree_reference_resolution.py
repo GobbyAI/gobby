@@ -12,6 +12,7 @@ cleanly before any terminal or worktree exists.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,12 +20,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.utils.project_context import get_project_context
+from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutProject,
@@ -157,6 +162,121 @@ async def _drain_spawn_background_tasks() -> None:
     tasks = tuple(_spawn_background_tasks.values())
     if tasks:
         await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seat", ["code-reviewer", "researcher", "lane-manager"])
+@pytest.mark.parametrize("dirty", [False, True], ids=["clean", "dirty"])
+async def test_team_lane_observer_preserves_candidate_checkout(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    mock_runner: MagicMock,
+    agent_body: AgentDefinitionBody,
+    checkout: IsolatedCheckoutProject,
+    seat: str,
+    dirty: bool,
+) -> None:
+    """Render the bundled spawn request and run preparation against a real candidate tree."""
+    root = Path(checkout.root_path)
+
+    def git(path: Path, *arguments: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(path), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git(root, "init", "-b", "0.5.0")
+    git(root, "config", "user.email", "test@example.com")
+    git(root, "config", "user.name", "Test")
+    git(root, "add", ".")
+    git(root, "commit", "-m", "base")
+    candidate = tmp_path / "candidate"
+    git(root, "worktree", "add", "-b", "lane-candidate", str(candidate))
+    tracked = candidate / "candidate.txt"
+    tracked.write_text("review this commit\n")
+    git(candidate, "add", "candidate.txt")
+    git(candidate, "commit", "-m", "candidate")
+    (root / "advanced.txt").write_text("base advanced after candidate\n")
+    git(root, "add", "advanced.txt")
+    git(root, "commit", "-m", "advance base")
+    if dirty:
+        tracked.write_text("uncommitted developer work\n")
+        (candidate / "untracked.txt").write_text("untracked developer work\n")
+    before = (
+        git(candidate, "rev-parse", "HEAD"),
+        git(root, "rev-parse", "refs/heads/lane-candidate"),
+        git(candidate, "status", "--porcelain"),
+        tracked.read_text(),
+    )
+    storage = LocalWorktreeManager(temp_db)
+    tree = storage.create(checkout.project.id, "lane-candidate", str(candidate))
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[4]
+                / "src/gobby/install/shared/workflows/pipelines/team-lane.yaml"
+            ).read_text()
+        )
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(lane="3", seats=seat)
+    step = next(step for step in definition.steps if step.id == seat)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        step.mcp.arguments,
+        {
+            "inputs": inputs,
+            "_string_inputs": frozenset(
+                name for name, spec in definition.inputs.items() if spec.get("type") == "string"
+            ),
+            "invocation_id": "observer-test",
+            "steps": {
+                "guard": {
+                    "output": {
+                        "worktree": tree.id,
+                        "project_path": str(candidate),
+                        "report_to": "gobby#1",
+                        "lane_pane": "test-pane",
+                        "lane_columns": 160,
+                        "lane_rows": 100,
+                    }
+                }
+            },
+        },
+        drop_none=True,
+    )
+    # Terminal placement/execution is the boundary fake; checkout preparation stays real.
+    arguments.pop("placement")
+    arguments.pop("reserved_run_id")
+    arguments.update(execution_mode="one_shot", parent_session_id="parent-1")
+    registry = _spawn_registry(mock_runner, storage, _git_manager())
+    sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha="base-sha"))
+    with (
+        _spawn_flow(agent_body, checkout) as execute_spawn,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+            get_project_context,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base", sync
+        ),
+    ):
+        result = await registry.call("spawn_agent", arguments)
+        await _drain_spawn_background_tasks()
+    assert result["success"] is True, result
+    sync.assert_not_awaited()
+    assert execute_spawn.await_args is not None
+    assert execute_spawn.await_args.args[0].cwd == str(candidate)
+    assert (
+        git(candidate, "rev-parse", "HEAD"),
+        git(root, "rev-parse", "refs/heads/lane-candidate"),
+        git(candidate, "status", "--porcelain"),
+        tracked.read_text(),
+    ) == before
+    if dirty:
+        assert (candidate / "untracked.txt").read_text() == "untracked developer work\n"
 
 
 class TestSpawnAgentResolvesWorktreeReferences:

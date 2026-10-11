@@ -172,7 +172,9 @@ def test_two_inputs_resolve_lane_state(lane_env: LaneEnv) -> None:
     manager = SessionManager(lane_env.db).get(lane_env.manager)
     assert manager is not None
     assert values["report_to"] == manager.ref
-    assert values["project_path"] == str(lane_env.root)
+    tree = LocalWorktreeManager(lane_env.db).get(lane_env.worktree)
+    assert tree is not None
+    assert values["project_path"] == tree.worktree_path
     assert (values["lane_columns"], values["lane_rows"]) == (205, 59)
 
 
@@ -578,7 +580,12 @@ def test_registered_guard_resolves_two_input_command(
     step = next(step for step in definition.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
     launch = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
-    assert launch["worktree_id"] == lane_env.worktree
+    if seat == "developer":
+        assert launch["worktree_id"] == lane_env.worktree and "project_path" not in launch
+    else:
+        tree = LocalWorktreeManager(lane_env.db).get(lane_env.worktree)
+        assert tree is not None
+        assert launch["project_path"] == tree.worktree_path and "worktree_id" not in launch
     assert launch["placement"]["split"]["pane"] == lane_env.pane
     assert (launch["placement"]["split"]["columns"], launch["placement"]["split"]["rows"]) == (
         205,
