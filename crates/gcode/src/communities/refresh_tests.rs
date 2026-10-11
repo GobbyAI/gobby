@@ -207,6 +207,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
     // cannot reach the user's daemon, including inherited daemon URL overrides.
     let daemon = std::net::TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
     let daemon_url = format!("http://{}", daemon.local_addr().expect("endpoint address"));
+    let owner_database_url = parent_ctx.database_url.clone();
     temp_env::with_vars(
         [
             ("GOBBY_HOME", Some(home.as_os_str())),
@@ -251,7 +252,35 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             assert_eq!(parent_symbols[0].name, "located");
             assert_eq!(parent_symbols[0].line_start, 1);
 
+            // Parent reads are admitted, but only the overlay is writable.
+            // A stale parent must serve its index without attempting an RLS-denied refresh.
+            fs::write(
+                parent_root.join(rel),
+                "// stale parent\npub fn located() {}\n",
+            )
+            .expect("change parent source outside managed write scope");
+            assert!(
+                !parent_ctx
+                    .can_refresh_index()
+                    .expect("parent write authority")
+            );
+            crate::test_env::clear_captured_logs();
+            assert_eq!(
+                ensure_fresh(&parent_ctx, FreshnessScope::Files(vec![PathBuf::from(rel)]))
+                    .expect("read-only parent freshness skips writes"),
+                FreshnessStatus::Checked
+            );
+            assert_eq!(
+                ensure_fresh(&parent_ctx, FreshnessScope::Project)
+                    .expect("read-only project freshness skips writes"),
+                FreshnessStatus::Checked
+            );
+            assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            fs::write(parent_root.join(rel), "pub fn located() {}\n")
+                .expect("restore parent source");
+
             let ctx = resolve(&admitted_root).expect("resolve admitted managed overlay");
+            assert!(ctx.can_refresh_index().expect("overlay write authority"));
             let mut context_connection =
                 db::connect_readonly(&ctx.database_url).expect("connect from managed context");
             let context_role: String = context_connection
@@ -355,6 +384,177 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 .expect("foreign overlay remains untouched")
                 .get(0);
             assert_eq!(foreign_count, 0);
+
+            // The already-issued login gains read authority from a live review link.
+            // Its frozen admitted overlay remains its only write scope.
+            let developer_id = uuid::Uuid::new_v4();
+            let reviewer_run_id = uuid::Uuid::new_v4();
+            let task_id = uuid::Uuid::new_v4();
+            let review_worktree_id = uuid::Uuid::new_v4();
+            let parent_uuid = db::id_param(&parent_id).expect("parent UUID");
+            let _assignment_cleanup = ReviewAssignmentCleanup {
+                database_url: owner_database_url.clone(),
+                reviewer_id: managed.session_id,
+                developer_id,
+                task_id,
+                run_id: reviewer_run_id,
+                worktree_id: review_worktree_id,
+            };
+            owner.execute(
+                "INSERT INTO sessions(id, external_id, machine_id, source, project_id, workspace_path)
+                 VALUES ($1, $2, $3, 'test', $4, $5)",
+                &[&developer_id, &developer_id.to_string(), &managed.machine_id,
+                    &parent_uuid, &foreign_root.to_string_lossy().as_ref()],
+            ).expect("seed current task claimant");
+            owner
+                .execute(
+                    "INSERT INTO agent_runs(id, parent_session_id, child_session_id, machine_id,
+                     provider, prompt, agent_name, status)
+                 VALUES ($1, $2, $2, $3, 'codex', 'review fixture', 'code-reviewer', 'running')",
+                    &[&reviewer_run_id, &managed.session_id, &managed.machine_id],
+                )
+                .expect("bind existing session to reviewer seat");
+            owner
+                .execute(
+                    "UPDATE sessions SET agent_run_id = $1 WHERE id = $2",
+                    &[&reviewer_run_id, &managed.session_id],
+                )
+                .expect("bind reviewer run");
+            owner.execute(
+                "INSERT INTO tasks(id, project_id, title, claimed_by_session_id, validation_criteria)
+                 VALUES ($1, $2, 'managed review evidence', $3, 'Bound evidence remains read-only.')",
+                &[&task_id, &parent_uuid, &developer_id],
+            ).expect("seed review task");
+            owner
+                .execute(
+                    "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path)
+                 VALUES ($1, $2, $3, $4, $5)",
+                    &[
+                        &review_worktree_id,
+                        &parent_uuid,
+                        &managed.machine_id,
+                        &review_worktree_id.to_string(),
+                        &foreign_root.to_string_lossy().as_ref(),
+                    ],
+                )
+                .expect("register developer worktree");
+            owner.execute(
+                "INSERT INTO session_tasks(session_id, task_id, action) VALUES ($1, $2, 'reviewing')",
+                &[&managed.session_id, &task_id],
+            ).expect("start review assignment");
+
+            let git = |args: &[&str]| {
+                let output = std::process::Command::new("git")
+                    .current_dir(&foreign_root)
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .args([
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                    ])
+                    .args(args)
+                    .output()
+                    .expect("run isolated git");
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                String::from_utf8(output.stdout)
+                    .expect("Git output")
+                    .trim()
+                    .to_string()
+            };
+            git(&["init", "--quiet"]);
+            git(&["add", rel]);
+            git(&["commit", "--quiet", "-m", "review fixture"]);
+            let mut developer_ctx = test_context(
+                owner_database_url.clone(),
+                &foreign_id,
+                ProjectIndexScope::Overlay {
+                    overlay_project_id: foreign_id.clone(),
+                    overlay_root: foreign_root.clone(),
+                    parent_project_id: parent_id.clone(),
+                    parent_root: parent_root.clone(),
+                },
+            );
+            developer_ctx.project_root = foreign_root.clone();
+            let _review_cleanup = ProjectCleanup {
+                database_url: owner_database_url.clone(),
+                project_id: foreign_id.clone(),
+            };
+            api::index_files(
+                IndexRequest {
+                    project_root: foreign_root.clone(),
+                    path_filter: None,
+                    explicit_files: vec![PathBuf::from(rel)],
+                    full: true,
+                    require_cpp_semantics: false,
+                    sync_projections: false,
+                },
+                &developer_ctx,
+                IndexOptions::default(),
+            )
+            .expect("developer indexes committed candidate");
+            let review_ctx =
+                resolve(&foreign_root).expect("live assignment admits reviewer evidence");
+            assert!(
+                !review_ctx
+                    .can_refresh_index()
+                    .expect("review write authority")
+            );
+            let request = serde_json::json!({
+                "schema_version": 1, "operation": "read",
+                "binding": {"project_id": foreign_id,
+                    "commit_oid": git(&["rev-parse", "HEAD"]),
+                    "tree_oid": git(&["rev-parse", "HEAD^{tree}"])},
+                "read": {"kind": "range", "path": rel, "start_line": 1, "end_line": 1}
+            });
+            let prepared = crate::commands::evidence::preflight(
+                &request.to_string(),
+                crate::output::Format::Json,
+                false,
+                Some(foreign_root.to_str().expect("review root")),
+            )
+            .expect("prepare commit-bound evidence");
+            crate::test_env::clear_captured_logs();
+            crate::commands::evidence::run(&review_ctx, prepared, false)
+                .expect("existing reviewer reads bound developer evidence");
+            fs::write(
+                foreign_root.join(rel),
+                "// stale review\npub fn located() {}\n",
+            )
+            .expect("stale read-only review checkout");
+            assert_eq!(
+                ensure_fresh(&review_ctx, FreshnessScope::Project)
+                    .expect("read-only review skips refresh"),
+                FreshnessStatus::Checked
+            );
+            assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            let write_error = crate::commands::index::run(
+                &review_ctx,
+                &foreign_root,
+                None,
+                None,
+                true,
+                false,
+                false,
+                false,
+                crate::output::Format::Json,
+            )
+            .expect_err("review assignment cannot run index writes");
+            assert!(
+                format!("{write_error:#}").contains("row-level security"),
+                "unexpected write denial: {write_error:#}"
+            );
+            owner
+                .execute("DELETE FROM session_tasks WHERE task_id = $1", &[&task_id])
+                .expect("end review assignment");
+            resolve(&foreign_root).expect_err("unassigned developer worktree is refused again");
         },
     );
 }
@@ -1947,6 +2147,34 @@ fn install_parent_seed_select_barrier(
 struct ProjectCleanup {
     database_url: String,
     project_id: String,
+}
+
+struct ReviewAssignmentCleanup {
+    database_url: String,
+    reviewer_id: uuid::Uuid,
+    developer_id: uuid::Uuid,
+    task_id: uuid::Uuid,
+    run_id: uuid::Uuid,
+    worktree_id: uuid::Uuid,
+}
+
+impl Drop for ReviewAssignmentCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut owner) = db::connect_readwrite(&self.database_url) {
+            let _ = owner.execute(
+                "UPDATE sessions SET agent_run_id = NULL WHERE id = $1",
+                &[&self.reviewer_id],
+            );
+            for (statement, id) in [
+                ("DELETE FROM tasks WHERE id = $1", self.task_id),
+                ("DELETE FROM agent_runs WHERE id = $1", self.run_id),
+                ("DELETE FROM worktrees WHERE id = $1", self.worktree_id),
+                ("DELETE FROM sessions WHERE id = $1", self.developer_id),
+            ] {
+                let _ = owner.execute(statement, &[&id]);
+            }
+        }
+    }
 }
 
 struct ManagedPrincipal {

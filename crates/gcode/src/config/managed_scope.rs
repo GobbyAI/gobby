@@ -8,7 +8,7 @@ use crate::cli_error::CliError;
 use crate::db;
 
 /// Reject a foreign overlay before parent validation or read-time freshness.
-/// A managed principal's parent remains readable; its overlay scope is frozen.
+/// Frozen parent/overlay authority plus the seat's current read-only review assignment.
 pub(super) fn validate(
     conn: &mut Client,
     principal: &GrantPrincipal,
@@ -23,7 +23,8 @@ pub(super) fn validate(
     let scope = conn.query_one(
         "SELECT gobby_agent_auth.current_project_id()::text,
                 COALESCE(gobby_agent_auth.current_code_overlay_project_id(),
-                         gobby_agent_auth.current_project_id())::text",
+                         gobby_agent_auth.current_project_id())::text,
+                gobby_agent_auth.current_review_code_project_id()::text",
         &[],
     )?;
     let parent_id = scope
@@ -32,7 +33,11 @@ pub(super) fn validate(
     let admitted_id = scope
         .get::<_, Option<String>>(1)
         .context("managed PostgreSQL binding has no code-index scope")?;
-    if requested_id == parent_id || requested_id == admitted_id {
+    let review_id = scope.get::<_, Option<String>>(2);
+    if requested_id == parent_id
+        || requested_id == admitted_id
+        || review_id.as_deref() == Some(requested_id)
+    {
         return Ok(());
     }
     // Diagnostic root metadata only: never read symbols/content from the
@@ -66,4 +71,13 @@ pub(super) fn validate(
         exit_status: 2,
     }
     .into())
+}
+
+pub(super) fn can_write(conn: &mut Client, requested_id: &str) -> anyhow::Result<bool> {
+    let row = conn.query_one(
+        "SELECT COALESCE(gobby_agent_auth.current_code_overlay_project_id(),
+                         gobby_agent_auth.current_project_id())::text",
+        &[],
+    )?;
+    Ok(row.get::<_, Option<String>>(0).as_deref() == Some(requested_id))
 }

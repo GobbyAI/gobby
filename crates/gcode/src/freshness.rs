@@ -50,6 +50,11 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
+    // Read-only parent and review scopes must never attempt index writes.
+    if !ctx.can_refresh_index()? {
+        return Ok(FreshnessStatus::Checked);
+    }
+
     // Lock-free pre-gate for whole-project reads: if nothing on disk is newer
     // than the recorded index and nothing was deleted, skip the advisory lock
     // and the full re-hash entirely (no "refresh already running" warning).

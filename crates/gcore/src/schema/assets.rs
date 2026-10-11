@@ -326,6 +326,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "54b6d53ceb2c903e1089861d250138aecf9bc6b319fc35bc11c86494e3e884e4",
         sql: include_str!("../../assets/schema/migrations/466_bounded_managed_rotation_drain.sql"),
     },
+    EmbeddedMigration {
+        version: 467,
+        filename: "467_assignment_derived_review_code_scope.sql",
+        checksum: "b2181969b74d9d6b11ef6a8da759d133cb3cf417ee7dcf2552977af06507d99e",
+        sql: include_str!(
+            "../../assets/schema/migrations/467_assignment_derived_review_code_scope.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

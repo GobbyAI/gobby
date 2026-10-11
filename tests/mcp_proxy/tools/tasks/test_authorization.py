@@ -188,6 +188,42 @@ class TestDeleteTaskGuard:
 
 
 class TestLinkTaskToSessionGuard:
+    @pytest.mark.parametrize(
+        ("live_reviewer", "closed", "other_session", "allowed"),
+        [
+            (True, False, False, True),
+            (False, False, False, False),
+            (True, True, False, False),
+            (True, False, True, False),
+        ],
+    )
+    def test_reviewing_requires_the_callers_live_seat_on_an_open_claimed_task(
+        self,
+        task_manager: MagicMock,
+        live_reviewer: bool,
+        closed: bool,
+        other_session: bool,
+        allowed: bool,
+    ) -> None:
+        task_manager.get_task.return_value = _task(
+            OWNER_SESSION, closed_at=datetime.now(UTC) if closed else None
+        )
+        task_manager.db.fetchone.return_value = {"id": "reviewer-run"} if live_reviewer else None
+        with ExitStack() as stack:
+            tool, writer = _build_link_task_to_session(task_manager, stack)
+            with session_context_for_test(CALLER_SESSION):
+                result = tool(
+                    task_id=TASK_UUID,
+                    action="reviewing",
+                    session_id=OWNER_SESSION if other_session else None,
+                )
+        if allowed:
+            assert result == {}
+            writer.assert_called_once_with(CALLER_SESSION, TASK_UUID, "reviewing")
+        else:
+            assert result["error_code"] == "TASK_CLAIM_CONFLICT"
+            writer.assert_not_called()
+
     def test_link_explicit_session_without_context_refused(self, task_manager: MagicMock) -> None:
         task_manager.get_task.return_value = _task(None)
         ctx = RegistryContext(task_manager=task_manager)

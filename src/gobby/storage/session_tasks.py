@@ -62,6 +62,7 @@ class SessionTaskManager:
         "de_escalated",
         "review_rejected",
         "plan_enhanced",
+        "reviewing",
     }
 
     def __init__(self, db: HubDatabase):
@@ -77,12 +78,19 @@ class SessionTaskManager:
         Link a task to a session with a specific action.
         Actions: worked_on, discovered, mentioned, closed, created, claimed,
                  escalated, needs_review, review_approved, reopened, de_escalated,
-                 review_rejected, plan_enhanced
+                 review_rejected, plan_enhanced, reviewing
         """
         if action not in self.VALID_ACTIONS:
             raise ValueError(f"Invalid action '{action}'. Must be one of {self.VALID_ACTIONS}")
 
         with self.db.transaction() as conn:
+            if action == "reviewing":
+                # Serialize replacement so a seat has one current review assignment.
+                conn.execute("SELECT id FROM sessions WHERE id = %s FOR UPDATE", (session_id,))
+                conn.execute(
+                    "DELETE FROM session_tasks WHERE session_id = %s AND action = 'reviewing'",
+                    (session_id,),
+                )
             conn.execute(
                 """
                 INSERT INTO session_tasks (

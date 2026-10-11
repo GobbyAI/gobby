@@ -154,7 +154,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": f"Task {task_id} not found"}
         # A discovered link only records the caller's own finding and is no close
         # evidence, so the found-work ladder's exit works on an owner-claimed task.
-        if action != "discovered":
+        if action not in {"discovered", "reviewing"}:
             denied = require_claim_authority(ctx.task_manager, task, "link_task_to_session")
             if denied:
                 return denied
@@ -164,6 +164,28 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolved_session_id = ctx.resolve_session_id(effective_session_id)
         except ValueError as e:
             return {"error": f"Invalid session_id '{effective_session_id}': {e}"}
+
+        if action == "reviewing":
+            reviewer = ctx.task_manager.db.fetchone(
+                """SELECT ar.id FROM agent_runs ar
+                JOIN sessions s ON s.id = ar.child_session_id AND s.agent_run_id = ar.id
+                JOIN sessions owner ON owner.id = %s
+                WHERE ar.child_session_id = %s AND ar.agent_name = 'code-reviewer'
+                  AND ar.status = 'running' AND s.project_id = %s
+                  AND owner.project_id = s.project_id AND owner.machine_id = s.machine_id
+                LIMIT 1""",
+                (task.claimed_by_session_id, resolved_session_id, task.project_id),
+            )
+            if (
+                resolved_session_id != caller_session_id
+                or task.closed_at is not None
+                or reviewer is None
+            ):
+                return task_error(
+                    "Review assignments require the caller's running code-reviewer seat "
+                    "and an open task claimed on the same project and machine.",
+                    TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                )
 
         # An explicit session_id naming another session is allowed only for
         # self or the task's agent-run delegation lineage (#20821).
@@ -209,7 +231,8 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "action": {
                     "type": "string",
-                    "description": "Relationship type (worked_on, discovered, mentioned, closed)",
+                    "description": "Relationship type (worked_on, discovered, mentioned, closed, "
+                    "reviewing). Reviewing replaces the caller code-reviewer seat's assignment.",
                     "default": "worked_on",
                 },
             },
