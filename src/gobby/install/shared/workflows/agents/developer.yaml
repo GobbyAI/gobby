@@ -338,8 +338,12 @@ step_workflow:
         with link_commit(task_id=assigned_task_id, commit_sha=<sha>). Linking
         the commit moves you to submit. Close only from submit, after your Lane
         Manager releases the task.
-        After release, a task you handed off with the reviewer LAND reason can
-        be de-escalated and closed directly, preserving the active task's binding.
+        For an Orchestrator-directed handoff, use escalate_task with a reason
+        starting exactly with "Handed off: reviewer LAND", for example:
+        "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
+        decision. Developer closes after landing."
+        After release, that task can be de-escalated and closed directly,
+        preserving the active task's binding.
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:reopen_task"
