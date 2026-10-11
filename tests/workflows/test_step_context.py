@@ -40,6 +40,7 @@ def _instance(
         enabled=enabled,
         snapshot=snapshot or _snapshot([step], None),
         workflow=snapshot or _snapshot([step], None),
+        current_definition=None,
     )
 
 

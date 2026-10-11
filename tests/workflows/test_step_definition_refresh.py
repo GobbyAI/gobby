@@ -243,5 +243,12 @@ async def test_project_definition_controls_running_seat(
     event.data["tool_input"] = {"server_name": "gobby-sessions", "tool_name": "get_handoff"}
     recovery = await engine.evaluate(event, session_id=session_id, variables={})
     assert recovery.decision == "allow"
+    if remove_step:
+        context = get_active_step_workflow_context(hub_db, session_id)
+        assert context is not None and context.current_step == "submit"
+        assert context.status_message is not None
+        assert "removed step 'submit'" in context.status_message
+        assert "handoff and memory access" in context.status_message
+        assert "end_agent_run with blockers" in context.status_message
     retained = instance_mgr.get_for_session(session_id)
     assert retained is not None and retained.snapshot == instance.snapshot

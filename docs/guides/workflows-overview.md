@@ -25,9 +25,10 @@ The shared state across all five layers is:
 - Session variables, which rules and step workflows read and mutate.
 - Domain definitions, which live in the typed tables above and are synced from
   bundled or project YAML. Names may overlap across domains.
-- Immutable step-workflow snapshots on `agent_step_instances`, taken at spawn
-  or whole-definition activation so a running session is not rewritten by later
-  definition edits.
+- Agent-step execution state on `agent_step_instances`: current step, variables,
+  and an immutable snapshot taken at spawn or whole-definition activation.
+  The snapshot retains activation provenance; live step policy uses the
+  installed definition as described below.
 - Completion IDs and notifications, which let agents, pipelines, and dispatch
   reconnect long-running work after a daemon restart or parent-session wait.
 
@@ -184,8 +185,15 @@ Keep this split clear:
   `pipeline_definitions`.
 - **Runtime state** is session-specific: variables, `agent_step_instances`
   snapshots, agent runs, pipeline executions, completion subscriptions, task
-  stage manifests, and task claims. A definition edit does not rewrite an
-  already-snapshotted run.
+  stage manifests, and task claims. Definition edits preserve the instance's
+  current step and variables.
+
+After definition sync, the next tool call resolves the installed agent
+definition (project row first, then global row) for step permissions, handlers,
+transitions, and the exit condition. The stored snapshot is activation
+provenance and the fallback when the definition row is missing or has no
+`step_workflow`. A removed active step fails closed to capability-neutral
+handoff and memory access, plus `end_agent_run` with blockers.
 
 When a guide says "enable a rule" or "update an agent definition", that is a
 definition change. When it says "the step transitioned" or "the pipeline is
@@ -199,4 +207,4 @@ waiting for approval", that is runtime state.
 - [Orchestration](./orchestration.md) for the current task/agent coordination model
 - [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules
 
-_Last verified: 2026-10-08_
+_Last verified: 2026-10-10_
