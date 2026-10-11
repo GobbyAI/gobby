@@ -1,4 +1,4 @@
-"""Safety checks for read-only shell pipeline stages and output markers."""
+"""Safety checks for shell stdin consumers, pipeline stages and output markers."""
 
 from gobby.hooks._normalization_shell import (
     ShellToken,
@@ -6,7 +6,10 @@ from gobby.hooks._normalization_shell import (
     has_mutating_output_redirection,
     has_shell_input_redirection,
 )
-from gobby.hooks._python_pipeline_classifier import _is_read_only_python_pipeline
+from gobby.hooks._python_pipeline_classifier import (
+    _inline_interpreter_parts,
+    _is_read_only_python_pipeline,
+)
 from gobby.hooks.code_navigation import shell_command_name
 
 _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
@@ -14,6 +17,27 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
 )
 # Characters in echo arguments that imply command substitution rather than a plain marker.
 _ECHO_UNSAFE_CHARS = frozenset({"$", "`"})
+
+
+def _stdin_program_interpreter(parts: list[str]) -> str | None:
+    interpreter_parts = _inline_interpreter_parts(parts)
+    if not interpreter_parts:
+        return None
+    interpreter = shell_command_name(interpreter_parts[0])
+    return interpreter if interpreter in {"node", "python", "python3", "ruby"} else None
+
+
+def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
+    interpreter_parts = _inline_interpreter_parts(parts)
+    if not interpreter_parts:
+        return False
+    interpreter = shell_command_name(interpreter_parts[0])
+    if interpreter not in {"node", "python", "python3", "ruby"}:
+        return False
+    args = interpreter_parts[1:]
+    if any(flag in {"-c", "-e", "--eval", "-m"} or flag.startswith("--eval=") for flag in args):
+        return False
+    return "-" in args or not any(not arg.startswith("-") for arg in args)
 
 
 def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
