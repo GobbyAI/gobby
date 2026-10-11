@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+from asyncio import AbstractEventLoop
+from collections.abc import Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +24,7 @@ pytestmark = pytest.mark.unit
 
 def _event(
     event_type: HookEventType = HookEventType.BEFORE_TOOL,
-    data: dict | None = None,
+    data: dict[str, Any] | None = None,
 ) -> HookEvent:
     event = HookEvent(
         event_type=event_type,
@@ -207,6 +210,91 @@ class TestSessionRefResolution:
 
 
 class TestWorkflowRuleEvaluator:
+    @pytest.mark.parametrize(
+        "error", [IndexError("matcher index out of range"), RuntimeError("matcher crashed")]
+    )
+    def test_before_tool_evaluation_exception_blocks_with_diagnostic(
+        self, error: Exception
+    ) -> None:
+        workflow_handler = MagicMock()
+        workflow_handler.handle.side_effect = error
+        dispatch = MagicMock()
+        evaluator = WorkflowRuleEvaluator(
+            workflow_handler=workflow_handler,
+            dispatch_mcp_calls=dispatch,
+            format_discovery_result=MagicMock(),
+            database=MagicMock(),
+            logger=MagicMock(),
+        )
+
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = evaluator.evaluate(_event())
+
+        assert context is None
+        assert blocking is not None
+        assert blocking.decision == "block"
+        assert blocking.reason is not None
+        assert type(error).__name__ in blocking.reason
+        assert str(error) in blocking.reason
+        dispatch.assert_not_called()
+        audit.assert_called_once()
+        assert audit.call_args.kwargs["rule_id"] == "hook-before-tool-safety"
+
+    @pytest.mark.parametrize("event_type", [HookEventType.STOP, HookEventType.STOP_FAILURE])
+    def test_stop_evaluation_exception_keeps_safety_block(self, event_type: HookEventType) -> None:
+        workflow_handler = MagicMock()
+        workflow_handler.handle.side_effect = RuntimeError("matcher crashed")
+        evaluator = WorkflowRuleEvaluator(
+            workflow_handler=workflow_handler,
+            dispatch_mcp_calls=MagicMock(),
+            format_discovery_result=MagicMock(),
+            database=MagicMock(),
+            logger=MagicMock(),
+        )
+
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = evaluator.evaluate(_event(event_type))
+
+        assert context is None
+        assert blocking == HookResponse(
+            decision="block", reason="Workflow evaluation failed; blocking stop for safety."
+        )
+        assert audit.call_args.kwargs["rule_id"] == "hook-stop-safety"
+
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            event
+            for event in HookEventType
+            if event
+            not in {HookEventType.BEFORE_TOOL, HookEventType.STOP, HookEventType.STOP_FAILURE}
+        ],
+    )
+    def test_other_evaluation_exceptions_keep_fail_open(self, event_type: HookEventType) -> None:
+        workflow_handler = MagicMock()
+        error = RuntimeError("matcher crashed")
+        workflow_handler.handle.side_effect = error
+        logger = MagicMock()
+        evaluator = WorkflowRuleEvaluator(
+            workflow_handler=workflow_handler,
+            dispatch_mcp_calls=MagicMock(),
+            format_discovery_result=MagicMock(),
+            database=MagicMock(),
+            logger=logger,
+        )
+
+        with patch("gobby.hooks.rule_evaluator.audit_source_block_sync") as audit:
+            context, blocking = evaluator.evaluate(_event(event_type))
+
+        assert context is None
+        assert blocking is None
+        workflow_handler.handle.assert_called_once()
+        assert logger.exception.call_args.args == (
+            "Workflow evaluation failed: %s",
+            error,
+        )
+        audit.assert_not_called()
+
     def test_allow_merges_workflow_and_discovery_context(self) -> None:
         workflow_handler = MagicMock()
         workflow_response = HookResponse(
@@ -282,13 +370,15 @@ class TestWorkflowRuleEvaluator:
 class TestBroadcastScheduling:
     @patch("gobby.hooks.broadcaster.asyncio.get_running_loop", side_effect=RuntimeError)
     @patch("gobby.hooks.broadcaster.asyncio.run_coroutine_threadsafe")
-    def test_schedules_on_captured_loop(self, mock_threadsafe, mock_get_loop) -> None:
+    def test_schedules_on_captured_loop(
+        self, mock_threadsafe: MagicMock, mock_get_loop: MagicMock
+    ) -> None:
         broadcaster = MagicMock()
 
-        async def broadcast_event(*args, **kwargs) -> None:
+        async def broadcast_event(*args: Any, **kwargs: Any) -> None:
             return None
 
-        def close_coro(coro, loop):
+        def close_coro(coro: Coroutine[Any, Any, None], loop: AbstractEventLoop) -> MagicMock:
             coro.close()
             return MagicMock()
 
@@ -296,7 +386,7 @@ class TestBroadcastScheduling:
         broadcaster.broadcast_event = MagicMock(side_effect=broadcast_event)
         loop = MagicMock()
 
-        result = schedule_hook_broadcast(
+        schedule_hook_broadcast(
             broadcaster,
             _event(),
             HookResponse(decision="allow"),
@@ -304,7 +394,7 @@ class TestBroadcastScheduling:
             MagicMock(),
         )
 
-        assert result is None
+        assert mock_threadsafe.call_args.args[0].cr_frame is None
         assert loop is mock_threadsafe.call_args.args[1]
         mock_get_loop.assert_called_once()
         mock_threadsafe.assert_called_once()
