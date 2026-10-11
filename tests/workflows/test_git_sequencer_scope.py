@@ -137,7 +137,7 @@ CLAIMED_VARIABLES: dict[str, Any] = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrapper", ["env -C {root}", "env --chdir={root}"])
+@pytest.mark.parametrize("wrapper", ["env -C {root}", "env --chdir={root}", "env -v -C {root}"])
 @pytest.mark.parametrize("operation", ["add x.py", "revert --quit"])
 @pytest.mark.parametrize("claimed", [False, True])
 async def test_env_git_writes_obey_task_claim_gate(
@@ -151,6 +151,26 @@ async def test_env_git_writes_obey_task_claim_gate(
     variables = {**CLAIMED_VARIABLES, "task_claimed": claimed}
     response = await claim_engine.evaluate(event, session_id=SESSION_ID, variables=variables)
     assert event.data["canonical_repo_mutation"] is True
+    assert response.decision == ("allow" if claimed else "block"), response.reason
+    if not claimed:
+        assert "require-task-before-edit" in (response.reason or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "wrapper",
+    ["nohup", "timeout 5", "nice -n 5", "env FOO+=x", "env a.b=1", "env -- FOO+=x", "env -- A=1"],
+)
+@pytest.mark.parametrize("claimed", [False, True])
+async def test_utility_wrapped_writes_obey_claim_gate(
+    claim_engine: RuleEngine, tmp_path: Path, wrapper: str, claimed: bool
+) -> None:
+    event = _event(f"{wrapper} touch x.py", tmp_path)
+    response = await claim_engine.evaluate(
+        event, session_id=SESSION_ID, variables={**CLAIMED_VARIABLES, "task_claimed": claimed}
+    )
+    assert event.data["canonical_repo_mutation"] is True
+    assert event.data["canonical_file_paths"] == ["x.py"]
     assert response.decision == ("allow" if claimed else "block"), response.reason
     if not claimed:
         assert "require-task-before-edit" in (response.reason or "")

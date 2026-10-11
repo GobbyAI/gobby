@@ -25,12 +25,14 @@ from gobby.utils.daemon_git import GitResult, GitTimeout, daemon_git
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
-    ForeignPathOwner,
-    _format_dirty_edit_reason,
-    _format_ref,
     active_owned_dirty_paths,
     foreign_owned_dirty_paths,
     parse_git_commit_invocations,
+)
+from gobby.workflows.commit_guard_conflicts import (
+    ForeignPathOwner,
+    format_dirty_edit_reason,
+    format_ref,
 )
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -56,7 +58,7 @@ def _local_machine_identity() -> Iterator[None]:
 def test_format_ref_preserves_full_uuid_fallback() -> None:
     task_id = "12345678-1234-5678-9abc-123456789abc"
 
-    assert _format_ref(None, task_id) == task_id
+    assert format_ref(None, task_id) == task_id
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -323,8 +325,83 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert "force=true" in response.reason
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ledger_path, requested", [(".", "foreign.txt"), ("sub", "sub/a.txt"), ("sub/a.txt", "sub")]
+)
+async def test_dirty_directory_owner_blocks_overlapping_edit(
+    guard_harness: GuardHarness, ledger_path: str, requested: str
+) -> None:
+    harness = guard_harness
+    manager = SessionVariableManager(harness.db)
+    manager.merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: [ledger_path]},
+            "task_edited_file_checkouts": {
+                harness.foreign_task.id: {str(harness.repo): [ledger_path]}
+            },
+        },
+    )
+    dirty_path = "foreign.txt" if ledger_path == "." else "sub/a.txt"
+    target = harness.repo / dirty_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("foreign change\n")
+    response = await harness.handler._evaluate_rules(harness.edit_event(requested))
+    assert response.decision == "block", response.reason
+    assert f"#{harness.foreign_task.seq_num}" in (response.reason or "")
+    assert manager.get_variables(harness.foreign_session.id)["task_edited_files"] == {
+        harness.foreign_task.id: [ledger_path],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["edit_owned", "commit_only", "commit_staged", "edit_clean"])
+async def test_foreign_root_owner_allows_requester_owned_or_clean_child(
+    guard_harness: GuardHarness, action: str
+) -> None:
+    harness = guard_harness
+    SessionVariableManager(harness.db).merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: ["."]},
+            "task_edited_file_checkouts": {harness.foreign_task.id: {str(harness.repo): ["."]}},
+        },
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n")
+    (harness.repo / "owned.txt").write_text("owned change\n")
+    if action == "commit_only":
+        event = harness.event("git commit --only -m mine -- owned.txt")
+    elif action == "commit_staged":
+        _git(harness.repo, "add", "owned.txt")
+        event = harness.event("git commit -m mine")
+    else:
+        event = harness.edit_event("new.txt" if action == "edit_clean" else "owned.txt")
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "allow", response.reason
+    ledger = SessionVariableManager(harness.db).get_variables(harness.foreign_session.id)
+    assert ledger["task_edited_file_checkouts"][harness.foreign_task.id][str(harness.repo)] == ["."]
+
+
+@pytest.mark.asyncio
+async def test_root_directory_owner_blocks_staged_child_commit(guard_harness: GuardHarness) -> None:
+    harness = guard_harness
+    SessionVariableManager(harness.db).merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: ["."]},
+            "task_edited_file_checkouts": {harness.foreign_task.id: {str(harness.repo): ["."]}},
+        },
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n")
+    _git(harness.repo, "add", "foreign.txt")
+    response = await harness.handler._evaluate_rules(harness.event("git commit -m test"))
+    assert response.decision == "block", response.reason
+    assert f"#{harness.foreign_task.seq_num}" in (response.reason or "")
+
+
 def test_dirty_edit_reason_lists_one_reclaim_hint_per_task() -> None:
-    reason = _format_dirty_edit_reason(
+    reason = format_dirty_edit_reason(
         {
             ForeignPathOwner(
                 path="docs/a.md",
@@ -377,6 +454,29 @@ async def test_normalized_bash_dirty_foreign_edit_blocks(guard_harness: GuardHar
 async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
 
+    assert response.decision == "allow"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch d.py",
+        "case x in x) :;; esac; touch d.py",
+        "if true; then echo hi; fi; touch d.py",
+        "for f in a b; do echo $f; done; git add d.py",
+        "if [ ! -d build ]; then mkdir build; fi; cp a.py build/",
+        "if grep -q x a.py; then :; else touch d.py; fi",
+    ],
+)
+@pytest.mark.asyncio
+async def test_directory_preserving_branches_allow_claimed_shell_write(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    guard_harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name = %s)",
+        ("block-unresolved-scope-shell-write",),
+    )
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
     assert response.decision == "allow"
 
 

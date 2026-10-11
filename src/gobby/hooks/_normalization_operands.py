@@ -79,14 +79,20 @@ def _file_transfer_paths(
         sources, destination = operands[:-1], operands[-1]
     else:
         return []
+    directory_operand = destination in {".", ".."}
     destination = _rebase_shell_paths([destination], cwd)[0]
     probe = Path(destination)
     if not probe.is_absolute() and base_cwd is not None:
         probe = base_cwd / probe
+    directory_destination = destination
+    if destination in {".", ".."}:
+        if not probe.is_absolute():
+            return []
+        directory_destination = posixpath.normpath(str(probe))
     no_target_directory = "-T" in parts or "--no-target-directory" in parts
     is_directory = not no_target_directory and (
         target_directory is not None
-        or destination in {".", ".."}
+        or directory_operand
         or destination.endswith("/")
         or (probe.is_absolute() and probe.is_dir())
     )
@@ -94,7 +100,7 @@ def _file_transfer_paths(
     # A dynamic basename is likewise covered only by the whole destination directory.
     destinations = (
         [
-            destination
+            directory_destination
             if source.endswith("/")
             or posixpath.basename(source).startswith("~")
             or _contains_unexpanded_shell_reference(posixpath.basename(source))

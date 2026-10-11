@@ -3,16 +3,18 @@
 from contextvars import ContextVar
 from pathlib import Path
 
+from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
 from gobby.hooks._normalization_operands import (
     _git_add_positional_args_after,
     _git_restore_positional_args_after,
 )
-from gobby.hooks._normalization_segments import _ShellSegmentMetadata
+from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
 from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
     _looks_path_target,
     _rebase_shell_paths,
     _strip_shell_wrappers,
+    scan_shell_command,
 )
 from gobby.hooks.code_navigation import shell_command_name
 
@@ -21,6 +23,18 @@ exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", de
 
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
     """Fail closed after shell-level selector assignments or declarations."""
+    if parts[:1] == ["eval"]:
+        try:
+            tokens = scan_shell_command(" ".join(parts[1:])).tokens
+        except ValueError:
+            return True
+        return any(
+            any(
+                word.split("=", 1)[0].removesuffix("+") in {"GIT_DIR", "GIT_WORK_TREE"}
+                for word in (token.value for token in segment.tokens)
+            )
+            for segment in _split_shell_segments(tokens)
+        )
     if not parts:
         words = raw_parts
     elif parts[0] in {"export", "declare", "typeset", "local", "readonly"}:
@@ -46,13 +60,13 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     return [parts[0], *selectors, *parts[1:]]
 
 
-def classify_git_mutation(
+def git_command_parts(
     parts: list[str], cwd: str | None, base_cwd: Path | None
-) -> _ShellSegmentMetadata | None:
-    """Classify Git writes; explicit selectors that lack proof fail closed."""
+) -> tuple[list[str], str | None, bool]:
+    """Skip Git global options and resolve only proven directory selectors."""
     index = 1
     git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
-    unknown = bool(git_cwd and _contains_unexpanded_shell_reference(git_cwd))
+    unknown = bool(git_cwd and git_cwd.startswith(UNRESOLVED_DIRECTORY))
     while index < len(parts):
         word = parts[index]
         if word in {"-C", "-c"}:
@@ -85,6 +99,15 @@ def classify_git_mutation(
             index += 2 if word in {"--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
         else:
             break
+    return [parts[0], *parts[index:]], git_cwd, unknown
+
+
+def classify_git_mutation(
+    parts: list[str], cwd: str | None, base_cwd: Path | None
+) -> _ShellSegmentMetadata | None:
+    """Classify Git writes; explicit selectors that lack proof fail closed."""
+    parts, git_cwd, unknown = git_command_parts(parts, cwd, base_cwd)
+    index = 1
     operation = parts[index] if index < len(parts) else ""
     arguments = parts[index + 1 :]
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})

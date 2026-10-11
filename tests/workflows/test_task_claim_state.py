@@ -16,9 +16,31 @@ from gobby.workflows.task_claim_state import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "owned, requested", [(".", "a.py"), ("tests", "tests/a.py"), ("tests/a.py", "tests")]
+)
+def test_directory_claims_conflict_with_child_edits(owned: str, requested: str) -> None:
+    variables: dict[str, Any] = {
+        "claimed_tasks": {"other": "#2"},
+        "task_edited_files": {"other": [owned]},
+    }
+    with pytest.raises(ValueError, match="live-attributed to #2"):
+        task_claim_state.assert_task_edit_paths_available(variables, "current", [requested], None)
+
+
+def test_directory_claim_does_not_conflict_with_prefix_sibling() -> None:
+    variables: dict[str, Any] = {
+        "claimed_tasks": {"other": "#2"},
+        "task_edited_files": {"other": ["tests"]},
+    }
+    task_claim_state.assert_task_edit_paths_available(
+        variables, "current", ["tests-other/a.py"], None
+    )
+
+
 class TestAddClaimedTask:
     def test_adds_to_empty(self) -> None:
-        variables: dict = {}
+        variables: dict[str, Any] = {}
         result = add_claimed_task(variables, "uuid-1", "#1")
         assert result == {
             "task_claimed": True,
@@ -95,7 +117,7 @@ class TestRemoveClaimedTask:
         assert result["active_task_id"] == "uuid-1"
 
     def test_removes_from_empty(self) -> None:
-        variables: dict = {}
+        variables: dict[str, Any] = {}
         result = remove_claimed_task(variables, "uuid-1")
         assert result["task_claimed"] is False
         assert result["claimed_tasks"] == {}
