@@ -318,6 +318,7 @@ async def run_daemon(
                 reap_remaining_child_processes=_reap_remaining_child_processes,
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_owned_pid_file,
+                ownership_resolution=ownership_resolution,
             )
             if unexpected_server_exit.is_set():
                 from gobby.runner import _healthy_daemon_running

@@ -647,6 +647,31 @@ raise SystemExit(0 if n!=2 else 1)
 }
 
 #[tokio::test]
+async fn backend_stop_marker_exits_without_respawn() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let script = r#"import os,pathlib
+from gobby.shutdown_intent import write_shutdown_intent
+home=pathlib.Path(os.environ['GOBBY_HOME']); starts=home/'starts'
+with starts.open('a') as output: output.write('a')
+write_shutdown_intent('test_stop','stop',home=home)
+raise SystemExit(0)
+"#;
+        let mut supervisor = db.supervisor(home.path(), script).await?;
+        let (_tx, rx) = watch::channel(false);
+        assert_eq!(
+            timeout(Duration::from_secs(10), supervisor.run(rx)).await??,
+            SupervisorExit::Stopped
+        );
+        assert_eq!(fs::read_to_string(home.path().join("starts"))?, "a");
+        assert!(!home.path().join("shutdown_intent_active.json").exists());
+        assert!(claim_pid_file(&home.path().join("gobby.pid"), Role::Maintenance)?.is_some());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn future_shutdown_marker_uses_crash_backoff() -> Result<()> {
     database_case(async |db| {
         let home = TempDir::new()?;

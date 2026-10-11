@@ -78,6 +78,57 @@ class _ExitAwareServer:
         await self.exit_requested.wait()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("supervised", "intent", "retained"),
+    [
+        (True, ShutdownIntent.STOP, True),
+        (False, ShutdownIntent.STOP, False),
+        (True, ShutdownIntent.RESTART, True),
+        (False, ShutdownIntent.RESTART, True),
+    ],
+)
+async def test_shutdown_marker_cleanup_respects_ownership(
+    tmp_path: Path, supervised: bool, intent: ShutdownIntent, retained: bool
+) -> None:
+    from gobby.runner_pid_file import FailOpenPidOwnership, SupervisedPidOwnership
+
+    marker = tmp_path / "shutdown_intent_active.json"
+    marker.write_text('{"intent":"' + intent.value + '"}')
+    original = marker.read_bytes()
+    runner = cast(
+        GobbyRunner,
+        SimpleNamespace(_shutdown_intent=intent, database=SimpleNamespace(close=MagicMock())),
+    )
+    server = cast("uvicorn.Server", SimpleNamespace(should_exit=False))
+    ownership = SupervisedPidOwnership() if supervised else FailOpenPidOwnership("test")
+
+    async def server_done() -> None:
+        return None
+
+    with (
+        patch.object(runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()),
+        patch.object(runner_lifecycle_shutdown, "_run_async_shutdown_cleanup", AsyncMock()),
+        patch.object(runner_lifecycle_shutdown, "get_shutdown_marker_path", return_value=marker),
+    ):
+        await runner_lifecycle_shutdown.shutdown_daemon_services(
+            runner,
+            server,
+            asyncio.create_task(server_done()),
+            1,
+            await_critical_stop_hook_grace_window=AsyncMock(),
+            shutdown_websocket_server=AsyncMock(),
+            reap_remaining_child_processes=AsyncMock(),
+            shutdown_telemetry=MagicMock(),
+            cleanup_pid_file=MagicMock(),
+            ownership_resolution=ownership,
+        )
+
+    assert marker.exists() is retained
+    if retained:
+        assert marker.read_bytes() == original
+
+
 class TestGobbyRunnerShutdown:
     """Tests for shutdown handling in run method."""
 

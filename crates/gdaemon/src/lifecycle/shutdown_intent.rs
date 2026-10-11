@@ -68,6 +68,13 @@ impl IntentMarker {
         }
         self.consumed.insert(digest);
         let restart = record.get("intent").and_then(Value::as_str) == Some("restart");
+        if !restart {
+            match tokio::fs::remove_file(&self.path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
         let drain = record
             .get("details")
             .and_then(|details| details.get("drain_terminals"))
@@ -88,5 +95,41 @@ impl IntentMarker {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn consumed_stop_removes_marker_and_restart_retains_it() -> io::Result<()> {
+        let home = tempfile::tempdir()?;
+        let path = home.path().join("shutdown_intent_active.json");
+        for (intent, drain, expected) in [
+            ("stop", false, Intent::Stop),
+            ("stop", true, Intent::StopTerminals),
+            ("restart", false, Intent::Restart),
+            ("restart", true, Intent::RestartTerminals),
+        ] {
+            let mut marker = IntentMarker::new(home.path());
+            marker.before_spawn().await?;
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "intent": intent, "timestamp": 1000.0,
+                "details": {"drain_terminals": drain}
+            }))?;
+            tokio::fs::write(&path, &bytes).await?;
+            assert_eq!(marker.after_exit(1010.0).await?, Some(expected));
+            if intent == "restart" {
+                assert_eq!(tokio::fs::read(&path).await?, bytes);
+                tokio::fs::remove_file(&path).await?;
+            } else {
+                assert!(
+                    !path.exists(),
+                    "consumed STOP must remove the active marker"
+                );
+            }
+        }
+        Ok(())
     }
 }
