@@ -39,6 +39,7 @@ class TurnCompletion:
     expected_final_text: str | None
     stable_since: float
     previous_content: tuple[str, str] | None = None
+    flushed: bool = False
 
 
 class ProcessorLifecycleMixin:
@@ -194,9 +195,8 @@ class ProcessorLifecycleMixin:
         lock = self._processing_locks.setdefault(session_id, asyncio.Lock())
         deadline = asyncio.get_running_loop().time() + 5.0
         async with lock:
-            self._pending_turn_completions[session_id] = TurnCompletion(
-                expected_final_text, asyncio.get_running_loop().time()
-            )
+            self._pending_turn_completions.pop(session_id, None)
+            completion: TurnCompletion | None = None
             while True:
                 if self._stopped:
                     return SessionFlushResult(flushed=False, error="processor is stopped")
@@ -207,7 +207,14 @@ class ProcessorLifecycleMixin:
                         return SessionFlushResult(flushed=False, error="processor is stopped")
                 if self._stopped:
                     return SessionFlushResult(flushed=False, error="processor is stopped")
-                if await self._finish_pending_turn(session_id):
+                if completion is None:
+                    # Hydrate existing transcript history before arming the completion;
+                    # only subsequent user records retire this turn's evidence.
+                    completion = TurnCompletion(
+                        expected_final_text, asyncio.get_running_loop().time()
+                    )
+                    self._pending_turn_completions[session_id] = completion
+                if completion.flushed or await self._finish_pending_turn(session_id):
                     return SessionFlushResult(flushed=True)
                 if asyncio.get_running_loop().time() >= deadline:
                     return SessionFlushResult(

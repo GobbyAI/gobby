@@ -871,7 +871,7 @@ async def test_timed_out_completion_mirrors_final_text_on_poll_without_later_rec
     await target._process_all_sessions()
     send.assert_not_awaited()
 
-    final_line = native_line("assistant", "reply", "final reply")
+    final_line = native_line("assistant", "reply", "final reply").rstrip("\n")
     if write_mode == "split":
         split = len(final_line) // 2
         with transcript.open("a") as stream:
@@ -887,6 +887,42 @@ async def test_timed_out_completion_mirrors_final_text_on_poll_without_later_rec
     assert send.call_args.args[0].content == expected_reply
     await target._process_all_sessions()
     assert send.await_count == 1
+
+
+@pytest.mark.parametrize("next_id", ["a2", "a2b"])
+@pytest.mark.parametrize("late_reply", [True, False])
+async def test_stale_completion_does_not_close_next_turn(
+    temp_db: HubDatabase,
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    tmp_path: Path,
+    next_id: str,
+    late_reply: bool,
+) -> None:
+    manager, session_id, send = attached
+    send.side_effect = [f"delivered-{index}" for index in range(5)]
+    transcript = tmp_path / "successive-turns.jsonl"
+    transcript.write_text(native_line("user", "u1", "question"))
+    target = processor(temp_db, manager)
+    target.register_session(session_id, str(transcript))
+    assert not (await target.complete_turn(session_id, "Done.")).flushed
+    with transcript.open("a") as stream:
+        if late_reply:
+            stream.write(native_line("assistant", "a1", "Done."))
+        stream.write(native_line("user", "u2", "next"))
+    await target._process_all_sessions()
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", "a2", "Step one. Done."))
+    await target._process_all_sessions()
+    with transcript.open("a") as stream:
+        stream.write(native_line("assistant", next_id, "Final answer."))
+    await target._process_all_sessions()
+    assert (await target.complete_turn(session_id, "Final answer.")).flushed
+    sent = [call.args[0].content for call in send.await_args_list]
+    assert len(sent) == (2 if late_reply else 1)
+    if late_reply:
+        assert sent[0] == "Done."
+    assert "Step one. Done." in sent[-1]
+    assert "Final answer." in sent[-1]
 
 
 @pytest.mark.parametrize("kind", ["thinking", "tool_use", "partial", "user", "unattached"])

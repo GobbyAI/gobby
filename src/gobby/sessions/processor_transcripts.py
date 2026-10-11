@@ -485,6 +485,12 @@ class ProcessorTranscriptMixin:
                 rendered_msg.to_dict(),
                 complete=True,
             )
+            if rendered_msg.role == "assistant":
+                completion = self._pending_turn_completions.pop(session_id, None)
+                if completion is not None:
+                    completion.flushed = True
+        if any(message.role == "user" for message in messages):
+            self._pending_turn_completions.pop(session_id, None)
         if render_state.current_message:
             await self._broadcast_rendered_session_message(
                 session_id,
