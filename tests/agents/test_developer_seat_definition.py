@@ -136,9 +136,11 @@ def test_developer_reaches_implement_only_through_both_skill_gates() -> None:
         "claim": "all(skill_loaded(skill) for skill in vars.required_skills)"
     }
     assert set(_transitions(steps["claim"])) == {"route_skills"}
-    assert set(_transitions(steps["route_skills"])) == {"load_additional_skills"}
+    assert set(_transitions(steps["route_skills"])) == {"load_additional_skills", "claim"}
     assert "vars.skills_routed" in _transitions(steps["route_skills"])["load_additional_skills"]
-    assert set(_transitions(steps["load_additional_skills"])) == {"implement"}
+    assert set(_transitions(steps["load_additional_skills"])) == {"implement", "claim"}
+    for step_name in ("route_skills", "load_additional_skills", "implement"):
+        assert _transitions(steps[step_name])["claim"] == "not vars.task_claimed"
     assert set(_transitions(steps["submit"])) == {"implement", "claim"}
     close_guard = next(
         handler

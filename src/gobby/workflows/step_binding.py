@@ -73,7 +73,10 @@ def release_lost_binding(
         return instance
 
     rewound = instance.model_copy(deep=True)
-    rewound.variables.update(copy.deepcopy(snapshot.variables))
+    defaults = copy.deepcopy(snapshot.variables)
+    # Handoffs outlive any one binding; only observing their close retires them.
+    defaults.pop("_developer_handoff_tasks", None)
+    rewound.variables.update(defaults)
     rewound.current_step = names[binding]
     rewound.step_action_count = 0
     rewound.step_entered_at = datetime.now(UTC)

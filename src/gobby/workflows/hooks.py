@@ -425,7 +425,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             get_active_step_workflow_context,
                             self.rule_engine.db,
                             session_id,
-                            variables,
+                            # Completion handlers still need the binding that authorized
+                            # this call, even when the tool just released the claim.
+                            None if event.event_type == HookEventType.AFTER_TOOL else variables,
                         )
                         if step_context is not None:
                             variables["current_step"] = step_context.current_step

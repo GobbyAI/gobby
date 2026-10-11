@@ -269,11 +269,20 @@ def test_missing_proxy_arguments_do_not_use_outer_keys() -> None:
     )
 
 
-def _task_proxy(seats: _Seats) -> ToolProxyService:
+def _task_proxy(seats: _Seats, *, full_hooks: bool = False) -> ToolProxyService:
     """Use real proxy dispatch with step enforcement as the workflow adapter."""
     engine = RuleEngine(seats.db)
+    handler = WorkflowHookHandler(
+        rule_engine=engine,
+        task_manager=LocalTaskManager(seats.db),
+        session_manager=SessionManager(seats.db),
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
 
     def evaluate(event: HookEvent) -> HookResponse:
+        if full_hooks:
+            event.metadata["_platform_session_id"] = seats.former
+            return asyncio.run(handler._evaluate_rules(event))
         if event.event_type == HookEventType.BEFORE_TOOL:
             return engine._check_step_tool_enforcement(event, seats.former, {}) or HookResponse(
                 decision="allow"
@@ -527,8 +536,17 @@ def test_developer_cannot_forge_handoff_permission(seats: _Seats) -> None:
 
 @pytest.mark.parametrize("active_step", ["implement", "submit"])
 @pytest.mark.parametrize("reviewer_closes", [False, True])
+@pytest.mark.parametrize(
+    "handoff_step", ["claim", "route_skills", "load_additional_skills", "implement", "submit"]
+)
+@pytest.mark.parametrize("use_ref", [False, True])
 async def test_handoff_close_preserves_next_task_binding(
-    seats: _Seats, tmp_path: Path, active_step: str, reviewer_closes: bool
+    seats: _Seats,
+    tmp_path: Path,
+    active_step: str,
+    reviewer_closes: bool,
+    handoff_step: str,
+    use_ref: bool,
 ) -> None:
     """Exercise real MCP gates and close storage without a live criteria reviewer."""
     tasks = LocalTaskManager(seats.db)
@@ -545,28 +563,47 @@ async def test_handoff_close_preserves_next_task_binding(
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     tasks.close_task(child.id, reason="completed")
-    _seat(seats, seats.former, "submit")
-    proxy = _task_proxy(seats)
+    _seat(seats, seats.former, handoff_step)
+    proxy = _task_proxy(seats, full_hooks=True)
     engine = RuleEngine(seats.db)
+    compact_handler = WorkflowHookHandler(
+        rule_engine=engine,
+        task_manager=tasks,
+        session_manager=SessionManager(seats.db),
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
 
     async def call(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         with session_context_for_test(seats.former):
             result = await proxy.call_tool(
                 "gobby-tasks", tool, arguments, session_id=seats.former, enforce_workflow=True
             )
-        if not result.get("error"):
-            await engine._process_step_after_tool(
-                _after_tool(seats.former, tool, arguments, result), seats.former, {}
-            )
+        # Codex supplies provider completion hooks; the proxy does not synthesize them.
+        completion = _after_tool(seats.former, tool, arguments, result)
+        completion.metadata["_platform_session_id"] = seats.former
+        completion.cwd = str(tmp_path)
+        await compact_handler._evaluate_rules(completion)
         return cast(dict[str, Any], result)
 
+    task_ref = seats.ref if use_ref else seats.task_id
     assert (
         await call(
-            "escalate_task", {"task_id": seats.ref, "reason": "Handed off: reviewer LAND at abc"}
+            "escalate_task", {"task_id": task_ref, "reason": "Handed off: reviewer LAND at abc"}
         )
         == {}
     )
     assert _current_step(seats.db, seats.former) == "claim"
+    await compact_handler._evaluate_rules(
+        HookEvent(
+            event_type=HookEventType.POST_COMPACT,
+            session_id="provider-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": seats.former},
+            cwd=str(tmp_path),
+        )
+    )
     next_task = tasks.create_task(
         project_id, "Next directed task", validation_criteria="The active binding survives."
     )
@@ -590,19 +627,25 @@ async def test_handoff_close_preserves_next_task_binding(
     foreign = await call("de_escalate_task", {"task_id": next_task.id, "reason": "Not handed off"})
     assert foreign["error_code"] == "TOOL_BLOCKED"
     assert "Finish only a task this developer handed off" in foreign["error"]
-    assert (
-        await call("de_escalate_task", {"task_id": seats.ref, "reason": "Landed and released"})
-        == {}
+    # The Orchestrator may resolve escalation before this seat finishes the handoff.
+    tasks.de_escalate_task(seats.task_id, reason="Externally landed and released")
+    observed = await call("get_task", {"task_id": task_ref})
+    assert observed["state"]["is_closed"] is False
+    de_escalate_event = replace(
+        _after_tool(seats.former, "de_escalate_task", {"task_id": task_ref}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
     )
+    assert engine._check_step_tool_enforcement(de_escalate_event, seats.former, {}) is None
+    assert _instance_state(seats.db, seats.former) == before
     assert not tasks.get_task(seats.task_id).is_escalated
     if reviewer_closes:
         # Automatic review closes out of band; the developer observes its verdict.
         tasks.close_task(seats.task_id, reason="completed")
-        observed = await call("get_task", {"task_id": seats.ref})
+        observed = await call("get_task", {"task_id": task_ref})
         assert observed["state"]["is_closed"] is True
     else:
         result = await call(
-            "close_task", {"task_id": seats.ref, "changes_summary": "All children finished."}
+            "close_task", {"task_id": task_ref, "changes_summary": "All children finished."}
         )
         assert result["closed"] is True
     assert tasks.get_task(seats.task_id).closed_at is not None
@@ -614,6 +657,33 @@ async def test_handoff_close_preserves_next_task_binding(
     for key in ("task_claimed", "assigned_task_id", "claimed_tasks"):
         assert session_after.get(key) == session_before.get(key)
     assert tasks.get_task(next_task.id).claimed_by_session_id == seats.former
+
+
+def test_lost_active_claim_keeps_previous_handoffs(seats: _Seats) -> None:
+    """An unrelated transfer retires the active binding, not unfinished handoffs."""
+    from gobby.workflows.step_context import get_active_step_workflow_context
+
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    tasks = LocalTaskManager(seats.db)
+    handoff = tasks.create_task(
+        tasks.get_task(seats.task_id).project_id,
+        "Previously handed off",
+        validation_criteria="The handoff is still pending.",
+    )
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    instance.variables["_developer_handoff_tasks"] = [handoff.id]
+    instances.save(instance)
+    _force_transfer(seats)
+
+    context = get_active_step_workflow_context(seats.db, seats.former, {})
+
+    assert context is not None and context.current_step == "claim"
+    _, state = _instance_state(seats.db, seats.former)
+    assert state["assigned_task_id"] is None and state["task_claimed"] is False
+    assert state["_developer_handoff_tasks"] == [handoff.id]
 
 
 @pytest.mark.parametrize("move", [_transfer, _force_transfer, _release])

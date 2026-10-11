@@ -148,6 +148,7 @@ step_workflow:
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
         - "gobby-tasks:claim_task"
+        - "gobby-tasks:escalate_task"
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:close_task"
         - "gobby-tasks:get_task"
@@ -159,6 +160,14 @@ step_workflow:
         - "gobby-memory:update_memory"
         - "gobby-memory:delete_memory"
       on_mcp_before:
+        - &assigned_handoff_guard
+          server: gobby-tasks
+          tool: escalate_task
+          action: block
+          when: >-
+            tool_input.get('task_id') is None
+            or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+          reason: "Hand off only the assigned task."
         - &handoff_de_escalate_guard
           server: gobby-tasks
           tool: de_escalate_task
@@ -174,6 +183,75 @@ step_workflow:
             tool_input.get('task_id') not in vars.get('_developer_handoff_tasks', [])
           reason: "Finish only a task this developer handed off."
       on_mcp_success:
+        - &record_land_handoff
+          server: gobby-tasks
+          tool: escalate_task
+          action: set_variable
+          variable: _developer_handoff_tasks
+          value: "vars.get('_developer_handoff_tasks', []) + [vars.assigned_task_id]"
+          when: >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND')
+        # A directed hand-off ends this task's loop just like a close. Match
+        # the assigned task first, then clear its binding last.
+        - &release_handoff_binding
+          server: gobby-tasks
+          tool: escalate_task
+          when: &own_task >-
+            tool_input.get('task_id') is not None
+            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+          action: set_variable
+          variable: task_claimed
+          value: false
+        - &reset_handoff_completion
+          server: gobby-tasks
+          tool: escalate_task
+          when: &task_handed_off "not vars.get('task_claimed')"
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - &reset_handoff_skills_loaded
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: additional_skills_loaded
+          value: false
+        - &reset_handoff_skills_routed
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: skills_routed
+          value: false
+        - &reset_handoff_candidate
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - &reset_handoff_bounce
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: bounced
+          value: false
+        - &clear_handoff_task_id
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: assigned_task_id
+          value: null
+        - &clear_handoff_task_ref
+          server: gobby-tasks
+          tool: escalate_task
+          when: *task_handed_off
+          action: set_variable
+          variable: assigned_task_ref
+          value: null
         - &forget_observed_closed_handoff
           server: gobby-tasks
           tool: get_task
@@ -271,9 +349,21 @@ step_workflow:
         - mcp__gobby__get_tool_schema
         - mcp__gobby__set_variable
       allowed_mcp_tools:
+        - "gobby-tasks:escalate_task"
         - "gobby-tasks:get_task"
         - "gobby-results:get_tool_result"
+      on_mcp_before:
+        - *assigned_handoff_guard
       on_mcp_success:
+        - *record_land_handoff
+        - *release_handoff_binding
+        - *reset_handoff_completion
+        - *reset_handoff_skills_loaded
+        - *reset_handoff_skills_routed
+        - *reset_handoff_candidate
+        - *reset_handoff_bounce
+        - *clear_handoff_task_id
+        - *clear_handoff_task_ref
         - server: gobby-tasks
           tool: get_task
           when: >-
@@ -282,6 +372,8 @@ step_workflow:
           variable: assigned_task_ref
           value: "(tool_output.get('result') or tool_output).get('ref')"
       transitions:
+        - to: claim
+          when: "not vars.task_claimed"
         - to: load_additional_skills
           when: "vars.skills_routed and vars.assigned_task_ref"
 
@@ -307,9 +399,21 @@ step_workflow:
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
       allowed_mcp_tools:
+        - "gobby-tasks:escalate_task"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+      on_mcp_before:
+        - *assigned_handoff_guard
       on_mcp_success:
+        - *record_land_handoff
+        - *release_handoff_binding
+        - *reset_handoff_completion
+        - *reset_handoff_skills_loaded
+        - *reset_handoff_skills_routed
+        - *reset_handoff_candidate
+        - *reset_handoff_bounce
+        - *clear_handoff_task_id
+        - *clear_handoff_task_ref
         - server: gobby-skills
           tool: get_skill
           action: set_variable
@@ -325,6 +429,8 @@ step_workflow:
             not vars.additional_skills
             or all(skill_loaded(skill) for skill in vars.additional_skills)
       transitions:
+        - to: claim
+          when: "not vars.task_claimed"
         - to: implement
           when: >-
             not vars.additional_skills
@@ -350,16 +456,24 @@ step_workflow:
         - "gobby-agents:spawn_agent"
         - "gobby-agents:kill_agent"
       on_mcp_before:
+        - *assigned_handoff_guard
         - *handoff_de_escalate_guard
         - *handoff_close_guard
       on_mcp_success:
+        - *record_land_handoff
+        - *release_handoff_binding
+        - *reset_handoff_completion
+        - *reset_handoff_skills_loaded
+        - *reset_handoff_skills_routed
+        - *reset_handoff_candidate
+        - *reset_handoff_bounce
+        - *clear_handoff_task_id
+        - *clear_handoff_task_ref
         - *forget_closed_handoff
         - *forget_observed_closed_handoff
         - server: gobby-tasks
           tool: link_commit
-          when: &own_task >-
-            tool_input.get('task_id') is not None
-            and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+          when: *own_task
           action: set_variable
           variable: implementation_complete
           value: true
@@ -376,6 +490,8 @@ step_workflow:
           variable: candidate_sent
           value: false
       transitions:
+        - to: claim
+          when: "not vars.task_claimed"
         - to: submit
           when: "vars.implementation_complete and not vars.bounced"
 
@@ -392,6 +508,9 @@ step_workflow:
         get_task(task_id=assigned_task_id). A closed task returns you to claim.
         When the Orchestrator directs a hand-off of the assigned task, a
         successful escalate_task also resets task state and returns you to claim.
+        The reason must start exactly with "Handed off: reviewer LAND", for example:
+        "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator
+        decision. Developer closes after landing."
         On a bounce, a close blocker you must fix, or a verdict that leaves the
         task open, call the top-level set_variable(name="bounced", value=true,
         scope="step") to return to implement.
@@ -412,74 +531,19 @@ step_workflow:
         - "gobby-tasks:de_escalate_task"
       on_mcp_before:
         - *handoff_de_escalate_guard
-        - server: gobby-tasks
-          tool: escalate_task
-          action: block
-          when: >-
-            tool_input.get('task_id') is None
-            or tool_input.get('task_id') not in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-          reason: "Hand off only the assigned task from submit."
+        - *assigned_handoff_guard
       on_mcp_success:
         - *forget_closed_handoff
         - *forget_observed_closed_handoff
-        - server: gobby-tasks
-          tool: escalate_task
-          action: set_variable
-          variable: _developer_handoff_tasks
-          value: "vars.get('_developer_handoff_tasks', []) + [vars.assigned_task_id]"
-          when: >-
-            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and str(tool_input.get('reason', '')).startswith('Handed off: reviewer LAND')
-        # A directed hand-off ends this task's loop just like a close. Match
-        # the assigned task first, then clear its binding last.
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *own_task
-          action: set_variable
-          variable: task_claimed
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: &task_handed_off "not vars.get('task_claimed')"
-          action: set_variable
-          variable: implementation_complete
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: additional_skills_loaded
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: skills_routed
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: candidate_sent
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: bounced
-          value: false
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: assigned_task_id
-          value: null
-        - server: gobby-tasks
-          tool: escalate_task
-          when: *task_handed_off
-          action: set_variable
-          variable: assigned_task_ref
-          value: null
+        - *record_land_handoff
+        - *release_handoff_binding
+        - *reset_handoff_completion
+        - *reset_handoff_skills_loaded
+        - *reset_handoff_skills_routed
+        - *reset_handoff_candidate
+        - *reset_handoff_bounce
+        - *clear_handoff_task_id
+        - *clear_handoff_task_ref
         - server: gobby-agents
           tool: send_message
           when: >-
