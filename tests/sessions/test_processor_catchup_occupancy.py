@@ -19,6 +19,7 @@ import pytest
 from gobby.sessions import processor_transcripts, processor_usage
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.workflows.observer_context_usage import (
     BLOCK_MESSAGE_VARIABLE,
     PRESSURE_BAND_VARIABLE,
@@ -88,9 +89,11 @@ class _Harness:
         self.published: list[int | None] = []
         self.efforts: list[str] = []
 
-        def persist_context(_session_id: str, snapshot: Any) -> bool:
+        def persist_context(_session_id: str, snapshot: ContextUsageSnapshot) -> bool:
             self.published.append(snapshot.context_used_tokens)
             self.session.context_used_tokens = snapshot.context_used_tokens
+            if snapshot.model is not None:
+                self.session.model = snapshot.model
             return True
 
         def persist_effort(_session_id: str, *, reasoning_effort: str) -> None:
@@ -184,6 +187,38 @@ async def test_missing_sidecar_catchup_publishes_tail_occupancy_first(
     offset = harness.processor._byte_offsets[SESSION_ID]
     assert CHUNK_BYTES <= offset < CHUNK_BYTES + line_size
     assert offset < transcript.stat().st_size
+
+
+@pytest.mark.parametrize(
+    "stored_model,tail_model,expected_model",
+    [
+        ("claude-fable-5-1", "<synthetic>", "claude-fable-5-1"),
+        (None, "<synthetic>", None),
+        ("claude-fable-5-1[1m]", "<synthetic>", "claude-fable-5-1[1m]"),
+        ("claude-fable-5-1", "claude-fable-5-2", "claude-fable-5-2"),
+    ],
+)
+async def test_tail_occupancy_reconciles_final_message_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_model: str | None,
+    tail_model: str,
+    expected_model: str | None,
+) -> None:
+    """The latest occupancy must not replace session metadata with a placeholder."""
+    transcript = tmp_path / "claude.jsonl"
+    _write_transcript(transcript, count=1)
+    tail: dict[str, Any] = json.loads(_assistant_line(1))
+    tail["message"]["model"] = tail_model
+    _append(transcript, [json.dumps(tail)])
+    harness = _Harness(monkeypatch)
+    harness.session.model = stored_model
+    harness.processor.register_session(SESSION_ID, str(transcript))
+
+    await harness.processor._publish_tail_occupancy(SESSION_ID, str(transcript))
+
+    assert harness.published == [FIRST_USED + USED_STEP]
+    assert harness.session.model == expected_model
 
 
 @pytest.mark.asyncio
