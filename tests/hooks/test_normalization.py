@@ -2715,6 +2715,15 @@ class TestExternalNavigationScope:
             ("--recursive P", True),
             ("--dereference-recursive P", True),
             ("-nreP", True),
+            ("--directories=recurse P", True),
+            ("-d recurse P", True),
+            ("--directories recurse P", True),
+            ("-ndrecurse P", True),
+            ("--directories=skip P", False),
+            ("-d skip P", False),
+            ("-ndskip P", False),
+            ("-e --directories=recurse", False),
+            ("-- --directories=recurse", False),
             ("P", False),
             ("-nerP", False),
             ("-er", False),
@@ -2750,6 +2759,33 @@ class TestExternalNavigationScope:
         assert data["canonical_file_paths"] == (
             [str(outside), str(outside / "f")] if recursive else [str(outside / "f")]
         )
+        assert data["canonical_code_navigation_repo_scope"] is False
+
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            ("rg P < f", ["{outside}/f"]),
+            ("rg P explicit.py < f", ["{outside}/explicit.py", "{outside}/f"]),
+            ("rg --files < f", ["{outside}", "{outside}/f"]),
+            ("rg P", ["{outside}"]),
+        ],
+    )
+    def test_rg_stdin_has_no_implicit_search_root(
+        self, tmp_path: Path, command: str, expected: list[str]
+    ) -> None:
+        repo = tmp_path / "repo"
+        outside = tmp_path / "outside"
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(repo),
+            "project_path": str(repo),
+            "tool_input": {"command": f"cd {outside}; {command}"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_paths"] == [path.format(outside=outside) for path in expected]
         assert data["canonical_code_navigation_repo_scope"] is False
 
     @pytest.mark.parametrize(

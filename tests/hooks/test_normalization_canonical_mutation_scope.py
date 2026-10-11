@@ -250,18 +250,19 @@ def test_compound_cwd_followups(tmp_path: Path, command: str, expected: list[str
 
 
 @pytest.mark.parametrize(
-    "command",
+    ("command", "expected_paths", "expected_unknown"),
     [
-        "builtin cd sub; touch y.py",
-        'eval "builtin cd sub"; touch y.py',
-        'eval "f() { cd sub; }"; f; touch y.py',
+        ("builtin cd sub; touch y.py", ["sub/y.py"], None),
+        ('eval "builtin cd sub"; touch y.py', None, True),
+        ('eval "f() { cd sub; }"; f; touch y.py', None, True),
     ],
 )
-def test_indirect_cwd_followups(tmp_path: Path, command: str) -> None:
+def test_indirect_cwd_followups(
+    tmp_path: Path, command: str, expected_paths: list[str] | None, expected_unknown: bool | None
+) -> None:
     data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
-    assert data.get("canonical_repo_mutation_scope_unknown") or data["canonical_file_paths"] == [
-        "sub/y.py"
-    ]
+    assert data.get("canonical_file_paths") == expected_paths
+    assert data.get("canonical_repo_mutation_scope_unknown") is expected_unknown
 
 
 @pytest.mark.parametrize("operand", ["-Cd=e", "-C{absolute}"])

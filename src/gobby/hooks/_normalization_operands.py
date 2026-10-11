@@ -275,6 +275,8 @@ def _shell_positional_args_after(
             "-A",
             "-B",
             "-C",
+            "-d",
+            "-D",
             "-e",
             "-f",
             "-g",
@@ -282,6 +284,8 @@ def _shell_positional_args_after(
             "--after-context",
             "--before-context",
             "--context",
+            "--directories",
+            "--devices",
             "--file",
             "--glob",
             "--max-count",
@@ -379,6 +383,11 @@ def _grep_is_recursive(parts: list[str]) -> bool:
             break
         if part in {"--recursive", "--dereference-recursive"}:
             return True
+        if part == "--directories" or part.startswith("--directories="):
+            directories = part.split("=", 1)[1] if "=" in part else next(arguments, None)
+            if directories == "recurse":
+                return True
+            continue
         if part.startswith("--"):
             if part in {
                 "--regexp",
@@ -387,7 +396,6 @@ def _grep_is_recursive(parts: list[str]) -> bool:
                 "--after-context",
                 "--before-context",
                 "--context",
-                "--directories",
                 "--devices",
                 "--binary-files",
                 "--label",
@@ -405,8 +413,9 @@ def _grep_is_recursive(parts: list[str]) -> bool:
             if option in "rR":
                 return True
             if option in "efmABCdD":
-                if index == len(part) - 1:
-                    next(arguments, None)
+                argument = part[index + 1 :] or next(arguments, None)
+                if option == "d" and argument == "recurse":
+                    return True
                 break
     return False
 

@@ -794,7 +794,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd in {"rg", "grep", "git"}:
-        return classify_search_segment(cmd, parts, cwd, base_cwd)
+        return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
         positional = _shell_positional_args(parts)

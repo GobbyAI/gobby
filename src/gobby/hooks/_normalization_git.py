@@ -26,7 +26,7 @@ exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", de
 
 
 def classify_search_segment(
-    cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None
+    cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None, *, shell_stdin: bool = False
 ) -> _ShellSegmentMetadata:
     """Classify rg/grep/git grep, naming an implicit search root the shell did not prove."""
     search_cwd, unknown = cwd, False
@@ -35,7 +35,11 @@ def classify_search_segment(
         if len(parts) <= 1 or parts[1] != "grep":
             return _ShellSegmentMetadata("execute")
     paths = _rebase_navigation_shell_paths(_search_command_paths(cmd, parts), search_cwd)
-    implicit_root = cmd in {"git", "rg"} or (cmd == "grep" and _grep_is_recursive(parts))
+    implicit_root = (
+        cmd == "git"
+        or (cmd == "rg" and (not shell_stdin or "--files" in parts[1:]))
+        or (cmd == "grep" and _grep_is_recursive(parts))
+    )
     if unknown or (
         implicit_root and not paths and (search_cwd or "").startswith(UNRESOLVED_DIRECTORY)
     ):
