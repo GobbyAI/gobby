@@ -261,6 +261,50 @@ def _curl_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
     return writes_file or unknown_output, [] if unknown_output else paths
 
 
+_SEARCH_OPTIONS_WITH_VALUES = {
+    "-A",
+    "-B",
+    "-C",
+    "-d",
+    "-D",
+    "-e",
+    "-f",
+    "-g",
+    "-m",
+    "--after-context",
+    "--before-context",
+    "--context",
+    "--directories",
+    "--devices",
+    "--file",
+    "--glob",
+    "--max-count",
+    "--regexp",
+}
+
+
+def _search_has_pattern_option(parts: list[str], start: int) -> bool:
+    """Find an e/f option using the same consuming grammar as positional parsing."""
+    arguments = iter(parts[start:])
+    for part in arguments:
+        if part == "--":
+            break
+        if part in {"--regexp", "--file"} or part.startswith(("--regexp=", "--file=")):
+            return True
+        if part.startswith("--"):
+            if part in _SEARCH_OPTIONS_WITH_VALUES:
+                next(arguments, None)
+        elif part.startswith("-"):
+            for index, option in enumerate(part[1:], start=1):
+                if f"-{option}" in _SEARCH_OPTIONS_WITH_VALUES:
+                    if option in "ef":
+                        return True
+                    if index == len(part) - 1:
+                        next(arguments, None)
+                    break
+    return False
+
+
 def _shell_positional_args_after(
     parts: list[str],
     start: int,
@@ -271,26 +315,7 @@ def _shell_positional_args_after(
     skip_next = False
     after_options = False
     if option_args is None:
-        option_args = {
-            "-A",
-            "-B",
-            "-C",
-            "-d",
-            "-D",
-            "-e",
-            "-f",
-            "-g",
-            "-m",
-            "--after-context",
-            "--before-context",
-            "--context",
-            "--directories",
-            "--devices",
-            "--file",
-            "--glob",
-            "--max-count",
-            "--regexp",
-        }
+        option_args = _SEARCH_OPTIONS_WITH_VALUES
     for part in parts[start:]:
         if skip_next:
             skip_next = False
@@ -368,14 +393,7 @@ def _find_has_mutation_predicate(parts: list[str]) -> bool:
 def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
     """Return whether git grep names a revision before its path separator."""
     before_paths = parts[: parts.index("--")] if "--" in parts else parts
-    pattern_from_option = any(
-        part in {"-e", "--regexp", "-f", "--file"}
-        or (part.startswith("-e") and not part.startswith("--") and part != "-e")
-        or (part.startswith("-f") and not part.startswith("--") and part != "-f")
-        or part.startswith("--regexp=")
-        or part.startswith("--file=")
-        for part in before_paths[2:]
-    )
+    pattern_from_option = _search_has_pattern_option(before_paths, 2)
     positional = _shell_positional_args_after(before_paths, 2)
     return bool(positional) if pattern_from_option else len(positional) > 1
 
@@ -432,10 +450,7 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
 
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)
-        pattern_from_option = any(
-            part in {"-e", "--regexp"} or part.startswith("-e") or part.startswith("--regexp=")
-            for part in parts[1:]
-        )
+        pattern_from_option = _search_has_pattern_option(parts, 1)
         lists_files = cmd == "rg" and "--files" in parts[1:]
         candidate_paths = positional if pattern_from_option or lists_files else positional[1:]
         return [path for path in candidate_paths if is_path_operand(path)]

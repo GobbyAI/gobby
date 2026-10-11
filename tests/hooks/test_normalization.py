@@ -3439,3 +3439,61 @@ def test_stdin_only_search_scope_preserves_in_repo_siblings(tmp_path: Path, comm
     normalize_tool_fields(data)
 
     assert data["canonical_code_navigation_repo_scope"] is True
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        "grep -ne P",
+        "grep -ie P",
+        "grep -rne P",
+        "grep -nf pats",
+        "rg -ne P",
+        "grep -f pats",
+        "grep --file=pats",
+        "grep --file pats",
+        "grep -eP",
+        "grep --regexp=P",
+        "grep -nA 3 P",
+    ],
+)
+@pytest.mark.parametrize("change_directory", [False, True])
+def test_search_pattern_options_preserve_explicit_repo_path(
+    tmp_path: Path, search: str, change_directory: bool
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    path = repo / "a.py"
+    prefix = f"cd {outside}; " if change_directory else ""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"{prefix}{search} {path}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_file_paths"] == [str(path)]
+    assert data["canonical_code_navigation_repo_scope"] is True
+
+
+@pytest.mark.parametrize("arguments", ["-ne P", "-nf pats", "-eP", "--file=pats"])
+@pytest.mark.parametrize("change_directory", [False, True])
+def test_git_grep_pattern_options_preserve_revision_scope(
+    tmp_path: Path, arguments: str, change_directory: bool
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    prefix = f"cd {outside}; " if change_directory else ""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"{prefix}git grep {arguments} HEAD"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_search_revision_scoped"] is True
+    assert data["canonical_file_paths"] == [str(outside if change_directory else repo)]
