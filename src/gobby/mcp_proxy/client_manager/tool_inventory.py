@@ -14,6 +14,10 @@ from gobby.mcp_proxy.models import MCPError
 from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 
 
+class _InvalidToolMetadataError(ValueError):
+    """A deterministic metadata rejection that reconnecting cannot repair."""
+
+
 class _ToolInventoryManager(Protocol):
     _connections: dict[str, Any]
     _configs: dict[str, Any]
@@ -121,6 +125,8 @@ async def retry_list_tools_after_failure(
     logger: logging.Logger,
 ) -> list[dict[str, Any]]:
     """Discard stale connection state and retry tool listing once."""
+    if isinstance(initial_error, _InvalidToolMetadataError):
+        raise initial_error
     used = manager._connections.get(server_id)
     await discard_connection(
         server_id,
@@ -174,7 +180,10 @@ def _clean_tool_metadata(tool: dict[str, Any]) -> dict[str, Any]:
     cleaned = dict(tool)
     for field in ("description", "inputSchema"):
         if field in cleaned:
-            cleaned[field], counts = clean_untrusted_value(cleaned[field])
+            try:
+                cleaned[field], counts = clean_untrusted_value(cleaned[field])
+            except ValueError as exc:
+                raise _InvalidToolMetadataError(str(exc)) from exc
             log_invisible_counts(counts, "external MCP discovery")
     return cleaned
 

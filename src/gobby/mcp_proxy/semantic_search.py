@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.ai.embeddings import EmbeddingService
 from gobby.projects.fenced_vector_store import project_write_context
+from gobby.prompts.rendering import clean_untrusted_value, log_invisible_counts
 from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -709,12 +710,14 @@ class SemanticToolSearch:
                 payload_server_id = str(payload.get("server_id") or "")
                 if payload_server_id not in visible_ids:
                     continue
+            description, counts = clean_untrusted_value(payload.get("description"))
+            log_invisible_counts(counts, "external MCP semantic search")
             results.append(
                 SearchResult(
                     tool_id=tool_id,
                     server_name=payload.get("server_name", "unknown"),
                     tool_name=payload.get("tool_name", "unknown"),
-                    description=payload.get("description"),
+                    description=description,
                     similarity=score,
                     embedding_id=0,
                 )
