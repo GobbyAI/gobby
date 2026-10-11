@@ -78,6 +78,7 @@ async def test_runbook_title_survives_task_claim_and_close(
                 "guard": {
                     "output": {
                         "worktree": str(uuid4()),
+                        "project_path": str(PIPELINES),
                         "lane_pane": "test-pane",
                         "lane_columns": 160,
                         "lane_rows": 100,
