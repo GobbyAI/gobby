@@ -261,6 +261,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 response["uncommitted_changes"] = True
             if result.error_code:
                 response["error_code"] = result.error_code
+            if result.message:
+                response["message"] = result.message
             return response
         return {
             "success": True,

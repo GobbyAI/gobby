@@ -277,11 +277,6 @@ def _contract_acceptance_lines(section: PlanSection) -> list[str]:
     return [f"- {item.item_id}: {item.prose}" for item in section.acceptance_items]
 
 
-def _contract_artifact_summary(section: PlanSection) -> str:
-    refs = [f"{item.artifact_kind.value}: {item.artifact_ref}" for item in section.acceptance_items]
-    return "; ".join(refs) if refs else "the documented acceptance artifacts"
-
-
 def _contract_affected_files(plan_doc: PlanDocument, section: PlanSection) -> list[str]:
     file_refs = [
         item.artifact_ref
