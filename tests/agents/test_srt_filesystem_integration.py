@@ -37,7 +37,7 @@ pytestmark = [
 
 
 def _nested_runner_socket_root() -> Path:
-    """Return the directory the nested runner binds its mux socket in, or skip.
+    """Check nested runner prerequisites and return its mux socket directory, or skip.
 
     sandbox-runtime allocates that socket under ``os.tmpdir()``, which the
     runner takes from GOBBY_SRT_TMPDIR. The directory cannot live inside
@@ -46,6 +46,10 @@ def _nested_runner_socket_root() -> Path:
     canonical current-run temp directory. Probe the bind rather than guessing
     from environment flags.
     """
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, os.getpriority(os.PRIO_PROCESS, 0))
+    except OSError as exc:
+        pytest.skip(f"host setpriority is unavailable for nested SRT in this sandbox: {exc}")
     root = Path(tempfile.gettempdir())
     probe_path = root / f"srt-probe-{os.getpid()}.sock"
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
