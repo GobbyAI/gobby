@@ -32,18 +32,28 @@ def test_nested_dollar_pair_quote_write_fails_closed(tmp_path: Path, wrapper: st
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "sh <<'EOF'\necho $$'\\' ; git apply x.patch ; echo '\\'\nEOF",
-        '''sh -c "echo 'unterminated"''',
-    ],
-)
-def test_nested_shell_parse_error_write_fails_closed(tmp_path: Path, command: str) -> None:
+def test_nested_shell_parse_error_write_fails_closed(tmp_path: Path) -> None:
+    command = '''sh -c "echo 'unterminated"'''
     data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["echo $$'\\' ; git apply x.patch ; echo '\\'", "git apply x.patch"],
+)
+def test_nested_shell_parse_heredoc_controls_keep_script_execution(
+    tmp_path: Path, body: str
+) -> None:
+    data = _invocation_metadata(
+        f"sh <<'EOF'\n{body}\nEOF", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_script_execution"] is True
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
 
 
 @pytest.mark.parametrize(
@@ -923,7 +933,6 @@ def test_nested_shell_string_uses_parent_cwd_without_changing_it(tmp_path: Path)
     [
         'sh -c "$PROGRAM"',
         "sh -c 'exec \"$PROGRAM\"'",
-        "bash -c 'touch /project/owned.py\nprintf \"'",
         # Redirecting a navigation read's output must not drop the opaque program.
         "bash -c 'cat /project/source.py; /project/missing.sh' > /tmp/scratchpad/out.txt",
     ],
@@ -932,6 +941,14 @@ def test_unresolved_shell_program_requires_a_claim(tmp_path: Path, command: str)
     data = _shell_write_metadata(command, tmp_path)
 
     assert data.get("canonical_script_execution") is True
+
+
+def test_malformed_nested_shell_program_fails_closed(tmp_path: Path) -> None:
+    data = _shell_write_metadata("bash -c 'touch /project/owned.py\nprintf \"'", tmp_path)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def _script(path: Path, body: str | bytes) -> Path:
