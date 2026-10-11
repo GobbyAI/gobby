@@ -326,6 +326,10 @@ class BaseChannelAdapter(ABC):
                 delay = backoff_base * (2**attempt)  # default fallback
                 parsed_retry_after = self.retry_after_delay(response)
                 if parsed_retry_after is not None:
+                    if parsed_retry_after > _MAX_RETRY_AFTER_DELAY_SECONDS:
+                        # Leave long waits to the durable delivery ledger rather
+                        # than holding a request beyond its delivery lease.
+                        response.raise_for_status()
                     delay = parsed_retry_after
                 if self._rate_limit_callback is not None:
                     self._rate_limit_callback(delay, False)

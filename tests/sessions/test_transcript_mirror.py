@@ -26,15 +26,16 @@ TS = datetime(2026, 10, 10, tzinfo=UTC)
 
 
 @pytest.fixture
-def retry_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+def retry_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], datetime]:
     now = datetime.now(UTC)
 
     def read_clock() -> datetime:
         return now
 
-    def advance(seconds: float) -> None:
+    def advance(seconds: float) -> datetime:
         nonlocal now
         now += timedelta(seconds=seconds)
+        return now
 
     monkeypatch.setattr("gobby.storage.communications.utc_now", read_clock)
     monkeypatch.setattr("gobby.communications.outbound.utc_now", read_clock)
@@ -43,7 +44,7 @@ def retry_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
 
 async def test_outage_backoff_survives_polling_and_replay(
     attached: tuple[CommunicationsManager, str, AsyncMock],
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, send = attached
     send.side_effect = [RuntimeError("offline"), RuntimeError("offline"), "delivered"]
@@ -67,18 +68,22 @@ async def test_outage_backoff_survives_polling_and_replay(
     assert len(rows) == 1 and rows[0].status == "sent"
 
 
+@pytest.mark.parametrize("retry_after,attempts", [(60, 4), (1000, 1)])
 async def test_telegram_flood_control_delays_transport_and_durable_retry(
     attached: tuple[CommunicationsManager, str, AsyncMock],
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
+    retry_after: int,
+    attempts: int,
 ) -> None:
     manager, session_id, _ = attached
     adapter = TelegramAdapter()
     requests: list[httpx.Request] = []
+    now = retry_clock(0).timestamp()
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if len(requests) <= 4:
-            return httpx.Response(429, json={"parameters": {"retry_after": 60}})
+        if len(requests) <= attempts:
+            return httpx.Response(429, json={"parameters": {"retry_after": retry_after}})
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
@@ -90,19 +95,23 @@ async def test_telegram_flood_control_delays_transport_and_durable_retry(
         ) as sleep:
             with pytest.raises(RuntimeError, match="429"):
                 await manager.mirror_session_message(session_id, "flood", "reply")
-        assert [call.args[0] for call in sleep.await_args_list] == [60, 60, 60]
-        retry_clock(59)
+        delays = [call.args[0] for call in sleep.await_args_list]
+        assert delays == [retry_after] * (attempts - 1)
+        assert all(delay <= 120 for delay in delays)
+        pending = manager.store.list_messages(session_id=session_id)[0]
+        assert pending.metadata_json["transcript_retry_at"] >= now + retry_after
+        retry_clock(retry_after - 1)
         await manager.retry_transcript_deliveries(session_id)
-        assert len(requests) == 4
+        assert len(requests) == attempts
         retry_clock(1)
         await manager.retry_transcript_deliveries(session_id)
     rows = manager.store.list_messages(session_id=session_id)
-    assert len(requests) == 5 and rows[0].status == "sent"
+    assert len(requests) == attempts + 1 and rows[0].status == "sent"
 
 
 async def test_detach_cancels_retries_before_same_dm_reattachment(
     attached: tuple[CommunicationsManager, str, AsyncMock],
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, send = attached
     send.side_effect = RuntimeError("offline")
@@ -126,7 +135,7 @@ async def test_detach_cancels_retries_before_same_dm_reattachment(
 @pytest.mark.parametrize("changed", ["destination", "thread"])
 async def test_stale_rows_cannot_starve_newer_retry_window(
     attached: tuple[CommunicationsManager, str, AsyncMock],
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
     changed: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -270,7 +279,7 @@ async def test_delivery_failure_keeps_cursor_stats_and_websocket_progressing(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     tmp_path: Path,
     failure: str,
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, send = attached
     transcript = tmp_path / "ingest.jsonl"
@@ -549,7 +558,7 @@ async def test_failed_final_reply_retries_on_poll_without_new_transcript_lines(
     temp_db: HubDatabase,
     attached: tuple[CommunicationsManager, str, AsyncMock],
     tmp_path: Path,
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, send = attached
     transcript = tmp_path / "retry.jsonl"
@@ -671,7 +680,7 @@ async def test_turn_end_waits_for_final_line_and_role_change_does_not_resend(
 async def test_failed_delivery_retries_are_bounded(
     temp_db: HubDatabase,
     attached: tuple[CommunicationsManager, str, AsyncMock],
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, send = attached
     send.side_effect = RuntimeError("transport down")
@@ -686,7 +695,7 @@ async def test_failed_delivery_retries_are_bounded(
 async def test_partial_reply_resumes_only_unconfirmed_chunks(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     recovery: str,
-    retry_clock: Callable[[float], None],
+    retry_clock: Callable[[float], datetime],
 ) -> None:
     manager, session_id, _ = attached
     adapter = TelegramAdapter()
