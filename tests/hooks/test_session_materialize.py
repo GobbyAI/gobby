@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import psutil
 import pytest
@@ -37,6 +38,7 @@ from gobby.sessions.handoff import (
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.workflows.agent_resolver import AgentResolutionError
@@ -773,6 +775,44 @@ def test_next_clear_takes_over_a_bound_but_unpulled_successor(
     consumed = consume_pending_handoff(temp_db, newcomer_id)
     assert consumed is not None
     assert consumed.session_id == staged.predecessor_id
+
+
+def test_context_reuse_expiry_keeps_same_tty_on_another_machine(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TTY names are machine-local; only a local reused tty retires its row."""
+    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="machine-expiry", pane="%104")
+    staged.term = {"tty": "/dev/ttys001", "parent_pid": 111, "parent_create_time": 1.0}
+    local_id = staged.register("local-tty")
+    machines = LocalMachineManager(temp_db)
+    local_machine = machines.get(staged.machine_id)
+    assert local_machine is not None
+    other_machine = machines.upsert_seen(str(uuid4()), local_machine.owner_user_id)
+    with patch(
+        "gobby.storage.workspace_machine_scope.require_machine_id", return_value=other_machine.id
+    ):
+        remote_id = staged.sessions.register_session(
+            external_id="remote-tty",
+            machine_id=other_machine.id,
+            source="grok",
+            project_id=staged.project_id,
+            terminal_context=staged.term,
+        )
+    staged.term = {"tty": "/dev/ttys001", "parent_pid": 222, "parent_create_time": 2.0}
+    current_id = staged.register("current-tty")
+
+    expire_stale_terminal_sessions_for_context(
+        _handler(staged.sessions),
+        session_id=current_id,
+        project_id=staged.project_id,
+        terminal_context=staged.term,
+    )
+
+    assert staged.status(remote_id) == "active"
+    assert staged.status(local_id) == "expired"
+    assert staged.status(current_id) == "active"
 
 
 def test_schedule_clear_continuation_forwards_terminal_runtime(

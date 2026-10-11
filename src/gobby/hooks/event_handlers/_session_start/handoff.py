@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.hooks.event_handlers._session_start.terminal_runtime import _terminal_context_reused
 from gobby.hooks.terminal_context import hook_sandbox_enabled
 from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
@@ -14,7 +15,6 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
-from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.sessions.tmux_context import parse_terminal_context_value
 
 _TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
@@ -463,7 +463,7 @@ def _classify_terminal_identity(
     ]
     if not comparable:
         return "unknown"
-    return "match" if terminal_contexts_match(stored, child) else "conflict"
+    return "match" if _terminal_context_reused(child, stored) else "conflict"
 
 
 def _log_missing_compact_row(

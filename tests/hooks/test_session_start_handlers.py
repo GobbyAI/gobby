@@ -294,6 +294,7 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
     session_manager.db.fetchall.assert_called_once()
     assert session_manager.db.fetchall.call_args.args[1] == (
         "project-1",
+        "current-session",
         "terminal",
         "active",
         "paused",
@@ -2295,3 +2296,52 @@ def test_expire_stale_terminal_sessions_keeps_codex_seats_in_other_panes() -> No
     )
 
     assert expired == [("previous-seat-same-pane", "context_reuse")]
+
+
+@pytest.mark.parametrize("pane,blocked", [("%73", False), ("%74", True)])
+def test_compact_pickup_rejects_sibling_tmux_pane(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    pane: str,
+    blocked: bool,
+) -> None:
+    """A pending handoff belongs to its pane, even across a CLI restart."""
+    sid = _register_context_claim_session(
+        isolated_checkout_factory, temp_db, external_id="pending-pane-handoff"
+    )
+    sessions = SessionManager(temp_db)
+    session = sessions.update(
+        sid,
+        status="awaiting_handoff",
+        terminal_context={
+            "tmux_session": "fleet",
+            "tmux_pane": "%73",
+            "tmux_socket_path": "/tmp/tmux-test",
+            "parent_pid": 111,
+            "parent_create_time": 1.0,
+        },
+    )
+    assert session is not None
+    resolution = resolve_session_start_identity(
+        SimpleNamespace(_session_manager=sessions, logger=MagicMock()),
+        {},
+        "compact",
+        external_id=session.external_id,
+        machine_id=session.machine_id,
+        project_id=session.project_id,
+        cli_source=session.source,
+        terminal_context={
+            "tmux_session": "fleet",
+            "tmux_pane": pane,
+            "tmux_socket_path": "/tmp/tmux-test",
+            "parent_pid": 222,
+            "parent_create_time": 2.0,
+        },
+    )
+    assert (resolution.blocked_reason is not None) is blocked
+    assert resolution.is_compact is (not blocked)
+    assert resolution.session is not None
+    assert resolution.session.id == sid
+    persisted = sessions.get(sid)
+    assert persisted is not None
+    assert persisted.status == "awaiting_handoff"

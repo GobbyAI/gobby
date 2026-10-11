@@ -189,6 +189,7 @@ def expire_stale_terminal_sessions_for_context(
             """
             SELECT id, source, terminal_context FROM sessions
             WHERE project_id = %s
+            AND machine_id = (SELECT machine_id FROM sessions WHERE id = %s)
             AND session_type = %s
             AND status IN (%s, %s)
             AND id <> %s
@@ -198,6 +199,7 @@ def expire_stale_terminal_sessions_for_context(
             """,
             (
                 project_id,
+                session_id,
                 "terminal",
                 "active",
                 "paused",
