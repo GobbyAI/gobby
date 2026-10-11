@@ -302,6 +302,9 @@ def register_terminal_tools(
         return normalize_found_work(
             entries,
             resolve_task=resolver.resolve_task if resolver is not None else None,
+            resolve_claimant_sessions=(
+                resolver.resolve_claimant_sessions if resolver is not None else None
+            ),
             session_id=session_id or None,
             descendant_session_ids=(
                 resolver.descendant_session_ids if resolver is not None else ()
