@@ -80,6 +80,82 @@ def test_javascript_assert_calls_count(extension: str, assertion: str) -> None:
 
 @pytest.mark.parametrize(
     "assertion",
+    ["assert.strictEqual(1, 1)", 'assert.equal("a", "a")', "t.is(1, 1)"],
+)
+def test_javascript_constant_compare_is_placebo(assertion: str) -> None:
+    test = AcceptanceTest("feature.test.js::feature", "feature.test.js", "feature", assertion)
+    assert artifacts_module._test_body_findings(test) == [
+        f"{test.reference}: contains a constant, stub, or placebo assertion"
+    ]
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "expect.soft(actual).toEqual(expected)",
+        "expect.soft(load()).resolves.not.toEqual(null)",
+        "t.is(actual, expected)",
+        'assert.strictEqual(read(1, 2), "expected")',
+        'assert.equal("expected", actual)',
+    ],
+)
+def test_javascript_soft_and_ava_assertions_count(assertion: str) -> None:
+    test = AcceptanceTest("feature.test.js::feature", "feature.test.js", "feature", assertion)
+    assert artifacts_module._test_body_findings(test) == []
+
+
+@pytest.mark.parametrize(
+    "assertion", ["expect.soft(1).toEqual(1)", "expect.soft(true).toBeTruthy()"]
+)
+def test_javascript_constant_soft_expect_is_placebo(assertion: str) -> None:
+    test = AcceptanceTest("feature.test.js::feature", "feature.test.js", "feature", assertion)
+    assert artifacts_module._test_body_findings(test) == [
+        f"{test.reference}: contains a constant, stub, or placebo assertion"
+    ]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "expect.soft(actual);",
+        "// expect.soft(actual).toEqual(expected); t.is(actual, expected);",
+        'const example = "t.is(actual, expected)";',
+        "other.t.is(actual, expected);",
+        "t.is();",
+    ],
+)
+def test_javascript_soft_and_ava_require_executable_assertions(body: str) -> None:
+    test = AcceptanceTest("feature.test.js::feature", "feature.test.js", "feature", body)
+    assert artifacts_module._test_body_findings(test) == [
+        f"{test.reference}: contains no executable assertion or panic expectation"
+    ]
+
+
+def test_javascript_unclosed_regex_scan_is_bounded() -> None:
+    # A subprocess bounds the regression even if the scanner backtracks forever.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from time import perf_counter\n"
+            "from gobby.tasks.acceptance_artifacts import _JS_LITERAL_RE\n"
+            "for count in (40, 400, 4000):\n"
+            "    source = 'const pattern = /' + '[x]' * count\n"
+            "    started = perf_counter()\n"
+            "    matches = list(_JS_LITERAL_RE.finditer(source))\n"
+            "    assert not matches\n"
+            "    assert perf_counter() - started < 0.5\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "assertion",
     [
         "expect(load()).resolves.not.toEqual(null)",
         "expect(load()).rejects.toThrow()",
@@ -241,6 +317,40 @@ def test_artifact_references_ignore_bare_prose_words() -> None:
 
     assert artifacts_module.extract_artifact_references(criteria, "test") == ()
     assert artifacts_module.extract_artifact_references(criteria, "file") == ()
+
+
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        "- Run the e2e-test: `npm run e2e`",
+        "1. Run the e2e-test: `npm run e2e`",
+        "1. Check source-file: `docs/evidence.md`",
+        "```\ntest: `tests/example.py::test_example`\n```",
+        "~~~python\ntest: `tests/example.py::test_example`\n~~~",
+        "```\ntest: `tests/example.py::test_example`",
+    ],
+)
+def test_artifact_references_ignore_compound_labels_and_fenced_examples(criteria: str) -> None:
+    assert artifacts_module.extract_artifact_references(criteria, "test") == ()
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ()
+    assert malformed_test_reference_findings(criteria) == ()
+
+
+def test_artifact_references_keep_real_tests_after_fenced_examples() -> None:
+    criteria = (
+        "```python\n"
+        "test: `tests/example.py::test_example`\n"
+        "~~~\n"
+        "```still an example\n"
+        "````\n"
+        "1. Run the e2e-test: `npm run e2e`; test: `tests/live.py::test_live`\n"
+        "file: `docs/evidence.md`"
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "test") == (
+        "tests/live.py::test_live",
+    )
+    assert artifacts_module.extract_artifact_references(criteria, "file") == ("docs/evidence.md",)
+    assert malformed_test_reference_findings(criteria) == ()
 
 
 def test_artifact_references_keep_pathlike_bare_tokens() -> None:
