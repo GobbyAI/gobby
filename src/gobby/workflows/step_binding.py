@@ -10,6 +10,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -75,7 +76,7 @@ def release_lost_binding(
     rewound = instance.model_copy(deep=True)
     defaults = copy.deepcopy(snapshot.variables)
     # Handoffs outlive any one binding; only observing their close retires them.
-    defaults.pop("_developer_handoff_tasks", None)
+    defaults.pop(DEVELOPER_HANDOFF_TASKS_VARIABLE, None)
     rewound.variables.update(defaults)
     rewound.current_step = names[binding]
     rewound.step_action_count = 0
