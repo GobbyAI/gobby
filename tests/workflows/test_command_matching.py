@@ -394,6 +394,13 @@ def test_function_continuation_and_heredoc_match_blocks(command: str, mask_quote
         ("true <<-#\\\nx", False),
         ("true <<-\\\n#\\\nx", False),
         ("true <<<-#\\\nx", False),
+        ("true <<<<<-#\\\nx", False),
+        ("true <<<<<<<<-#\\\nx", False),
+        ("true <\\\n<<-#\\\nx", False),
+        ("true <<<\\\n<<-#\\\nx", False),
+        ("true <<\\\n-#\\\nx", False),
+        ("true <\\\n<-#\\\nx", False),
+        ("gem push x <<<<<-#\\\nx", True),
     ],
 )
 def test_heredoc_comment_continuation_matches(
