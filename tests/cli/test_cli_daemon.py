@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1149,6 +1149,56 @@ class TestStartCommand:
                 assert result.exit_code == 0
                 assert "Stopped 2 existing process(es)" not in result.output
                 mock_kill_daemons.assert_not_called()
+
+
+@pytest.mark.parametrize("status_code", [409, 401, 500])
+def test_refused_admin_stop_never_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_daemon_config: MagicMock,
+    capsys: pytest.CaptureFixture[str],
+    status_code: int,
+) -> None:
+    from gobby.cli import daemon_lifecycle as lifecycle
+    from gobby.cli.runtime import CliRuntime
+
+    service_stop = MagicMock(return_value={"success": False, "error": "service stop failed"})
+    pid_stop = MagicMock(return_value=True)
+    post = MagicMock(return_value=httpx.Response(status_code, text="shutdown rejected"))
+    monkeypatch.setattr(lifecycle, "_request_admin_stop", request_admin_stop)
+    monkeypatch.setattr(lifecycle, "stop_singleton_gate", lambda _path: ("stop", None))
+    monkeypatch.setattr(lifecycle, "clear_protected_runs", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        lifecycle, "protect_pending_handoffs", lambda *_args, **_kwargs: nullcontext()
+    )
+    monkeypatch.setattr(lifecycle, "is_test_protect_enabled", lambda: False)
+    monkeypatch.setattr(
+        lifecycle, "probe_daemon_lock", lambda _path: MagicMock(state=ProbeState.DAEMON)
+    )
+    monkeypatch.setattr(lifecycle, "_is_daemon_healthy", lambda _port: True)
+    monkeypatch.setattr(
+        lifecycle, "get_service_status", lambda: {"installed": True, "running": True}
+    )
+    monkeypatch.setattr(lifecycle, "_read_pid_file", lambda: 42)
+    monkeypatch.setattr(lifecycle, "_is_process_alive", lambda _pid: True)
+    monkeypatch.setattr(lifecycle, "service_stop", service_stop)
+    monkeypatch.setattr(lifecycle, "stop_daemon_util", pid_stop)
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle.httpx.post", post)
+    monkeypatch.setattr(lifecycle, "daemon_auth_headers", lambda: {})
+
+    monkeypatch.setattr(
+        CliRuntime, "read_only_operational_config", lambda _self: mock_daemon_config
+    )
+    ctx = click.Context(cli, obj=CliRuntime(config_file=None))
+    assert lifecycle._do_stop(ctx, False, shutdown_intent="restart", wait=True) is False
+    post.assert_called_once_with(
+        f"http://localhost:{mock_daemon_config.daemon_port}/api/admin/shutdown",
+        params={"force": "true", "terminals": "false", "restart_supervisor": "true"},
+        headers={},
+        timeout=5.0,
+    )
+    assert service_stop.call_count == 0
+    assert pid_stop.call_count == 0
+    assert "Shutdown refused: shutdown rejected" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("command", ["stop", "restart"])
