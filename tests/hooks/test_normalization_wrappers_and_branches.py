@@ -154,7 +154,7 @@ def test_directory_changing_loop_fails_closed(tmp_path: Path, command: str) -> N
 @pytest.mark.parametrize(
     "command",
     [
-        "pushd sub; touch z.py",
+        'pushd "$X"; touch z.py',
         "popd; touch z.py",
         'cd "$X"; cd ..; touch z.py',
         'cd "$X"; cd sub; cd ../..; touch z.py',
@@ -195,6 +195,8 @@ def test_unproven_git_selector_grep_reports_unknown_scope(tmp_path: Path, comman
         ("for d in a b; do cd ROOT/sub; touch x.py; done", ["ROOT/sub/x.py"]),
         ("for f in $(touch h.py) a; do cd sub; done", ["h.py"]),
         ("cd sub; cd ..; touch z.py", ["z.py"]),
+        ("pushd sub; touch z.py", ["sub/z.py"]),
+        ("pushd sub; popd; touch z.py", ["z.py"]),
     ],
 )
 def test_loop_directory_controls_keep_exact_paths(
