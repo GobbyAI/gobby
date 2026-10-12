@@ -85,6 +85,7 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
             "hub_daemon_url port must be an integer between 0 and 65535".to_owned(),
         )
     };
+    let value = value.replace(['\t', '\r', '\n'], "");
     let (scheme, rest) = value.trim().split_once("://").ok_or_else(invalid)?;
     let scheme = scheme.to_ascii_lowercase();
     if !matches!(scheme.as_str(), "http" | "https") {
@@ -93,8 +94,10 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     let (rest, fragment) = rest.split_once('#').unwrap_or((rest, ""));
     let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let (userinfo, netloc) = authority.rsplit_once('@').unwrap_or(("", authority));
-    if userinfo.contains(['[', ']']) || (!netloc.starts_with('[') && netloc.contains(['[', ']'])) {
+    let netloc = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if !netloc.starts_with('[') && authority.contains(['[', ']']) {
         return Err(invalid());
     }
     let (host, port) = if let Some(ipv6) = netloc.strip_prefix('[') {
@@ -121,7 +124,11 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         } else {
             Some(suffix.strip_prefix(':').ok_or_else(invalid)?)
         };
-        (format!("[{}]", host.to_lowercase()), port)
+        let host = host.split_once('%').map_or_else(
+            || host.to_lowercase(),
+            |(address, scope)| format!("{}%{scope}", address.to_lowercase()),
+        );
+        (format!("[{host}]"), port)
     } else {
         let (host, port) = netloc
             .split_once(':')
