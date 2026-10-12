@@ -1,6 +1,78 @@
 {
     "cases": [
         {
+            "name": "uppercase_scheme",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "HTTPS://hub.example"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
+            "name": "zero_padded_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:0443"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example:443"
+        },
+        {
+            "name": "empty_host",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "empty_fragment",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example#"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
+            "name": "empty_query",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example?"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
+            "name": "local_null_optional_fields",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub_daemon_url": null,
+                "hub_cert": null
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null
+        },
+        {
+            "name": "remote_null_hub_url",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": null
+            },
+            "error": "hub_daemon_url is required for datastore_mode: remote"
+        },
+        {
+            "name": "node_null_hub_cert",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "hub_cert": null
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
             "name": "standalone",
             "bootstrap": {
                 "files_home": "/tmp/gobby-vector-files",

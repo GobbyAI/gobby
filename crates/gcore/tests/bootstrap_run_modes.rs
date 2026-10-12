@@ -34,7 +34,9 @@ fn shared_vectors_match_python() -> Result<()> {
                 case.name
             );
         } else {
-            let bootstrap = parsed?.expect("nonempty bootstrap mapping");
+            let bootstrap = parsed
+                .expect(&case.name)
+                .expect("nonempty bootstrap mapping");
             let mode = match bootstrap.mode {
                 RunMode::Standalone => "standalone",
                 RunMode::Hub => "hub",

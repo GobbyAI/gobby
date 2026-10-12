@@ -25,6 +25,7 @@ pub use front_door::{
     DEFAULT_FRONT_DOOR_CERT, DEFAULT_FRONT_DOOR_KEY, FrontDoorBootstrap, RouteBackend,
     TlsBootstrap, TlsMode, is_loopback_host,
 };
+use run_mode::parse_hub_origin;
 
 /// Default daemon port when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_DAEMON_PORT: u16 = 60887;
@@ -377,49 +378,14 @@ fn parse_absolute_files_home(value: &str) -> Result<PathBuf, FilesHomeError> {
     Ok(path)
 }
 
-fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
-    let value = value.trim();
-    let trimmed = value.strip_suffix('/').unwrap_or(value);
-    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
-        ("https", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        ("http", rest)
-    } else {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must be an http(s) origin with a host".to_string(),
-        ));
-    };
-    if rest.is_empty() {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must be an http(s) origin with a host".to_string(),
-        ));
-    }
-    if rest.contains('@') {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must not include userinfo".to_string(),
-        ));
-    }
-    if rest.contains('?') || rest.contains('#') {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must not include a query or fragment".to_string(),
-        ));
-    }
-    if rest.contains('/') {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url path must be empty or /".to_string(),
-        ));
-    }
-    Ok(format!("{scheme}://{}", rest.to_lowercase()))
-}
-
 fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Result<Option<String>> {
     let key = serde_yaml::Value::String(name.to_string());
     match map.get(&key) {
+        Some(serde_yaml::Value::Null) | None => Ok(None),
         Some(value) => match value.as_str() {
             Some(text) => Ok(non_empty_trimmed(text)),
             None => anyhow::bail!("bootstrap.yaml field `{name}` must be a string"),
         },
-        None => Ok(None),
     }
 }
 
