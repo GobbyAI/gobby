@@ -39,7 +39,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
-from gobby.hooks._normalization_compound import case_arm_tokens, shell_function_bodies
+from gobby.hooks._normalization_compound import (
+    case_arm_tokens,
+    heredoc_substitution_bodies,
+    shell_function_bodies,
+)
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -52,8 +56,8 @@ from gobby.hooks._normalization_shell import (
     is_shell_output_redirection_token,
     scan_shell_command,
 )
-from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks._shell_execution_words import _unwrap, option_word_count
+from gobby.hooks._shell_syntax import joined_prefix_end
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
     _SHELLS,
@@ -68,7 +72,7 @@ from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
 # consumer — shells, language interpreters, ``ssh``, ``xargs``, ``eval``,
 # unknown tools — fails closed and keeps its heredoc body in the subject.
 HEREDOC_DATA_CONSUMERS = frozenset({"cat", "tee", "git", "gh"})
-_OUTPUT_PROCESS_SUBSTITUTION_RE = re.compile(r">\(")
+_OUTPUT_PROCESS_SUBSTITUTION_RE = re.compile(r">(?:\\\n)*\(")
 # A newline right after one of these continues the same command list.
 _CONTINUATION_OPERATORS = frozenset({"|", "&&", "||"})
 # Lookbehind class used by bundled command-position patterns, minus newline
@@ -603,12 +607,12 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        for match in re.finditer(r"\$\(|`|[<>]\(", command[start:end]):
+        for match in re.finditer(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[start:end]):
             opening = start + match.start()
             tick = command[opening] == "`"
             try:
                 split_substitution |= (
-                    _substitution_end(command, opening + (1 if tick else 2), tick, depth + 1) >= end
+                    _substitution_end(command, start + match.end(), tick, depth + 1) >= end
                 )
             except ValueError:
                 continue
@@ -783,13 +787,15 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(subject[index : index + 2])
             index += 2
             continue
-        if quote not in {"'", "$"} and (
-            subject.startswith("$(", index)
-            or char == "`"
-            or (not quote and subject[index : index + 2] in {"<(", ">("})
-        ):
+        opening = (
+            joined_prefix_end(subject, index, char + "(")
+            if char == "$" or (not quote and char in "<>")
+            else None
+        )
+        if quote not in {"'", "$"} and (opening is not None or char == "`"):
             tick = char == "`"
-            start = index + (1 if tick else 2)
+            start = index + 1 if tick else opening
+            assert start is not None
             try:
                 end = _substitution_end(subject, start, tick, depth + 1)
             except ValueError:
@@ -798,8 +804,9 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
             if not tick and char in "<>":
                 # Keep the process target in its owner: it determines whether a
-                # heredoc is executable. Add only newly separated arm subjects.
-                executed.extend(part for part in bodies if part != body)
+                # heredoc is executable. Resolve its body independently too, so
+                # decoded command words retain their own quote context.
+                executed.extend(bodies)
                 out.append(subject[index : end + 1])
                 correlated.append(subject[index : end + 1])
                 index = end + 1
@@ -910,7 +917,8 @@ def _substitution_spans(body: str) -> list[str]:
     A body whose substitutions cannot be delimited is matched whole.
     """
     try:
-        return _prepare(body, 0, data=True)[1]
+        bodies, unclosed = heredoc_substitution_bodies(body, depth=0)
+        return [body] if unclosed else bodies
     except ValueError:
         return [body]
 

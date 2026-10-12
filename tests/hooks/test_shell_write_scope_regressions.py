@@ -15,6 +15,78 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_rule_file
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <\\\n(touch a.py)",
+        "cat 2<\\\n(touch a.py)",
+        "cat >\\\n(touch a.py)",
+        "echo $\\\n(touch a.py)",
+        'echo "$\\\n(touch a.py)"',
+        "cat <(touch a.py)\\\n",
+        "cat <\\\n\\\n(touch a.py)\\\n\\\n",
+        "x=$\\\n(touch a.py)",
+        "echo $(echo $\\\n(touch a.py))",
+        "echo `echo $\\\n(touch a.py)`",
+        "cat <(cat <\\\n(touch a.py))",
+    ],
+)
+def test_split_substitution_opener_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    control = _metadata(command.replace("\\\n", ""), tmp_path)
+    assert control["canonical_repo_mutation"] is True
+    assert control["canonical_file_paths"] == ["a.py"]
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_file_paths"] == control["canonical_file_paths"]
+
+
+def test_unclosed_split_substitution_opener_fails_closed(tmp_path: Path) -> None:
+    metadata = _metadata("echo $\\\n(", tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in <\\\n(touch a.py)) ;; esac",
+        "case x in y|<(touch a.py)) ;; esac",
+        "case x in <(touch a.py)\\\n) ;; esac",
+        "cat <(touch a.py)x",
+        'cat <(touch a.py)"x"',
+    ],
+)
+def test_process_substitution_with_suffix_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_tool_kind"] == "write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '$\\\n(touch a.py)'",
+        'echo "\\$\\\n(touch a.py)"',
+        'echo "<\\\n(touch a.py)"',
+        'echo ">\\\n(touch a.py)"',
+    ],
+)
+def test_literal_split_substitution_stays_read_only(tmp_path: Path, command: str) -> None:
+    assert _metadata(command, tmp_path).get("canonical_repo_mutation") is not True
+
+
+@pytest.mark.parametrize("delimiter", ["EOF", "'EOF'", '"EOF"'])
+def test_heredoc_split_substitution_write(tmp_path: Path, delimiter: str) -> None:
+    command = f"cat <<{delimiter}\n$\\\n(touch a.py)\nEOF"
+    metadata = _metadata(command, tmp_path)
+    if delimiter == "EOF":
+        assert metadata["canonical_repo_mutation"] is True
+        assert metadata["canonical_file_paths"] == ["a.py"]
+    else:
+        assert metadata.get("canonical_repo_mutation") is not True
+
+
 SESSION = "11111111-1111-4111-8111-111111111111"
 
 

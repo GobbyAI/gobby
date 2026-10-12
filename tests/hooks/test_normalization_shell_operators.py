@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from gobby.hooks._normalization_shell import _scan_unquoted_shell_operator
+from gobby.hooks._shell_syntax import _scan_unquoted_shell_operator
 
 pytestmark = pytest.mark.unit
 

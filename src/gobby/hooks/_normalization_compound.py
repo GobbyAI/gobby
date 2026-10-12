@@ -5,6 +5,7 @@ import re
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._case_syntax import case_pattern_end
 from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
+from gobby.hooks._shell_syntax import joined_prefix_end, skip_line_continuations
 
 _FUNCTION_HEADER = re.compile(
     r"(?:(?:function\s+)?([^\s;&|()<>\"'\\$`]+)\s*\(\s*\)"
@@ -101,8 +102,10 @@ def heredoc_substitution_bodies(text: str, *, depth: int) -> tuple[list[str], bo
         if char == "\\":
             index += 2
             continue
-        if (text.startswith("$(", index) and not text.startswith("$((", index)) or char == "`":
-            start = index + (1 if char == "`" else 2)
+        opening = joined_prefix_end(text, index, "$(")
+        if (opening is not None and joined_prefix_end(text, index, "$((") is None) or char == "`":
+            start = index + 1 if char == "`" else opening
+            assert start is not None
             try:
                 end = _substitution_end(text, start, char == "`", depth + 1)
             except ValueError:
@@ -133,10 +136,13 @@ def command_substitution_bodies(
                 quote = "$'"
                 index += 2
                 continue
+            opening = joined_prefix_end(text, index, "$(")
             if quote not in {"'", "$'"} and (
-                (text.startswith("$(", index) and not text.startswith("$((", index)) or char == "`"
+                (opening is not None and joined_prefix_end(text, index, "$((") is None)
+                or char == "`"
             ):
-                start = index + (1 if char == "`" else 2)
+                start = index + 1 if char == "`" else opening
+                assert start is not None
                 end = _substitution_end(text, start, char == "`", depth + 1)
                 bodies.append((index, text[start:end]))
                 masked[start:end] = " " * (end - start)
@@ -164,8 +170,11 @@ def process_substitution_bodies(
             following = tokens[index + 1]
             start, end = spans[id(following)]
             raw = command[start:end]
-            if spans[id(token)][1] == start and raw.startswith("(") and raw.endswith(")"):
-                bodies.append(raw[1:-1])
+            if skip_line_continuations(command, spans[id(token)][1]) == start and raw.startswith(
+                "("
+            ):
+                close = _substitution_end(command, start + 1, False, 0)
+                bodies.append(command[start + 1 : min(close, end)])
                 index += 2
                 continue
         owner.append(token)
