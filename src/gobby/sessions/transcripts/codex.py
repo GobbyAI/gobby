@@ -295,15 +295,19 @@ class CodexTranscriptParser(BaseTranscriptParser):
         )
         self._pending_tool_search_use_ids: deque[str] = deque()
         self._execution_chain = ExecutionChainCorrelator()
+        self._cwd: str | None = None
 
     def snapshot_state(self) -> dict[str, Any]:
         state: dict[str, Any] = {
             "pending_tool_search_use_ids": list(self._pending_tool_search_use_ids),
             "execution_chain": self._execution_chain.snapshot_state(),
+            "cwd": self._cwd,
         }
         return state
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
+        cwd = state.get("cwd")
+        self._cwd = cwd if isinstance(cwd, str) and Path(cwd).is_absolute() else None
         raw_queue = state.get("pending_tool_search_use_ids")
         self._pending_tool_search_use_ids = (
             _dedupe_pending_tool_search_ids(
@@ -421,6 +425,11 @@ class CodexTranscriptParser(BaseTranscriptParser):
         timestamp: datetime,
     ) -> ParsedMessage | ParsedToolEvent | None:
         line_type = data.get("type")
+
+        if line_type in {"session_meta", "turn_context"}:
+            cwd = payload.get("cwd")
+            if isinstance(cwd, str):
+                self._cwd = cwd if Path(cwd).is_absolute() else None
 
         if line_type == "event_msg":
             return self._parse_event_msg(data, payload, index, timestamp)
@@ -596,6 +605,11 @@ class CodexTranscriptParser(BaseTranscriptParser):
         # shared shell classifier. Preserve the original envelope in raw_json.
         if name in {"exec", "wait"}:
             name = f"functions.{name}"
+
+        # Relative native patches execute in the provider's checkout. This is
+        # call-time provenance, rather than a fallback to the close checkout.
+        if self._cwd is not None:
+            tool_input = {"cwd": self._cwd, **tool_input}
 
         return ParsedMessage(
             index=index,

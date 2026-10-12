@@ -55,6 +55,9 @@ from gobby.tasks.transcript_evidence_snapshots import (
     read_transcript_suffix,
     store_durable_snapshot,
 )
+from gobby.tasks.transcript_evidence_snapshots import (
+    derivation_fingerprint as _derivation_fingerprint,
+)
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
     decode_cooperatively,
@@ -161,34 +164,6 @@ class _DerivationState:
         return self.order
 
 
-def _derivation_fingerprint(
-    session: Session,
-    window_start: datetime | None,
-    detection_config: ValidationDetectionConfig,
-    task_edited_files: set[str],
-    repo_path: str,
-    task_checkout_paths: frozenset[tuple[str, str]] | None,
-) -> str:
-    """Fingerprint every input the derived records are a function of."""
-    payload = json.dumps(
-        {
-            "derivation_version": 18,
-            "session": session.id,
-            "source": session.source,
-            "window_start": window_start.isoformat() if window_start is not None else None,
-            "repo_path": repo_path,
-            "task_checkout_paths": sorted(task_checkout_paths)
-            if task_checkout_paths is not None
-            else None,
-            "task_edited_files": sorted(task_edited_files),
-            "detection": detection_config.model_dump(mode="json"),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 async def derive_transcript_evidence(
     session: Session,
     window_start: datetime | str | None,
@@ -222,9 +197,9 @@ def select_window_raw_lines(
     """Yield raw lines the claim window can still reach, keeping line numbers.
 
     A line is dropped only when it carries an unambiguously UTC timestamp
-    older than :data:`WINDOW_LOOKBACK` before the window. Everything else —
-    later lines, undated lines, and timestamps in another offset — is kept, so
-    this narrows the parser's input without deciding anything about it.
+    older than :data:`WINDOW_LOOKBACK` before the window. Provider cwd metadata,
+    later lines, undated lines, and timestamps in another offset are kept, so
+    filtering preserves the context that later tool calls depend on.
     """
     if window_start is None:
         yield from raw_lines_from_texts(lines)
@@ -237,7 +212,19 @@ def select_window_raw_lines(
         # and strand a live validation run.
         stamps = [match.group(1) for match in _UTC_LINE_TIMESTAMP_RE.finditer(text)]
         if stamps and all(stamp < cutoff for stamp in stamps):
-            continue
+            # Provider metadata establishes the cwd for later relative tools,
+            # even when a long turn began before this task's lookback window.
+            if '"session_meta"' not in text and '"turn_context"' not in text:
+                continue
+            try:
+                context = json.loads(text)
+            except ValueError:
+                continue
+            if not isinstance(context, dict) or context.get("type") not in {
+                "session_meta",
+                "turn_context",
+            }:
+                continue
         yield RawLine(byte_offset=None, raw_line_no=index, text=text)
 
 
