@@ -451,7 +451,10 @@ async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter)
         channel_id="channel1",
         direction="outbound",
         content=("**bold** *italic* `<code>` [link](https://example.com?a=1&b=2) <raw>"),
-        metadata_json={"platform_destination": "chat999", "telegram_sender_label": "Lane <4>"},
+        metadata_json={
+            "platform_destination": "chat999",
+            "telegram_sender_label": "Lane <4> (gobby#16004)",
+        },
         created_at=datetime.now(UTC),
     )
 
@@ -461,7 +464,7 @@ async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter)
     assert payload == {
         "chat_id": "chat999",
         "text": (
-            "<b>Lane &lt;4&gt;:</b>\n<b>bold</b> <i>italic</i> <code>&lt;code&gt;</code> "
+            "<b>Lane &lt;4&gt; (gobby#16004):</b>\n<b>bold</b> <i>italic</i> <code>&lt;code&gt;</code> "
             '<a href="https://example.com?a=1&amp;b=2">link</a> &lt;raw&gt;'
         ),
         "parse_mode": "HTML",
@@ -880,7 +883,10 @@ async def test_send_attachment_uses_send_photo_for_images(
         channel_id="channel1",
         direction="outbound",
         content="**caption**",
-        metadata_json={"platform_destination": "chat999", "telegram_sender_label": "Lane <4>"},
+        metadata_json={
+            "platform_destination": "chat999",
+            "telegram_sender_label": "Lane <4> (gobby#16004)",
+        },
         created_at=datetime.now(UTC),
     )
     attachment = CommsAttachment(
@@ -898,7 +904,7 @@ async def test_send_attachment_uses_send_photo_for_images(
     assert call.args[0] == "https://api.telegram.org/bottest-token/sendPhoto"
     assert call.kwargs["data"] == {
         "chat_id": "chat999",
-        "caption": "<b>Lane &lt;4&gt;:</b>\n<b>caption</b>",
+        "caption": "<b>Lane &lt;4&gt; (gobby#16004):</b>\n<b>caption</b>",
         "parse_mode": "HTML",
     }
     assert call.kwargs["files"] == {
@@ -1004,9 +1010,11 @@ async def test_send_attachment_reports_partial_caption_when_follow_up_fails(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sender_label", [None, "Assistant (gobby#15976)"])
 async def test_send_attachment_uses_send_voice_for_voice_notes(
     adapter: TelegramAdapter,
     tmp_path: Path,
+    sender_label: str | None,
 ) -> None:
     voice_path = tmp_path / "reply.ogg"
     voice_path.write_bytes(b"OggSvoice")
@@ -1028,6 +1036,7 @@ async def test_send_attachment_uses_send_voice_for_voice_notes(
         metadata_json={
             "platform_destination": "chat999",
             "voice_note": True,
+            "telegram_sender_label": sender_label,
         },
         created_at=datetime.now(UTC),
     )
@@ -1044,13 +1053,30 @@ async def test_send_attachment_uses_send_voice_for_voice_notes(
     assert result == "43"
     call = mock_client.post.await_args
     assert call.args[0] == "https://api.telegram.org/bottest-token/sendVoice"
-    assert call.kwargs["data"] == {
+    expected_data: dict[str, object] = {
         "chat_id": "chat999",
         "message_thread_id": 17,
     }
+    if sender_label is not None:
+        expected_data["caption"] = "<b>Assistant (gobby#15976):</b>\n"
+        expected_data["parse_mode"] = "HTML"
+    assert call.kwargs["data"] == expected_data
     assert call.kwargs["files"] == {
         "voice": ("reply.ogg", b"OggSvoice", "audio/ogg"),
     }
+
+
+def test_chunked_heading_preserves_reference_after_long_seat() -> None:
+    from gobby.communications.adapters.telegram import _labeled_chunks
+
+    label = "A" * 80 + " (gobby#16004)"
+    prefix = f"<b>{label}:</b>\n"
+    content = "word " * 100
+    chunks = _labeled_chunks(content, 150, label)
+    assert len(chunks) > 1
+    assert all(chunk.startswith(prefix) for chunk in chunks)
+    assert all(len(chunk.replace("<b>", "").replace("</b>", "")) <= 150 for chunk in chunks)
+    assert " ".join(chunk.removeprefix(prefix) for chunk in chunks).split() == content.split()
 
 
 def test_parse_webhook(adapter: TelegramAdapter) -> None:

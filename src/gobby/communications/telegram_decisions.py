@@ -74,11 +74,6 @@ def _is_decision(source: CommsMessage) -> bool:
     )
 
 
-def _sender_label(source: CommsMessage) -> str | None:
-    label = source.metadata_json.get("telegram_sender_label")
-    return label if isinstance(label, str) else None
-
-
 async def _publish(
     manager: CommunicationsManager,
     adapter: TelegramAdapter,
@@ -93,11 +88,15 @@ async def _publish(
     async def record(chunk_ids: list[str]) -> None:
         await asyncio.to_thread(manager._store.record_platform_message_ids, source.id, chunk_ids)
 
+    channel = next(
+        channel for channel in manager._channel_by_name.values() if channel.id == source.channel_id
+    )
+    label = await asyncio.to_thread(manager.telegram_sender_label, channel, source.session_id)
     await adapter.edit_stored_message(
         source,
         content,
         chat_id,
-        sender_label=_sender_label(source),
+        sender_label=label,
         inline_keyboard=inline_keyboard,
         callback_generation=generation,
         record_chunk_ids=record,

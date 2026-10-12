@@ -688,9 +688,13 @@ class TelegramAdapter(BaseChannelAdapter):
         files = {file_field: (attachment.filename, file_bytes, attachment.content_type)}
         data: dict[str, Any] = {"chat_id": chat_id}
         caption_chunks: list[str] = []
-        if message.content and not is_voice_note:
+        if (message.content and not is_voice_note) or message.metadata_json.get(
+            "telegram_sender_label"
+        ):
             caption_chunks = _labeled_chunks(
-                message.content, 1024, message.metadata_json.get("telegram_sender_label")
+                "" if is_voice_note else message.content,
+                1024,
+                message.metadata_json.get("telegram_sender_label"),
             )
             data["caption"] = caption_chunks[0]
             data["parse_mode"] = "HTML"
@@ -977,7 +981,7 @@ def _labeled_chunks(content: str, limit: int, sender_label: object) -> list[str]
     """Render Markdown before adding the escaped sender to every Telegram chunk."""
     if not isinstance(sender_label, str) or not sender_label:
         return markdown_to_telegram_html_chunks(content, limit)
-    label = sender_label[:80]
+    label = sender_label
     prefix = f"<b>{html.escape(label)}:</b>\n"
     chunks = markdown_to_telegram_html_chunks(content, limit - len(label) - 2)
     return [f"{prefix}{chunk}" for chunk in chunks]
