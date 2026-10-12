@@ -448,6 +448,11 @@ impl Registry {
         r.finalized = true;
         r.writes.clear();
         let sizing = t.elect();
+        let sizing = if t.records.values().all(|r| r.finalized) {
+            Some(t.sizing(None))
+        } else {
+            sizing
+        };
         let event = self.event(attachment, sequence, "finalized", &t.view, Some(reason));
         state.sequence = sequence;
         permit.send(event);

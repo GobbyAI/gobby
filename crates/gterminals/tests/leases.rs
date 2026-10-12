@@ -476,3 +476,39 @@ async fn competing_control_requests_publish_one_ordered_winner() -> anyhow::Resu
     assert_eq!(published[2].holder, Some(winner));
     Ok(())
 }
+
+#[tokio::test]
+async fn last_viewer_finalize_releases_sizing_without_prior_owner() -> anyhow::Result<()> {
+    for backend in [Backend::Native, Backend::Tmux] {
+        let (registry, _events) = Registry::new(16);
+        let terminal = Uuid::new_v4();
+        let first = registry
+            .attach(terminal, Uuid::new_v4(), Viewer::Web, backend)
+            .await?;
+        let last = registry
+            .attach(terminal, Uuid::new_v4(), Viewer::Web, backend)
+            .await?;
+        assert_eq!(registry.snapshot(terminal).await.sizing_owner, None);
+        assert!(
+            registry
+                .finalize(first, "detach")
+                .await?
+                .expect("first finalize")
+                .sizing
+                .is_none()
+        );
+        let finalized = registry
+            .finalize(last, "detach")
+            .await?
+            .expect("last finalize");
+        let sizing = finalized
+            .sizing
+            .expect("last viewer must release backend sizing even without an owner");
+        assert!(!sizing.applied);
+        assert_eq!(sizing.owner, None);
+        assert_eq!(sizing.rows, None);
+        assert_eq!(sizing.cols, None);
+        assert!(registry.finalize(last, "detach").await?.is_none());
+    }
+    Ok(())
+}
