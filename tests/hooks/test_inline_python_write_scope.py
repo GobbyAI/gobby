@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import yaml
 
-from gobby.hooks._normalization_canonical import _set_canonical_tool_metadata
+from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import get_bundled_rules_path
 

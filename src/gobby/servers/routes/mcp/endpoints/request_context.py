@@ -88,15 +88,6 @@ def is_mcp_wrapper_request(request: Request | None) -> bool:
     )
 
 
-def _get_argument_session_id(arguments: Any) -> str | None:
-    """Return a target-tool session_id from the request body when present."""
-    if isinstance(arguments, dict):
-        session_id = arguments.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            return session_id
-    return None
-
-
 def _session_ref_seq_num(session_ref: str | None) -> int | None:
     if not session_ref:
         return None
@@ -153,8 +144,9 @@ async def _set_context_for_request(
       2. X-Gobby-Terminal-Context resolution
       3. HTTP 409 SESSION_REQUIRED
 
-    Non-wrapper callers retain the body ``session_id`` fallback. For wrappers,
-    body ``session_id`` remains a target-tool parameter only.
+    Body ``session_id`` is a target-tool parameter for every HTTP caller.
+    Authentication binds managed caller headers to their signed credentials;
+    operator-authenticated callers may explicitly delegate identity via headers.
 
     The stdio process runs in the CLI's project directory, so its CWD-derived
     project_id is always correct. The daemon's CWD is NOT — it points to the
@@ -168,7 +160,6 @@ async def _set_context_for_request(
     caller_project_id_header = headers.get("x-gobby-caller-project-id")
     wrapper_request = is_mcp_wrapper_request(request)
     terminal_context_seen = _header_seen(headers, TERMINAL_CONTEXT_HEADER)
-    argument_session_id = _get_argument_session_id(arguments)
     terminal_context: dict[str, Any] | None = None
     if wrapper_request and (terminal_context_seen or not header_session_id):
         terminal_context = _parse_terminal_context_header(
@@ -179,7 +170,7 @@ async def _set_context_for_request(
     # Header session is wrapper/caller context. Body session_id remains a
     # target-tool parameter and must not make child-session workflow
     # enforcement apply to the caller.
-    session_id = header_session_id or (None if wrapper_request else argument_session_id)
+    session_id = header_session_id
     session_ref_origin: Literal["explicit", "ambient"] = "ambient"
     if header_session_id:
         session_ref_origin = "explicit"
@@ -263,10 +254,8 @@ async def _set_context_for_request(
     if (
         not canonical_project_ref
         and header_session_id
-        and argument_session_id
         and not wrapper_request
         and server.session_manager
-        and argument_session_id.lstrip("#").isdigit()
     ):
         try:
             bootstrap_id = await server.run_db(

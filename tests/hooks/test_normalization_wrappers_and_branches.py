@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from gobby.hooks._normalization_canonical import _set_canonical_tool_metadata
+from gobby.hooks._normalization_tools import _set_canonical_tool_metadata
 
 pytestmark = pytest.mark.unit
 

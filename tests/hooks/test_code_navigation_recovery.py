@@ -42,6 +42,17 @@ STDOUT_REDIRECT_CASES = [
     ("&> 2", True),
     ("> /tmp/x 2>& 1", True),
     ("2>& 1 > /tmp/x", True),
+    ('>& "2"', False),
+    (">& '2'", False),
+    ('>&"2"', False),
+    ('> /tmp/x >& "2"', False),
+    ('> /tmp/x 1>& "2"', False),
+    ("> /tmp/x 01>& 2", False),
+    ("> /tmp/x 01<& 2", False),
+    ('> /tmp/x 1<& "2"', False),
+    ('>& "/tmp/x"', True),
+    ('> /tmp/x 2>& "1"', True),
+    ('> /tmp/x ">&" 2', True),
 ]
 
 
@@ -585,6 +596,9 @@ def test_spaced_stdout_duplication_keeps_wrapped_and_assigned_reads(
         ("cat X > /tmp/x 1<& 2", False),
         ("cat X 2>& 1 > /tmp/x", True),
         ("cat X >& /tmp/x", True),
+        ('cat X > /tmp/x 1<& "2"', False),
+        ('cat X > /tmp/x 1>& "2"', False),
+        ("cmd > & '2'", False),
     ],
 )
 def test_descriptor_duplication_reaches_stdout_proof_whole(
@@ -602,7 +616,6 @@ def test_descriptor_duplication_reaches_stdout_proof_whole(
     [
         ("cmd & other", [["cmd"], ["other"]]),
         ("cmd '>' & 2", [["cmd", ">"], ["2"]]),
-        ("cmd > & '2'", [["cmd", ">"], ["2"]]),
         ("cmd > & other", [["cmd", ">"], ["other"]]),
         ("cat a 2>&1 & 2", [["cat", "a", "2>&1"], ["2"]]),
         ("cat a > /tmp/x & 2", [["cat", "a", ">", "/tmp/x"], ["2"]]),

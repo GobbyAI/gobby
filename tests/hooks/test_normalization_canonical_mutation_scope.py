@@ -10,14 +10,13 @@ from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARA
 from gobby.hooks._normalization_canonical import (
     _classify_shell_command,
     _classify_shell_segment_without_redirection,
-    _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _substitution_end
-from gobby.hooks._normalization_tools import normalize_tool_fields
+from gobby.hooks._normalization_tools import _set_canonical_tool_metadata, normalize_tool_fields
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit
@@ -810,9 +809,6 @@ def test_quoted_process_substitution_text_is_not_a_write(tmp_path: Path, command
         "env -u HOME bash probe.sh",
         "command -p bash probe.sh",
         "bash /tmp/scratchpad/probe.sh",
-        "source /tmp/scratchpad/probe.sh",
-        ". /tmp/scratchpad/probe.sh",
-        "bash -c 'source /tmp/scratchpad/probe.sh'",
         "bash < /tmp/scratchpad/probe.sh",
         "bash -s < /tmp/scratchpad/probe.sh",
         "bash <<'EOF'\ntouch /project/x.py\nEOF",
@@ -831,6 +827,23 @@ def test_script_file_execution_requires_only_a_claim(tmp_path: Path, command: st
     assert not data.get("canonical_repo_mutation")
     assert not data.get("canonical_write_file_paths")
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source /tmp/scratchpad/probe.sh",
+        ". /tmp/scratchpad/probe.sh",
+        "bash -c 'source /tmp/scratchpad/probe.sh'",
+    ],
+)
+def test_sourced_script_requires_conservative_mutation_scope(tmp_path: Path, command: str) -> None:
+    data = _shell_write_metadata(command, tmp_path)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data.get("canonical_script_execution") is True
+    assert data.get("canonical_repo_mutation") is True
+    assert data.get("canonical_repo_mutation_scope_unknown") is True
 
 
 @pytest.mark.parametrize(

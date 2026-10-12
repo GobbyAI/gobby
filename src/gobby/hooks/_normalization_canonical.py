@@ -57,13 +57,6 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_paths import (
     _compact_tool_name as _compact_tool_name,
 )
-from gobby.hooks._normalization_paths import (
-    _extract_tool_input_paths,
-    _is_structured_file_mutation,
-    _setdefault_tool_input_paths,
-    _structured_write_paths,
-    extract_structured_mutation_paths,
-)
 from gobby.hooks._normalization_pipeline import (
     _interpreter_reads_program_from_stdin,
     _is_neutral_echo_segment,
@@ -85,7 +78,6 @@ from gobby.hooks._normalization_segments import (
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _contains_unexpanded_shell_reference,
-    _get_command_text,
     _input_redirection_paths,
     _looks_file_like,
     _looks_path_target,
@@ -101,8 +93,6 @@ from gobby.hooks._normalization_shell import (
     strip_output_redirections,
 )
 from gobby.hooks._path_scope import (
-    apply_path_scope_metadata,
-    current_tool_cwd,
     resolve_tool_path,
 )
 from gobby.hooks._python_pipeline_classifier import (
@@ -116,13 +106,10 @@ from gobby.hooks.code_navigation import (
     count_option_line_count,
     find_navigation_metadata,
     gcode_navigation_metadata,
-    line_count_from_tool_input,
-    search_navigation_metadata,
     shell_command_name,
     source_read_navigation_metadata,
 )
 from gobby.hooks.code_navigation_recovery import (
-    annotate_navigation,
     gcode_targets,
 )
 from gobby.hooks.shell_execution import (
@@ -136,7 +123,6 @@ from gobby.hooks.shell_execution import (
     starts_elsewhere,
 )
 
-_CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 # Script bodies the current top-level command may still read; none outside one.
 _script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
 
@@ -148,6 +134,7 @@ def _normalize_shell_tool_metadata(
     depth: int = 0,
     base_cwd: Path | None = None,
     pipeline_subshell: bool = False,
+    deferred_functions: bool = False,
 ) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments.
 
@@ -173,7 +160,7 @@ def _normalize_shell_tool_metadata(
             if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
                 command, bodies = function_program
                 first = min(bodies)
-                unknown = any(
+                unknown = deferred_functions or any(
                     token.value in {"cd", "pushd", "popd", "eval"}
                     for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
                     if start > first
@@ -760,6 +747,16 @@ def _classify_shell_segment_without_redirection(
 
     execution = path_execution(parts, base_cwd) or shell_execution(parts, stdin=shell_stdin)
     if execution is not None:
+        if cmd in {"source", "."}:
+            # Sourced code can export functions whose later call directory is unknowable.
+            return _ShellSegmentMetadata(
+                "write",
+                repo_mutation=True,
+                extra={
+                    "canonical_script_execution": True,
+                    "_canonical_repo_mutation_scope_unknown": True,
+                },
+            )
         command = execution.command
         script: tuple[Path, str] | None = None
         reads_left = _script_reads_left.get()
@@ -779,6 +776,7 @@ def _classify_shell_segment_without_redirection(
                 depth=depth + 1,
                 base_cwd=base_cwd,
                 pipeline_subshell=execution.pipeline_subshell,
+                deferred_functions=cmd == "eval",
             )
             if script is not None:
                 nested["canonical_script_bodies"] = sorted(
@@ -913,81 +911,3 @@ def _classify_shell_segment_without_redirection(
         return classify_sed_segment(parts, cwd, raw_parts, base_cwd)
 
     return classify_file_command(cmd, parts, cwd, base_cwd)
-
-
-def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
-    """Annotate events with canonical read/search/write semantics across CLIs."""
-    tool_name = data.get("tool_name")
-    tool_input = data.get("tool_input")
-
-    metadata: dict[str, Any] = {}
-    tool_name_lower = tool_name.lower() if isinstance(tool_name, str) else ""
-
-    is_structured_mutation = _is_structured_file_mutation(data, tool_name)
-    if tool_name_lower in _CANONICAL_READ_TOOL_NAMES:
-        metadata = _build_canonical_tool_metadata("read")
-    elif is_structured_mutation:
-        canonical_paths = extract_structured_mutation_paths(data)
-        write_paths = _structured_write_paths(data, tool_name, canonical_paths)
-        metadata = _build_canonical_tool_metadata(
-            "write",
-            paths=canonical_paths,
-            write_paths=write_paths or None,
-            repo_mutation=True,
-        )
-        metadata["canonical_structured_mutation"] = True
-        metadata["canonical_file_paths"] = canonical_paths
-    elif tool_name_lower in {"grep_search", "grep"}:
-        metadata = _build_canonical_tool_metadata("search")
-    elif tool_name == "Bash":
-        command = _get_command_text(tool_input)
-        if command:
-            metadata = _normalize_shell_tool_metadata(command, base_cwd=current_tool_cwd(data))
-    elif "mcp_server" in data and "mcp_tool" in data:
-        metadata = _build_canonical_tool_metadata("mcp")
-
-    canonical_file_paths = metadata.get("canonical_file_paths")
-    if not isinstance(canonical_file_paths, list):
-        canonical_file_paths = []
-
-    if not canonical_file_paths:
-        canonical_file_paths = _extract_tool_input_paths(tool_input)
-        if canonical_file_paths:
-            metadata["canonical_file_paths"] = canonical_file_paths
-
-    if canonical_file_paths and "canonical_file_path" not in metadata:
-        metadata["canonical_file_path"] = canonical_file_paths[0]
-
-    if (
-        metadata.get("canonical_tool_kind") == "read"
-        and "canonical_code_navigation_broad" not in metadata
-    ):
-        line_count = line_count_from_tool_input(tool_input)
-        read_scope = "line_range" if line_count is not None else "full_file"
-        metadata.update(
-            source_read_navigation_metadata(
-                canonical_file_paths,
-                line_count=line_count,
-                read_scope=read_scope,
-            )
-        )
-
-    if (
-        metadata.get("canonical_tool_kind") == "search"
-        and not metadata.get("canonical_code_index_navigation")
-        and "canonical_code_navigation_broad" not in metadata
-    ):
-        metadata.update(search_navigation_metadata(canonical_file_paths))
-
-    # Unproved variable operands remain source reads after all enclosing proofs fail.
-    for record in metadata.pop("_canonical_pending_source_reads", ()):
-        metadata.setdefault("canonical_code_navigation_segments", []).append(
-            {**record["scope"], "canonical_file_paths": list(record["paths"])}
-        )
-    apply_path_scope_metadata(data, metadata, canonical_file_paths)
-    annotate_navigation(data, metadata)
-
-    if canonical_file_paths:
-        _setdefault_tool_input_paths(tool_input, canonical_file_paths)
-
-    data.update(metadata)

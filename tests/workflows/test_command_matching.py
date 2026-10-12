@@ -28,6 +28,38 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "cat <(g\\\nem push x)",
+        "cat >(g\\\nem push x)",
+        "cat <\\\n(g\\\nem push x)",
+        "cat >\\\n(g\\\nem push x)",
+        "echo $\\\n(g\\\nem push x)",
+        'echo "$\\\n(g\\\nem push x)"',
+    ],
+)
+def test_split_substitution_command_matches(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("delimiter", ["EOF", "'EOF'", '"EOF"'])
+def test_heredoc_split_substitution_matches(delimiter: str, mask_quoted: bool) -> None:
+    command = f"cat <<{delimiter}\n$\\\n(gem push x)\nEOF"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is (
+        delimiter == "EOF"
+    )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("delimiter", ["EOF", "'EOF'", '"EOF"'])
+def test_heredoc_split_output_process_sink_matches(delimiter: str, mask_quoted: bool) -> None:
+    command = f"cat <<{delimiter} > >\\\n(bash)\ngem push x\nEOF"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is True
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
         "(case x in x) gem push x;; esac)",
         "( case x in x) gem push x;; esac )",
         "(case x in (x) gem push x;; esac)",
@@ -630,7 +662,7 @@ class TestExecutableCommandSubjects:
     def test_output_process_substitution_keeps_the_body(self) -> None:
         command = "cat <<'EOF' > >(bash)\nbody\nEOF"
 
-        assert executable_command_subjects(command) == ["cat <<'EOF' > >(bash)", "body"]
+        assert executable_command_subjects(command) == ["cat <<'EOF' > >(bash)", "bash", "body"]
 
     def test_unquoted_delimiter_contributes_only_substitution_spans(self) -> None:
         assert executable_command_subjects("cat <<EOF\n$(git push --force)\nEOF") == [

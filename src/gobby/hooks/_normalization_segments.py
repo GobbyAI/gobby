@@ -66,7 +66,6 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
             if (
                 not previous.quoted
                 and re.fullmatch(r"\d*(?:>>|[<>])", previous.value)
-                and not following.quoted
                 and re.fullmatch(r"\d+|-", following.value)
             ):
                 current.append(token)

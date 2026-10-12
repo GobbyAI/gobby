@@ -72,7 +72,8 @@ def redirects_stdout_to_file(tokens: list[ShellToken]) -> bool:
         if token.quoted:
             continue
         target = tokens[index] if index < len(tokens) else None
-        if token.value in {"1<", "1>", "1>>"} and target is not None:
+        fd_redirect = re.fullmatch(r"(\d+)(?:<|>|>>)", token.value)
+        if fd_redirect and fd_redirect.group(1).lstrip("0") == "1" and target is not None:
             if not target.quoted and target.value == "&":
                 file_redirected = False
                 continue
@@ -81,7 +82,7 @@ def redirects_stdout_to_file(tokens: list[ShellToken]) -> bool:
         if target is None:
             file_redirected = False
             continue
-        if token.value in {">&", "1>&"} and not target.quoted:
+        if token.value in {">&", "1>&"}:
             if re.fullmatch(r"\d+|-", target.value):
                 file_redirected = False
                 index += 1

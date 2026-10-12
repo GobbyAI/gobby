@@ -15,6 +15,78 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_rule_file
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <\\\n(touch a.py)",
+        "cat 2<\\\n(touch a.py)",
+        "cat >\\\n(touch a.py)",
+        "echo $\\\n(touch a.py)",
+        'echo "$\\\n(touch a.py)"',
+        "cat <(touch a.py)\\\n",
+        "cat <\\\n\\\n(touch a.py)\\\n\\\n",
+        "x=$\\\n(touch a.py)",
+        "echo $(echo $\\\n(touch a.py))",
+        "echo `echo $\\\n(touch a.py)`",
+        "cat <(cat <\\\n(touch a.py))",
+    ],
+)
+def test_split_substitution_opener_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    control = _metadata(command.replace("\\\n", ""), tmp_path)
+    assert control["canonical_repo_mutation"] is True
+    assert control["canonical_file_paths"] == ["a.py"]
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_file_paths"] == control["canonical_file_paths"]
+
+
+def test_unclosed_split_substitution_opener_fails_closed(tmp_path: Path) -> None:
+    metadata = _metadata("echo $\\\n(", tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in <\\\n(touch a.py)) ;; esac",
+        "case x in y|<(touch a.py)) ;; esac",
+        "case x in <(touch a.py)\\\n) ;; esac",
+        "cat <(touch a.py)x",
+        'cat <(touch a.py)"x"',
+    ],
+)
+def test_process_substitution_with_suffix_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_tool_kind"] == "write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '$\\\n(touch a.py)'",
+        'echo "\\$\\\n(touch a.py)"',
+        'echo "<\\\n(touch a.py)"',
+        'echo ">\\\n(touch a.py)"',
+    ],
+)
+def test_literal_split_substitution_stays_read_only(tmp_path: Path, command: str) -> None:
+    assert _metadata(command, tmp_path).get("canonical_repo_mutation") is not True
+
+
+@pytest.mark.parametrize("delimiter", ["EOF", "'EOF'", '"EOF"'])
+def test_heredoc_split_substitution_write(tmp_path: Path, delimiter: str) -> None:
+    command = f"cat <<{delimiter}\n$\\\n(touch a.py)\nEOF"
+    metadata = _metadata(command, tmp_path)
+    if delimiter == "EOF":
+        assert metadata["canonical_repo_mutation"] is True
+        assert metadata["canonical_file_paths"] == ["a.py"]
+    else:
+        assert metadata.get("canonical_repo_mutation") is not True
+
+
 SESSION = "11111111-1111-4111-8111-111111111111"
 
 
@@ -74,6 +146,57 @@ def test_function_called_after_directory_change_has_conservative_scope(tmp_path:
     command = f"cd ..; f() (touch a.py); cd '{tmp_path}'; f"
     metadata = _metadata(command, tmp_path)
     assert metadata["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize("loader", ["eval", "source", "."])
+@pytest.mark.parametrize("body", ["{ touch a.py; }", "(touch a.py)"])
+def test_indirect_function_uses_call_directory(tmp_path: Path, loader: str, body: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+    definition = f"f() {body}"
+    script = scratch / "functions.sh"
+    script.write_text(definition)
+    setup = f"eval '{definition}'" if loader == "eval" else f"{loader} '{script}'"
+    command = f"cd '{scratch}'; {setup}; cd '{root}'; f"
+
+    metadata = _metadata(command, root)
+
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata.get("canonical_repo_mutation_scope_unknown") is True
+
+
+@pytest.mark.parametrize("loop", ["select d in x", "select d"])
+def test_select_directory_change_leaves_followup_scope_unknown(tmp_path: Path, loop: str) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    command = f"{loop}; do cd '{scratch}'; break; done; touch a.py"
+
+    metadata = _metadata(command, tmp_path)
+
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata.get("canonical_repo_mutation_scope_unknown") is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval 'touch a.py'",
+        "eval 'f() { printf ready; }'; f",
+        "select d in x; do printf ready; break; done; touch a.py",
+    ],
+)
+def test_indirect_and_select_controls_keep_external_scope(tmp_path: Path, command: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+
+    metadata = _metadata(command, root, cwd=scratch)
+
+    assert not metadata.get("canonical_repo_mutation")
+    assert not metadata.get("canonical_repo_mutation_scope_unknown")
 
 
 def test_function_definition_retains_known_external_scope(tmp_path: Path) -> None:
@@ -423,6 +546,9 @@ def scope_engine(hub_db: HubDatabase) -> RuleEngine:
         ("sed 's/a/b/' in.py > out.py", True),
         ('sed "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
         ('sed -e "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
+        ("cd /tmp; eval 'f() { touch a.py; }'; cd -; f", True),
+        ("source /tmp/functions.sh; f", True),
+        ("select d in x; do cd /tmp; break; done; touch a.py", True),
     ],
 )
 async def test_literal_write_scope_enforcement_without_claim(
