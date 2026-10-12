@@ -3,7 +3,7 @@ type: pipeline
 version: "1.0"
 description: |
   Coordination runbook: launches a team of seats into one lane tab in the shared checkout.
-  Approved seats: archivist, log-monitor, metrics-monitor, release-manager, inbox-manager and recovery-steward.
+  Approved seats: archivist, log-monitor, metrics-monitor, release-manager, inbox-manager, recovery-steward and consolidator.
   recovery-steward is optional; request it by name in `seats`.
 
   Placement: the first launched seat opens the lane tab, or splits the lane_pane when one is
@@ -34,7 +34,7 @@ inputs:
   seats:
     type: string
     default: archivist
-    description: "Comma-separated missing seats: archivist, log-monitor, metrics-monitor, release-manager, inbox-manager, recovery-steward"
+    description: "Comma-separated missing seats: archivist, log-monitor, metrics-monitor, release-manager, inbox-manager, recovery-steward, consolidator"
   report_to:
     type: string
     required: true
@@ -116,6 +116,19 @@ inputs:
     default: high
     description: "Seat reasoning effort; override to change the default"
 
+  consolidator_provider:
+    type: string
+    default: claude
+    description: "Seat provider; override to change the default"
+  consolidator_model:
+    type: string
+    default: claude-opus-5-5
+    description: "Seat model; override to change the default"
+  consolidator_reasoning_effort:
+    type: string
+    default: medium
+    description: "Seat reasoning effort; override to change the default"
+
 steps:
   - id: guard
     mcp:
@@ -145,6 +158,9 @@ steps:
           - name: recovery-steward
             title: "${{ 'Lane ' + inputs.lane + ' recovery steward' }}"
             agent: recovery-steward
+          - name: consolidator
+            title: "${{ 'Lane ' + inputs.lane + ' consolidator' }}"
+            agent: consolidator
 
   - id: archivist
     condition: "${{ 'archivist' in inputs.seats.split(',') }}"
@@ -285,4 +301,26 @@ steps:
           ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref if 'log-monitor' in inputs.seats.split(',') else steps['metrics-monitor'].output.pane_ref if 'metrics-monitor' in inputs.seats.split(',') else steps['release-manager'].output.pane_ref if 'release-manager' in inputs.seats.split(',') else steps['inbox-manager'].output.pane_ref),
           'axis': 'right', 'title': 'Lane ' + inputs.lane + ' recovery steward'}}
           if inputs.lane_pane or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',') or 'metrics-monitor' in inputs.seats.split(',') or 'release-manager' in inputs.seats.split(',') or 'inbox-manager' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+
+  - id: consolidator
+    condition: "${{ 'consolidator' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: consolidator
+        title: "${{ 'Lane ' + inputs.lane + ' consolidator' }}"
+        provider: "${{ inputs.consolidator_provider }}"
+        model: "${{ inputs.consolidator_model }}"
+        reasoning_effort: "${{ inputs.consolidator_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the consolidator seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': inputs.lane_pane or (steps['archivist'].output.pane_ref if 'archivist' in inputs.seats.split(',') else steps['log-monitor'].output.pane_ref if 'log-monitor' in inputs.seats.split(',') else steps['metrics-monitor'].output.pane_ref if 'metrics-monitor' in inputs.seats.split(',') else steps['release-manager'].output.pane_ref if 'release-manager' in inputs.seats.split(',') else steps['inbox-manager'].output.pane_ref if 'inbox-manager' in inputs.seats.split(',') else steps['recovery-steward'].output.pane_ref),
+          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' consolidator'}}
+          if inputs.lane_pane or 'archivist' in inputs.seats.split(',') or 'log-monitor' in inputs.seats.split(',') or 'metrics-monitor' in inputs.seats.split(',') or 'release-manager' in inputs.seats.split(',') or 'inbox-manager' in inputs.seats.split(',') or 'recovery-steward' in inputs.seats.split(',')
           else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}

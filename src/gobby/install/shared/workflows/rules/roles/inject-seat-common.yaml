@@ -13,7 +13,7 @@ rules:
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
-        'design-reviewer', 'recovery-steward']
+        'design-reviewer', 'recovery-steward', 'consolidator']
       and not variables.get('_seat_common_injected')
     effects:
       - type: inject_context

@@ -204,6 +204,46 @@ def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubD
     assert "Do not wait for DAEMON BACK to consume it" in prompt
 
 
+def test_consolidator_is_propose_only_with_read_only_task_tools() -> None:
+    body = _load("consolidator")
+    prompt = _prompt("consolidator")
+    assert body.surfaces == ["spawn", "persona"]
+    assert body.execution_mode == "interactive"
+    assert body.timeout == 0
+    assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
+    assert body.step_workflow is not None
+    assert len(body.step_workflow.steps) == 1
+    step = body.step_workflow.steps[0]
+    assert step.allowed_tools != "all"
+    assert not {"Bash", "exec_command", "Edit", "Write", "apply_patch"} & set(step.allowed_tools)
+    assert step.allowed_mcp_tools != "all"
+    task_tools = {tool for tool in step.allowed_mcp_tools if tool.startswith("gobby-tasks:")}
+    assert task_tools == {
+        "gobby-tasks:get_task",
+        "gobby-tasks:list_tasks",
+        "gobby-tasks:search_tasks",
+        "gobby-tasks:get_task_diff",
+        "gobby-tasks:get_dependency_tree",
+    }
+    assert "gobby-agents:send_message" in step.allowed_mcp_tools
+    assert "gobby-agents:spawn_agent" not in step.allowed_mcp_tools
+    assert "which applies every task edit" in prompt
+    assert "Never edit tasks, claim work, spawn agents" in prompt
+    assert "#23378 Lane 6 - Everything else" in prompt
+    assert "Exclude the whole #22978 triage subtree, including #22360" in prompt
+    assert "exclude all plan-expanded epics and their entire subtrees" in prompt
+
+
+def test_consolidator_syncs_with_shared_seat_rules(definition_db: PostgresHubDatabase) -> None:
+    result = sync_bundled_agents(definition_db)
+    assert result["success"] is True
+    row = AgentDefinitionManager(definition_db).get_by_name("consolidator")
+    assert row is not None
+    assert AgentDefinitionBody.model_validate(row.definition_json) == _load("consolidator")
+    selected = _selected_rules("consolidator", definition_db)
+    assert {"inject-seat-common", "no-send-keys", "block-update-task"} <= selected
+
+
 def test_root_panes_keep_interactive_git_guards_without_worker_rules(temp_db: HubDatabase) -> None:
     for name in ("assistant", "orchestrator"):
         selected = _selected_rules(name, temp_db)
