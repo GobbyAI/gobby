@@ -93,9 +93,10 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     let (rest, fragment) = rest.split_once('#').unwrap_or((rest, ""));
     let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let netloc = authority
-        .rsplit_once('@')
-        .map_or(authority, |(_, host)| host);
+    let (userinfo, netloc) = authority.rsplit_once('@').unwrap_or(("", authority));
+    if userinfo.contains(['[', ']']) || (!netloc.starts_with('[') && netloc.contains(['[', ']'])) {
+        return Err(invalid());
+    }
     let (host, port) = if let Some(ipv6) = netloc.strip_prefix('[') {
         let (host, suffix) = ipv6.split_once(']').ok_or_else(invalid)?;
         // Match urllib's bracketed-host validation, including scoped IPv6 and IPvFuture.
