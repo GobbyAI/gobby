@@ -261,18 +261,7 @@ def case_arm_tokens(
                 # Only the word crossing the boundary needs retokenization;
                 # preserve the identities and quote provenance of other words.
                 tail_start = terminator + 1
-                try:
-                    tail = scan_shell_command(command[tail_start:word_end])
-                except ValueError:
-                    # A glued group can span later words; rescan its complete
-                    # body before deciding that the arm is malformed.
-                    tail = scan_shell_command(command[tail_start:end])
-                    for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
-                        spans[id(arm_token)] = (tail_start + left, tail_start + right)
-                        if raw is not None:
-                            raw[id(arm_token)] = command[tail_start + left : tail_start + right]
-                        kept.append(arm_token)
-                    return kept, case_depth, False
+                tail = scan_shell_command(command[tail_start:word_end])
                 for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
                     spans[id(arm_token)] = (tail_start + left, tail_start + right)
                     if raw is not None:

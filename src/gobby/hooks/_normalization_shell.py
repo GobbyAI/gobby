@@ -54,8 +54,6 @@ _SHELL_CONTROL_TOKENS = (
 _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 # Fd duplication (``2>&1``, ``>&2``, ``0<&3``, ``2>&-``) rebinds descriptors without
 # opening files, so it is neither a mutating redirection nor a segment separator.
-# The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
-# ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -154,6 +152,8 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
     heredoc_operator: str | None = None
     comparison_operators: set[int] = set()
     in_backtick = False
+    cases = CaseSyntax()
+    arm_terminator: int | None = None
     # Output redirects of substitutions inside the current double-quoted word.
     quoted_substitution_redirects: list[tuple[ShellToken, tuple[int, int]]] = []
 
@@ -239,6 +239,17 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             index += 1
             continue
 
+        pattern_end = cases.pattern_ends.get(0)
+        pattern_paren = False
+        if token_start is None or char in "();&|\n" or index == pattern_end:
+            pattern_paren = cases.pattern_paren(command, index, 0)
+        if pattern_paren and char == ")" and index == pattern_end:
+            arm_terminator = index
+        if char == "(" and arm_terminator == index - 1:
+            # A case pattern's closing parenthesis ends the word even when
+            # the arm's subshell is glued to it. Quotes/expansions are data.
+            flush(index)
+
         if char == "#" and token_start is None:
             # An unquoted word-initial ``#`` comments out the rest of the line; a
             # quote inside it opens nothing. The newline still ends the command,
@@ -292,6 +303,11 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             continue
         compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
         if compound_end is not None:
+            if cases.pattern_ends.get(0) == compound_end - 1:
+                # A parenthesized pattern is consumed as one word. Advance
+                # its syntax frame before scanning a glued executable group.
+                cases.pattern_paren(command, compound_end - 1, 0)
+                arm_terminator = compound_end - 1
             if not (
                 char == "(" and not command.startswith("((", index)
             ) and _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
@@ -457,6 +473,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     if depth > _MAX_SUBSTITUTION_DEPTH:
         raise ValueError("Shell nesting limit")
     quote = ""
+    parameter_quotes: list[str] = []
     level = 1
     # In arithmetic $((...)) ``<<`` is a shift, and a newline never starts a body.
     arithmetic = not backtick and text.startswith("(", start)
@@ -467,7 +484,12 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     index = start
     while index < len(text):
         char = text[index]
-        pattern_paren = not quote and not arithmetic and cases.pattern_paren(text, index, level)
+        pattern_paren = (
+            not quote
+            and not arithmetic
+            and not parameter_quotes
+            and cases.pattern_paren(text, index, level)
+        )
         if char == "\\" and quote != "'":
             line.append(text[index : index + 2])
             index += 2
@@ -489,6 +511,14 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             index = _substitution_end(text, start_body, tick, depth + 1) + 1
             line.append("__gobby_expansion__")
             continue
+        elif text.startswith("${", index):
+            parameter_quotes.append(quote)
+            quote = ""
+            line.append("${")
+            index += 2
+            continue
+        elif parameter_quotes and not quote and char == "}":
+            quote = parameter_quotes.pop()
         elif char in "\"'":
             if not quote:
                 quote = char
@@ -496,6 +526,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
                 quote = ""
         elif (
             not quote
+            and not parameter_quotes
             and char == "#"
             and (index == start or text[index - 1].isspace() or text[index - 1] in ";|&(")
         ):
@@ -507,12 +538,18 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             line.append(text[index:end])
             index = end
             continue
-        elif not quote and not arithmetic and char == "\n":
+        elif not quote and not arithmetic and not parameter_quotes and char == "\n":
             tokens = scan_shell_command("".join(line)).tokens
             index = _skip_heredocs(text, tokens, index + 1)
             line = []
             continue
-        elif not quote and not backtick and char in "()" and not pattern_paren:
+        elif (
+            not quote
+            and not backtick
+            and not parameter_quotes
+            and char in "()"
+            and not pattern_paren
+        ):
             level += 1 if char == "(" else -1
             if level == 0:
                 return index

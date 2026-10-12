@@ -133,13 +133,19 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     output: list[str] = []
     expansions: list[str] = []
     quote = ""
+    parameter_quotes: list[str] = []
     cases = CaseSyntax()
     brace_ends, compounds, functions = ({}, {}, {}) if data else _group_spans(command)
     index = 0
     line_start = 0
     while index < len(command):
         char = command[index]
-        pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
+        pattern_paren = (
+            not data
+            and not quote
+            and not parameter_quotes
+            and cases.pattern_paren(command, index, 0)
+        )
         if index in functions and not quote:
             names, index = functions[index]
             output.append(" ".join(f"{name}()" for name in names))
@@ -170,6 +176,17 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append(command[index : index + 2])
             index += 2
             continue
+        if quote not in {"'", "$"} and command.startswith("${", index):
+            parameter_quotes.append(quote)
+            quote = ""
+            output.append("${")
+            index += 2
+            continue
+        if parameter_quotes and not quote and char == "}":
+            quote = parameter_quotes.pop()
+            output.append(char)
+            index += 1
+            continue
         if quote not in {"'", "$"} and (
             command.startswith("$(", index)
             or char == "`"
@@ -197,7 +214,12 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append(marker)
             index = end + 1
             continue
-        if not data and not quote and ((char == "(" and not pattern_paren) or index in brace_ends):
+        if (
+            not data
+            and not quote
+            and not parameter_quotes
+            and ((char == "(" and not pattern_paren) or index in brace_ends)
+        ):
             if char == "(":
                 end = _substitution_end(command, index + 1, False, depth)
             else:
@@ -219,7 +241,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
                 quote = char
             elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
-        elif not data and not quote:
+        elif not data and not quote and not parameter_quotes:
             if command.startswith(">|", index):
                 # Noclobber override has the same stream target as ordinary >.
                 output.append(">")
@@ -244,4 +266,6 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
                 continue
         output.append(char)
         index += 1
+    if parameter_quotes:
+        raise ValueError("Unclosed shell parameter expansion")
     return "".join(output), expansions

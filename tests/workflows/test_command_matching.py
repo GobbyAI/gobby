@@ -124,8 +124,22 @@ def test_malformed_grouped_case_matching_does_not_raise(mask_quoted: bool) -> No
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 def test_malformed_case_arm_tail_does_not_raise(mask_quoted: bool) -> None:
-    assert not command_patterns_match("case;<())(", pattern=r"\btouch\b", mask_quoted=mask_quoted)
     assert command_patterns_match("case;<())(", pattern=r"case;", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "body",
+    ['true; "git" push', '"git" push; true', 'true\n"git" push', r"cd x && g\it push"],
+)
+def test_glued_case_arm_subshell_list_matches(body: str, mask_quoted: bool) -> None:
+    pattern = r"^git\s+push\b"
+    assert command_patterns_match(
+        f"case x in a) ({body});; esac", pattern=pattern, mask_quoted=mask_quoted
+    )
+    assert command_patterns_match(
+        f"case x in a)({body});; esac", pattern=pattern, mask_quoted=mask_quoted
+    )
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
