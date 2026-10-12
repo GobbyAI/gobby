@@ -180,6 +180,39 @@ def test_output_process_substitution_forwarding_data_stays_allowed(command: str)
 @pytest.mark.parametrize(
     "command",
     [
+        "case x in (x) claude -p hi;; esac",
+        "case x in (a|x) claude -p hi;; esac",
+        "case x in a) echo;; (x) claude -p hi;; esac",
+        'echo "$(case x in (x) claude -p hi;; esac)"',
+        "case x in\n(x) claude -p hi\n;;\nesac",
+        "case x in (x) echo 'claude -p hi' | bash;; esac",
+    ],
+)
+def test_case_pattern_parentheses_preserve_provider_commands(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+def test_case_pattern_parentheses_with_harmless_commands_stay_allowed() -> None:
+    assert (
+        blocks_direct_provider_launch("Bash", {"command": "case $x in (a) echo a;; esac"}) is False
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ echo 'import os; os.system(\"claude -p hi\")'; } > >(tee >(bash) >(python3))",
+        "(echo 'import os; os.system(\"claude -p hi\")') > >(tee >(bash) >(python3))",
+        "{ echo 'import os; os.system(\"claude -p hi\")'; } | tee >(bash) | python3",
+    ],
+)
+def test_grouped_producers_inspect_each_executable_consumer(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash 0<<<'claude -p hi'",
         "sh 0<<<'codex exec hi'",
         "python3 0<<<'import os; os.system(\"claude -p hi\")'",

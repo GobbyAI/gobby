@@ -13,6 +13,7 @@ from collections.abc import Collection, Mapping
 from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
+from gobby.hooks._case_syntax import CaseSyntax
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
@@ -125,10 +126,12 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     output: list[str] = []
     expansions: list[str] = []
     quote = ""
+    cases = CaseSyntax()
     index = 0
     line_start = 0
     while index < len(command):
         char = command[index]
+        pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
         if char == "\\" and quote != "'":
             output.append(command[index : index + 2])
             index += 2
@@ -164,7 +167,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             not data
             and not quote
             and (
-                char == "("
+                (char == "(" and not pattern_paren)
                 or (
                     char == "{"
                     and command[index + 1 : index + 2].isspace()
@@ -866,20 +869,22 @@ def _blocked(
             producer_consumer = output_consumer
             if producer_consumer is None:
                 producer_consumer = "shell" if piped else "python" if python_piped else None
+            group_consumers: list[Literal["shell", "python"]] = []
+            if piped:
+                group_consumers.append("shell")
+            if python_piped:
+                group_consumers.append("python")
             for token in segment:
                 group = re.fullmatch(r"__gobby_group_([0-9]+)__", token.value)
-                if (
-                    group is not None
-                    and int(group[1]) < len(expansions)
-                    and producer_consumer is not None
-                ):
-                    if _blocked(
-                        expansions[int(group[1])],
-                        depth + 1,
-                        dialect,
-                        output_consumer=producer_consumer,
-                    ):
-                        return True
+                if group is not None and int(group[1]) < len(expansions):
+                    for group_consumer in group_consumers:
+                        if _blocked(
+                            expansions[int(group[1])],
+                            depth + 1,
+                            dialect,
+                            output_consumer=group_consumer,
+                        ):
+                            return True
                 match = re.fullmatch(r"__gobby_process_input_([0-9]+)__", token.value)
                 if match is None:
                     continue
