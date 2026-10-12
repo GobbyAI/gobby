@@ -14,8 +14,9 @@ import click
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
-from gobby.cli.daemon_lifecycle import restart
+from gobby.cli.daemon_lifecycle import _do_stop
 from gobby.cli.daemon_preflight import restart_start_refusal
+from gobby.cli.daemon_start import start
 from gobby.cli.runtime import get_cli_runtime
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
@@ -233,14 +234,19 @@ def run_cutover(
     root: Path,
     bin_dir: Path,
     *,
-    restart_daemon: Callable[[], None],
+    stop_daemon: Callable[[], bool],
+    start_daemon: Callable[[], None],
     start_refusal: Callable[[Path], str | None],
 ) -> None:
-    """Build, prove, promote, verify, and restart one coherent native-binary set."""
+    """Build and prove the candidate, stop, then promote and start the new set."""
     artifacts = _build_artifacts(root)
     if refusal := start_refusal(artifacts["gdaemon"]):
         raise CutoverError(f"refusing to promote: {refusal}")
     _prove_catalog_freshness(root, artifacts["gdaemon"])
+    # Only the actual stop proves that the running route accepts shutdown and
+    # that the old process exited. Never replace its binaries before that proof.
+    if not stop_daemon():
+        raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
     try:
         promote_workspace_binary_set(
             artifacts,
@@ -253,7 +259,7 @@ def run_cutover(
     except BinarySetCoherenceError as exc:
         raise CutoverError(str(exc)) from exc
     _verify_restart_target(bin_dir)
-    restart_daemon()
+    start_daemon()
 
 
 @click.command()
@@ -286,19 +292,15 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
 
-    def restart_daemon() -> None:
+    def stop_daemon() -> bool:
+        return _do_stop(ctx, False, shutdown_intent="restart", wait=True)
+
+    def start_daemon() -> None:
         try:
-            ctx.invoke(
-                restart,
-                verbose=False,
-                docker_flag=False,
-                full=True,
-                wait=True,
-                expected_identity=expected_identity,
-            )
+            ctx.invoke(start, verbose=False)
         except SystemExit as exc:
             if exc.code not in (None, 0):
-                raise CutoverError(f"daemon restart failed (exit {exc.code})") from exc
+                raise CutoverError(f"daemon start failed (exit {exc.code})") from exc
 
     try:
         if not allow_dirty and (dirty := _dirty_schema_inputs(root)):
@@ -311,7 +313,8 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
         run_cutover(
             root,
             bin_dir,
-            restart_daemon=restart_daemon,
+            stop_daemon=stop_daemon,
+            start_daemon=start_daemon,
             start_refusal=lambda candidate: (
                 restart_start_refusal(ctx, candidate, expected_identity=expected_identity)
                 or _stop_admission_refusal(ctx, wait=wait)

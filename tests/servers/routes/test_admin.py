@@ -19,7 +19,7 @@ from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.mcp_proxy.models import ConnectionState, HealthState, MCPConnectionHealth
 from gobby.servers.routes.admin import create_admin_router, create_health_router
 from gobby.shutdown_intent import ShutdownIntent, read_shutdown_intent, write_shutdown_intent
-from gobby.telemetry import health_metrics
+from gobby.telemetry import health_metrics, instruments
 from gobby.telemetry.health_metrics import (
     configure_health_metrics,
     record_automation_event,
@@ -948,9 +948,23 @@ class TestAdminRoutes:
         assert mock_server._runner.request_shutdown_calls == []
         mock_server._process_shutdown.assert_not_called()
 
-    def test_shutdown_endpoint(self, client: TestClient, mock_server: MagicMock) -> None:
-        with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
-            response = client.post("/api/admin/shutdown")
+    def test_shutdown_endpoint(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        provider = MeterProvider()
+        collector = TelemetryMetrics(provider.get_meter("admin-shutdown-test"))
+        monkeypatch.setattr(instruments, "get_telemetry_metrics", lambda: collector)
+        try:
+            with patch("gobby.runner_maintenance.write_shutdown_source") as mock_write_shutdown:
+                response = client.post("/api/admin/shutdown")
+        finally:
+            provider.shutdown()
+        assert collector.get_all_metrics()["counters"]["shutdown_requests_total"]["value"] == 1
+        assert not any("not registered" in record.message for record in caplog.records)
         assert response.status_code == 200
         assert response.json() == {
             "status": "shutting_down",

@@ -12,11 +12,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import click
+import httpx
 import pytest
 from click.testing import CliRunner, Result
 
-from gobby.cli import cli
+from gobby.cli import cli, daemon_lifecycle
 from gobby.install import bin_set_coherence
+from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 
 cutover_module = importlib.import_module("gobby.cli.cutover")
@@ -50,9 +52,7 @@ def test_cutover_refuses_node_bootstrap_before_build(
     monkeypatch.setattr(cutover_module, "_build_artifacts", forbid("build"))
     monkeypatch.setattr(cutover_module, "_run", forbid("subprocess"))
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", forbid("promote"))
-    monkeypatch.setattr(
-        cutover_module, "restart", click.Command("restart", callback=forbid("restart"))
-    )
+    monkeypatch.setattr(cutover_module, "start", click.Command("start", callback=forbid("start")))
     monkeypatch.setattr(subprocess, "run", forbid("subprocess"))
     result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
     assert result.exit_code != 0, result.output
@@ -194,7 +194,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         cutover_module.run_cutover(
             fixture,
             tmp_path / "bin",
-            restart_daemon=restart,
+            stop_daemon=lambda: True,
+            start_daemon=restart,
             start_refusal=lambda _candidate: None,
         )
     assert "catalog manifest is stale" in str(error.value)
@@ -263,7 +264,8 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
     cutover_module.run_cutover(
         root,
         bin_dir,
-        restart_daemon=lambda: restarted.append((bin_dir / "gdaemon").read_bytes()),
+        stop_daemon=lambda: True,
+        start_daemon=lambda: restarted.append((bin_dir / "gdaemon").read_bytes()),
         start_refusal=lambda _candidate: None,
     )
 
@@ -301,7 +303,8 @@ def test_run_cutover_fails_closed_when_resolved_gdaemon_differs_from_pin(
         cutover_module.run_cutover(
             root,
             bin_dir,
-            restart_daemon=pytest.fail,
+            stop_daemon=lambda: True,
+            start_daemon=pytest.fail,
             start_refusal=lambda _candidate: None,
         )
 
@@ -404,55 +407,56 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
     assert observed == [expected]
 
 
-def test_cli_restarts_against_selected_workspace_pin(
+def test_cli_stops_before_starting_the_selected_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    expected = _identity(443)
-    observed: list[dict[str, int | str]] = []
+    events: list[str] = []
 
-    def restart(
-        *,
-        verbose: bool,
-        docker_flag: bool,
-        wait: bool,
-        full: bool,
-        expected_identity: dict[str, int | str],
-    ) -> None:
+    def stop(_ctx: click.Context, docker_flag: bool, *, shutdown_intent: str, wait: bool) -> bool:
+        assert (docker_flag, shutdown_intent, wait) == (False, "restart", True)
+        events.append("stop")
+        return True
+
+    def start(*, verbose: bool) -> None:
         assert verbose is False
-        assert docker_flag is False
-        assert wait is True
-        assert full is True
-        observed.append(expected_identity)
+        events.append("start")
 
     def run_cutover(
-        _root: Path, _bin_dir: Path, *, restart_daemon: Callable[[], None], **_kwargs: object
+        _root: Path,
+        _bin_dir: Path,
+        *,
+        stop_daemon: Callable[[], bool],
+        start_daemon: Callable[[], None],
+        **_kwargs: object,
     ) -> None:
-        restart_daemon()
+        assert stop_daemon()
+        start_daemon()
 
-    monkeypatch.setattr(cutover_module, "restart", restart)
-    result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
+    monkeypatch.setattr(cutover_module, "_do_stop", stop)
+    monkeypatch.setattr(cutover_module, "start", start)
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover)
 
     assert result.exit_code == 0, result.output
-    assert observed == [expected]
+    assert events == ["stop", "start"]
 
 
-def test_cli_reports_daemon_restart_exit_code(
+def test_cli_reports_daemon_start_exit_code(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def failing_restart(**_kwargs: object) -> None:
+    def failing_start(**_kwargs: object) -> None:
         raise SystemExit(7)
 
-    monkeypatch.setattr(cutover_module, "restart", failing_restart)
+    monkeypatch.setattr(cutover_module, "start", failing_start)
 
     def run_cutover(
-        _root: Path, _bin_dir: Path, *, restart_daemon: Callable[[], None], **_kwargs: object
+        _root: Path, _bin_dir: Path, *, start_daemon: Callable[[], None], **_kwargs: object
     ) -> None:
-        restart_daemon()
+        start_daemon()
 
     result = _invoke_cli(tmp_path, monkeypatch, run_cutover)
 
     assert result.exit_code == 1
-    assert "daemon restart failed (exit 7)" in result.output
+    assert "daemon start failed (exit 7)" in result.output
 
 
 def test_cutover_has_no_private_replacement_or_rollback_machinery() -> None:
@@ -506,7 +510,8 @@ def test_run_cutover_refuses_before_promotion_when_candidate_plan_fails(
         cutover_module.run_cutover(
             root,
             bin_dir,
-            restart_daemon=pytest.fail,
+            stop_daemon=lambda: True,
+            start_daemon=pytest.fail,
             start_refusal=lambda _candidate: "unrecognized schema lineage",
         )
 
@@ -624,7 +629,7 @@ def test_cutover_refuses_before_promotion_when_stop_admission_refuses(
 
     monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
     monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
-    monkeypatch.setattr(cutover_module, "restart", restart)
+    monkeypatch.setattr(cutover_module, "start", restart)
     result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover)
 
     assert result.exit_code == 1
@@ -635,7 +640,7 @@ def test_cutover_refuses_before_promotion_when_stop_admission_refuses(
     assert events == []
 
 
-def test_cutover_restart_waits_after_promotion(
+def test_cutover_waits_for_stop_before_promotion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     events: list[str] = []
@@ -653,18 +658,71 @@ def test_cutover_restart_waits_after_promotion(
         events.append(f"handoffs wait={wait}")
         yield
 
-    def restart(*, wait: bool, **_kwargs: object) -> None:
-        events.append(f"restart wait={wait}")
+    def stop(_ctx: click.Context, _docker: bool, *, wait: bool, **_kwargs: object) -> bool:
+        events.append(f"stop wait={wait}")
+        return True
+
+    def restart(**_kwargs: object) -> None:
+        events.append("start")
+
+    monkeypatch.setattr(cutover_module, "_do_stop", stop)
 
     monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
     monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
-    monkeypatch.setattr(cutover_module, "restart", restart)
+    monkeypatch.setattr(cutover_module, "start", restart)
     result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover, extra_args=("--wait",))
 
     assert result.exit_code == 0, result.output
     assert events == [
         "protected_runs wait=True",
         "handoffs wait=True",
+        "stop wait=True",
         "promote",
-        "restart wait=True",
+        "start",
     ]
+
+
+@pytest.mark.parametrize("status", [409, 401, 500])
+def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = {name: bin_dir / name for name in SET_MEMBERS}
+    for path in installed.values():
+        _write_stub(path, _identity(419))
+    stamp = bin_dir / ".gdaemon-schema-identity.json"
+    stamp.write_text(json.dumps(_identity(419)), encoding="utf-8")
+    paths = [*installed.values(), stamp]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
+    candidate = _artifacts(tmp_path / "candidate", _identity(420))
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: candidate)
+    monkeypatch.setattr(daemon_lifecycle, "is_test_protect_enabled", lambda: False)
+    monkeypatch.setattr(
+        daemon_lifecycle,
+        "probe_daemon_lock",
+        lambda _path: SimpleNamespace(state=ProbeState.DAEMON),
+    )
+    monkeypatch.setattr(daemon_lifecycle, "_is_daemon_healthy", lambda _port: True)
+    monkeypatch.setattr(daemon_lifecycle, "daemon_auth_headers", lambda: {})
+    response = httpx.Response(status, json={"status": "handoff_pending"})
+    post = Mock(return_value=response)
+    monkeypatch.setattr(httpx, "post", post)
+    started = Mock()
+
+    with pytest.raises(cutover_module.CutoverError, match="installed binaries unchanged"):
+        cutover_module.run_cutover(
+            tmp_path,
+            bin_dir,
+            stop_daemon=lambda: daemon_lifecycle._request_admin_stop(
+                12345, force=True, drain_terminals=False, restart_supervisor=True
+            )
+            is True,
+            start_daemon=started,
+            start_refusal=lambda _candidate: None,
+        )
+
+    assert post.call_count == 1
+    assert post.call_args.kwargs["params"]["restart_supervisor"] == "true"
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths} == before
+    started.assert_not_called()
