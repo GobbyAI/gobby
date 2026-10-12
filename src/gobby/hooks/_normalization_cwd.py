@@ -12,6 +12,7 @@ from gobby.hooks._normalization_shell import (
     ShellToken,
     _apply_cd,
     _literal_cd_target,
+    _quoted_tilde_word,
     _strip_shell_wrappers,
     scan_shell_command,
 )
@@ -71,9 +72,10 @@ class ShellDirectoryState:
             cwd = str(base_cwd)
         for operand in directories:
             cwd = _apply_cd(cwd, operand)
-        if any(
-            not _raw_shell_word_is_literal(word)
-            for word in env_directory_operands(list(source_parts))
+        raw_directories = env_directory_operands(list(source_parts))
+        if len(directories) != len(raw_directories) or any(
+            not _raw_shell_word_is_literal(raw) or _quoted_tilde_word(value, raw)
+            for value, raw in zip(directories, raw_directories, strict=True)
         ):
             return UNRESOLVED_DIRECTORY
         return cwd

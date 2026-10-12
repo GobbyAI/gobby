@@ -59,6 +59,12 @@ def apply_path_scope_metadata(
                 and not scope_resolved_by_loop_binding
             )
             or (metadata.get("canonical_structured_mutation") is not True and not paths)
+            or any(
+                isinstance(raw_path, str)
+                and raw_path.startswith("~")
+                and resolve_tool_path(raw_path, cwd) is None
+                for raw_path in paths
+            )
             or (
                 unverified
                 and not all(
@@ -235,7 +241,10 @@ def _linked_git_dir(marker: Path) -> Path | None:
 def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
     if not isinstance(path, str) or not path.strip():
         return None
-    candidate = Path(path).expanduser()
+    try:
+        candidate = Path(path).expanduser()
+    except RuntimeError:
+        return None
     if not candidate.is_absolute():
         if cwd is None:
             return None
@@ -246,7 +255,10 @@ def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
 def _resolve_base_dir(path: Any) -> Path | None:
     if not isinstance(path, str) or not path.strip():
         return None
-    return Path(path).expanduser().resolve(strict=False)
+    try:
+        return Path(path).expanduser().resolve(strict=False)
+    except RuntimeError:
+        return None
 
 
 def _is_known_external_path(path: Path) -> bool:

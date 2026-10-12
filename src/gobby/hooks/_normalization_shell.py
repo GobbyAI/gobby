@@ -854,6 +854,11 @@ def _rebase_shell_path(path: str, cwd: str | None) -> str:
     return _join_cwd(cwd, path)
 
 
+def _quoted_tilde_word(value: str, raw: str) -> bool:
+    """A quoted or escaped tilde prefix cannot prove home-directory scope."""
+    return value.startswith("~") and any(char in raw.split("/", 1)[0] for char in "'\"\\")
+
+
 def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
     return [_rebase_shell_path(path, cwd) for path in paths]
 
@@ -866,14 +871,18 @@ def _rebase_navigation_shell_paths(paths: list[str], cwd: str | None) -> list[st
         return os.environ.get(name, match.group(0))
 
     expanded = [
-        posixpath.normpath(_KNOWN_NAVIGATION_SHELL_REFERENCE.sub(replace_reference, path))
+        _apply_cd(None, _KNOWN_NAVIGATION_SHELL_REFERENCE.sub(replace_reference, path))
         for path in paths
     ]
     return _rebase_shell_paths(expanded, cwd)
 
 
 def _apply_cd(cwd: str | None, target: str) -> str:
-    if target.startswith(("/", "~")):
+    if target.startswith("~"):
+        target = os.path.expanduser(target)
+        if target.startswith("~"):
+            return UNRESOLVED_DIRECTORY
+    if target.startswith("/"):
         return posixpath.normpath(target)
     if not cwd:
         return posixpath.normpath(target)

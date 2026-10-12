@@ -23,6 +23,7 @@ from gobby.hooks._normalization_compound import (
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_env import (
+    UNRESOLVED_DIRECTORY,
     UNRESOLVED_WRAPPER,
     env_directory_operands,
 )
@@ -78,6 +79,7 @@ from gobby.hooks._normalization_shell import (
     _input_redirection_paths,
     _looks_file_like,
     _looks_path_target,
+    _quoted_tilde_word,
     _rebase_navigation_shell_paths,
     _rebase_shell_paths,
     _shell_positional_args,
@@ -350,7 +352,12 @@ def _classify_shell_command(
                 )
             ):
                 directory.directory_command(
-                    parts, uncertain=segment.separator_before in {"||", "&"}
+                    parts,
+                    uncertain=segment.separator_before in {"||", "&"}
+                    or any(
+                        _quoted_tilde_word(value, raw)
+                        for value, raw in zip(parts, source_parts[-len(parts) :], strict=True)
+                    ),
                 )
                 directory.list_conditional |= (
                     segment.separator_before == "&&" or directory.in_conditional
@@ -472,6 +479,19 @@ def _classify_shell_segment(
     search_base_cwd: Path | None = None,
     raw_by_token: dict[int, str] | None = None,
 ) -> _ShellSegmentMetadata:
+    if raw_by_token:
+        scoped_tokens = [
+            replace(token, value=UNRESOLVED_DIRECTORY + token.value)
+            if _quoted_tilde_word(token.value, raw_by_token[id(token)])
+            else token
+            for token in tokens
+        ]
+        raw_by_token = {
+            id(scoped): raw_by_token[id(original)]
+            for original, scoped in zip(tokens, scoped_tokens, strict=True)
+        }
+        tokens = scoped_tokens
+        parts = _strip_shell_wrappers(shell_token_values(tokens))
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
     cwd = invocation_cwd if invocation_cwd is not None else cwd

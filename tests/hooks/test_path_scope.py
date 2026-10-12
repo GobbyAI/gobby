@@ -11,6 +11,14 @@ from gobby.providers import provider_metadata
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("path", ["~+", "~-", "~1", "~nosuchuser_zz"])
+def test_unresolvable_tilde_path_is_unknown(tmp_path: Path, path: str) -> None:
+    assert _path_scope.resolve_tool_path(f"{path}/y.py", tmp_path) is None
+    assert _path_scope.current_tool_cwd({"tool_input": {"cwd": path}}) is None
+    assert _path_scope.current_project_root({"project_path": path}) is None
+    assert _path_scope.paths_may_touch_project([path], cwd=tmp_path, project_root=tmp_path)
+
+
 def _scope_results(
     paths: list[str],
     *,

@@ -18,10 +18,10 @@ pytestmark = pytest.mark.unit
 SESSION = "11111111-1111-4111-8111-111111111111"
 
 
-def _metadata(command: str, root: Path) -> dict[str, Any]:
+def _metadata(command: str, root: Path, cwd: Path | None = None) -> dict[str, Any]:
     data: dict[str, Any] = {
         "tool_name": "Bash",
-        "tool_input": {"command": command, "cwd": str(root)},
+        "tool_input": {"command": command, "cwd": str(cwd or root)},
         "project_path": str(root),
     }
     normalize_tool_fields(data)
@@ -97,9 +97,102 @@ def test_tilde_directory_target_keeps_home_repository_scope(
     (root / "sub").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(root))
     data = _metadata(f"cd /tmp; {navigation} ~/sub; touch y.py", root)
-    assert data["canonical_file_paths"] == ["~/sub/y.py"]
+    assert data["canonical_file_paths"] == [str(root / "sub" / "y.py")]
     assert data["canonical_repo_mutation"] is True
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch ~+/y.py",
+        "rm ~-/y.py",
+        "touch ~1/y.py",
+        "touch ~nosuchuser_zz/y.py",
+        "cd ~-; touch y.py",
+        "cd /tmp; cd ~-; touch y.py",
+        "cd /tmp; cd ~nosuchuser_zz; touch y.py",
+    ],
+)
+def test_unresolvable_tilde_write_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [
+        ("Write", {"file_path": "y.py"}),
+        ("Edit", {"file_path": "y.py", "old_string": "a", "new_string": "b"}),
+        ("Bash", {"command": "touch y.py"}),
+        ("Bash", {"command": "echo x > y.py"}),
+    ],
+)
+def test_relative_write_without_cwd_does_not_gain_unknown_scope(
+    tool_name: str, tool_input: dict[str, str]
+) -> None:
+    data: dict[str, Any] = {"tool_name": tool_name, "tool_input": tool_input}
+    normalize_tool_fields(data)
+    assert data["canonical_repo_mutation"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("prefix", ["", "cd /tmp; "])
+@pytest.mark.parametrize("navigation", ["cd", "pushd"])
+def test_tilde_parent_keeps_repository_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefix: str, navigation: str
+) -> None:
+    home, root, scratch = (tmp_path / name for name in ("home", "repo", "scratch"))
+    for directory in (home, root, scratch):
+        directory.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    data = _metadata(f"{prefix}{navigation} ~/../repo; touch y.py", root, scratch)
+    assert data["canonical_file_paths"] == [str(root / "y.py")]
+    assert data["canonical_repo_mutation"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "~"; touch y.py',
+        "pushd '~'; touch y.py",
+        'touch "~/y.py"',
+        "touch '~/y.py'",
+        r"touch \~/y.py",
+        'echo x > "~/y.py"',
+        'cp source.py "~/y.py"',
+        'env -C "~" touch y.py',
+        'env --chdir="~" touch y.py',
+        'env "-C" "~" touch y.py',
+    ],
+)
+def test_quoted_tilde_write_scope_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "outside"))
+    data = _metadata(command, root)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_unquoted_tilde_with_quoted_suffix_keeps_home_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("HOME", str(root))
+    data = _metadata('touch ~/"y.py"', root)
+    assert data["canonical_repo_mutation"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_unresolvable_tilde_navigation_does_not_invent_repository_path(tmp_path: Path) -> None:
+    data = _metadata("cat ~nosuchuser_zz/../y.py", tmp_path)
+    assert not data.get("canonical_file_paths")
 
 
 @pytest.mark.parametrize(
