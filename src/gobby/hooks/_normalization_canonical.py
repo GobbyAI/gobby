@@ -900,6 +900,7 @@ def _classify_shell_segment_without_redirection(
                 line_count=line_count,
                 byte_count=byte_count,
                 read_scope=read_scope,
+                defer_unresolved=True,
             ),
         )
 

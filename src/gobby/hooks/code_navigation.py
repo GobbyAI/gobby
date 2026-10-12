@@ -192,8 +192,11 @@ def source_read_navigation_metadata(
     line_count: int | None = None,
     byte_count: int | None = None,
     read_scope: str,
+    defer_unresolved: bool = False,
 ) -> dict[str, Any]:
-    if not any(_is_source_file_path(path) for path in paths):
+    source_paths = any(_is_source_file_path(path) for path in paths)
+    deferred = defer_unresolved and any("$" in path for path in paths)
+    if not source_paths and not deferred:
         return {}
     narrow = (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES) or (
         byte_count is not None and byte_count <= MAX_NARROW_SOURCE_BYTES
@@ -208,6 +211,9 @@ def source_read_navigation_metadata(
         metadata["canonical_source_line_count"] = line_count
     if byte_count is not None:
         metadata["canonical_source_byte_count"] = byte_count
+    if not source_paths:
+        metadata.pop("canonical_code_navigation_action")
+        metadata["_canonical_deferred_source_read"] = True
     return metadata
 
 

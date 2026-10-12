@@ -111,6 +111,7 @@ def _classify_sed_operands(
             paths,
             line_count=line_count,
             read_scope="line_range" if line_count is not None else "full_file",
+            defer_unresolved=True,
         )
     )
     if operands.unresolved:

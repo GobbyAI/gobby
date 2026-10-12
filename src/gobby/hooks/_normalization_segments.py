@@ -104,15 +104,26 @@ def _bound_pipeline_reads(
         item = metadata[prior]
         if (
             item.extra
-            and item.extra.get("canonical_code_navigation_action") == "read"
+            and (
+                item.extra.get("canonical_code_navigation_action") == "read"
+                or item.extra.get("_canonical_deferred_source_read")
+            )
             and item.extra.get("canonical_code_navigation_broad")
         ):
+            narrowed = {
+                "canonical_code_navigation_broad": False,
+                "canonical_narrow_source_context": True,
+                "canonical_source_line_count": bound,
+            }
+            extra = {**item.extra, **narrowed}
+            if "canonical_code_navigation_segments" in extra:
+                extra["canonical_code_navigation_segments"] = [
+                    {**segment, **narrowed}
+                    if segment.get("canonical_code_navigation_action") == "read"
+                    else segment
+                    for segment in extra["canonical_code_navigation_segments"]
+                ]
             metadata[prior] = replace(
                 item,
-                extra={
-                    **item.extra,
-                    "canonical_code_navigation_broad": False,
-                    "canonical_narrow_source_context": True,
-                    "canonical_source_line_count": bound,
-                },
+                extra=extra,
             )

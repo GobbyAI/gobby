@@ -337,6 +337,50 @@ def test_typed_outage_opens_sed_read_classified_as_write(repo: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c 'cat src/long.py; touch /tmp/x'",
+        "( cat src/long.py; touch /tmp/x )",
+        'for f in src/long.py; do cat "$f"; touch /tmp/x; done',
+        'for f in src/long.py; do cat "$f"; done; touch /tmp/x',
+        "bash -c 'sed -n p src/long.py; touch /tmp/x'",
+        'for f in src/long.py; do sed -n "${start},${end}p" "$f"; done',
+        'for f in src/long.py; do sed -n -f script.sed "$f"; done',
+        'for f in src/long.py; do sed -n "/value/w out.txt" "$f"; done',
+        "bash -c 'sed -n \"${start},${end}p\" src/long.py'",
+        "sh -c 'sed -n \"${start},${end}p\" src/long.py'",
+        '( sed -n "${start},${end}p" src/long.py )',
+        "bash -c \"sed -n '/value/w /tmp/x' src/long.py\"",
+        "( sed -n -f script.sed src/long.py )",
+        "bash -c 'cat src/long.py'",
+        "{ cat src/long.py; touch /tmp/x; }",
+        'for f in src/long.py; do cat "$f"; done',
+    ],
+)
+def test_nested_and_loop_bound_reads_stay_broad_in_write_commands(repo: Path, command: str) -> None:
+    (repo / "script.sed").write_text("w /tmp/x\n")
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/long.py; do head -n 10 "$f"; touch /tmp/x; done',
+        'for f in src/long.py; do tail -c 100 "$f"; touch /tmp/x; done',
+        'for f in src/long.py; do sed -n "1,10p" "$f"; touch /tmp/x; done',
+        'for f in src/long.py; do cat "$f" | head -n 10; touch /tmp/x; done',
+        "bash -c 'cat src/long.py; touch /tmp/x' | head -n 10",
+        'for f in notes.txt; do cat "$f"; touch /tmp/x; done',
+        'for f in notes.txt; do sed -n "/value/w out.txt" "$f"; done',
+        'for f in src/short.py; do cat "$f"; touch /tmp/x; done',
+    ],
+)
+def test_bound_and_non_source_loop_reads_remain_exempt(repo: Path, command: str) -> None:
+    (repo / "notes.txt").write_text("value\n" * 60)
+    assert not broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         ("rg pattern web/dist/assets", False),

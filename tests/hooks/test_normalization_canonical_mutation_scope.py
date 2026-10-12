@@ -518,6 +518,42 @@ def test_nested_shell_parse_controls_keep_scope(
 
 
 @pytest.mark.parametrize(
+    "command,kind,paths,unknown",
+    [
+        ("bash -c 'cat src/long.py; touch /tmp/x'", "write", ["/tmp/x"], None),
+        ("( cat src/long.py; touch /tmp/x )", "write", ["/tmp/x"], None),
+        ('for f in src/long.py; do cat "$f"; touch /tmp/x; done', "write", ["/tmp/x"], None),
+        ('for f in src/long.py; do cat "$f"; done; touch /tmp/x', "write", ["/tmp/x"], None),
+        ("bash -c 'sed -n p src/long.py; touch /tmp/x'", "write", ["/tmp/x"], None),
+        ('for f in src/long.py; do sed -n "${start},${end}p" "$f"; done', "write", None, True),
+        ('for f in src/long.py; do sed -n -f script.sed "$f"; done', "write", ["/tmp/x"], None),
+        (
+            'for f in src/long.py; do sed -n "/value/w out.txt" "$f"; done',
+            "write",
+            ["out.txt"],
+            None,
+        ),
+        ("bash -c 'sed -n \"${start},${end}p\" src/long.py'", "write", None, True),
+        ("sh -c 'sed -n \"${start},${end}p\" src/long.py'", "write", None, True),
+        ('( sed -n "${start},${end}p" src/long.py )', "write", None, True),
+        ("bash -c \"sed -n '/value/w /tmp/x' src/long.py\"", "write", ["/tmp/x"], None),
+        ("( sed -n -f script.sed src/long.py )", "write", ["/tmp/x"], None),
+        ("bash -c 'cat src/long.py'", "read", ["src/long.py"], None),
+        ("{ cat src/long.py; touch /tmp/x; }", "write", ["/tmp/x"], None),
+        ('for f in src/long.py; do cat "$f"; done', "read", ["src/long.py"], None),
+    ],
+)
+def test_nested_and_loop_bound_reads_preserve_mutation_scope(
+    tmp_path: Path, command: str, kind: str, paths: list[str] | None, unknown: bool | None
+) -> None:
+    (tmp_path / "script.sed").write_text("w /tmp/x\n")
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == kind
+    assert data.get("canonical_file_paths") == paths
+    assert data.get("canonical_repo_mutation_scope_unknown") is unknown
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "echo $$'\\' ; git apply x.patch ; echo '\\'",

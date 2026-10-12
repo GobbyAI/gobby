@@ -14,6 +14,7 @@ from gobby.hooks._normalization_bindings import (
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _contains_unexpanded_shell_reference
 from gobby.hooks._sed_program import sed_write_paths
+from gobby.hooks.code_navigation import source_read_navigation_metadata
 
 
 def _unknown_write_metadata() -> dict[str, Any]:
@@ -159,6 +160,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     saw_unexpanded_mutation_path = False
     navigation_scope_unknown = False
     navigation_scope_paths: list[str] = []
+    navigation_segments: list[dict[str, Any]] = []
     loop_bindings: dict[str, tuple[str, ...]] = {}
     disqualified_loop_variables = set().union(
         *(_shell_loop_binding_disqualifications(item.shell_words) for item in metadata)
@@ -195,6 +197,38 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         resolvable = [
             path for path in item.paths if not _path_is_unresolved(path, item.literal_path_root)
         ]
+        if item.neutral_setup or item.read_only_pipeline_filter:
+            pass
+        elif item.extra and item.extra.get("canonical_code_navigation_segments"):
+            navigation_segments.extend(
+                dict(segment) for segment in item.extra["canonical_code_navigation_segments"]
+            )
+        elif item.extra and (
+            item.extra.get("canonical_code_navigation_action")
+            or item.extra.get("_canonical_deferred_source_read")
+        ):
+            navigation_paths: list[str] = []
+            for path in item.navigation_paths or item.paths:
+                reference = _plain_loop_binding_reference(
+                    path, item.shell_words, item.shell_raw_words
+                )
+                if reference and reference[0] in loop_bindings:
+                    variable, suffix = reference
+                    navigation_paths.extend(value + suffix for value in loop_bindings[variable])
+                else:
+                    navigation_paths.append(path)
+            navigation_extra = dict(item.extra)
+            if navigation_extra.pop("_canonical_deferred_source_read", False):
+                navigation_extra = source_read_navigation_metadata(
+                    navigation_paths,
+                    line_count=navigation_extra.get("canonical_source_line_count"),
+                    byte_count=navigation_extra.get("canonical_source_byte_count"),
+                    read_scope=navigation_extra["canonical_source_read_scope"],
+                )
+            if navigation_extra.get("canonical_code_navigation_action"):
+                navigation_segments.append(
+                    {**navigation_extra, "canonical_file_paths": navigation_paths}
+                )
         if item.extra and item.extra.get("canonical_code_navigation_action"):
             for path in item.extra.get("_canonical_code_navigation_scope_paths", ()):
                 if _path_is_unresolved(path, item.literal_path_root):
@@ -288,11 +322,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         # Scope-only segments authorize the command without claiming a directory.
         # Preserve actual edits in mixed commands and nested shell wrappers.
         extra["canonical_edit_file_paths"] = edit_paths
-    extra["canonical_code_navigation_segments"] = [
-        {**dict(item.extra), "canonical_file_paths": list(item.navigation_paths or item.paths)}
-        for item in active
-        if item.extra and item.extra.get("canonical_code_navigation_action")
-    ]
+    extra.pop("_canonical_deferred_source_read", None)
+    extra["canonical_code_navigation_segments"] = navigation_segments
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
     # Every level's classified script bodies, which a single extra would overwrite.
