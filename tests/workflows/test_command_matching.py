@@ -297,6 +297,38 @@ def test_many_function_definitions_match_blocks(mask_quoted: bool, definition_co
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case b in a) f() { :; };; b) g() { gem push x; };; esac; g",
+        "case b in (a) f() { :; };; (b) g() { gem push x; };; esac; g",
+        "case b in a) function f { :; };; b) function g { gem push x; };; esac; g",
+    ],
+)
+def test_later_case_arm_function_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.timeout(5)
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("wrapper", ["echo $({body})", "cat <({body})", "( {body} )"])
+def test_nested_wrappers_with_many_functions_match_blocks(mask_quoted: bool, wrapper: str) -> None:
+    command = "; ".join([*(f"p{j}() {{ echo {j}; }}" for j in range(300)), "gem push x"])
+    for i in range(8):
+        command = f"f{i}() {{ :; }}; " + wrapper.format(body=command)
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("levels", [8, 9, 10])
+def test_deep_substitution_function_matches_blocks(mask_quoted: bool, levels: int) -> None:
+    command = "f() { gem push x; }; f"
+    for _ in range(levels):
+        command = f"echo $( {command} )"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 def test_nine_nested_function_definitions_match_blocks(mask_quoted: bool) -> None:
     command = "gem push x"
     for index in range(9):

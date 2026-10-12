@@ -48,6 +48,9 @@ class ShellDirectoryState:
     group_last_pipeline: set[int] = field(default_factory=set)
     pipeline_group_changes: list[bool | None] = field(default_factory=list)
     group_functions: dict[int, str] = field(default_factory=dict)
+    function_bodies: dict[int, str] = field(default_factory=dict)
+    function_scope_unknown: bool = False
+    opaque: bool = False
     function_headers: dict[int, int] = field(default_factory=dict)
     directory_functions: set[str] = field(default_factory=set)
     groups: list[
@@ -80,7 +83,9 @@ class ShellDirectoryState:
             return UNRESOLVED_DIRECTORY
         return cwd
 
-    def prepare_groups(self, segments: list[_ShellSegment]) -> None:
+    def prepare_groups(
+        self, segments: list[_ShellSegment], spans: dict[int, tuple[int, int]] | None = None
+    ) -> None:
         """Identify pipeline members and function bodies before consuming braces."""
         openings: list[tuple[int, int]] = []
         for index, segment in enumerate(segments):
@@ -96,17 +101,20 @@ class ShellDirectoryState:
                         else []
                     )
                     function: str | None = None
-                    for start in range(len(header_tokens)):
-                        header = header_tokens[start:]
-                        match = re.fullmatch(
-                            r"(?:function\s+([^\s()]+)(?:\s*\(\s*\))?|([^\s()]+)\s*\(\s*\))",
-                            " ".join(t.value for t in header),
-                        )
-                        if match and all(not t.quoted for t in header):
-                            function = match[1] or match[2]
-                            self.group_functions[id(token)] = function
-                            self.function_headers[id(header[0])] = len(header)
-                            break
+                    if spans and (name := self.function_bodies.get(spans[id(token)][0])):
+                        function = self.group_functions[id(token)] = name
+                    if function is None:
+                        for start in range(len(header_tokens)):
+                            header = header_tokens[start:]
+                            match = re.fullmatch(
+                                r"(?:function\s+([^\s()]+)(?:\s*\(\s*\))?|([^\s()]+)\s*\(\s*\))",
+                                " ".join(t.value for t in header),
+                            )
+                            if match and all(not t.quoted for t in header):
+                                function = match[1] or match[2]
+                                self.group_functions[id(token)] = function
+                                self.function_headers[id(header[0])] = len(header)
+                                break
                     if function is None and not self._brace_command_position(
                         segment.tokens[:position]
                     ):
@@ -318,6 +326,9 @@ class ShellDirectoryState:
                     self.branches = []
                 self.group_entry = True
                 self.list_ops.append(isolated)
+                if function is not None and self.function_scope_unknown:
+                    self.cwd, self.stack = UNRESOLVED_DIRECTORY, None
+                    self.mark_unproven()
             elif word == "}":
                 if self.groups:
                     entry = self.groups.pop()
@@ -353,7 +364,7 @@ class ShellDirectoryState:
     def directory_command(self, parts: list[str], *, uncertain: bool) -> None:
         """Track literal pushes and pops; unknown stack operations lose proof."""
         name = parts[0].rsplit("/", 1)[-1]
-        if uncertain:
+        if uncertain or self.opaque:
             self.invalidate()
         elif name == "cd":
             self.change(_literal_cd_target(parts))

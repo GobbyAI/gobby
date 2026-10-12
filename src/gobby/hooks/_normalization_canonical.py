@@ -150,8 +150,32 @@ def _normalize_shell_tool_metadata(
     entry = (exported_git_selector.get(), _script_reads_left.get())
     unstable: frozenset[int] = frozenset()
     try:
+        bodies: dict[int, str] = {}
+        unknown = False
+        try:
+            scan = scan_shell_command(command)
+        except ValueError:
+            pass
+        else:
+            if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
+                command, bodies = function_program
+                first = min(bodies)
+                unknown = any(
+                    token.value in {"cd", "pushd", "popd", "eval"}
+                    for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
+                    if start > first
+                )
+        opaque = unknown and any(command[start] != "{" for start in bodies)
+        if opaque:
+            cwd, base_cwd = UNRESOLVED_DIRECTORY, None
         while True:
-            directory = ShellDirectoryState(cwd, unstable_loops=unstable)
+            directory = ShellDirectoryState(
+                cwd,
+                unstable_loops=unstable,
+                function_bodies=bodies,
+                function_scope_unknown=unknown,
+                opaque=opaque,
+            )
             result = _classify_shell_command(
                 command, directory=directory, depth=depth, base_cwd=base_cwd
             )
@@ -171,7 +195,6 @@ def _classify_shell_command(
 ) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
-        function_bodies = shell_function_bodies(command, scan.tokens, scan.spans)
         masked_command, command_substitutions = command_substitution_bodies(
             command, scan.spans, depth=depth
         )
@@ -209,7 +232,7 @@ def _classify_shell_command(
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
-    directory.prepare_groups(segments)
+    directory.prepare_groups(segments, spans_by_token)
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
@@ -293,23 +316,6 @@ def _classify_shell_command(
         segment_base = None if directory.changed or starts_elsewhere(parts) else base_cwd
         if env_directories:
             segment_base = Path(segment_cwd) if segment_cwd else None
-        for position, body in function_bodies:
-            if segment_start <= position < segment_end:
-                # A later call may run after directory movement. Its scope is
-                # opaque unless the remaining program has no directory commands.
-                uncertain = any(
-                    token.value in {"cd", "pushd", "popd", "eval"}
-                    for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
-                    if start > position
-                )
-                metadata.append(
-                    _classify_shell_segment_without_redirection(
-                        ["sh", "-c", body],
-                        None if uncertain else directory.cwd,
-                        depth=depth,
-                        base_cwd=None if uncertain or directory.changed else base_cwd,
-                    )
-                )
         for body in process_bodies:
             metadata.append(
                 _classify_shell_segment_without_redirection(

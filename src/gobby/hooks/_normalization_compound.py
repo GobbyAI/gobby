@@ -6,35 +6,34 @@ from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._case_syntax import case_pattern_end
 from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
 
+_FUNCTION_HEADER = re.compile(
+    r"(?:(?:function\s+)?([^\s;&|()<>\"'\\$`]+)\s*\(\s*\)"
+    r"|function\s+([^\s;&|()<>\"'\\$`]+))\s*"
+)
+_FUNCTION_BODY = re.compile(r"(?:[({]|(?:if|while|until|case|for|select)\b)")
+
 
 def shell_function_bodies(
     command: str, tokens: list[ShellToken], spans: list[tuple[int, int]]
-) -> list[tuple[int, str]]:
-    """Expose the first function's suffix with every function header blanked.
-
-    Include the suffix conservatively because calls can use dynamic names. Blank
-    all headers first so recursive compound parsing handles every later body once.
-    """
+) -> tuple[str, dict[int, str]] | None:
+    """Blank every header in place; map each body's opening position to its function name."""
     headers: list[tuple[int, int]] = []
+    bodies: dict[int, str] = {}
     for index in range(len(tokens)):
         start = spans[index][0]
         if headers and start < headers[-1][1]:
             continue
-        header = re.match(
-            r"(?:(?:function\s+)?[^\s;&|()<>\"'\\$`]+\s*\(\s*\)"
-            r"|function\s+[^\s;&|()<>\"'\\$`]+)\s*",
-            command[start:],
-        )
+        header = _FUNCTION_HEADER.match(command, start)
         if header is None:
             continue
-        body = command[start + header.end() :]
-        if re.match(r"(?:[({]|(?:if|while|until|case|for|select)\b)", body):
-            headers.append((start, start + header.end()))
+        if _FUNCTION_BODY.match(command, header.end()):
+            headers.append((start, header.end()))
+            bodies[header.end()] = header[1] or header[2]
     masked = list(command)
     for start, end in headers:
         masked[start:end] = " " * (end - start)
     program = "".join(masked)
-    return [(headers[0][0], program[headers[0][1] :])] if headers else []
+    return (program, bodies) if headers else None
 
 
 def heredoc_substitution_bodies(text: str, *, depth: int) -> tuple[list[str], bool]:

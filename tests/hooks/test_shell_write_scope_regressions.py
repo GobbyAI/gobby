@@ -91,6 +91,43 @@ def test_many_function_definitions_report_write(tmp_path: Path, definition_count
     assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case b in a) f() { :; };; b) g() ( touch a.py );; esac; g",
+        "case b in a) f() { :; };; b) g() if touch a.py; then :; fi;; esac; g",
+        "f() { cd /tmp; }; touch a.py",
+    ],
+)
+def test_function_compound_context_reports_write(tmp_path: Path, command: str) -> None:
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd ..; f() { touch a.py; }; cd 'ROOT'; f",
+        "f(){ touch a.py; }; f",
+        "echo $(f() { cd /tmp; }; touch a.py)",
+        "(cd /tmp; f() (touch a.py); cd 'ROOT'; f)",
+        "f() { pushd /tmp; }; touch a.py",
+        "f() select d in x; do cd /tmp; break; done; touch a.py",
+    ],
+)
+def test_function_directory_scope_amendment_reports_write(tmp_path: Path, command: str) -> None:
+    command = command.replace("ROOT", str(tmp_path))
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
+@pytest.mark.timeout(5)
+@pytest.mark.parametrize("wrapper", ["echo $({body})", "cat <({body})", "( {body} )"])
+def test_nested_wrappers_with_many_functions_report_write(tmp_path: Path, wrapper: str) -> None:
+    command = "; ".join([*(f"p{j}() {{ echo {j}; }}" for j in range(1000)), "touch a.py"])
+    for i in range(8):
+        command = f"f{i}() {{ :; }}; " + wrapper.format(body=command)
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
 def test_nine_nested_function_definitions_report_write(tmp_path: Path) -> None:
     command = "touch a.py"
     for index in range(9):
