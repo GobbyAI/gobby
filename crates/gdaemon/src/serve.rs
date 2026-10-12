@@ -35,6 +35,7 @@ use crate::front_door::routes::{FAMILIES, RouteTable};
 #[cfg(unix)]
 use crate::front_door::tls;
 use crate::front_door::{FrontDoor, FrontDoorState};
+use crate::nodes::NativeRoutes;
 
 /// How long an accepted connection may take to send its first byte and, for
 /// TLS, finish the handshake before it is dropped.
@@ -93,20 +94,28 @@ pub fn run() -> Result<()> {
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
         let Some((secret, auth, (backend_http, backend_ws))) = native else {
-            let Some((node, claim)) =
-                crate::state::NodeServices::prepare(&bootstrap, &path, home)?
+            let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)?
             else {
                 return Ok(());
             };
             let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
             let ws = bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?;
-            let doors = http.into_iter()
+            let doors = http
+                .into_iter()
                 .map(|listener| (listener, FrontDoor::node(node.clone(), false)))
-                .chain(ws.into_iter()
-                    .map(|listener| (listener, FrontDoor::node(node.clone(), true))))
+                .chain(
+                    ws.into_iter()
+                        .map(|listener| (listener, FrontDoor::node(node.clone(), true))),
+                )
                 .collect();
+            let channel = tokio::spawn(crate::nodes::channel::run_client(
+                node.clone(),
+                crate::nodes::channel::ChannelTiming::default(),
+            ));
             let result =
                 serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
+            channel.abort();
+            let _ = channel.await;
             drop(claim);
             return result;
         };
@@ -114,10 +123,31 @@ pub fn run() -> Result<()> {
             crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
         else {
             eprintln!(
-                "gdaemon serve: runtime singleton claim unavailable (another owner or live service reservation): {}",
+                "gdaemon serve: runtime singleton claim unavailable \
+                 (another owner or live service reservation): {}",
                 home.join("gobby.pid").display()
             );
             return Ok(());
+        };
+        let native_routes = if bootstrap.mode == RunMode::Hub {
+            use gobby_core::postgres_pool::{Pool, PoolSettings};
+            NativeRoutes::Hub(Arc::new(crate::nodes::HubNodes {
+                db: Pool::build(
+                    bootstrap
+                        .database_url
+                        .as_deref()
+                        .context("hub requires database_url")?,
+                    PoolSettings {
+                        max_size: 4,
+                        application_name: "gobby-gdaemon-nodes".into(),
+                        acquire_timeout: Duration::from_secs(2),
+                    },
+                )?,
+                registry: Default::default(),
+                timing: Default::default(),
+            }))
+        } else {
+            NativeRoutes::default()
         };
         let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
         listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);
@@ -137,6 +167,7 @@ pub fn run() -> Result<()> {
             tls.map(|loaded| loaded.config),
             auth,
             Some(state),
+            native_routes,
             async {
                 tokio::select! {
                     () = shutdown_signal() => {},
@@ -279,6 +310,7 @@ pub async fn serve(
         auth,
         #[cfg(unix)]
         None,
+        NativeRoutes::default(),
         shutdown,
     )
     .await
@@ -290,11 +322,13 @@ async fn serve_with_runtime(
     tls: Option<Arc<ServerConfig>>,
     auth: Arc<AuthState>,
     #[cfg(unix)] runtime: Option<Arc<crate::state::RuntimeState>>,
+    native: NativeRoutes,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut doors = Vec::with_capacity(listeners.len());
     for PublicListener { listener, backend } in listeners {
-        let state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
+        let mut state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
+        state.native = native.clone();
         #[cfg(unix)]
         let state = FrontDoorState {
             runtime: runtime.clone(),

@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.18"
+version = "0.4.19"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -21,7 +21,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.8", default-features = false }
+axum = { version = "0.8", default-features = false, features = ["ws"] }
+futures-util = "0.3"
+tokio-tungstenite = "0.26.2"
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -51,7 +53,6 @@ libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"
-futures-util = "0.3"
 tempfile = "3"
 tokio-postgres = "0.7.18"
 tokio = { version = "1", features = ["test-util"] }

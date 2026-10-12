@@ -4,6 +4,7 @@ pub mod front_door;
 pub mod heartbeat;
 pub mod lease;
 pub mod lifecycle;
+pub mod nodes;
 mod retention;
 pub mod serve;
 #[cfg(unix)]

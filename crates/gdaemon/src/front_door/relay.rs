@@ -71,11 +71,14 @@ impl HubRelay {
         let mut http_config = config;
         // hyper-rustls owns ALPN for its pooled client; manual TLS keeps http/1.1.
         http_config.alpn_protocols.clear();
+        let mut http = HttpConnector::new();
+        http.enforce_http(false);
+        http.set_connect_timeout(Some(Duration::from_secs(10)));
         let connector = HttpsConnectorBuilder::new()
             .with_tls_config(http_config)
             .https_or_http()
             .enable_http1()
-            .build();
+            .wrap_connector(http);
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
             .build(connector);
@@ -141,10 +144,13 @@ impl HubRelay {
                 Err(error) => return bad_gateway(&self.origin, error),
             };
         }
-        let stream = match TcpStream::connect(&self.dial).await {
-            Ok(stream) => stream,
-            Err(_) => return unavailable(&self.origin, BackendState::Down),
-        };
+        let stream =
+            match connect_with_timeout(Duration::from_secs(10), TcpStream::connect(&self.dial))
+                .await
+            {
+                Ok(stream) => stream,
+                Err(_) => return unavailable(&self.origin, BackendState::Down),
+            };
         if let Some(config) = &self.tls {
             let name = match ServerName::try_from(self.host.clone()) {
                 Ok(name) => name,
@@ -162,4 +168,14 @@ impl HubRelay {
             ws::splice_over(stream, request, &self.origin).await
         }
     }
+}
+
+/// Bound one hub dial; exposed for pending-transport acceptance checks.
+pub async fn connect_with_timeout<T>(
+    budget: Duration,
+    connect: impl std::future::Future<Output = std::io::Result<T>>,
+) -> std::io::Result<T> {
+    tokio::time::timeout(budget, connect)
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "hub connect timed out"))?
 }

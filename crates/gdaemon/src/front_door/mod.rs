@@ -24,6 +24,7 @@ use routes::RouteTable;
 /// Shared state for one listener: its backend target and the proxy client.
 #[derive(Clone)]
 pub struct FrontDoorState {
+    pub native: crate::nodes::NativeRoutes,
     #[cfg(unix)]
     pub runtime: Option<Arc<crate::state::RuntimeState>>,
     pub target: SocketAddr,
@@ -39,6 +40,7 @@ impl FrontDoorState {
         auth: Arc<auth::AuthState>,
     ) -> Self {
         Self {
+            native: crate::nodes::NativeRoutes::default(),
             #[cfg(unix)]
             runtime: None,
             target,
@@ -167,6 +169,11 @@ impl FrontDoor {
         }
         if let Err(response) = backend_state.auth.authenticate(request.headers_mut()).await {
             return *response;
+        }
+        if request.uri().path() == "/api/nodes/channel"
+            && let crate::nodes::NativeRoutes::Hub(nodes) = &state.native
+        {
+            return crate::nodes::channel::handle(nodes.clone(), request).await;
         }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&state, request).await
