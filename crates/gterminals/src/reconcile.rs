@@ -292,6 +292,12 @@ pub async fn reconcile(
                     after.locator = Some(json!({"host_terminal_id": entry.slot(*id)}));
                     after.locator_key =
                         Some(format!("native:{}:{}", inventory.epoch, entry.slot(*id)));
+                    // An omitted field cannot inherit the prior host's kill proof.
+                    if let Some(process) = after.process.as_mut().and_then(Value::as_object_mut) {
+                        for key in ["host_terminal_id", "pgid", "start_time"] {
+                            process.remove(key);
+                        }
+                    }
                     entry.merge_process(&mut after);
                 }
                 _ => return Ok(()),

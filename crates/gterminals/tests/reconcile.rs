@@ -773,6 +773,63 @@ async fn absence_preserves_alive_groups_and_settles_orphans() -> anyhow::Result<
 }
 
 #[tokio::test]
+async fn orphan_rebind_replaces_stale_process_identity() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    for pgid in [None, Some(5678)] {
+        let mut row = live(
+            Terminal {
+                agent_run_id: None,
+                ..terminal()
+            },
+            "epoch-E",
+        );
+        row.state = State::Orphaned;
+        row.process = Some(json!({
+            "host_terminal_id": "old-slot", "pgid": 1234,
+            "start_time": 123.25, "attempt_owner": "retained"
+        }));
+        hub.insert(&row).await?;
+        let mut host = inventory(&row, "committed");
+        let listing = host.terminals[0].as_object_mut().expect("inventory object");
+        listing.remove("pgid");
+        listing.remove("start_time");
+        if let Some(pgid) = pgid {
+            listing.insert("pgid".into(), json!(pgid));
+        }
+        reconcile::reconcile(
+            &hub.pool,
+            row.machine_id,
+            Observation::Accepted(&host),
+            &options(),
+            &Runtime::default(),
+        )
+        .await?;
+        let rebound = hub.get(row.id).await?;
+        let process = rebound.process.as_ref().expect("rebound process");
+        assert_eq!(rebound.state, State::Orphaned);
+        assert_eq!(rebound.locator, Some(json!({"host_terminal_id": "slot-1"})));
+        assert_eq!(process["host_terminal_id"], "slot-1");
+        assert_eq!(process["attempt_owner"], "retained");
+        assert_eq!(process.get("pgid"), pgid.map(|id| json!(id)).as_ref());
+        assert!(
+            process.get("start_time").is_none(),
+            "stale start_time retained"
+        );
+        let before_repeat = rebound;
+        reconcile::reconcile(
+            &hub.pool,
+            row.machine_id,
+            Observation::Accepted(&host),
+            &options(),
+            &Runtime::default(),
+        )
+        .await?;
+        assert_eq!(hub.get(row.id).await?, before_repeat);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn future_pending_attempt_is_not_stale_with_zero_grace() -> anyhow::Result<()> {
     let hub = Hub::new().await?;
     let mut settings = options();
