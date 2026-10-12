@@ -460,7 +460,6 @@ class TestEnsureIsolationCodeIndex:
             grant_signing_secret="sec-live",
         )
         monkeypatch.setattr("gobby.runtime_grants.lease_view.current_lease", lambda: lease)
-        monkeypatch.setattr("gobby.runtime_grants.lease_view.current_lease", lambda: lease)
         context = _active_deployment_grant_context()
         assert context.token == "tok-live"
         assert context.fencing_epoch == 9
