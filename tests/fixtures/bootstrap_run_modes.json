@@ -173,6 +173,188 @@
             "hub_daemon_url": "https://[v1.a:b]:443"
         },
         {
+            "name": "node_colon_free_ipvfuture",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[v1.abc]:443"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://[v1.abc]:443"
+        },
+        {
+            "name": "node_ipv6_zone_case",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[fe80::1%25ETH0]:443"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://[fe80::1%25ETH0]:443"
+        },
+        {
+            "name": "node_ipvfuture_percent_case",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[v1.a%B]"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://[v1.a%B]"
+        },
+        {
+            "name": "node_embedded_lf",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://ho\nst"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_embedded_tab",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://ho\tst"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_embedded_cr",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://ho\rst"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "hub_bracketed_hostname_userinfo",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[bad]@host"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_stray_userinfo_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://us]er@host"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_bracketed_ipv6_userinfo",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[::1]@host"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_stray_closing_port_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://host:44]3"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_stray_opening_port_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://host:[443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_empty_ipv6_scope",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[fe80::1%]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_repeated_ipv6_scope_separator",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[fe80::1%en%0]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_non_hex_ipvfuture_version",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[vxyz.abc]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_empty_ipvfuture_version",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[v.abc]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_empty_ipvfuture_address",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[v1.]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_userinfo_with_ipv6_host",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://user@[::1]:443"
+            },
+            "error": "hub_daemon_url must not include userinfo"
+        },
+        {
+            "name": "hub_bracketed_userinfo_with_ipv6_host",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[::1]@[::2]"
+            },
+            "error": "hub_daemon_url must not include userinfo"
+        },
+        {
+            "name": "hub_stray_userinfo_bracket_with_ipv6_host",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://us]er@[::1]"
+            },
+            "error": "hub_daemon_url must not include userinfo"
+        },
+        {
+            "name": "hub_bracketed_userinfo_with_ipvfuture_host",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[x]@[v1.abc]"
+            },
+            "error": "hub_daemon_url must not include userinfo"
+        },
+        {
+            "name": "hub_ipv6_port_closing_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[::1]:44]3"
+            },
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
+        },
+        {
+            "name": "hub_ipv6_port_opening_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[::1]:[443"
+            },
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
+        },
+        {
             "name": "remote_hub",
             "bootstrap": {
                 "datastore_mode": "remote",

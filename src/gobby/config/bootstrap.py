@@ -468,7 +468,7 @@ def _parse_hub_daemon_url(value: object) -> str:
     if parsed.path not in {"", "/"}:
         raise BootstrapConfigError("hub_daemon_url path must be empty or /")
     host = parsed.hostname
-    if ":" in host and not host.startswith("["):
+    if ":" in host or parsed.netloc.startswith("["):
         host = f"[{host}]"
     try:
         port = parsed.port
