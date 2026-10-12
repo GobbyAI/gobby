@@ -43,6 +43,7 @@ SEAT_CATALOGUE = {
     "debugger",
     "design-reviewer",
     "recovery-steward",
+    "consolidator",
 }
 # Root panes: the operator opens them, so they never take the spawn surface.
 PERSONA_ONLY_SEATS = {"assistant", "orchestrator"}
@@ -77,9 +78,17 @@ READ_ONLY_SEATS = {
     "debugger",
     "design-reviewer",
     "recovery-steward",
+    "consolidator",
 }
 WRITE_SCOPE_RULES = {"assistant": "assistant-write-scope", "archivist": "archivist-write-scope"}
-STEP_SEATS = {"developer", "code-reviewer", "log-monitor", "metrics-monitor", "researcher"}
+STEP_SEATS = {
+    "developer",
+    "code-reviewer",
+    "log-monitor",
+    "metrics-monitor",
+    "researcher",
+    "consolidator",
+}
 
 SYNC_METADATA_KEYS = {"tags", "priority", "type"}
 UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
@@ -101,6 +110,7 @@ SEND_MESSAGE_TARGETS = {
     "debugger": ["parent", "session"],
     "design-reviewer": ["parent", "session"],
     "recovery-steward": ["parent", "session"],
+    "consolidator": ["parent", "session"],
 }
 # The Assistant and Orchestrator are root panes under the interactive rules.
 ROOT_PANE_INCLUDES = ["tag:default"]
@@ -115,6 +125,7 @@ WAITING_STEPS = {
     "log-monitor": {"tick", "report"},
     "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
+    "consolidator": {"load_skills", "consolidate"},
 }
 # #23750: the steps a relaunched seat bootstraps its role file from.
 ROLE_BOOTSTRAP_STEPS = {

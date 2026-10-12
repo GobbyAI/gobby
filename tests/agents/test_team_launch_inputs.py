@@ -858,6 +858,7 @@ class TeamEntrypointProxy:
                 "release-manager",
                 "inbox-manager",
                 "recovery-steward",
+                "consolidator",
             ),
         ),
         ("team-planning", ("plan-writer", "plan-adversary")),

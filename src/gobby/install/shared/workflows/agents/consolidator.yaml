@@ -53,7 +53,30 @@ workflows:
 
 # Task inspection and proposals, with skill and continuity support.
 step_workflow:
+  variables:
+    required_skills: [brevity]
   steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: Load required instructions before inspecting the backlog.
+      status_message: |
+        Load brevity through gobby-skills:get_skill using mcp__gobby__call_tool.
+        Follow every page.next_cursor with only cursor until null. Use Gobby's
+        proxy for tracked skill loading; do not set loading flags manually.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+        - "gobby-sessions:get_handoff"
+        - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
+      transitions:
+        - to: consolidate
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
     - name: consolidate
       description: Inspect the backlog and send proposals; never mutate tasks.
       allowed_tools:

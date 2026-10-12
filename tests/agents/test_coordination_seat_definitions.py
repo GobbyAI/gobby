@@ -212,8 +212,8 @@ def test_consolidator_is_propose_only_with_read_only_task_tools() -> None:
     assert body.timeout == 0
     assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
     assert body.step_workflow is not None
-    assert len(body.step_workflow.steps) == 1
-    step = body.step_workflow.steps[0]
+    assert [step.name for step in body.step_workflow.steps] == ["load_skills", "consolidate"]
+    step = next(step for step in body.step_workflow.steps if step.name == "consolidate")
     assert step.allowed_tools != "all"
     assert not {"Bash", "exec_command", "Edit", "Write", "apply_patch"} & set(step.allowed_tools)
     assert step.allowed_mcp_tools != "all"
