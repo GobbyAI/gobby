@@ -3555,15 +3555,15 @@ nits from batch 1 are corrected in place.
 | #22051 — Feedback synthesis report ef48b0b1 | `26aa30ddb8`, `dbe7162df6` | missing | Both historical report postimages, 237 and 236 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
 | #22039 — Dream synthesis report 49640230 | `dea81c11c8`, `f7cac386b2` | missing | Both historical report postimages, 46 and 48 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
 | #21820 — Fair archive-backed summary retries | `eb53e743b4` | delivered | Same-task landed replacement `c3e0e7d33695b9c19a01d5dd4bd996dfbb722f18` is an ancestor of the pin. B8–B10 retain exclusive (created_at,id) pagination, wraparound, cursor advance in finally even on failure, and archive-aware TranscriptReader construction. The failure ceiling also limits deterministic poison-session retries. |
-| #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | intentionally superseded | These revisions document and test generated structured recovery, full source coverage, combination and replay qualification. Landed #21693 **Structured handoff delivery history**, `22556858ef2752f6a668ce7224f415e91aa6beac`, supplies the authored-content path in B12. Landed #21887 **Incidental handoff history policy**, `8921c88c1fc2dad64f6e1375479f1fdebf14d0d2`, explicitly excludes regenerated/merged handoffs and whole-session replay in B11. Restoring the absent old rollout guide and replay test would contradict that replacement contract. |
+| #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | missing | Partial loss, corrected after batch 3 review: `12abc42f165a18d8f6f0ef004a7d12b985cecb03` independently documents `get_handoff_record` and `search_handoffs`, including project-default search and non-consuming historical reads. Those docs follow the missing #21792 **Read-only handoff queries** into #24121 **Handoff retrieval recovery**. Generated Source Records, provenance/coverage fields, full-source replay qualification and the two replay-only revisions remain intentionally retired under #21693 **Structured handoff delivery history** and #21887 **Incidental handoff history policy** (B11/B12). Adapt the query documentation to the surviving authored-record contract; do not restore the retired rollout wholesale. |
 | #21875 — Optional review candidates in recovery | `0acc7cef77` | missing | The generated recovery/combination mechanism is intentionally superseded by B11–B12, but this revision also adds six fidelity lines to the live archival-summary prompt and its golden fixture. Those lines are absent in B15. The missing half prevents a whole-task superseded verdict. See the exact recovery referral below. |
 | #21881 — Operation qualifiers in recovered facts | `5fa4992e9e` | missing | The generated recovery/combination mechanism is intentionally superseded, but six operation, actor, condition, reference-kind and source-inspection fidelity lines added to the live archival-summary prompt and golden fixture are absent in B15. B11 explicitly leaves archival-summary behavior unchanged. See the exact recovery referral below. |
 | #21850 — Reference fidelity and inherited attribution | `9b925f9c27`, `d10d2f7f6f` | missing | The generated reducer, validation and combination changes are intentionally superseded. The d10d2f7f6f revision also adds two exact-identifier and inherited-attribution lines to the live archival-summary prompt and golden fixture; B15 lacks them. No explicit withdrawal covers those live edits. See the exact recovery referral below. |
 | #21860 — Generated recovery output headroom | `410c950601` | intentionally superseded | The revision targets 6,000 characters beneath a 12,000-character generated-recovery limit. B11 replaces that path with authored handoffs. B13 documents the active 10,000 JSON-escaped hard cap and approximately 5,000-character authoring target. These are different operations and budgets; the old reducer's numeric instructions are not claimed as delivered. |
 | #21867 — Session and example exclusion from task evidence | `103a07c698` | intentionally superseded | The revision filters session identities and displayed examples from generated transcript Source Records evidence. B11 explicitly places that ledger and source-position semantics outside the replacement contract. B12 loads bounded DB-owned task evidence for authored content. The absent transcript-selection/evidence modules should not be replayed into that design. |
 
-Batch totals: **4 delivered, 3 intentionally superseded, 8 missing**.
-Cumulative totals: **11 delivered, 7 intentionally superseded, 12 missing**;
+Batch totals: **4 delivered, 2 intentionally superseded, 9 missing**.
+Cumulative totals: **11 delivered, 6 intentionally superseded, 13 missing**;
 **59 tasks remain**. B11 supersedes the generated-recovery halves of the handoff revisions. B14 shows
 archival summaries still use a separate Markdown generator; no claim is made
 about installed prompt registry rows or live semantic behavior. No audited task,
@@ -3723,7 +3723,7 @@ on the Lane Manager’s direction; the evidence pin remains fixed.
 | #19133 — Reduce routine daemon INFO noise | `2771fbfced` | delivered | Same-task landed replacement cc82f7a5a395a0fa033c5bdfa8cf1376b4ced824 is an ancestor of the pin. Surviving logging demotions, mode transitions and caplog regressions remain. The aggregate sync behavior moved to C15. The draft’s unrelated dream semaphore change is replaced by landed #19253 Batched related-evidence retrieval, 06112ec3cc40a44b66cb6dde1ceb63590525fc73: C16 starts keyword/vector channels independently with bounded deadlines. Retired codewiki/summary-action and close-log paths need no replay. |
 
 Batch totals: **5 delivered, 3 intentionally superseded, 7 missing**.
-Cumulative totals: **16 delivered, 10 intentionally superseded, 19 missing**;
+Cumulative totals: **16 delivered, 9 intentionally superseded, 20 missing**;
 **44 tasks remain**. These are source classifications, not fresh test passes,
 installed registry assertions or live activation receipts. B11’s explicit
 preservation of archival-summary behavior does not withdraw independent prompt
@@ -3837,8 +3837,10 @@ retained as partial missing findings even when their generation interfaces retir
 
 ### Batch 3 reproducible report validation
 
-Run the following focused source/report check from this seat’s worktree. It uses
-the immutable audit cache already present here; it runs no runtime test suite.
+Run this focused source/report check from any checkout containing this report
+and its historical Git objects. It derives the fixed inventory from the committed
+original table and per-commit proof sections; no ignored cache is required. It runs
+no runtime test suite.
 
 ```bash
 uv run python - <<'PY'
@@ -3852,18 +3854,26 @@ from pathlib import Path
 
 PIN = "4ccb3e966ed18fe13cd9f268d55143128d034048"
 REPORT = Path(".gobby/plans/research/closed-unlanded-audit-2026-10.md").read_text()
-CACHE = json.loads(Path(".gobby/audit-cache-24076.json").read_text())
 EXCLUDE = {23201, 23252, 23304, 23345, 23519, 23626, 23269}
 
 def git(*args):
     return subprocess.check_output(["/usr/bin/git", *args])
 
+original = REPORT.split("## Every closed task with an unlanded commit\n", 1)[1].split("\n## Per-commit", 1)[0]
+proof = REPORT.split("## Per-commit supersession and recovery evidence", 1)[1].split("## Every closed task", 1)[0]
+needs_inspection = {
+    sha for sha, body in re.findall(r"### `([0-9a-f]{40})`\n(.*?)(?=\n### `|\Z)", proof, re.S)
+    if "\nMissing linked revision, semantic supersession not proven." in body
+}
 inventory = []
-for task in CACHE["tasks"]:
-    oids = [CACHE["status"].get(raw, {}).get("oid") for raw in task["commits"]]
-    oids = [oid for oid in oids if CACHE["supersession"].get(oid, {}).get("verdict") == "needs_inspection"]
-    if oids and task["seq_num"] not in EXCLUDE:
-        inventory.append((task, oids))
+for line in original.splitlines():
+    if not line.startswith("| #") or not line.endswith("Missing linked revision, semantic supersession not proven |"):
+        continue
+    columns = line.strip("| ").split(" | ")
+    seq_num = int(re.match(r"#(\d+)", columns[0])[1])
+    oids = [oid for oid in re.findall(r"`([0-9a-f]{40})`", columns[2]) if oid in needs_inspection]
+    if oids and seq_num not in EXCLUDE:
+        inventory.append(({"seq_num": seq_num, "closed_at": columns[1]}, oids))
 inventory.sort(key=lambda row: (row[0]["closed_at"] or "", row[0]["seq_num"]), reverse=True)
 assert len(inventory) == 89
 batch = REPORT.split("## Semantic recovery review: batch 3", 1)[1]
@@ -3881,8 +3891,8 @@ path_rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (\d+) \| (\d+) \|
 assert len(path_rows) == 15
 for (n, prefix, present, absent), (task, oids) in zip(path_rows, inventory[30:45], strict=True):
     assert int(n) == task["seq_num"] and prefix == oids[0][:10]
-    paths = CACHE["changed_paths"][oids[0]]
-    found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{row['path']}"], capture_output=True).returncode == 0 for row in paths)
+    paths = git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", oids[0]).decode().splitlines()
+    found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{path}"], capture_output=True).returncode == 0 for path in paths)
     assert (found, len(paths)-found) == (int(present), int(absent))
     assert not git("for-each-ref", f"--contains={oids[0]}")
 for task, oids in inventory[30:45]:
@@ -3913,5 +3923,19 @@ excerpt hashes, 15 touched-path/ref inventories, seven missing full-SHA referral
 four replacement ancestors, six exact live prompt losses, and Markdown/footer.
 The focused AST check also confirms the five missing db annotations. Whitespace
 check passed. No full suite or heavy command ran.
+
+### Batch 3 review follow-up
+
+LOW-1 is corrected by the cache-independent validator above. The original committed
+208-task table and 121 unproven per-commit records reconstruct the same 89-task
+inventory, newest first; historical Git derives each changed-path inventory.
+The ignored cache remains unmodified and uncommitted.
+
+LOW-2 is corrected in batch 2's #21794 **Handoff rollout and replay qualification**
+row and cumulative totals. Its historical query documentation is missing alongside
+#21792 **Read-only handoff queries**; #24121 **Handoff retrieval recovery** owns both.
+The old replay-only artifacts and generated-recovery guidance remain retired.
+This correction changes the 45 classified tasks to **16 delivered, 9 intentionally
+superseded, 20 missing**; **44 tasks remain**. Batch 4 research is in progress.
 
 _Last verified: 2026-10-12_
