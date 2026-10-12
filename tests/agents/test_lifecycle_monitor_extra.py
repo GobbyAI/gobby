@@ -577,7 +577,7 @@ class TestLoopPromptEscalation:
         runtime = _runtime_of(monitor)
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         runtime.snapshot_text = "stuck in a loop\nContinue? (y/n)"
 
         handled = await monitor.check_loop_prompts()
@@ -598,7 +598,7 @@ class TestLoopPromptEscalation:
         runtime = _runtime_of(monitor)
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         runtime.snapshot_text = "stuck in a loop\nContinue? (y/n)"
 
         # Pre-load 2 dismissals
@@ -629,7 +629,7 @@ class TestLoopPromptEscalation:
         runtime = _runtime_of(monitor)
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         runtime.snapshot_text = "It seems like I'm stuck in a loop.\n"
 
         with patch.object(
@@ -658,7 +658,7 @@ class TestLoopPromptEscalation:
         monitor._terminal_prompt_monitor._monotonic = lambda: now
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         runtime.snapshot_text = "Potential loop detected\nContinue? (y/n)"
 
         assert await monitor.check_loop_prompts() == 1
@@ -683,7 +683,7 @@ class TestLoopPromptEscalation:
         monitor._terminal_prompt_monitor._monotonic = lambda: now
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         runtime.snapshot_effects = [
             "Potential loop detected\nContinue? (y/n)",
             "It seems to be stuck\nContinue? (y/n)",
@@ -709,7 +709,7 @@ class TestLoopPromptEscalation:
         runtime = _runtime_of(monitor)
 
         run = self._run()
-        mock_run_mgr.list_active_for_machine.return_value = [run]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [run]
         pane_output = "Potential loop detected\nContinue? (y/n)"
         runtime.snapshot_text = pane_output
         runtime.write_failures = [True]
@@ -755,7 +755,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = "Approval required\nPress Enter to approve this command\n"
 
         handled = await monitor.check_approval_prompts()
@@ -769,7 +769,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = (
             "Tool call needs your approval. Reason: Request contains encrypted reasoning "
             "and a tool call; requires user confirmation to proceed.\n"
@@ -789,7 +789,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = "Approval required\nPress Enter to approve this command\n"
 
         handled_1 = await monitor.check_approval_prompts()
@@ -804,7 +804,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_effects = [
             "Approval required\nPress Enter to approve command A\n",
             "Approval required\nPress Enter to approve command B\n",
@@ -830,7 +830,7 @@ class TestApprovalPromptAutoEnter:
             terminal_services=_memory_terminal_services("gobby-approval"),
         )
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
 
         handled = await monitor.check_approval_prompts()
 
@@ -843,7 +843,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(run_id="run-no-tmux", terminal_id=None)
         ]
 
@@ -906,7 +906,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, "gobby-codex", "gobby-claude")
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(run_id="run-codex", terminal_id="gobby-codex", provider="codex"),
             self._run(run_id="run-claude", terminal_id="gobby-claude", provider="claude"),
         ]
@@ -926,7 +926,7 @@ class TestPeriodicAgentTerminalEnter:
             auto_enter_approval_prompts=False,
         )
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = (
             "Tool call needs your approval.\n"
             "› 1. Allow   Run the tool and continue.\n"
@@ -949,7 +949,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, "gobby-trust", "gobby-loop", "gobby-normal")
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(run_id="run-trust", terminal_id="gobby-trust"),
             self._run(run_id="run-loop", terminal_id="gobby-loop"),
             self._run(run_id="run-normal", terminal_id="gobby-normal"),
@@ -1005,7 +1005,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, db=temp_db)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(child_session_id=child.id),
         ]
 
@@ -1020,7 +1020,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, "gobby-claude", interval=30)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(run_id="run-claude", terminal_id="gobby-claude", provider="claude"),
         ]
         runtime.snapshot_text = (
@@ -1042,7 +1042,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = "Press up to edit queued messages\n"
 
         result = await monitor.check_queued_continuation_prompts()
@@ -1055,7 +1055,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, interval=30)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         current_time = 100.0
         monitor._terminal_prompt_monitor._monotonic = lambda: current_time
 
@@ -1073,7 +1073,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, interval=30)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = "Approval required\nPress Enter to approve command A\n"
         current_time = 100.0
         monitor._terminal_prompt_monitor._monotonic = lambda: current_time
@@ -1091,7 +1091,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, interval=30)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
         runtime.snapshot_text = "Which probe path should I take?\n❯ 1. alpha\n  2. beta\n"
 
         handled = await monitor.check_periodic_enters()
@@ -1129,7 +1129,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, interval=30)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run(provider=provider)]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run(provider=provider)]
         monitor._terminal_prompt_monitor._monotonic = lambda: 100.0
         runtime.snapshot_text = draft_pane
 
@@ -1148,7 +1148,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr, enabled=False)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine_summary.return_value = [self._run()]
 
         handled = await monitor.check_periodic_enters()
 
@@ -1160,7 +1160,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         monitor = self._monitor(mock_run_mgr)
         runtime = _runtime_of(monitor)
-        mock_run_mgr.list_active_for_machine.return_value = [
+        mock_run_mgr.list_active_for_machine_summary.return_value = [
             self._run(run_id="run-no-tmux", terminal_id=None)
         ]
 
