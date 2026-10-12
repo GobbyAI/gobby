@@ -32,7 +32,6 @@ class _Branch:
 @dataclass
 class ShellDirectoryState:
     cwd: str | None
-    shell: str = "bash"
     stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
@@ -45,6 +44,8 @@ class ShellDirectoryState:
     altered_loops: set[int] = field(default_factory=set)
     loops_opened: int = 0
     group_isolation: dict[int, bool] = field(default_factory=dict)
+    group_last_pipeline: set[int] = field(default_factory=set)
+    pipeline_group_changes: list[bool | None] = field(default_factory=list)
     group_functions: dict[int, str] = field(default_factory=dict)
     function_headers: dict[int, int] = field(default_factory=dict)
     directory_functions: set[str] = field(default_factory=set)
@@ -109,18 +110,27 @@ class ShellDirectoryState:
                     ):
                         continue  # A brace argument cannot consume a later group's closer.
                     openings.append((index, id(token)))
+                    first_group = not any(
+                        prior.value == "{" and not prior.quoted
+                        for prior in segment.tokens[:position]
+                    )
+                    if segment.separator_before == "|" and first_group and function is None:
+                        self.group_last_pipeline.add(id(token))
                     self.group_isolation[id(token)] = (
-                        segment.separator_before == "|"
-                        and self.shell != "zsh"
-                        and not any(
-                            prior.value == "{" and not prior.quoted
-                            for prior in segment.tokens[:position]
-                        )
+                        segment.separator_before == "|" and first_group
                     ) or function is not None
-                elif token.value == "}" and position == 0 and openings:
+                elif (
+                    token.value == "}"
+                    and self._brace_command_position(segment.tokens[:position])
+                    and openings
+                ):
                     _, opener = openings.pop()
-                    if index + 1 < len(segments) and segments[index + 1].separator_before == "|":
-                        self.group_isolation[opener] = True
+                    if index + 1 < len(segments):
+                        after = segments[index + 1].separator_before
+                        if after == "|":
+                            self.group_isolation[opener] = True
+                        if after in {"|", "&"}:
+                            self.group_last_pipeline.discard(opener)
 
     @staticmethod
     def _brace_command_position(prefix: list[ShellToken]) -> bool:
@@ -157,7 +167,7 @@ class ShellDirectoryState:
         return True
 
     def pipeline_stage(self, before: str | None, after: str | None) -> bool:
-        return (before == "|" and not self.group_entry and self.shell != "zsh") or after == "|"
+        return (before == "|" and not self.group_entry) or after == "|"
 
     def end_list(self, before: str | None) -> None:
         """A cd that ran only after another command leaves cwd unknown once its list ends."""
@@ -288,6 +298,9 @@ class ShellDirectoryState:
             elif word == "{":
                 isolated = self.group_isolation.get(id(tokens[0]), False)
                 function = self.group_functions.get(id(tokens[0]))
+                self.pipeline_group_changes.append(
+                    False if id(tokens[0]) in self.group_last_pipeline else None
+                )
                 self.groups.append(
                     (
                         self.cwd,
@@ -306,12 +319,15 @@ class ShellDirectoryState:
             elif word == "}":
                 if self.groups:
                     entry = self.groups.pop()
+                    pipeline_changed = self.pipeline_group_changes.pop()
                     self.redirection_cwd = entry[0]
                     self.group_closed = True
                     if entry[4]:
                         self.cwd, self.changed, self.branches = entry[:3]
                         self.list_conditional = entry[5]
                         self.stack = entry[6]
+                    if pipeline_changed:
+                        self.invalidate()
                 self.group_entry = False
                 self.list_ops.append(None)
             else:
@@ -415,6 +431,11 @@ class ShellDirectoryState:
         """Record directory movement in every enclosing branch."""
         self.mark_unproven()
         self.list_changed = True
+        for index in range(len(self.groups) - 1, -1, -1):
+            if self.pipeline_group_changes[index] is not None:
+                self.pipeline_group_changes[index] = True
+            if self.groups[index][4]:
+                break
         for frame in reversed(self.list_frames):
             frame[1] = True
             if frame[2]:
