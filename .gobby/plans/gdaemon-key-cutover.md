@@ -574,8 +574,8 @@ Targets:
 - `crates/gdaemon/src/front_door/challenge.rs`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers `auth` and `challenge`; `FrontDoorState` carries the auth state and `FrontDoor::handle` authenticates HTTP requests and WebSocket upgrades before dispatch or `ws::splice`
 - `crates/gdaemon/src/front_door/proxy.rs::*` — scope-reason: strips client identity headers and sets the resolved identity with the front-door secret
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` reads `GOBBY_FRONT_DOOR_SECRET` and builds the key resolver from `database_url`; `serve` takes the auth state
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains the key, identity, challenge, resolver-error, and break-glass pass-through tests; spawned `serve` children get a secret
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` generates the front-door secret and builds the key resolver from bootstrap `database_url`; `serve` takes the auth state
+- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: covers key, identity, challenge, resolver-error, break-glass pass-through, and missing bootstrap `database_url` refusal
 - `crates/gdaemon/tests/common/mod.rs::*` — scope-reason: its `serve` calls pass a test auth state
 - `crates/gdaemon/tests/heartbeat.rs::*` — scope-reason: its `serve` call passes a test auth state
 - `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: `start_front_door` passes a test auth state and a test bootstrap key; replays the version-2 corpus
@@ -631,8 +631,8 @@ Targets:
 - `crates/gterminal/tests/host_lifecycle.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `crates/gterminal/tests/host_support/mod.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `crates/gterminal/tests/terminal_theme.rs::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
-- `src/gobby/runner_front_door.py::*` — scope-reason: `FrontDoorChild` generates the per-boot secret once and passes it to every gdaemon child in `GOBBY_FRONT_DOOR_SECRET`, and the missing-gdaemon `FrontDoorStartupError` stops offering `front_door.enabled: false` as an equivalent
-- `src/gobby/runner_init/servers.py::*` — scope-reason: `_bind_runtime_grants` binds the front-door secret into `AuthService`, and `init_servers` wires the WebSocket identity callback
+- `src/gobby/runner_front_door.py::*` — scope-reason: historical startup-wrapper target, since retired; gdaemon now generates the per-boot secret and supplies it to its Python backend
+- `src/gobby/runner_init/servers.py::*` — scope-reason: `_bind_runtime_grants` binds the native-supplied `GOBBY_FRONT_DOOR_SECRET` into `AuthService`, and `init_servers` wires the WebSocket identity callback
 - `src/gobby/servers/auth_service.py::*` — scope-reason: adds the front-door identity check; removes `token_file`, `verify_bearer`, `verify_ws_token`, `refresh`, `_token_hash_snapshot`, `local_token`, and the `X-Gobby-Local-Token` alias
 - `src/gobby/servers/middleware/auth.py::*` — scope-reason: `_LOGIN_GUIDANCE` names `gobby auth login`; `dispatch` carries the forwarded identity
 - `src/gobby/servers/websocket/auth.py::*` — scope-reason: `AuthMixin._authenticate` passes the handshake headers to the identity callback
@@ -840,14 +840,13 @@ examples are 1.5; the CLI is 1.4.
   a node acquires grants only once #23274 (Node channel, relay backend, and
   `/api/machines`) relays them. 1.3.4 proves that the hub validates a node
   grant against the forwarded machine; node acquisition is out of scope.
-- **Per-boot secret.** `FrontDoorChild.__init__` sets
-  `self.secret = secrets.token_urlsafe(32)`; `_popen` adds
-  `GOBBY_FRONT_DOOR_SECRET` to the child env, and a respawn reuses it.
-  `serve.rs::run` refuses to start when the variable is missing or empty
-  (Decision 6). `_bind_runtime_grants` passes
-  `runner.front_door_child.secret` (or `None`) to
-  `AuthService.bind_runtime(front_door_secret=…)`. 5.2 of the plan of record
-  later moves generation into gdaemon.
+- **Per-boot secret.** `serve.rs::run` generates 32 random bytes and encodes
+  them with URL-safe base64 without padding. `RuntimeState::prepare` passes
+  the secret to the Python backend through `GOBBY_FRONT_DOOR_SECRET`.
+  `_bind_runtime_grants` reads that environment variable and passes it to
+  `AuthService.bind_runtime(front_door_secret=…)`. Hub runtime ownership
+  requires bootstrap `database_url`; a missing value reports
+  `runtime ownership requires bootstrap database_url` (Decision 6).
 - **Python trusts the front door.** `AuthService` gains
   `_front_door_identity(request)`, which returns user, machine, and key ids
   only when `X-Gobby-Front-Door` equals the bound secret (constant time) and
