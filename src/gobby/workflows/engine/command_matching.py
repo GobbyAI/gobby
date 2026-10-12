@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
-from gobby.hooks._normalization_compound import case_arm_tokens
+from gobby.hooks._normalization_compound import case_arm_tokens, shell_function_bodies
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -588,6 +588,12 @@ def _subjects(
         return [command]
     # Language source has its own syntax; a variable named cat is not a data sink.
     if heredoc_source == "language" or (heredoc_source == "shell" and not scan.heredocs):
+        return [command]
+    try:
+        if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
+            command, _ = function_program
+            scan = scan_shell_command(command)
+    except ValueError:
         return [command]
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False

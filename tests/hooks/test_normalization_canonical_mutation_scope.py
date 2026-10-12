@@ -901,6 +901,7 @@ def test_combined_grammar_prefixes_preserve_write_classification(
         "cd sub && cd deeper; touch y.py",
         "if false && cd sub; then touch y.py; fi",
         "f() { cd sub; }; f; touch y.py",
+        "f(){ cd sub; }; f; touch y.py",
         "f() { cd sub; }; false || f; touch y.py",
         "if true; then f() { cd sub; }; fi; f; touch y.py",
         "while true; do f() { cd sub; }; break; done; f; touch y.py",

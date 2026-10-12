@@ -241,6 +241,103 @@ GEM_PUSH = r"(^|(?<=[;&|(`\n]))\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gem\s+push\b
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
+    "command",
+    [
+        "f() (case x in x) gem push x;; esac); f",
+        "f() { gem push x; }; f",
+        "function f (case x in x) gem push x;; esac); f",
+        "f() (gem push x); f",
+        "f () (case x in x) gem push x;; esac); f",
+        "function f() { gem push x; }; f",
+        "if true; then f() (case x in x) gem push x;; esac); f; fi",
+        "f() { g() (case x in x) gem push x;; esac); g; }; f",
+        "f(){ gem push x; }; f",
+        "f()(case x in x) gem push x;; esac); f",
+        "if f() { gem push x; }; f; then :; fi",
+        "while f() { gem push x; }; f; do break; done",
+        "case x in x) f() { gem push x; }; f;; esac",
+        "! f() { gem push x; }; f",
+        "f() while gem push x; do break; done; f",
+        "f() if gem push x; then :; fi; f",
+        "f() case x in x) gem push x;; esac; f",
+        "f() { gem push x; echo {; }; f",
+        "my-func() { gem push x; }; my-func",
+        "a.b() { gem push x; }; a.b",
+        "a:b() { gem push x; }; a:b",
+        "time f() { gem push x; }; f",
+        "time -p f() { gem push x; }; f",
+    ],
+)
+def test_invoked_function_body_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '%s' 'f() { gem push x; }; f'",
+        "f() { printf '%s' 'gem push x'; }; f",
+        "cat <<'EOF'\nf() { gem push x; }; f\nEOF",
+        'echo "f() { gem push x; }"',
+    ],
+)
+def test_function_body_literal_does_not_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.timeout(5)
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("definition_count", [40, 300])
+def test_many_function_definitions_match_blocks(mask_quoted: bool, definition_count: int) -> None:
+    definitions = [f"f{i}() {{ echo {i}; }}" for i in range(definition_count - 1)]
+    last = f"f{definition_count - 1}"
+    command = "; ".join([*definitions, f"{last}() {{ gem push x; }}", last])
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case b in a) f() { :; };; b) g() { gem push x; };; esac; g",
+        "case b in (a) f() { :; };; (b) g() { gem push x; };; esac; g",
+        "case b in a) function f { :; };; b) function g { gem push x; };; esac; g",
+    ],
+)
+def test_later_case_arm_function_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.timeout(5)
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("wrapper", ["echo $({body})", "cat <({body})", "( {body} )"])
+def test_nested_wrappers_with_many_functions_match_blocks(mask_quoted: bool, wrapper: str) -> None:
+    command = "; ".join([*(f"p{j}() {{ echo {j}; }}" for j in range(300)), "gem push x"])
+    for i in range(8):
+        command = f"f{i}() {{ :; }}; " + wrapper.format(body=command)
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("levels", [8, 9, 10])
+def test_deep_substitution_function_matches_blocks(mask_quoted: bool, levels: int) -> None:
+    command = "f() { gem push x; }; f"
+    for _ in range(levels):
+        command = f"echo $( {command} )"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_nine_nested_function_definitions_match_blocks(mask_quoted: bool) -> None:
+    command = "gem push x"
+    for index in range(9):
+        command = f"f{index}() {{ {command}; }}; f{index}"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
     "command,expected",
     [
         pytest.param('gem push x ; echo "\\', True, id="simple-match"),

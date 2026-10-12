@@ -20,6 +20,7 @@ from gobby.hooks._normalization_compound import (
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
+    shell_function_bodies,
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_env import (
@@ -149,8 +150,32 @@ def _normalize_shell_tool_metadata(
     entry = (exported_git_selector.get(), _script_reads_left.get())
     unstable: frozenset[int] = frozenset()
     try:
+        bodies: dict[int, str] = {}
+        unknown = False
+        try:
+            scan = scan_shell_command(command)
+        except ValueError:
+            pass
+        else:
+            if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
+                command, bodies = function_program
+                first = min(bodies)
+                unknown = any(
+                    token.value in {"cd", "pushd", "popd", "eval"}
+                    for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
+                    if start > first
+                )
+        opaque = unknown and any(command[start] != "{" for start in bodies)
+        if opaque:
+            cwd, base_cwd = UNRESOLVED_DIRECTORY, None
         while True:
-            directory = ShellDirectoryState(cwd, unstable_loops=unstable)
+            directory = ShellDirectoryState(
+                cwd,
+                unstable_loops=unstable,
+                function_bodies=bodies,
+                function_scope_unknown=unknown,
+                opaque=opaque,
+            )
             result = _classify_shell_command(
                 command, directory=directory, depth=depth, base_cwd=base_cwd
             )
@@ -207,7 +232,7 @@ def _classify_shell_command(
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
-    directory.prepare_groups(segments)
+    directory.prepare_groups(segments, spans_by_token)
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
