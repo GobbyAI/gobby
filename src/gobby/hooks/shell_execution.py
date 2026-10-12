@@ -44,6 +44,7 @@ _DIRECTORY_WRAPPERS = frozenset({"env", "sudo"})
 @dataclass(frozen=True)
 class ShellExecution:
     command: str | None = None
+    shell: str | None = None
     script_file: bool = False
     # The word naming the file a shell reads its program from, when that file is
     # known; a script file without one stays opaque.
@@ -94,13 +95,15 @@ def path_execution(words: list[str], base: Path | None) -> ShellExecution | None
     first_line = header.split(b"\n", 1)[0]
     if header[:4] in _NATIVE_EXECUTABLE_MAGIC and b"\x00" in first_line:
         return None
+    interpreter: str | None = None
     if first_line.startswith(b"#!"):
-        interpreter = _shebang_interpreter(first_line[2:])
-        if interpreter is None:
+        parsed_interpreter = _shebang_interpreter(first_line[2:])
+        if parsed_interpreter is None:
             return ShellExecution(script_file=True)
+        interpreter = parsed_interpreter
         if interpreter not in _SHELLS:
             return None
-    return ShellExecution(script_file=True, script_word=str(path))
+    return ShellExecution(script_file=True, script_word=str(path), shell=interpreter)
 
 
 def _shebang_interpreter(line: bytes) -> str | None:
@@ -171,10 +174,15 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
                 program = words[index + 1 : index + 3]
                 if program[:1] == ["--"]:
                     program = program[1:]
-                return ShellExecution(command=program[0]) if program else ShellExecution()
+                return (
+                    ShellExecution(command=program[0], shell=shell_command_name(words[0]))
+                    if program
+                    else ShellExecution()
+                )
         index += 1
     operand = index < len(words) and not stdin_program
     return ShellExecution(
         script_file=stdin_program or index < len(words) or stdin,
         script_word=words[index] if operand else None,
+        shell=shell_command_name(words[0]),
     )

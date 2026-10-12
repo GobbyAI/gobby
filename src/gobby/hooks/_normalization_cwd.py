@@ -32,6 +32,7 @@ class _Branch:
 @dataclass
 class ShellDirectoryState:
     cwd: str | None
+    shell: str = "bash"
     stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
@@ -103,17 +104,60 @@ class ShellDirectoryState:
                             self.group_functions[id(token)] = function
                             self.function_headers[id(header[0])] = len(header)
                             break
+                    if function is None and not self._brace_command_position(
+                        segment.tokens[:position]
+                    ):
+                        continue  # A brace argument cannot consume a later group's closer.
                     openings.append((index, id(token)))
                     self.group_isolation[id(token)] = (
-                        position == 0 and segment.separator_before == "|"
+                        segment.separator_before == "|"
+                        and self.shell != "zsh"
+                        and not any(
+                            prior.value == "{" and not prior.quoted
+                            for prior in segment.tokens[:position]
+                        )
                     ) or function is not None
                 elif token.value == "}" and position == 0 and openings:
                     _, opener = openings.pop()
                     if index + 1 < len(segments) and segments[index + 1].separator_before == "|":
                         self.group_isolation[opener] = True
 
+    @staticmethod
+    def _brace_command_position(prefix: list[ShellToken]) -> bool:
+        """Recognize the control prefixes consumed before a command-position brace."""
+        index = 0
+        while index < len(prefix):
+            token = prefix[index]
+            if token.quoted:
+                return False
+            if token.value == "time":
+                index += 1
+                for option in ("-p", "--"):
+                    if (
+                        index < len(prefix)
+                        and not prefix[index].quoted
+                        and prefix[index].value == option
+                    ):
+                        index += 1
+                continue
+            if token.value not in {
+                "{",
+                "}",
+                "if",
+                "elif",
+                "then",
+                "else",
+                "do",
+                "while",
+                "until",
+                "!",
+            }:
+                return False
+            index += 1
+        return True
+
     def pipeline_stage(self, before: str | None, after: str | None) -> bool:
-        return (before == "|" and not self.group_entry) or after == "|"
+        return (before == "|" and not self.group_entry and self.shell != "zsh") or after == "|"
 
     def end_list(self, before: str | None) -> None:
         """A cd that ran only after another command leaves cwd unknown once its list ends."""

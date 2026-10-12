@@ -131,10 +131,16 @@ from gobby.hooks.shell_execution import (
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 # Script bodies the current top-level command may still read; none outside one.
 _script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
+_active_shell: ContextVar[str] = ContextVar("_active_shell", default="bash")
 
 
 def _normalize_shell_tool_metadata(
-    command: str, *, cwd: str | None = None, depth: int = 0, base_cwd: Path | None = None
+    command: str,
+    *,
+    cwd: str | None = None,
+    depth: int = 0,
+    base_cwd: Path | None = None,
+    shell: str | None = None,
 ) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments.
 
@@ -143,12 +149,13 @@ def _normalize_shell_tool_metadata(
     script-read budget its nested calls share.
     """
     selectors = exported_git_selector.set(exported_git_selector.get() if depth else False)
+    shell_context = _active_shell.set(shell if shell is not None else _active_shell.get())
     budget = _script_reads_left.set(SCRIPT_READ_BUDGET) if not depth else None
     entry = (exported_git_selector.get(), _script_reads_left.get())
     unstable: frozenset[int] = frozenset()
     try:
         while True:
-            directory = ShellDirectoryState(cwd, unstable_loops=unstable)
+            directory = ShellDirectoryState(cwd, shell=_active_shell.get(), unstable_loops=unstable)
             result = _classify_shell_command(
                 command, directory=directory, depth=depth, base_cwd=base_cwd
             )
@@ -161,6 +168,7 @@ def _normalize_shell_tool_metadata(
         if budget is not None:
             _script_reads_left.reset(budget)
         exported_git_selector.reset(selectors)
+        _active_shell.reset(shell_context)
 
 
 def _classify_shell_command(
@@ -722,7 +730,7 @@ def _classify_shell_segment_without_redirection(
             return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
         if command is not None:
             nested = _normalize_shell_tool_metadata(
-                command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd
+                command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd, shell=execution.shell
             )
             if script is not None:
                 nested["canonical_script_bodies"] = sorted(
@@ -885,7 +893,12 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     elif tool_name == "Bash":
         command = _get_command_text(tool_input)
         if command:
-            metadata = _normalize_shell_tool_metadata(command, base_cwd=current_tool_cwd(data))
+            shell = tool_input.get("shell") if isinstance(tool_input, dict) else None
+            metadata = _normalize_shell_tool_metadata(
+                command,
+                base_cwd=current_tool_cwd(data),
+                shell=shell_command_name(shell) if isinstance(shell, str) else "bash",
+            )
     elif "mcp_server" in data and "mcp_tool" in data:
         metadata = _build_canonical_tool_metadata("mcp")
 

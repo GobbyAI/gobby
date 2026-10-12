@@ -38,6 +38,70 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
     return data
 
 
+@pytest.mark.parametrize("command", ["cd sub || touch x.py", "cd sub && make & touch y.py"])
+def test_chain_operator_before_newline_keeps_operator(tmp_path: Path, command: str) -> None:
+    multiline = command.replace(" touch", "\n touch")
+    inline_data = _metadata(command, tmp_path)
+    multiline_data = _metadata(multiline, tmp_path)
+    assert multiline_data.get("canonical_write_file_paths") == inline_data.get(
+        "canonical_write_file_paths"
+    )
+    assert multiline_data["canonical_repo_mutation_scope_unknown"] is True
+    assert inline_data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("argument", ["{", "'{'"])
+@pytest.mark.parametrize("prefix", ["", "! ", "time ", "time -p "])
+def test_brace_argument_does_not_open_group(tmp_path: Path, argument: str, prefix: str) -> None:
+    data = _metadata(f"{prefix}{{ cd sub; echo {argument}; }} | cat; touch y.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["y.py"]
+
+
+@pytest.mark.parametrize("shell, expected", [("/bin/zsh", "sub/z.py"), ("/bin/bash", "z.py")])
+def test_zsh_last_pipeline_stage_cd(tmp_path: Path, shell: str, expected: str) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "echo x | { cd sub; }; touch z.py",
+            "cwd": str(tmp_path),
+            "shell": shell,
+        },
+        "project_path": str(tmp_path),
+    }
+    _set_canonical_tool_metadata(data)
+    assert data["canonical_write_file_paths"] == [expected]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("echo x | { cd sub; }; touch z.py", "sub/z.py"),
+        ("echo x | cd sub; touch z.py", "sub/z.py"),
+        ("echo x | { cd sub; } | cat; touch z.py", "z.py"),
+        ("{ cd sub; } | cat; touch z.py", "z.py"),
+        ("echo x | { cd sub; echo {; }; touch z.py", "sub/z.py"),
+    ],
+)
+def test_explicit_zsh_pipeline_directory(tmp_path: Path, body: str, expected: str) -> None:
+    data = _metadata(f"zsh -c '{body}'", tmp_path)
+    assert data["canonical_write_file_paths"] == [expected]
+
+
+@pytest.mark.parametrize("invocation", ["zsh probe.sh", "./probe.sh"])
+def test_zsh_script_pipeline_directory(tmp_path: Path, invocation: str) -> None:
+    script = tmp_path / "probe.sh"
+    script.write_text("#!/bin/zsh\necho x | { cd sub; }; touch z.py\n")
+    data = _metadata(invocation, tmp_path)
+    assert data["canonical_write_file_paths"] == ["sub/z.py"]
+
+
+def test_headerless_script_inherits_zsh_pipeline_semantics(tmp_path: Path) -> None:
+    script = tmp_path / "probe.sh"
+    script.write_text("echo x | { cd sub; }; touch z.py\n")
+    data = _metadata("zsh -c './probe.sh'", tmp_path)
+    assert data["canonical_write_file_paths"] == ["sub/z.py"]
+
+
 @pytest.mark.parametrize(
     "command",
     [
