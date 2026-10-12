@@ -232,6 +232,7 @@ async def test_explicit_route_to_an_expired_session_says_so_instead_of_the_respo
 
     manager.send_message.assert_awaited_once()
     assert manager.send_message.await_args.args[1] == _EXPIRED_REPLY
+    assert manager.send_message.await_args.kwargs["session_id"] is None
     mailbox.send.assert_not_awaited()
 
 
