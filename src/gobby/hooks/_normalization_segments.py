@@ -59,8 +59,8 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     separator_before: str | None = None
     for token in tokens:
         if not token.quoted and token.value in _SHELL_CHAIN_TOKENS:
-            # Newlines after an operator continue its pipeline or conditional chain.
-            if not current and token.value == "\n" and separator_before in {"|", "&&", "||"}:
+            # Preserve pipeline, conditional and background operators across trailing newlines.
+            if not current and token.value == "\n" and separator_before in {"|", "&&", "||", "&"}:
                 continue
             if current:
                 segments.append(_ShellSegment(current, separator_before))

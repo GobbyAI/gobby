@@ -253,7 +253,7 @@ def test_compound_cwd_followups(tmp_path: Path, command: str, expected: list[str
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
-@pytest.mark.parametrize("separator", ["|", "&&", "||"])
+@pytest.mark.parametrize("separator", ["|", "&&", "||", "&"])
 @pytest.mark.parametrize("continuation", ["\n", " # c\n", "\n\n"])
 def test_chain_newline_preserves_cwd_scope(
     tmp_path: Path, separator: str, continuation: str
@@ -269,7 +269,7 @@ def test_chain_newline_preserves_cwd_scope(
     assert continued.get("canonical_repo_mutation_scope_unknown") == single_line.get(
         "canonical_repo_mutation_scope_unknown"
     )
-    if separator == "|":
+    if separator in {"|", "&"}:
         assert continued["canonical_file_paths"] == ["e.py"]
 
 
@@ -2572,6 +2572,8 @@ def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: 
     ("command", "expected"),
     [
         ("case x in x) cd sub;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub;&\n d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub;& # fallthrough\n d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub;;& d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub  # go\n;& d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub  # go\n;;& d) touch e.py;; esac", "sub/e.py"),
