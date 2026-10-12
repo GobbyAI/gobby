@@ -140,7 +140,15 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
         ):
             tick = char == "`"
             start = index + (1 if tick else 2)
-            end = _substitution_end(command, start, tick, depth)
+            try:
+                end = _substitution_end(command, start, tick, depth)
+            except ValueError as error:
+                if not data or str(error) != "Unclosed shell substitution":
+                    raise
+                # Inspect incomplete bodies too: data can still contain a launch.
+                expansions.append(command[start:])
+                output.append("__gobby_expansion__")
+                break
             marker = (
                 f"__gobby_process_input_{len(expansions)}__"
                 if command.startswith("<(", index)

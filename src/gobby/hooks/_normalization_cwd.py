@@ -11,6 +11,7 @@ from gobby.hooks._normalization_segments import _ShellSegment, _split_shell_segm
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _apply_cd,
+    _literal_cd_target,
     _strip_shell_wrappers,
     scan_shell_command,
 )
@@ -25,11 +26,13 @@ class _Branch:
     in_condition: bool = False
     condition_altered: bool = False
     loop: int | None = None
+    stack: tuple[str | None, ...] | None = ()
 
 
 @dataclass
 class ShellDirectoryState:
     cwd: str | None
+    stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
     list_conditional: bool = False
@@ -44,9 +47,11 @@ class ShellDirectoryState:
     group_functions: dict[int, str] = field(default_factory=dict)
     function_headers: dict[int, int] = field(default_factory=dict)
     directory_functions: set[str] = field(default_factory=set)
-    groups: list[tuple[str | None, bool, list[_Branch], str | None, bool, bool]] = field(
-        default_factory=list
-    )
+    groups: list[
+        tuple[
+            str | None, bool, list[_Branch], str | None, bool, bool, tuple[str | None, ...] | None
+        ]
+    ] = field(default_factory=list)
     group_entry: bool = False
     redirection_cwd: str | None = None
     group_closed: bool = False
@@ -182,7 +187,7 @@ class ShellDirectoryState:
             self._close("case")
             self.list_ops.append(None)
         elif not first.quoted and first.value == "case":
-            self.branches.append(_Branch("case", self.cwd))
+            self.branches.append(_Branch("case", self.cwd, stack=self.stack))
             self.list_ops.append(False)
         elif re.search(r";;(?!&)", gap):
             self._restore("case")
@@ -195,7 +200,7 @@ class ShellDirectoryState:
                 continue
             word = tokens[0].value
             if word == "if":
-                self.branches.append(_Branch("if", self.cwd, in_condition=True))
+                self.branches.append(_Branch("if", self.cwd, in_condition=True, stack=self.stack))
                 self.list_ops.append(False)
             elif word in {"else", "elif"}:
                 self._restore("if")
@@ -203,6 +208,7 @@ class ShellDirectoryState:
                     branch = self.branches[-1]
                     if branch.condition_altered:
                         self.cwd = UNRESOLVED_DIRECTORY
+                        self.stack = None
                     branch.in_condition = word == "elif"
             elif word == "fi":
                 self._close("if")
@@ -211,9 +217,12 @@ class ShellDirectoryState:
                 if self.branches and self.branches[-1].kind == "if":
                     branch = self.branches[-1]
                     branch.cwd = self.cwd
+                    branch.stack = self.stack
                     branch.in_condition = False
             elif word in {"for", "while", "until"}:
-                self.branches.append(_Branch("loop", self.cwd, loop=self.loops_opened))
+                self.branches.append(
+                    _Branch("loop", self.cwd, loop=self.loops_opened, stack=self.stack)
+                )
                 self.list_ops.append(False)
                 self.loops_opened += 1
                 if word == "for":
@@ -243,6 +252,7 @@ class ShellDirectoryState:
                         function,
                         isolated,
                         self.list_conditional,
+                        self.stack,
                     )
                 )
                 if isolated:
@@ -257,6 +267,7 @@ class ShellDirectoryState:
                     if entry[4]:
                         self.cwd, self.changed, self.branches = entry[:3]
                         self.list_conditional = entry[5]
+                        self.stack = entry[6]
                 self.group_entry = False
                 self.list_ops.append(None)
             else:
@@ -268,24 +279,69 @@ class ShellDirectoryState:
         if self.branches and self.branches[-1].kind == "loop":
             if self.branches[-1].loop in self.unstable_loops:
                 self.cwd = UNRESOLVED_DIRECTORY
+                self.stack = None
                 self.mark_unproven()
 
     def change(self, target: str | None) -> None:
         self.cwd = _apply_cd(self.cwd, target) if target is not None else UNRESOLVED_DIRECTORY
+        if target is None:
+            self.stack = None
         self.mark_changed()
+
+    def directory_command(self, parts: list[str], *, uncertain: bool) -> None:
+        """Track literal pushes and pops; unknown stack operations lose proof."""
+        name = parts[0].rsplit("/", 1)[-1]
+        if uncertain:
+            self.invalidate()
+        elif name == "cd":
+            self.change(_literal_cd_target(parts))
+        elif name == "popd" and parts[1:] in ([], ["--"]) and self.stack:
+            self.cwd, self.stack = self.stack[-1], self.stack[:-1]
+            self.mark_changed()
+        elif name == "pushd":
+            arguments = parts[1:]
+            if arguments[:1] == ["--"]:
+                arguments = arguments[1:]
+            target = _literal_cd_target(["cd", *arguments])
+            if len(arguments) == 1 and target is not None and not re.fullmatch(r"[+-]\d+", target):
+                if self.stack is not None:
+                    self.stack = (*self.stack, self.cwd)
+                self.change(target)
+            elif not arguments and self.stack:
+                previous = self.cwd
+                self.cwd = self.stack[-1]
+                self.stack = (*self.stack[:-1], previous)
+                self.mark_changed()
+            else:
+                self.invalidate()
+        else:
+            self.invalidate()
 
     def invalidate(self) -> None:
         self.cwd = UNRESOLVED_DIRECTORY
+        self.stack = None
         self.mark_changed()
 
     def apply_opaque_change(self, parts: list[str]) -> None:
         """Calls and eval may change cwd without a provable literal exit directory."""
-        if self._changes_directory(parts):
+        if self._clears_stack(parts):
+            self.stack = None
+            self.mark_changed()
+        elif self._changes_directory(parts):
             self.change(None)
+
+    @staticmethod
+    def _clears_stack(parts: list[str]) -> bool:
+        return bool(parts and parts[0] == "dirs") and any(
+            word.startswith("-") and not word.startswith("--") and "c" in word[1:]
+            for word in parts[1:]
+        )
 
     def _changes_directory(self, parts: list[str], depth: int = 0) -> bool:
         if not parts:
             return False
+        if self._clears_stack(parts):
+            return True
         if parts[0] in self.directory_functions:
             return True
         if parts[0] != "eval":
@@ -330,6 +386,7 @@ class ShellDirectoryState:
         if self.branches and self.branches[-1].kind == kind:
             branch = self.branches[-1]
             self.cwd = branch.cwd
+            self.stack = branch.stack
 
     def _close(self, kind: str) -> None:
         if self.branches and self.branches[-1].kind == kind:
@@ -337,3 +394,4 @@ class ShellDirectoryState:
             if branch.altered and branch.loop is not None:
                 self.altered_loops.add(branch.loop)
             self.cwd = UNRESOLVED_DIRECTORY if branch.altered else branch.cwd
+            self.stack = None if branch.altered else branch.stack

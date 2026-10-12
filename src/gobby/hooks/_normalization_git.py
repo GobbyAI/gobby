@@ -10,6 +10,7 @@ from gobby.hooks._normalization_operands import (
     _git_restore_positional_args_after,
     _grep_is_recursive,
     _search_command_paths,
+    _shell_positional_args_after,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
 from gobby.hooks._normalization_shell import (
@@ -144,16 +145,35 @@ def classify_git_mutation(
     index = 1
     operation = parts[index] if index < len(parts) else ""
     arguments = parts[index + 1 :]
+    if operation in {"rm", "mv"}:
+        skip_value = False
+        for argument in arguments:
+            if skip_value:
+                skip_value = False
+            elif argument == "--":
+                break
+            elif argument == "--pathspec-from-file" and operation == "rm":
+                skip_value = True
+            elif argument == "--dry-run" or (
+                argument.startswith("-") and not argument.startswith("--") and "n" in argument[1:]
+            ):
+                return _ShellSegmentMetadata("execute")
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})
     if operation == "apply":
         if any(flag in arguments for flag in {"--check", "--stat", "--numstat"}):
             return _ShellSegmentMetadata("execute")
         return _ShellSegmentMetadata("write", repo_mutation=True)
-    if operation in {"add", "checkout", "restore"}:
+    if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation == "add":
             candidates = _git_add_positional_args_after(parts, index + 1)
+        elif operation in {"rm", "mv"}:
+            candidates = _shell_positional_args_after(
+                parts,
+                index + 1,
+                option_args={"--pathspec-from-file"} if operation == "rm" else set(),
+            )
         elif "--" in arguments:
             candidates = arguments[arguments.index("--") + 1 :]
         elif operation == "restore":

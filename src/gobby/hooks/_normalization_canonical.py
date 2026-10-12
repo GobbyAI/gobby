@@ -26,6 +26,7 @@ from gobby.hooks._normalization_env import (
     UNRESOLVED_WRAPPER,
     env_directory_operands,
 )
+from gobby.hooks._normalization_file_commands import classify_file_command
 from gobby.hooks._normalization_git import (
     classify_git_mutation,
     classify_search_segment,
@@ -41,11 +42,8 @@ from gobby.hooks._normalization_metadata import (
 )
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
-    _file_command_operands,
-    _file_transfer_paths,
     _find_has_mutation_predicate,
     _search_command_paths,
-    _truncate_positional_paths,
 )
 from gobby.hooks._normalization_paths import (
     CANONICAL_WRITE_TOOL_NAMES as CANONICAL_WRITE_TOOL_NAMES,
@@ -66,6 +64,7 @@ from gobby.hooks._normalization_pipeline import (
     _is_read_only_pipeline_stage,
     _stdin_program_interpreter,
 )
+from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
     _pipeline_filter_output_line_bound,
@@ -76,10 +75,7 @@ from gobby.hooks._normalization_shell import (
     ShellToken,
     _contains_unexpanded_shell_reference,
     _get_command_text,
-    _has_perl_inplace_option,
-    _has_sed_inplace_option,
     _input_redirection_paths,
-    _literal_cd_target,
     _looks_file_like,
     _looks_path_target,
     _rebase_navigation_shell_paths,
@@ -114,7 +110,6 @@ from gobby.hooks.code_navigation import (
     gcode_navigation_metadata,
     line_count_from_tool_input,
     search_navigation_metadata,
-    sed_line_count,
     shell_command_name,
     source_read_navigation_metadata,
 )
@@ -335,7 +330,6 @@ def _classify_shell_command(
             )
             continue
 
-        cd_target = _literal_cd_target(parts)
         if parts[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd"}:
             if (
                 not env_directories
@@ -345,7 +339,9 @@ def _classify_shell_command(
                     segment.separator_before not in {"||", "&"} or next_separator not in {"|", "&"}
                 )
             ):
-                directory.change(None if segment.separator_before in {"||", "&"} else cd_target)
+                directory.directory_command(
+                    parts, uncertain=segment.separator_before in {"||", "&"}
+                )
                 directory.list_conditional |= (
                     segment.separator_before == "&&" or directory.in_conditional
                 )
@@ -385,6 +381,7 @@ def _classify_shell_command(
                     base_cwd=segment_base,
                     invocation_cwd=segment_cwd,
                     search_base_cwd=base_cwd,
+                    raw_by_token=raw_by_token,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
@@ -457,6 +454,7 @@ def _classify_shell_segment(
     base_cwd: Path | None = None,
     invocation_cwd: str | None = None,
     search_base_cwd: Path | None = None,
+    raw_by_token: dict[int, str] | None = None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
@@ -487,6 +485,15 @@ def _classify_shell_segment(
     if stdin_parts and shell_command_name(stdin_parts[0]) == "rg" and input_paths == ["/dev/null"]:
         shell_stdin, cwd = False, cwd or str(search_base_cwd or base_cwd or ".")
 
+    operand_tokens = strip_input_redirections(plain_tokens)
+    raw_parts = None
+    if (
+        raw_by_token
+        and stdin_parts
+        and shell_token_values(operand_tokens)[-len(stdin_parts) :] == stdin_parts
+    ):
+        raw_parts = tuple(raw_by_token[id(token)] for token in operand_tokens[-len(stdin_parts) :])
+
     gcode_metadata = gcode_navigation_metadata(plain_parts)
     if gcode_metadata and not (
         has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens)
@@ -510,10 +517,19 @@ def _classify_shell_segment(
 
     if redirection_paths:
         base_metadata = _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
+            stdin_parts,
+            cwd,
+            depth=depth,
+            shell_stdin=shell_stdin,
+            base_cwd=base_cwd,
+            raw_parts=raw_parts,
         )
         extra = _without_code_index_navigation(base_metadata.extra)
-        if base_metadata.repo_mutation and not base_metadata.paths:
+        if (
+            base_metadata.kind == "write"
+            and base_metadata.repo_mutation
+            and not base_metadata.paths
+        ):
             # A redirect names its own destination, never the opaque base write's.
             extra["_canonical_repo_mutation_scope_unknown"] = True
         if "canonical_edit_file_paths" in extra:
@@ -551,13 +567,19 @@ def _classify_shell_segment(
             ),
             extra=extra,
             repo_mutation=True,
-            unverified_write_scope=base_metadata.unverified_write_scope,
+            unverified_write_scope=base_metadata.unverified_write_scope
+            or (base_metadata.repo_mutation and not base_metadata.paths),
         )
 
     if input_paths:
         # Input redirection operands are stdin, never positional arguments.
         base_metadata = _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
+            stdin_parts,
+            cwd,
+            depth=depth,
+            shell_stdin=shell_stdin,
+            base_cwd=base_cwd,
+            raw_parts=raw_parts,
         )
         if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
@@ -592,14 +614,24 @@ def _classify_shell_segment(
             )
         # A heredoc only feeds stdin; the command still writes what it names.
         return _classify_shell_segment_without_redirection(
-            stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
+            stdin_parts,
+            cwd,
+            depth=depth,
+            shell_stdin=shell_stdin,
+            base_cwd=base_cwd,
+            raw_parts=raw_parts,
         )
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)
 
     return _classify_shell_segment_without_redirection(
-        stdin_parts, cwd, depth=depth, shell_stdin=shell_stdin, base_cwd=base_cwd
+        stdin_parts,
+        cwd,
+        depth=depth,
+        shell_stdin=shell_stdin,
+        base_cwd=base_cwd,
+        raw_parts=raw_parts,
     )
 
 
@@ -652,6 +684,7 @@ def _classify_shell_segment_without_redirection(
     depth: int = 0,
     shell_stdin: bool = False,
     base_cwd: Path | None = None,
+    raw_parts: tuple[str, ...] | None = None,
 ) -> _ShellSegmentMetadata:
     if not parts:
         return _ShellSegmentMetadata("execute")
@@ -817,99 +850,9 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "sed" and len(parts) >= 2:
-        positional = _shell_positional_args(parts)
-        candidate = positional[-1] if positional else None
-        if _has_sed_inplace_option(parts):
-            paths = [candidate] if candidate and _looks_path_target(candidate) else []
-            rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
-            return _ShellSegmentMetadata(
-                "write",
-                paths=rebased_paths,
-                write_paths=rebased_paths,
-                repo_mutation=True,
-            )
-        paths = _rebase_navigation_shell_paths(
-            [
-                item
-                for item in positional
-                if _looks_file_like(item) or _contains_unexpanded_shell_reference(item)
-            ],
-            cwd,
-        )
-        line_count = sed_line_count(parts, positional)
-        read_scope = "line_range" if line_count is not None else "full_file"
-        return _ShellSegmentMetadata(
-            "read",
-            paths=tuple(paths),
-            extra=source_read_navigation_metadata(
-                paths,
-                line_count=line_count,
-                read_scope=read_scope,
-            ),
-        )
+        return classify_sed_segment(parts, cwd, raw_parts)
 
-    if cmd == "perl" and _has_perl_inplace_option(parts):
-        positional = _shell_positional_args(parts)
-        candidate = positional[-1] if positional else None
-        paths = [candidate] if candidate and _looks_path_target(candidate) else []
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
-        return _ShellSegmentMetadata(
-            "write",
-            paths=rebased_paths,
-            write_paths=rebased_paths,
-            repo_mutation=True,
-        )
-
-    if cmd == "tee":
-        positional = _shell_positional_args(parts)
-        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
-        return _ShellSegmentMetadata(
-            "write",
-            paths=rebased_paths,
-            write_paths=rebased_paths,
-            repo_mutation=True,
-        )
-
-    if cmd == "touch":
-        operands, _, _ = _file_command_operands(cmd, parts)
-        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
-        return _ShellSegmentMetadata(
-            "write",
-            paths=rebased_paths,
-            write_paths=rebased_paths,
-            repo_mutation=True,
-        )
-
-    if cmd in {"rm", "mkdir", "rmdir"}:
-        operands, _, _ = _file_command_operands(cmd, parts)
-        paths = [candidate for candidate in operands if _looks_path_target(candidate)]
-        return _ShellSegmentMetadata(
-            "write",
-            paths=tuple(_rebase_shell_paths(paths, cwd)),
-            repo_mutation=True,
-        )
-
-    if cmd in {"cp", "mv", "install"}:
-        rebased_paths = tuple(_file_transfer_paths(cmd, parts, cwd, base_cwd))
-        return _ShellSegmentMetadata(
-            "write",
-            paths=rebased_paths,
-            write_paths=rebased_paths if cmd != "mv" else (),
-            repo_mutation=True,
-        )
-
-    if cmd == "truncate":
-        paths = _rebase_shell_paths(_truncate_positional_paths(parts), cwd)
-        return _ShellSegmentMetadata(
-            "write",
-            paths=tuple(paths),
-            write_paths=tuple(paths),
-            repo_mutation=True,
-        )
-
-    return _ShellSegmentMetadata("execute")
+    return classify_file_command(cmd, parts, cwd, base_cwd)
 
 
 def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
