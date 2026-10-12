@@ -34,7 +34,6 @@ def shell_function_bodies(
     while index < len(command):
         char = command[index]
         if not quote and not escaped and command.startswith("\\\n", index):
-            less_than_run = 0
             index += 2
             continue
         end = heredoc_ends.get(index)

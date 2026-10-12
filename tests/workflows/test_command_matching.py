@@ -410,6 +410,20 @@ def test_heredoc_comment_continuation_matches(
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat <\\\n<<-# ; gem push x",
+        "cat <<\\\n-EOF\nEOF\ngem push x\n-EOF",
+        "cat <<\\\n< x\ngem push x\nx",
+        "bash -c 'cat <\\\n<<-# ; gem push x'",
+    ],
+)
+def test_split_operator_continuation_matches(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 def test_quoted_function_header_continuation_stays_literal(mask_quoted: bool) -> None:
     command = "echo 'f\\\n() { gem push x; }'"
     assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)

@@ -51,7 +51,9 @@ _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 # opening files, so it is neither a mutating redirection nor a segment separator.
 # The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
 # ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
-_FD_DUP_SCAN_RE = re.compile(r"[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
+_FD_DUP_SCAN_RE = re.compile(
+    r"[<>](?:\\\n)*&(?:\\\n)*(?:\d(?:(?:\\\n)*\d)*|-)(?=(?:\\\n)*(?:$|[\s;&|<>]))"
+)
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -298,8 +300,9 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
         if char in ")`" and current and tokens and is_shell_output_redirection_token(tokens[-1]):
             flush(index)
 
-        operator = _scan_unquoted_shell_operator(command, index)
-        if operator:
+        scanned_operator = _scan_unquoted_shell_operator(command, index)
+        if scanned_operator:
+            operator, raw_length = scanned_operator
             start = index
             value = operator
             # Only a whole unquoted digit word adjacent to < or > is an IO_NUMBER.
@@ -315,20 +318,21 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
                 # Keep an incomplete fd duplication split and fail-closed as a write.
                 if operator == ">&":
                     operator = ">"
+                    raw_length = 1
                 value = "".join(current) + operator
                 current.clear()
                 token_start = None
             else:
                 flush(index)
             tokens.append(ShellToken(value))
-            spans.append((start, index + len(operator)))
+            spans.append((start, index + raw_length))
             if operator == "\n":
                 if pending_heredocs:
                     index = _skip_heredoc_bodies(command, index + 1, pending_heredocs, heredocs)
                     continue
             if operator in _HEREDOC_OPERATORS:
                 heredoc_operator = operator
-            index += len(operator)
+            index += raw_length
             continue
 
         if char.isspace():
@@ -616,17 +620,18 @@ def extract_heredoc_bodies(command: str) -> list[str]:
     return bodies
 
 
-def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
+def _scan_unquoted_shell_operator(command: str, index: int) -> tuple[str, int] | None:
     char = command[index]
     if char == "\n":
-        return "\n"
+        return "\n", 1
     # Every operator opens with one of these; the scanner probes
     # each character, so skip the regex and prefix checks for the rest.
     if char not in ";&|<>":
         return None
     fd_dup = _FD_DUP_SCAN_RE.match(command, index)
     if fd_dup:
-        return fd_dup.group(0)
+        raw = fd_dup.group(0)
+        return raw.replace("\\\n", ""), len(raw)
     for operator in (
         "<<<",
         "<<-",
@@ -643,8 +648,15 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
         ">&",
         ">",
     ):
-        if command.startswith(operator, index):
-            return operator
+        end = index
+        for expected in operator:
+            while command.startswith("\\\n", end):
+                end += 2
+            if end == len(command) or command[end] != expected:
+                break
+            end += 1
+        else:
+            return operator, end - index
     return None
 
 
