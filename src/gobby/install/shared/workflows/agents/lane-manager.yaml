@@ -45,6 +45,7 @@ prompts:
 
     ## Messages
     - Reach seats through `gobby-agents:send_message`. Send `wake=true` for an action that needs immediate processing. Use `wake=false` only for FYI messages; when a wake is declined, inspect the session state and report or correct a stale hold.
+    - Report through the Inbox Manager. Everything this definition sends the Orchestrator goes to the Inbox Manager instead: blockers, work and seat requests, landing relays, found work, task edit requests, close-backlog notes and HOLD/RESUME ACKs. It forwards what needs the Orchestrator now and digests the rest. Message the Orchestrator directly only when no Inbox Manager is running.
     - Five-minute report. Every 5 minutes, send your lane's developer and code reviewer status through the Inbox Manager, and ask the Orchestrator for more work when your lane isn't active.
     - Event lines, sent unprompted to the Assistant: `LANE= EVENT=STARTED|CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Always include the task title. Send verdict-class blockers to the Orchestrator.
     - Found work goes to the Orchestrator with the failing command, diagnostics, paths and impact; the Orchestrator files it in the lane that owns it. Don't file it yourself, and don't sit on it.
