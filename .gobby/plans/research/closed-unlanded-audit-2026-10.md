@@ -3555,7 +3555,7 @@ nits from batch 1 are corrected in place.
 | #22051 — Feedback synthesis report ef48b0b1 | `26aa30ddb8`, `dbe7162df6` | missing | Both historical report postimages, 237 and 236 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
 | #22039 — Dream synthesis report 49640230 | `dea81c11c8`, `f7cac386b2` | missing | Both historical report postimages, 46 and 48 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
 | #21820 — Fair archive-backed summary retries | `eb53e743b4` | delivered | Same-task landed replacement `c3e0e7d33695b9c19a01d5dd4bd996dfbb722f18` is an ancestor of the pin. B8–B10 retain exclusive (created_at,id) pagination, wraparound, cursor advance in finally even on failure, and archive-aware TranscriptReader construction. The failure ceiling also limits deterministic poison-session retries. |
-| #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | missing | Partial loss, corrected after batch 3 review: `12abc42f165a18d8f6f0ef004a7d12b985cecb03` independently documents `get_handoff_record` and `search_handoffs`, including project-default search and non-consuming historical reads. Those docs follow the missing #21792 **Read-only handoff queries** into #24121 **Handoff retrieval recovery**. Generated Source Records, provenance/coverage fields, full-source replay qualification and the two replay-only revisions remain intentionally retired under #21693 **Structured handoff delivery history** and #21887 **Incidental handoff history policy** (B11/B12). Adapt the query documentation to the surviving authored-record contract; do not restore the retired rollout wholesale. |
+| #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | missing | Partial loss, corrected after batch 3 review: `12abc42f165a18d8f6f0ef004a7d12b985cecb03` independently documents `get_handoff_record` and `search_handoffs`, including project-default search and non-consuming historical reads. Those docs follow the missing #21792 **Read-only handoff queries** into #24121 **Handoff retrieval recovery**. Original sweep holding status: no captured local/remote branch; no captured holding worktree. Exact retained archive: `refs/audit/24076/12abc42f165a18d8f6f0ef004a7d12b985cecb03`. Corrected exact-revision/no-holder referral sent to Inbox `e301be2b-5d72-4416-8b39-1645de691dce` and Orchestrator `22e10336-2c85-4ec1-9d31-44ec326abb01` for the existing #24121 task. Generated Source Records, provenance/coverage fields, full-source replay qualification and the two replay-only revisions remain intentionally retired under #21693 **Structured handoff delivery history** and #21887 **Incidental handoff history policy** (B11/B12). Adapt the query documentation to the surviving authored-record contract; do not restore the retired rollout wholesale. |
 | #21875 — Optional review candidates in recovery | `0acc7cef77` | missing | The generated recovery/combination mechanism is intentionally superseded by B11–B12, but this revision also adds six fidelity lines to the live archival-summary prompt and its golden fixture. Those lines are absent in B15. The missing half prevents a whole-task superseded verdict. See the exact recovery referral below. |
 | #21881 — Operation qualifiers in recovered facts | `5fa4992e9e` | missing | The generated recovery/combination mechanism is intentionally superseded, but six operation, actor, condition, reference-kind and source-inspection fidelity lines added to the live archival-summary prompt and golden fixture are absent in B15. B11 explicitly leaves archival-summary behavior unchanged. See the exact recovery referral below. |
 | #21850 — Reference fidelity and inherited attribution | `9b925f9c27`, `d10d2f7f6f` | missing | The generated reducer, validation and combination changes are intentionally superseded. The d10d2f7f6f revision also adds two exact-identifier and inherited-attribution lines to the live archival-summary prompt and golden fixture; B15 lacks them. No explicit withdrawal covers those live edits. See the exact recovery referral below. |
@@ -4429,7 +4429,7 @@ citations show retained source, not fresh runtime passes.
 | E9 | `web/src/components/activity/IntegrationsTab.tsx` | 300–366 | `c276b2edb5b26a589a0c8839ddaccd3fe684a5d3f5bbd75f5cbf6cfc39e78346` |
 | E10 | `web/src/components/activity/integrations/ChannelDetailPanel.tsx` | 120–200 | `eb1a9889162083ca87b6f74ede8969677e3a0f7878f3e9129e01a73f99fbf0c3` |
 | E11 | `web/src/components/activity/integrations/IntegrationsTabModel.ts` | 105–158 | `3fbc131bed6668770d3eb2feb42e8ab6bca9becf8c8fe54fde5dd0a0f0a5ce7a` |
-| E12 | `web/src/components/activity/integrations/IntegrationsTabActions.ts` | 1–50 | `472247bdf059804a5f6b83e5b43db85f03d936d61d7d35de798b7b2b283109ac` |
+| E12 | `web/src/components/activity/integrations/IntegrationsTabActions.ts` | 1–47 | `472247bdf059804a5f6b83e5b43db85f03d936d61d7d35de798b7b2b283109ac` |
 | E13 | `web/src/components/activity/integrations/__tests__/IntegrationsTab.test.tsx` | 226–402 | `22f6ffec76655be5dc6426e3c4dd41d4b9a751fd8c380da6d98a8f7730620f2f` |
 | E14 | `web/src/components/activity/integrations/__tests__/IntegrationsTab.test.tsx` | 490–563 | `8de06e86843c0d92d6aa2365aa6a710f79e96535381a7c0c9a1f707e203e4bc1` |
 | E15 | `src/gobby/communications/adapters/gobby_chat.py` | 102–122 | `44e51c87d0603146d56f70507ab392feb937e7199c711d8fb4cb559466addd37` |
@@ -4838,6 +4838,7 @@ each addendum before parsing. Run from this worktree:
 ```bash
 uv run python - <<'PY'
 # batch-6-audit
+import ast
 import hashlib
 import re
 import subprocess
@@ -4984,6 +4985,18 @@ for receipt in (
 ):
     assert receipt in batch
 assert "#24136" in batch and "249–251" in batch
+# Close-review correction: the partial-loss docs have explicit holder/referral provenance.
+docs_oid = "12abc42f165a18d8f6f0ef004a7d12b985cecb03"
+docs_row = next(line for line in sections[2].splitlines() if line.startswith("| #21794 — Handoff rollout"))
+assert docs_oid in docs_row
+assert "no captured local/remote branch" in docs_row
+assert "no captured holding worktree" in docs_row
+assert not holders_for(docs_oid)
+assert git("rev-parse", f"refs/audit/24076/{docs_oid}").decode().strip() == docs_oid
+for receipt in ("e301be2b-5d72-4416-8b39-1645de691dce","22e10336-2c85-4ec1-9d31-44ec326abb01"):
+    assert receipt in docs_row
+assert len(source("web/src/components/activity/integrations/IntegrationsTabActions.ts").splitlines()) == 47
+assert "| E12 | "+Q+"web/src/components/activity/integrations/IntegrationsTabActions.ts"+Q+" | 1–47 |" in sections[5]
 
 # Retained contracts and specifically absent diagnostic implementation.
 runtime = source("src/gobby/llm/claude_runtime.py")
@@ -5059,10 +5072,12 @@ for receipt in ("e051b26e-4553-486e-966a-aa4a910f44ac","0fca1877-81bd-4528-b67d-
     assert receipt in sections[5]
 assert "7f719a24-e8a6-4e13-8bb9-ee73adf3cdce" in sections[4]
 assert "db116bc8-3028-4307-8307-f5b3f7cd340e" in sections[4]
+for program in re.findall(r"(?m)^uv run python - <<'PY'\n(.*?)^PY$", REPORT, re.S):
+    ast.parse(program)
 assert sum(line.startswith(Q*3) for line in REPORT.splitlines()) % 2 == 0
 assert REPORT.endswith("\n\n_Last verified: 2026-10-12_\n")
 assert not REPORT.endswith("\n\n\n_Last verified: 2026-10-12_\n")
-print("PASS: all89 classifications/order/counts; batch6 32 hashes/15 inventories/14 archives/35 ancestors/referrals/ruling; retained contracts and diagnostic absence; prior3/4/5 115 hashes/46 inventories/36 ancestors and semantic regressions; Markdown/footer")
+print("PASS: all89 classifications/order/counts; batch6 32 hashes/15 inventories/14 archives/35 ancestors/referrals/ruling; retained contracts and diagnostic absence; prior3/4/5 115 hashes/46 inventories/36 ancestors and semantic regressions; Markdown/footer; #21794 holder/referral and E12 actual bounds")
 
 PY
 ```
@@ -5079,5 +5094,13 @@ passing audit uses one topological branch/remote graph walk and one pinned
 path inventory. Native evidence and Git bytes agree. `git diff --check` passes.
 No fresh provider, installed-registry, release-publication or browser pass is
 claimed. The report is the only changed file.
+
+Close-review correction: #21794 **Handoff rollout docs** now states its exact
+missing revision, original no-holder status, retained archive and corrected
+Inbox/Orchestrator referral receipts for #24121 **Handoff retrieval recovery**.
+Batch 5 E12's EOF-clamped bounds are corrected to 1–47; its hash is unchanged
+and a complete native read confirms the actual range. The reproducible audit
+now checks both corrections and parses embedded audit programs for syntax.
+Classification totals and dispositions are unchanged.
 
 _Last verified: 2026-10-12_
