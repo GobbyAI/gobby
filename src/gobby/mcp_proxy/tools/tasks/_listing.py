@@ -21,6 +21,35 @@ class TaskStateFilters(TypedDict, total=False):
     labels: list[str]
 
 
+def _bound_compact_row(
+    row: list[Any],
+    columns: list[str],
+    task_id: str,
+    ref_errors: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    """Omit large values with full-fetch pointers before eliding a whole row."""
+    page: dict[str, Any] = {"columns": columns, "rows": [row], "count": 1, "next_offset": None}
+    if ref_errors:
+        page["ref_errors"] = ref_errors
+    if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+        return row
+
+    ref = row[0]
+    pointer = f"Value elided; get_task(task_id='{task_id}', brief=false)"
+    for column in sorted(
+        (1, 7, 8, 11), key=lambda index: len(json.dumps(row[index], default=str)), reverse=True
+    ):
+        if column == 11:
+            row[column] = [receipt[:3] + [{"_elided": pointer}] for receipt in row[column]]
+        elif column == 8:
+            row[column] = [[blocker[0], pointer] for blocker in row[column]]
+        elif row[column] is not None:
+            row[column] = pointer
+        if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+            return row
+    return [ref, f"Row elided; {pointer}", *([None] * (len(columns) - 2))]
+
+
 def compact_tasks(
     tasks: list[Task],
     ctx: RegistryContext,
@@ -54,36 +83,38 @@ def compact_tasks(
         blockers = [
             ctx.task_manager.get_task(task_id) for task_id in sorted(task.active_blocked_by)
         ]
-        rows.append(
+        row = [
+            f"#{task.seq_num}" if task.seq_num else task.id,
+            task.title,
+            task.path_cache,
+            task.task_type,
+            task.claimed_by_session_id,
+            datetime_to_iso(task.closed_at),
+            datetime_to_iso(task.escalated_at),
+            task.escalation_reason,
             [
-                f"#{task.seq_num}" if task.seq_num else task.id,
-                task.title,
-                task.path_cache,
-                task.task_type,
-                task.claimed_by_session_id,
-                datetime_to_iso(task.closed_at),
-                datetime_to_iso(task.escalated_at),
-                task.escalation_reason,
-                [
-                    [f"#{blocker.seq_num}" if blocker.seq_num else blocker.id, blocker.title]
-                    for blocker in blockers
-                ],
-                task_discovery_payload(task)["state"],
-                datetime_to_iso(candidate_times.get(task.id)),
-                [
-                    [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
-                    for receipt in list_close_receipts(ctx.task_manager.db, task.id)
-                ],
-                task.commits[-1] if task.commits else None,
-            ]
-        )
+                [f"#{blocker.seq_num}" if blocker.seq_num else blocker.id, blocker.title]
+                for blocker in blockers
+            ],
+            task_discovery_payload(task)["state"],
+            datetime_to_iso(candidate_times.get(task.id)),
+            [
+                [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
+                for receipt in list_close_receipts(ctx.task_manager.db, task.id)
+            ],
+            task.commits[-1] if task.commits else None,
+        ]
+        row = _bound_compact_row(row, columns, task.id, ref_errors if not rows else None)
+        rows.append(row)
         result["count"] = len(rows)
         if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
             rows.pop()
             result["count"] = len(rows)
             result["next_offset"] = index
             if not rows:
-                return {"error": "One task exceeds compact page budget", "ref": f"#{task.seq_num}"}
+                return {
+                    "error": "Ref errors leave no room for a compact row; reduce the refs batch"
+                }
             break
     return result
 
