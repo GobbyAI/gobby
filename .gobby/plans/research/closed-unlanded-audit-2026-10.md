@@ -4595,5 +4595,489 @@ hashes/15 inventories/four ancestors and batch 4's 40 hashes/15 inventories/
 18 ancestors, including prompt-loss and reconciliation-ledger checks.
 Whitespace check passed. Only this report changed.
 
+## Semantic recovery review: batch 6 (89 of 89 cumulative)
+
+This final addendum covers positions 76–89: 14 tasks, 15 task/revision rows,
+14 distinct revisions. The diagnostic and mode-doc tasks share 184a1e9642.
+Evidence stays bound to commit `4ccb3e966ed18fe13cd9f268d55143128d034048`,
+tree `428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`, project
+`19b73420-3946-5c6a-8a06-4c7522f77543`. The Lane Manager authorized the
+clean fast-forward to batch 5 landed tip
+`6462c799e3dbdec1ff83b26571239bf3144266e3` before report edits.
+
+### Batch 6 classifications
+
+| Task and title | Unproven revision | Classification | Pinned evidence and disposition |
+| --- | --- | --- | --- |
+| #11243 — Add CLI diagnostic probe on SDK text generation failure | `184a1e9642`, `5a20e9e5c9` | missing | Partial loss: the independent post-failure CLI diagnostic, including stream-json --verbose, is absent. E1–E2 retain callback stderr capture/drain and executable discovery without the requested subprocess. #11283 **Consistent SDK diagnostics** and #17976 **Bounded stderr** improve capture without withdrawing the probe. #24136 **Recover CLI diagnostic probe after SDK failure** owns recovery. The second revision's hook suppression survives through E1/E3–E4 and landed headless-settings/provider consolidation. Shared mode-doc rows are accounted under #11241. |
+| #11241 — Clean up stale mode='terminal' references in docs, docstrings, and YAML | `184a1e9642` | delivered | Documentation cleanup is carried by equivalent 404e434428 and later mode/document retirement. The shared revision fixes two remaining Merge/Review matrix rows; their agents skill is explicitly deleted by 5c379f5606. #11301 **Mode/template cleanup** withdraws the mode field. Its independent diagnostic hunk remains missing and is routed once under #11243/#24136. |
+| #11242 — Fix set_variable receiving unexpected session_id kwarg from proxy | `a7a0e70f03` | delivered | E5–E7 show required target-session signatures and matching arguments in top-level MCP and replacement HTTP routes. Explicit targeting replaces the temporary ContextVar workaround. #20192 **Domain HTTP routes** retires workflows.py and relocates endpoints/tests. Historical test changes follow that call-contract change; batch 5 E53–E55 preserve explicit-target regression coverage. |
+| #11238 — Fix /clear and /compact handoff context injection | `121640b3e5` | intentionally superseded | #21140 **Structured session handoffs** replaces source heuristics, generic parent adoption and summary injection with attempt-bound marker consumption. E8–E9 retain explicit clear/compact status and successor ownership. The independent handoff_source fallback, two inject rules and their heuristic tests are withdrawn. Batch 5 also accounts for the related session-start delta. |
+| #11232 — Pass CLAUDECODE=1 explicitly in SDK options to unpin claude-agent-sdk | `6467de53b1` | intentionally superseded | Reinjection contradicts retained #8183 **Prevent nested SDK sessions**: E23 strips CLAUDECODE and E3 overrides only auto-memory. #20654 **MCP 2 migration** selects SDK >=0.2.144 (E24), replacing the obsolete workaround/version target. Independent llama-cpp lock/core changes are withdrawn by #11321 **LiteLLM/llama-cpp drawdown**. No restart/provider success is asserted. |
+| #11231 — Pin claude-agent-sdk<=0.1.45 and investigate 0.1.53 breakage | `7829ab5193` | intentionally superseded | E24 and #20654 **MCP 2 migration** explicitly require SDK >=0.2.144; the old upper cap conflicts. Independent llama-cpp optional-to-core movement is withdrawn by #11321 **LiteLLM/llama-cpp drawdown**. Historical install/restart criteria do not establish current activation. |
+| #11225 — Remove dead executor layer, streaming code, and UI remnants | `f6d3e84b4f` | delivered | #11286 **Dead validation tools**, #11287 **Executor removal**, #11288 **in_process removal**, #11289 **Streaming removal** and #11988 **Dead web-terminal plumbing** carry cleanup. E25–E27 retain tracking-only AgentRunner, startup without executors and the decomposed editor. Complete production-scope checks find no ExecutorRegistry, EmbeddedPTYResult, stream_with_mcp_tools or run_fix_attempt/validate_and_fix. Temporary App agents stubbing is withdrawn by #11988's activity-panel ownership. LiteLLM utilities are later retired by #11319/#11321 **LiteLLM drawdown**. Independent tests/UI changes are accounted below. |
+| #11224 — Disable codex-review-gate in template and database | `24c4d53679` | intentionally superseded | Landed 3c2ab4dcd6 deprecates the Codex templates; #11301 **Mode/template cleanup** explicitly deletes both agents and the review gate. Gate defaults disappear with source retirement. No installed DB state or historical one-off DB update is asserted; templates do not establish activation. |
+| #11223 — Fix Neo4j auth: resolve $secret reference before passing to Docker | `44efe20794` | intentionally superseded | #14630 **FalkorDB compose**, #14641 **Neo4j runtime sweep** and #14660 **Stale Neo4j config cleanup** withdraw the Neo4j password contract. E22/E30 follow managed startup and resolve FalkorDB secrets before Docker environment construction. Independent SDK ghost-hook suppression and caller consolidation survive via E1/E3–E4/E16–E19 and landed bea14472/af801058. Helpers/tests moved with provider ownership. |
+| #11218 — Implement subagent rule isolation via is_subagent variable | `ef6038c2fb` | intentionally superseded | E10–E15 retain overlap-safe counters, defaults, native tracker exemption and regression source. Orchestrator ruling a970cce7 (2026-10-12) explicitly withdraws blanket project-task blocking and edit/commit exemptions: native children inherit the parent's claim, preserving attribution/gates. E13–E14 match. Memory/error guards have named retirements; web SDK callbacks belong to #11434 **Unified CLI chat** retirement. Rich stop-metadata logging is enhancement under the ruling. Dependency/root-version deltas follow current contracts. No recovery route. |
+| #11215 — Remove stale session_id references from prompts, skills, and rules | `b9262c2fe5` | intentionally superseded | E5–E7 and batch 5 E53–E55 retain required explicit variable targeting. E28–E29 document its matching signature. #22275 **Folded skills**, #18880 **Task-guidance consolidation**, #11535 **Lean session start**, #15174 **Completion-gate simplification** and #19408 **Obsolete registry retirement** account for five absent skill/rule paths. The instruction regression follows the required-target contract. |
+| #11214 — Remove session_id from stdio proxy tool schemas and wire ContextVar fallback | `62029ef16a` | intentionally superseded | Explicit targeting replaces sticky first-caller/header learning and optional variable schemas. E5–E7 and batch 5 E53–E55 preserve matching signatures/targets/tests. #20192 **Domain HTTP routes** relocates endpoints and retires old tests. Batch 5 E46–E47 retain injection only for required schemas; optional-tool gaps belong to #24130 **Caller-session scoping recovery**. Do not restore sticky targeting. |
+| #11201 — Fix codex-rescue agent template mode: self → interactive | `2fe1e8c83c` | intentionally superseded | #11301 **Mode/template cleanup** explicitly deletes codex-rescue after landed deprecation 3c2ab4dcd6. This one-field revision has no independent behavior. No installed-registry activation is asserted. |
+| #10399 — Fix messages scrolling under ChatInput after Phase2b flex change | `7ae3b093b3` | intentionally superseded | #10400 **Chat scroller grid fix** explicitly replaces the conflicting flex-col wrapper with grid, recording historical Playwright geometry evidence. E20–E21 retain grid/min-h-0, Virtuoso containment and sibling ChatInput after decomposition. No fresh browser test is asserted. |
+
+Batch totals: **3 delivered, 10 intentionally superseded, 1 missing**.
+Final cumulative totals: **37 delivered, 29 intentionally superseded,
+23 missing**; **all 89 tasks are classified**. Missing means at least one
+unretired independent behavior is absent. Shared revisions remain separate
+task/revision rows; recovery is routed to the task owning the missing behavior.
+
+### Batch 6 recovery referral and explicit ruling
+
+#11243 **CLI diagnostic probe** retains linked revisions
+`184a1e964258fed862908989d4b9943347af7737` and
+`5a20e9e5c91c827e37b30050a34272427f642e7b` in exact audit archives, with no
+branch/remote holder. Base probe `9bdb7e188308d0151cb8253854cf375557135fbb`
+is not a pin ancestor. The first linked revision adds --verbose; the second
+adds --bare hook suppression, independently replaced by headless settings
+and provider consolidation. Recovery preserves suppression and avoids probing
+planned-shutdown cancellation.
+
+Referral receipts: Inbox `a5cf3d05-15b7-4881-bfa6-84a6b3156267`,
+Orchestrator `a98efd2c-3b7b-432a-97da-8cfe997e3ffe`, Lane Manager
+`79de6539-a658-4302-bb70-f7be69d0beb7`. A citation correction identifies
+E1's drain/join at **249–251**, replacing initial 244–246 references:
+`3474c8d3-cc84-4b47-8ba5-f2c181c5fc2f`,
+`ef5e8dfb-2080-4985-bc48-e4c3fe701480`,
+`44de941b-a688-4920-8d65-c095fd851d7e`. Orchestrator receipt
+`72447de6-7365-4096-be93-c12dbb3bfa27` routes #24136 **Recover CLI diagnostic
+probe after SDK failure**, queued behind this audit and #24130 **Caller-session
+scoping recovery**. Hook suppression and mode docs are outside recovery.
+
+#11218 **Subagent isolation** request `51ab138b-c5f7-40ad-ad1d-d7f0afa56d29`
+received ruling `a970cce7-3236-4c70-b49c-81fa32570f72` on 2026-10-12:
+native children inherit their parent's claim; edit/commit exemptions would
+break attribution/gates. Blanket project-task blocking has no current
+requirement. #21892 **Task/handoff discipline** governs spawned workers.
+Keep the native tracker guard. Rich metadata logging is enhancement.
+
+### Batch 6 touched-path and replacement audit
+
+Git diff-tree's complete inventory uses rename detection disabled: Codex gate
+deprecation has seven old/new paths. All 14 distinct revisions have exact
+`refs/audit/24076/<full-SHA>` archives and no branch/remote holders. Archive
+retention establishes recoverability, not delivery.
+
+| Task and title | Revision | Paths present at pin | Paths absent at pin |
+| --- | --- | --- | --- |
+| #11243 — Diagnostic probe | `184a1e9642` | 1 | 1 |
+| #11243 — Hook suppression | `5a20e9e5c9` | 1 | 0 |
+| #11241 — Mode docs (shared) | `184a1e9642` | 1 | 1 |
+| #11242 — Variable kwarg | `a7a0e70f03` | 3 | 1 |
+| #11238 — Handoff injection | `121640b3e5` | 1 | 3 |
+| #11232 — SDK environment | `6467de53b1` | 2 | 0 |
+| #11231 — SDK pin | `7829ab5193` | 1 | 0 |
+| #11225 — Dead executors | `f6d3e84b4f` | 21 | 27 |
+| #11224 — Codex gate | `24c4d53679` | 1 | 6 |
+| #11223 — Neo4j auth/SDK | `44efe20794` | 7 | 3 |
+| #11218 — Subagent isolation | `ef6038c2fb` | 9 | 3 |
+| #11215 — Session-ID docs | `b9262c2fe5` | 3 | 5 |
+| #11214 — ContextVar stdio | `62029ef16a` | 3 | 2 |
+| #11201 — Rescue mode | `2fe1e8c83c` | 0 | 1 |
+| #10399 — Chat clipping | `7ae3b093b3` | 1 | 0 |
+
+Independent deltas and absent paths:
+
+- #11243 **Diagnostic probe** / #11241 **Mode docs**: agents/SKILL.md is
+  explicitly removed by 5c379f5606. Its shared diagnostic hunk remains a
+  recovery input. sdk_utils.py's former factory no longer owns generation;
+  E1/E3–E4 follow the supported suppression replacement.
+- #11242 **Variable kwarg** / #11214 **ContextVar stdio**: old workflows.py
+  and route tests become typed session routes. Historical MCP tests adapt to
+  matching explicit-target signatures. Sticky header/bootstrap targeting is
+  superseded; required-only schema injection survives.
+- #11238 **Handoff injection**: two heuristic injection rules and monolithic
+  handler tests are retired/decomposed. Its independent session-end fallback
+  is withdrawn by the marker contract, rather than inferred from file absence.
+- #11232 **SDK environment**, #11231 **SDK pin**, #11218 **Subagent isolation**:
+  independent llama-cpp dependency/extra/lock changes are withdrawn by #11321.
+  SDK follows #20654. Root lock 0.4.0 is superseded by the 0.5.0 integration
+  version (batch 5 E19–E21).
+- #11225 **Dead executors**: named landed cleanup removes six implementations,
+  streaming, factories, runner execution, fix-loop tools and their tests.
+  Registry/spawner paths later become managed terminal/run lifecycle. Tracking,
+  queries and cancel remain; relevant agents/CLI scopes contain no in_process
+  mode. Provider validation survives until typed/provider redesign. LiteLLM
+  model/environment utilities are intentionally withdrawn by #11319/#11321.
+  Non-string workflow-model mocks retain their prior assertion; only comments
+  change. #16308 **Dead resolver removal** explicitly deletes that resolver
+  and its tests (6b7c44f296). E31–E32 retain provider settings/form types
+  without embedded execution or an execution mode field. #11988 explicitly withdraws App's temporary agents stub
+  and keeps management in the activity panel. Embedded editor/color options
+  and old Terminal copy belong to retired mode/terminal surfaces. Remaining
+  tests adapt autonomous/interactive fixtures, tracking-only setup and
+  completion status; executor/fix-loop/streaming tests follow removed APIs.
+  The one-line skill-file fixture deletion is whitespace.
+- #11224 **Codex gate** / #11201 **Rescue mode**: #11301 explicitly deletes
+  both old/deprecated agents and gate paths. Gate-default removal matches
+  retirement; the historical database update is unproven and unclaimed.
+- #11223 **Neo4j auth/SDK**: hook dispatcher suppression moves before launch
+  into headless settings. Summarizer/tests move under utils via #13908 **Tool
+  summarizer relocation**. E18–E19 preserve feature calls, prompt paths and
+  fallback; E16–E17 preserve import generation after bounded HTTP fetching.
+  bea14472/af801058 consolidate provider text/summary/vision/MCP callers and
+  adapt their mocks. The old factory/helper names are not required. Neo4j
+  password parsing/.env/compose arguments are replaced by FalkorDB's secret
+  contract, rather than copied to an absent service.
+- #11218 **Subagent isolation**: #11309/#11311 deliver counters/default/native
+  tracker behavior, strengthened by #16252 **Overlapping subagents**. Memory
+  and error guards have named retirements. Absent edit/commit exemptions,
+  blanket task blocking and richer logging have the explicit ruling above.
+  SDK web callbacks are retired by #11434 **Unified CLI chat**.
+- #11215 **Session-ID docs**: expand/task-transitions are folded; session-start
+  error policy, memory-review and error-triage guards have named retirements.
+  Surviving prompt/fallback examples follow required targeting.
+- #10399 **Chat clipping**: its only wrapper change has named #10400 grid
+  replacement, retained after ChatPage decomposition.
+
+### Batch 6 replacement and retirement ancestors
+
+All 35 full OIDs are ancestors of the fixed evidence pin. They establish
+replacement or explicit retirement history independently of archive retention.
+The diagnostic base probe is separately checked as a non-ancestor.
+
+| Decision or replacement | Ancestor |
+| --- | --- |
+| #11301 — Mode/template cleanup | `5e83fcd400df54cad0b534ed477fdd1b4e635991` |
+| #11321 — LiteLLM/llama-cpp drawdown | `d985e44c7311af0ddd80854f78fd872922fbe881` |
+| #14641 — Neo4j runtime sweep | `38f3e8f37cafdc2fd5fff404f39a2aca9b0367b7` |
+| #14660 — Stale Neo4j cleanup | `d833c9fa0e03c8b1c542ddbaa22b9b1644da0fcb` |
+| #14630 — FalkorDB compose | `e552de756e4c9e73a556e4cda042e4b97b75e7e4` |
+| Codex/Neo4j deprecation | `3c2ab4dcd6f4d64f98b52105c457e882aa0e82f4` |
+| #11287 — Executor removal | `a686d7923c75f2fcca2e18ab968d7e1024ebc4dd` |
+| #11289 — Streaming removal | `c6005ccab4aaaba672dc167626aa377d0695989e` |
+| #11286 — Dead validation tools | `89c5ae833e7384006e4c843466879863a98c88eb` |
+| #11288 — in_process removal | `a525b4d89fc346d884af236c0f06004beb57d6fb` |
+| #11988 — Dead web-terminal plumbing | `070a204e5518f96180e86639f0676f6e1db4a7bb` |
+| Headless hook settings | `bea14472c265b0871988568e359a69a7a5c0b8a2` |
+| Provider consolidation | `af801058350226fde20f892580cac3e31f10252d` |
+| #11283 — Consistent SDK diagnostics | `0b2a015afd7213681c5120cf93e849df9af0cac1` |
+| #11241 — Mode docs equivalent | `404e434428d31e98792431a25934f6c747a12624` |
+| Obsolete agents skill removal | `5c379f56062996e773e52d27d4e13ff210192261` |
+| #8183 — Prevent nested SDK sessions | `136be00bb566289a2355eef9fa2001507e5d5712` |
+| #11319 — LiteLLM drawdown | `429e535d71b72f9f702d9fb2c8308fc20d397f64` |
+| #11309 — Subagent toggle | `b32855726111a3fa66618902e6bf2abbaa641c74` |
+| #11311 — Native tracker guards | `6c82af66c8e3a8de524f46370a42014f0aa31b46` |
+| #16252 — Overlapping subagents | `7a795dcfd3d6b21afc1521eecc2994efbfd8f568` |
+| #21892 — Task/handoff discipline | `4f4090edc3aae5f0a634351b624b0cf64ed665cd` |
+| #22439 — Native tracker retirement | `63733e703c3472f4ec3a0d94aca2e540d67130ee` |
+| #15174 — Completion-gate simplification | `6178d41474cd22d50abf97333d37d3f59498046e` |
+| #19408 — Obsolete registry retirement | `66dbca284ce8d815deca324548a2118f1a67f731` |
+| #20192 — Domain HTTP routes | `99bfc9e2ae3f5cdbf91d6df89e75a806cf9d61e5` |
+| #18880 — Task-guidance consolidation | `87a1a71fc3f168e816c6ef8dca493fcd73ec1d49` |
+| #22275 — Folded skills | `9acef616df8bdb8e31458d8f88847a0ec48e61ce` |
+| #11535 — Lean session start | `72b2d244bf26fe3e7da84bfa0057d05bd1b0c8e0` |
+| #10400 — Chat scroller grid fix | `d06ebcbcc12ec7b6b235922f67de54d639a1371f` |
+| #13908 — Tool summarizer relocation | `f488c59fc1b4925f44fe40132290354f6c405577` |
+| #16308 — Dead resolver removal | `6b7c44f296f12dc6d72f21df5920a2d4d716dead` |
+| #21140 — Structured session handoffs | `5694253eb6232fc0cae9dc6a27521b176dea98d5` |
+| #11434 — Unified CLI chat | `fbaab4ca2bc8f3a16fe3785e9f2cfff656e35bde` |
+| #20654 — MCP 2 migration | `eff0bf72e6d95cbb44811c970fea7a0ec091b8ee` |
+
+### Batch 6 deterministic evidence ledger
+
+Complete native reads used the fixed binding. Hashes cover raw UTF-8 excerpts;
+EOF-clamped ranges below give actual bounds. Test citations show retained
+source, not a fresh runtime pass. Previous-batch evidence IDs explicitly name
+their batch. Key returned lines include E1 `249| await asyncio.sleep(0.2)`
+and `251| stderr_text = "\n".join(stderr_lines)`; E23
+`104| os.environ.pop("CLAUDECODE", None)`; E24
+`36| "claude-agent-sdk>=0.2.144"`; E20
+`157| <div className="grid min-h-0 flex-1">` and sibling ChatInput at 208–209.
+
+| Evidence | Bound path | Lines | excerpt_hash |
+| --- | --- | --- | --- |
+| E1 | src/gobby/llm/claude_runtime.py | 167–263 | `1c4c6e0aab90dc6867a01cfd636e073765a69f9d4e7996bafc5450479993dfdd` |
+| E2 | src/gobby/llm/claude_cli.py | 1–90 | `9f3b97a0596b39a8c8ae972b596d6ef909df9497a1973557e4b1efadb9538ab2` |
+| E3 | src/gobby/llm/claude_sdk.py | 44–105 | `cf4c947a66230dc2c7f5a02a071db60073e6d9a92a1a942ade3d1c612875a4c2` |
+| E4 | src/gobby/runner_init/helpers.py | 48–77 | `c0c710b5874bef01ec0e82f51b302f35cabe577b2647fa9ccf736a1cc95bb3f9` |
+| E5 | src/gobby/mcp_proxy/tools/workflows/_variables.py | 1–140 | `9ecd81a1aa866f492583e0089d9c6e0a2692bc9b248715ba353dfe22c45fb51b` |
+| E6 | src/gobby/mcp_proxy/server.py | 546–609 | `be3af544ab068e4c9b9b784288ccb4922ed42f4f3e34ac9d75261aaeae2ee2f6` |
+| E7 | src/gobby/servers/routes/sessions/variables.py | 63–133 | `2da246cf1200ed727732e6ff036f1e3401fa295d60eba265e9c657bb5e489cf3` |
+| E8 | src/gobby/hooks/event_handlers/_session_end.py | 58–115 | `1f179ad9b30902f7c0841c07b07e0ee95f353c663cf3f7b7df995549bb741bd4` |
+| E9 | src/gobby/hooks/event_handlers/_session_end.py | 185–236 | `03294c4d58bafc0b048150c2c22f5fde6e72e9c1afd3e4129d09fe21f8a922d4` |
+| E10 | src/gobby/hooks/event_handlers/_agent.py | 698–785 | `e70799c19773458ce10bd8ac1cc4c5f31c7627d1f0f8f047cdebec27da2b3920` |
+| E11 | src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml | 87–99 | `40f43cc9d695cbe59483ee6f3ca99fe44bb41b14a6619a587e5045f1e7a72aa9` |
+| E12 | src/gobby/install/shared/workflows/rules/task-enforcement/block-native-task-tools.yaml | 1–32 | `1be0eb709dba6c41a4e0586d0f4b04ab8ad3a803e81da5d3f304d1282e38798f` |
+| E13 | src/gobby/install/shared/workflows/rules/task-enforcement/require-task-before-edit.yaml | 1–44 | `37d46aac715a7f7dc2ef64f8dd702fa775acdbb6776223f64b7f6993af35181b` |
+| E14 | src/gobby/install/shared/workflows/rules/task-enforcement/require-commit-before-status.yaml | 1–30 | `faec1a0572a821ce240140657919fe59c0d574c1934ca030b7df1ba1f67f1c21` |
+| E15 | tests/workflows/test_subagent_rule_integration.py | 79–163 | `64e1858b96a1732715fd8c5acb6550e262a9c65854ec1a308502ff1401b6ddb7` |
+| E16 | src/gobby/mcp_proxy/importer.py | 205–246 | `1ffeb278eb58a5d462c5c21c187fc6b32f90e4e2337bd770ab9e3d7621e34b7d` |
+| E17 | src/gobby/mcp_proxy/importer.py | 266–306 | `e463d6385e835c6d70a0528ba1bb800458543cd98e2a771369789cc238be6d21` |
+| E18 | src/gobby/utils/tool_summarizer.py | 62–102 | `b015ef87efb26bf9f49e4c646f8015e81a0c33cd0ea6c17199895fc90d103036` |
+| E19 | src/gobby/utils/tool_summarizer.py | 154–197 | `86651728a9719d1ccaea49cb8d17b2021d4dd02955b74b19a6ebd6f26b7639ba` |
+| E20 | web/src/components/chat/ChatMainColumn.tsx | 140–215 | `c4c5071fc3938753fa7cc425a1548e7d2923e6a8cd94f8cb3dd3153917189a37` |
+| E21 | web/src/components/chat/MessageList.tsx | 375–413 | `a5da905740c552c8ca72a3803c62e49d78c3408afd38f17a3e58aa9d6788efa0` |
+| E22 | src/gobby/cli/daemon.py | 1–18 | `fafe065ab00d5ba70bf31ee1c1bd277470fb7e435d62bb2490c4d5314fb653ce` |
+| E23 | src/gobby/runner.py | 95–107 | `2245fba4a3a29cf0b962da5b0d7fefb758aefb2560034480659145454d0de125` |
+| E24 | pyproject.toml | 18–86 | `ff9c538455f7f748dfc209eab4d602581495de13938206b389d172fc5c584ca8` |
+| E25 | src/gobby/agents/runner.py | 35–82 | `2741859fe5a3ff502a417c44a82d2222218d8f1fdf7cbcc23dccd68914b90996` |
+| E26 | src/gobby/runner_init/orchestration.py | 486–500 | `ee8769e44786e741ce49898dc279461faabe9a3be5f55cffe49436b89a29228d` |
+| E27 | web/src/components/agents/AgentEditForm.tsx | 140–220 | `766c14d165ee37a8ab5c364be5714a134d4467b53195241043a3c8747520dc21` |
+| E28 | src/gobby/install/shared/prompts/mcp/progressive-discovery.md | 64–82 | `43278ed8fed96d49895338d7cc2326438e00aa26b230fec4b16376d13216a3c6` |
+| E29 | src/gobby/mcp_proxy/instructions.py | 71–89 | `43278ed8fed96d49895338d7cc2326438e00aa26b230fec4b16376d13216a3c6` |
+| E30 | src/gobby/cli/installers/compose_env.py | 147–222 | `86166bf08195843700dbb1adf9f382d689f977858b0b68c16aaa86a5696e01dc` |
+| E31 | web/src/components/agents/AgentProviderSettings.tsx | 18–51 | `dff0a6fa1b00aa72573dbf8a7c3db8337bebbaf070cde092ff0259fe485c4dcc` |
+| E32 | web/src/components/agents/AgentEditForm.types.ts | 1–65 | `ecfd96fad4a7fa77bbd1ab18a4b5fca81cabc0a9c60d0a7ccf33acd6126c1258` |
+
+### Batch 6 reproducible validation
+
+This audit reconstructs the 89-task inventory from the report's original
+table and per-commit proofs; it reads no ignored cache. It also reruns the
+relevant batch 3–5 hash, inventory, ancestor and semantic checks, bounding
+each addendum before parsing. Run from this worktree:
+
+```bash
+uv run python - <<'PY'
+# batch-6-audit
+import hashlib
+import re
+import subprocess
+from collections import Counter
+from functools import lru_cache
+from pathlib import Path
+
+PIN = "4ccb3e966ed18fe13cd9f268d55143128d034048"
+REPORT = Path(".gobby/plans/research/closed-unlanded-audit-2026-10.md").read_text()
+EXCLUDE = {23201, 23252, 23304, 23345, 23519, 23626, 23269}
+Q = chr(96)
+
+def git(*args):
+    return subprocess.check_output(["/usr/bin/git", *args])
+
+@lru_cache
+def source(path):
+    return git("show", f"{PIN}:{path}").decode()
+
+pin_paths = set(git("ls-tree", "-r", "--name-only", PIN).decode().splitlines())
+pin_history = set(git("rev-list", PIN).decode().splitlines())
+
+def exists(path):
+    return path in pin_paths
+
+def ancestor(oid):
+    assert oid in pin_history, oid
+
+# One topological graph walk proves exact branch/remote containment.
+refs = [line.split(" ", 1) for line in git(
+    "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/remotes"
+).decode().splitlines()]
+reach = {}
+for index, (oid, _) in enumerate(refs):
+    reach[oid] = reach.get(oid, 0) | (1 << index)
+graph = subprocess.check_output(
+    ["/usr/bin/git", "rev-list", "--topo-order", "--parents", "--stdin"],
+    input=("\n".join(oid for oid, _ in refs)+"\n").encode(),
+).decode().splitlines()
+holders_by_oid = {}
+for line in graph:
+    oid, *parents = line.split()
+    bits = reach.pop(oid, 0)
+    holders_by_oid[oid] = bits
+    for parent in parents:
+        reach[parent] = reach.get(parent, 0) | bits
+
+def holders_for(oid):
+    bits = holders_by_oid.get(oid, 0)
+    return [name for index, (_, name) in enumerate(refs) if bits & (1 << index)]
+
+original = REPORT.split("## Every closed task with an unlanded commit\n", 1)[1].split("\n## Per-commit", 1)[0]
+proof = REPORT.split("## Per-commit supersession and recovery evidence", 1)[1].split("## Every closed task", 1)[0]
+unproven = {
+    oid for oid, body in re.findall(r"### \x60([0-9a-f]{40})\x60\n(.*?)(?=\n### \x60|\Z)", proof, re.S)
+    if "\nMissing linked revision, semantic supersession not proven." in body
+}
+inventory = []
+for line in original.splitlines():
+    if not line.startswith("| #") or not line.endswith("Missing linked revision, semantic supersession not proven |"):
+        continue
+    columns = line.strip("| ").split(" | ")
+    number = int(re.match(r"#(\d+)", columns[0])[1])
+    oids = [oid for oid in re.findall(r"\x60([0-9a-f]{40})\x60", columns[2]) if oid in unproven]
+    if oids and number not in EXCLUDE:
+        inventory.append((columns[1], number, oids))
+inventory.sort(key=lambda row: (row[0] or "", row[1]), reverse=True)
+assert len(inventory) == 89
+
+sections = {}
+all_rows = []
+for n in range(1, 7):
+    section = REPORT.split(f"## Semantic recovery review: batch {n}", 1)[1]
+    section = re.split(r"\n## Semantic recovery review:", section, maxsplit=1)[0]
+    sections[n] = section
+    table = section.split(f"### Batch {n} classifications", 1)[1].split("Batch totals:", 1)[0]
+    rows = []
+    for line in table.splitlines():
+        if line.startswith("| #"):
+            columns = line.strip("| ").split(" | ")
+            rows.append((int(re.match(r"#(\d+)", columns[0])[1]),
+                         re.findall(r"\x60([0-9a-f]+)\x60", columns[1]),
+                         columns[2]))
+    expected = inventory[(n-1)*15:min(n*15, 89)]
+    assert [(number, prefixes[0]) for number, prefixes, _ in rows] == [
+        (number, oids[0][:10]) for _, number, oids in expected
+    ], n
+    if n == 6:
+        assert [prefixes for _, prefixes, _ in rows] == [[oid[:10] for oid in oids] for _, _, oids in expected]
+    all_rows.extend(rows)
+assert len(all_rows) == len({row[0] for row in all_rows}) == 89
+assert Counter(row[2] for row in all_rows) == {
+    "delivered": 37, "intentionally superseded": 29, "missing": 23,
+}
+batch = sections[6]
+assert [row[0] for row in all_rows[75:]] == [
+    11243,11241,11242,11238,11232,11231,11225,11224,11223,11218,11215,11214,11201,10399,
+]
+assert Counter(row[2] for row in all_rows[75:]) == {
+    "delivered": 3, "intentionally superseded": 10, "missing": 1,
+}
+
+hash_counts = {3:16, 4:40, 5:59, 6:32}
+for n, count in hash_counts.items():
+    hashes = re.findall(r"\| [CDE]\d+ \| \x60?([^\x60 |]+)\x60? \| (\d+)–(\d+) \| \x60([0-9a-f]{64})\x60", sections[n])
+    assert len(hashes) == count, (n, len(hashes))
+    for path, start, end, expected in hashes:
+        excerpt = b"".join(git("show", f"{PIN}:{path}").splitlines(keepends=True)[int(start)-1:int(end)])
+        assert hashlib.sha256(excerpt).hexdigest() == expected, (n, path)
+
+release_refs = {
+    17462: ["refs/heads/0.4.44"], 17461: ["refs/heads/0.4.43"],
+    15711: ["refs/heads/0.4.18"],
+    15562: ["refs/heads/0.4.15", "refs/remotes/origin/0.4.15"],
+    15329: ["refs/heads/0.4.12", "refs/remotes/origin/0.4.12"],
+    15293: ["refs/heads/0.4.11", "refs/remotes/origin/0.4.11"],
+    15296: ["refs/heads/0.4.11"],
+}
+for n, count in ((3,15),(4,15),(5,16),(6,15)):
+    path_rows = re.findall(r"\| #(\d+) — .*? \| \x60([0-9a-f]+)\x60 \| (\d+) \| (\d+) \|", sections[n])
+    expected = [(number, oid) for _, number, oids in inventory[(n-1)*15:min(n*15,89)] for oid in oids]
+    assert len(path_rows) == len(expected) == count, n
+    for (number, prefix, present, absent), (task, oid) in zip(path_rows, expected, strict=True):
+        assert int(number) == task and prefix == oid[:10]
+        paths = git("diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-r", oid).decode().splitlines()
+        found = sum(exists(path) for path in paths)
+        assert (found, len(paths)-found) == (int(present),int(absent)), (task,oid)
+        holders = holders_for(oid)
+        assert holders == release_refs.get(task, []), (task,holders)
+        if not holders:
+            assert git("rev-parse", f"refs/audit/24076/{oid}").decode().strip() == oid
+assert len({oid for _, _, oids in inventory[75:] for oid in oids}) == 14
+ancestor_text = batch.split("### Batch 6 replacement and retirement ancestors",1)[1].split("### Batch 6 deterministic evidence ledger",1)[0]
+ancestors = re.findall(r"\x60([0-9a-f]{40})\x60",ancestor_text)
+assert len(ancestors) == len(set(ancestors)) == 35
+for oid in ancestors:
+    ancestor(oid)
+assert "9bdb7e188308d0151cb8253854cf375557135fbb" not in pin_history
+for receipt in (
+    "a5cf3d05-15b7-4881-bfa6-84a6b3156267","a98efd2c-3b7b-432a-97da-8cfe997e3ffe",
+    "79de6539-a658-4302-bb70-f7be69d0beb7","72447de6-7365-4096-be93-c12dbb3bfa27",
+    "a970cce7-3236-4c70-b49c-81fa32570f72","3474c8d3-cc84-4b47-8ba5-f2c181c5fc2f",
+    "ef5e8dfb-2080-4985-bc48-e4c3fe701480","44de941b-a688-4920-8d65-c095fd851d7e",
+):
+    assert receipt in batch
+assert "#24136" in batch and "249–251" in batch
+
+# Retained contracts and specifically absent diagnostic implementation.
+runtime = source("src/gobby/llm/claude_runtime.py")
+assert 'options.stderr = lambda line: stderr_lines.append(line)' in runtime
+assert r'stderr_text = "\n".join(stderr_lines)' in runtime
+assert 'options.settings = str(_HEADLESS_SETTINGS)' in runtime
+assert "with fixed_textgen_cwd() as neutral_cwd:" in source("src/gobby/llm/claude_sdk.py")
+for path in ("src/gobby/llm/claude_runtime.py","src/gobby/llm/claude_cli.py","src/gobby/llm/claude_sdk.py"):
+    assert not re.search(r"create_subprocess|subprocess\.(run|Popen)|_probe_cli", source(path))
+helpers = source("src/gobby/runner_init/helpers.py")
+for hook in ("SessionStart","SessionEnd","UserPromptSubmit","PreToolUse","PostToolUse","PreCompact","Stop","SubagentStart","SubagentStop","PermissionRequest"):
+    assert f'"{hook}": []' in helpers
+assert 'os.environ.pop("CLAUDECODE", None)' in source("src/gobby/runner.py")
+assert '"claude-agent-sdk>=0.2.144"' in source("pyproject.toml")
+assert not re.search(r"(?m)^  mode:", source("web/src/components/agents/AgentEditForm.types.ts"))
+for path in ("web/src/components/agents/AgentProviderSettings.tsx","web/src/components/agents/AgentEditForm.types.ts"):
+    assert "embedded" not in source(path)
+variables = source("src/gobby/mcp_proxy/tools/workflows/_variables.py")
+assert "session_id: str," in variables and "resolved_session_id" in variables
+assert "session_id=session_id" in source("src/gobby/mcp_proxy/server.py")
+assert "session_id=" in source("src/gobby/servers/routes/sessions/variables.py")
+assert "adjust_counter_and_derive_boolean" in source("src/gobby/hooks/event_handlers/_agent.py")
+assert "  is_subagent:\n    value: false" in source("src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml")
+assert "is_subagent" in source("src/gobby/install/shared/workflows/rules/task-enforcement/block-native-task-tools.yaml")
+for path in ("require-task-before-edit.yaml","require-commit-before-status.yaml"):
+    assert "is_subagent" not in source("src/gobby/install/shared/workflows/rules/task-enforcement/"+path)
+for path in ("src/gobby/mcp_proxy/importer.py","src/gobby/utils/tool_summarizer.py"):
+    assert "call_feature" in source(path)
+assert 'className="grid min-h-0 flex-1"' in source("web/src/components/chat/ChatMainColumn.tsx")
+assert "<ChatInput" in source("web/src/components/chat/ChatMainColumn.tsx")
+assert "Virtuoso" in source("web/src/components/chat/MessageList.tsx")
+for pattern, paths in (
+    ("ExecutorRegistry|EmbeddedPTYResult|stream_with_mcp_tools|run_fix_attempt|validate_and_fix",["src/gobby","web/src"]),
+    ("in_process",["src/gobby/agents","src/gobby/cli"]),
+):
+    result = subprocess.run(["/usr/bin/git","grep","-E",pattern,PIN,"--",*paths],capture_output=True)
+    assert result.returncode == 1, result.stdout.decode()
+for path in ("src/gobby/llm/resolver.py","tests/llm/test_resolver.py"):
+    assert not exists(path)
+
+# Prior-batch semantic regressions and ancestor ledgers.
+prompt_losses = sections[3].split(Q*3+"text\n",1)[1].split("\n"+Q*3,1)[0].splitlines()
+assert len(prompt_losses) == 6
+for path in ("src/gobby/install/shared/prompts/handoff/session_end.md","tests/prompts/fixtures/handoff_session_end_golden.md"):
+    historical = git("show", f"19ad378d4e65347ec6406b04d83597c57ed2e342:{path}").decode()
+    assert all(line in historical and line not in source(path) for line in prompt_losses)
+for oid in ("cc82f7a5a395a0fa033c5bdfa8cf1376b4ced824","06112ec3cc40a44b66cb6dde1ceb63590525fc73","95e809ee251d64e742b68032065c241cce34b179","b705b0254841bbcadd3bb0b55e2c8dc5f5ec08ba"):
+    ancestor(oid)
+for n in (4,5):
+    if n == 5:
+        text = sections[n].split("### Batch 5 replacement and retirement ancestors",1)[1].split("### Batch 5 deterministic evidence ledger",1)[0]
+        oids = re.findall(r"\x60([0-9a-f]{40})\x60",text)
+        assert len(oids) == 14
+    else:
+        text = sections[n].split("ancestors = (",1)[1].split(")",1)[0]
+        oids = re.findall(r'"([0-9a-f]{40})"',text)
+        assert len(oids) == 18
+    for oid in oids:
+        ancestor(oid)
+for packet in ("06-tasks-plans-review-learning.md","07-workflows-skills-orchestration.md","08-mcp-proxy-hub-services.md","09-servers-sessions-runtime.md"):
+    source(".gobby/plans/completed/coderabbit-fixes/"+packet)
+plan = source(".gobby/plans/remove-gobby-build.md")
+assert "src/gobby/build/workspaces.py::*"+Q+" — operation: delete" in plan
+assert "src/gobby/dispatch/spawn.py::*"+Q+" — operation: delete" in plan
+for path in ("src/gobby/dispatch/base_guard.py","tests/dispatch/test_dependency_base_guard.py"):
+    assert not exists(path)
+coverage = source("src/gobby/plans/review_coverage.py")
+assert 'return canonical_json_sha256({"plan_hash": plan_hash, "sources": source_hashes})' in coverage
+assert coverage.count('json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()') == 2
+assert "[0.4.11]" in git("show","d4cf939a6dd9ef9b0e466b501c505dbfe17979c3:CHANGELOG.md").decode()
+assert "[0.4.11]" not in source("CHANGELOG.md")
+for receipt in ("e051b26e-4553-486e-966a-aa4a910f44ac","0fca1877-81bd-4528-b67d-6f77c7e65ac0","12c4bfa0-a058-4063-96b7-1eee7b677115"):
+    assert receipt in sections[5]
+assert "7f719a24-e8a6-4e13-8bb9-ee73adf3cdce" in sections[4]
+assert "db116bc8-3028-4307-8307-f5b3f7cd340e" in sections[4]
+assert sum(line.startswith(Q*3) for line in REPORT.splitlines()) % 2 == 0
+assert REPORT.endswith("\n\n_Last verified: 2026-10-12_\n")
+assert not REPORT.endswith("\n\n\n_Last verified: 2026-10-12_\n")
+print("PASS: all89 classifications/order/counts; batch6 32 hashes/15 inventories/14 archives/35 ancestors/referrals/ruling; retained contracts and diagnostic absence; prior3/4/5 115 hashes/46 inventories/36 ancestors and semantic regressions; Markdown/footer")
+
+PY
+```
+
+Validation passed with the direct `uv run python` audit above: all 89 ordered,
+unique classifications and final counts; batch 6's 32 pinned excerpt hashes,
+15 path inventories, 14 exact archives with no branch/remote holders,
+35 replacement ancestors, referral/ruling receipts, retained contracts and
+diagnostic absence. The same run rechecked batch 3–5's 115 hashes,
+46 inventories, 36 ancestors, live prompt losses, reconciliation packet
+availability, approved retirement, LOW-1 source correction and release scope.
+The original sequential containment run was interrupted for speed; the final
+passing audit uses one topological branch/remote graph walk and one pinned
+path inventory. Native evidence and Git bytes agree. `git diff --check` passes.
+No fresh provider, installed-registry, release-publication or browser pass is
+claimed. The report is the only changed file.
 
 _Last verified: 2026-10-12_
