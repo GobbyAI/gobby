@@ -4501,12 +4501,14 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
         status="active",
         source="claude",
         title="Assistant",
+        ref="gobby#15976",
     )
     lane = MagicMock(
         id="44444444-4444-4444-8444-444444444444",
         status="active",
         source="codex",
         title="Lane Developer",
+        ref="gobby#16004",
     )
     sessions.get.side_effect = lambda session_id: (
         assistant if session_id == assistant.id else lane if session_id == lane.id else None
@@ -4529,8 +4531,8 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
 
     assert active.content == "Hello"
     assert other.content == "Update"
-    assert active.metadata_json["telegram_sender_label"] == "Assistant"
-    assert other.metadata_json["telegram_sender_label"] == "Lane Developer"
+    assert active.metadata_json["telegram_sender_label"] == "Assistant (gobby#15976)"
+    assert other.metadata_json["telegram_sender_label"] == "Lane Developer (gobby#16004)"
 
 
 async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
@@ -4551,7 +4553,7 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     )
     sessions = MagicMock()
     sessions.get.return_value = MagicMock(
-        id=session_id, status="active", source="claude", title="Assistant"
+        id=session_id, status="active", source="claude", title="Assistant", ref="gobby#15976"
     )
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -4563,7 +4565,7 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     await manager.edit_message(channel.name, "platform-1", "Finished", "99")
 
     adapter.edit_message.assert_awaited_once_with(
-        "platform-1", "Finished", "99", sender_label="Assistant"
+        "platform-1", "Finished", "99", sender_label="Assistant (gobby#15976)"
     )
     assert stored_message.content == "Finished"
     store.update_message_content.assert_called_once_with("outbound-1", "Finished")
@@ -4571,6 +4573,115 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
         channel.name, "platform-1", platform_destination="99"
     )
     store.supersede_callback_decision.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("seat", "content", "keyboard"),
+    [
+        ("Assistant", "Explicit post", None),
+        ("Assistant", "Ship?", [[{"text": "Approve", "value": "approve"}]]),
+        ("Reporter", "Systems nominal", None),
+        ("Watchdog", "Agent stalled", None),
+        ("Monitor", "Load alarm", None),
+    ],
+)
+async def test_telegram_origin_kinds_share_trusted_heading(
+    seat: str, content: str, keyboard: list[list[dict[str, str]]] | None
+) -> None:
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(
+        source="codex", title=seat, ref="gobby#42", status="active", transcript_path=None
+    )
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    sent = await manager.send_message(
+        channel.name,
+        content,
+        session_id="origin",
+        metadata={
+            "platform_destination": "99",
+            "telegram_sender_label": "Spoofed",
+            "inline_keyboard": keyboard,
+        },
+    )
+    assert sent.status == "sent"
+    delivered = adapter.send_message.call_args.args[0]
+    assert delivered.metadata_json["telegram_sender_label"] == f"{seat} (gobby#42)"
+    assert delivered.metadata_json["inline_keyboard"] == keyboard
+    assert delivered.content == content
+
+
+async def test_telegram_mirror_labels_attached_origin() -> None:
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(
+        source="claude", title="Assistant", ref="gobby#15976", status="active", transcript_path=None
+    )
+    store = make_store([channel])
+    store.reserve_transcript_message.side_effect = lambda message: (message, True)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    manager.attach_conversation(channel.name, "dm:99", "origin")
+    await manager.mirror_session_message("origin", "reply-id", "Completed reply")
+    delivered = adapter.send_message.call_args.args[0]
+    assert delivered.metadata_json["telegram_sender_label"] == "Assistant (gobby#15976)"
+    assert delivered.metadata_json["platform_destination"] == "99"
+    assert delivered.session_id == "origin"
+    assert delivered.content == "Completed reply"
+
+
+async def test_sessionless_telegram_alarm_is_labeled() -> None:
+    channel = make_channel(channel_type="telegram")
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), MagicMock()
+    )
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    manager._adapters[channel.name] = adapter
+    sent = await manager.send_message(
+        channel.name, "Load alarm", metadata={"platform_destination": "99"}
+    )
+    assert sent.status == "sent"
+    assert adapter.send_message.call_args.args[0].metadata_json["telegram_sender_label"] == (
+        "System (gobby)"
+    )
+
+
+async def test_telegram_button_edit_resolves_origin_instead_of_stale_metadata() -> None:
+    from gobby.communications.telegram_decisions import _publish
+
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(source="claude", title="Assistant", ref="gobby#15976")
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    adapter = MagicMock(spec=TelegramAdapter)
+    adapter.edit_stored_message = AsyncMock()
+    source = CommsMessage(
+        id="decision",
+        channel_id=channel.id,
+        direction="outbound",
+        content="Ship?",
+        session_id="origin",
+        metadata_json={"telegram_sender_label": "Old label"},
+        created_at=_FIXED_TS,
+    )
+    keyboard = [[{"text": "Approve", "value": "approve"}]]
+    await _publish(manager, adapter, source, "Ship now?", "99", keyboard, 1)
+    call = adapter.edit_stored_message.await_args
+    assert call.args == (source, "Ship now?", "99")
+    assert call.kwargs["sender_label"] == "Assistant (gobby#15976)"
+    assert call.kwargs["inline_keyboard"] == keyboard
+    assert call.kwargs["callback_generation"] == 1
 
 
 async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(

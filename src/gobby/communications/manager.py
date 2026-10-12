@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
-from gobby.communications.agent_labels import agent_label
+from gobby.communications.agent_labels import telegram_agent_label
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.group_policy import evaluate_group_message
 from gobby.communications.identities import IdentityManager
@@ -458,13 +458,11 @@ class CommunicationsManager:
             )
 
     def telegram_sender_label(self, channel: ChannelConfig, session_id: str | None) -> str | None:
-        """Return the agent name to add after Telegram rendering."""
-        if channel.channel_type != "telegram" or session_id is None:
+        """Resolve the trusted origin heading shared by every Telegram outbound path."""
+        if channel.channel_type != "telegram":
             return None
-        session = self._session_store.get(session_id)
-        if session is None or session.source in {"comms", "web-chat", "web_chat", "system"}:
-            return None
-        return agent_label(session)
+        session = self._session_store.get(session_id) if session_id is not None else None
+        return telegram_agent_label(session)
 
     async def send_attachment(
         self,

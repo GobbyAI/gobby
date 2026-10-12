@@ -38,3 +38,11 @@ def agent_menu_labels(sessions: Sequence[Session]) -> dict[str, str]:
         else:
             labels[session.id] = name[:46]
     return labels
+
+
+def telegram_agent_label(session: Session | None) -> str:
+    """Identify an outbound origin; sessionless alarms use the stable System (gobby) label."""
+    if session is None:
+        return "System (gobby)"
+    seat = " ".join(agent_label(session).split())[:80]
+    return f"{seat} ({session.ref})"
