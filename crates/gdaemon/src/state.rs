@@ -1,19 +1,58 @@
-//! Single native owner of the machine PID claim, lease and backend lifecycle.
+//! Single owner of the machine PID claim and runtime startup.
 //!
-//! Node relay work consumes gcore's bootstrap RunMode and this state; it must
-//! never create a second mode parser or a database lease for a node.
+//! Standalone and hub runtimes take a lease and backend lifecycle. A node takes
+//! only the PID claim and NodeServices, without a native runtime or database.
 
 use crate::{
     lease::{ActiveDaemonLease, LeaseState},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
-        pid_file::claim_from_environment,
+        pid_file::{PidFileClaim, claim_from_environment},
     },
 };
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::{HubDatabaseBootstrap, RunMode};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{Mutex, watch};
+
+/// Enrollment and hub destination for a node's front door.
+pub struct NodeServices {
+    pub bootstrap_path: PathBuf,
+    pub hub_daemon_url: String,
+}
+
+impl NodeServices {
+    pub fn prepare(
+        bootstrap: &HubDatabaseBootstrap,
+        path: &Path,
+        home: &Path,
+    ) -> Result<Option<(Arc<Self>, PidFileClaim)>> {
+        bootstrap.api_key.as_ref().with_context(|| {
+            format!(
+                "node bootstrap {} has no api_key; run `gobby auth login` to enroll",
+                path.display()
+            )
+        })?;
+        let hub_daemon_url = bootstrap
+            .hub_daemon_url
+            .as_ref()
+            .context("node bootstrap requires hub_daemon_url")?;
+        let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
+            return Ok(None);
+        };
+        Ok(Some((
+            Arc::new(Self {
+                bootstrap_path: path.to_owned(),
+                hub_daemon_url: hub_daemon_url.clone(),
+            }),
+            claim,
+        )))
+    }
+}
 
 /// The HTTP layer sees a projection, while the supervisor owns the PID claim.
 pub struct RuntimeState {
@@ -29,24 +68,23 @@ impl RuntimeState {
         home: &Path,
         secret: &str,
     ) -> Result<Option<(Arc<Self>, BackendSupervisor)>> {
+        if bootstrap.mode == RunMode::Node {
+            anyhow::bail!(
+                "a node takes no native runtime; NodeServices::prepare claims its PID file"
+            );
+        }
         let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
             return Ok(None);
         };
-        let mut lease_state = None;
-        let lease = match bootstrap.mode {
-            RunMode::Node => None,
-            mode => {
-                let database_url = bootstrap
-                    .database_url
-                    .as_deref()
-                    .context("native runtime ownership requires bootstrap database_url")?;
-                let machine = gobby_core::machine::read_machine_id_from_home(home)?;
-                let token = gobby_core::grant::deployment_token(home);
-                let lease = ActiveDaemonLease::new(database_url, &machine, &token, mode)?;
-                lease_state = Some(lease.subscribe());
-                Some(Arc::new(Mutex::new(lease)))
-            }
-        };
+        let database_url = bootstrap
+            .database_url
+            .as_deref()
+            .context("native runtime ownership requires bootstrap database_url")?;
+        let machine = gobby_core::machine::read_machine_id_from_home(home)?;
+        let token = gobby_core::grant::deployment_token(home);
+        let lease = ActiveDaemonLease::new(database_url, &machine, &token, bootstrap.mode)?;
+        let lease_state = Some(lease.subscribe());
+        let lease = Some(Arc::new(Mutex::new(lease)));
         let mut config = BackendConfig::from_environment(home)?;
         config
             .environment

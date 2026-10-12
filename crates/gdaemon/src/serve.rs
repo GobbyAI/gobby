@@ -15,7 +15,7 @@ use gobby_core::bootstrap::{
     HubDatabaseBootstrap, RouteBackend, read_hub_database_bootstrap_file,
 };
 #[cfg(unix)]
-use gobby_core::bootstrap::{backend_ports, bootstrap_path};
+use gobby_core::bootstrap::{RunMode, backend_ports, bootstrap_path};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -54,23 +54,27 @@ pub struct PublicListener {
 pub fn run() -> Result<()> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use rand::RngCore;
-    let mut secret = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut secret);
-    let secret = URL_SAFE_NO_PAD.encode(secret);
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
-    let resolver = bootstrap
-        .database_url
-        .as_deref()
-        .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
-    let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
-    let (backend_http, backend_ws) =
-        backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
-    for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
-        eprintln!(
-            "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
-        );
-    }
+    let native = if bootstrap.mode == RunMode::Node {
+        None
+    } else {
+        let mut secret = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret);
+        let secret = URL_SAFE_NO_PAD.encode(secret);
+        let resolver = bootstrap
+            .database_url
+            .as_deref()
+            .map(|url| Arc::new(PostgresKeyResolver::new(url)) as Arc<dyn KeyResolver>);
+        let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
+        let ports = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
+        for name in unimplemented_families(FAMILIES, &bootstrap.front_door.routes) {
+            eprintln!(
+                "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
+            );
+        }
+        Some((secret, auth, ports))
+    };
     let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
     if let Some(loaded) = &tls {
         for name in &loaded.missing_sans {
@@ -88,6 +92,18 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
+        if bootstrap.mode == RunMode::Node {
+            let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)? else {
+                return Ok(());
+            };
+            let mut listeners = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
+            listeners.extend(bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?);
+            let doors = listeners.into_iter().map(|listener| (listener, FrontDoor::node(node.clone()))).collect();
+            let result = serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
+            drop(claim);
+            return result;
+        }
+        let (secret, auth, (backend_http, backend_ws)) = native.context("native runtime configuration missing")?;
         let Some((state, supervisor)) =
             crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
         else {
@@ -181,18 +197,26 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
 /// reaches the front door.
 pub async fn bind(host: &str, port: u16, backend_port: u16) -> Result<Vec<PublicListener>> {
     let backend = SocketAddr::from(([127, 0, 0, 1], backend_port));
+    Ok(bind_listeners(host, port)
+        .await?
+        .into_iter()
+        .map(|listener| PublicListener { listener, backend })
+        .collect())
+}
+
+async fn bind_listeners(host: &str, port: u16) -> Result<Vec<TcpListener>> {
     let listener = TcpListener::bind(bind_addr(host, port).await?)
         .await
         .with_context(|| format!("failed to bind {host}:{port}"))?;
     let bound = listener
         .local_addr()
         .context("bound listener has no address")?;
-    let mut listeners = vec![PublicListener { listener, backend }];
+    let mut listeners = vec![listener];
     if let Some(companion) = companion_addr(bound) {
         let listener = TcpListener::bind(companion)
             .await
             .with_context(|| format!("failed to bind the loopback companion {companion}"))?;
-        listeners.push(PublicListener { listener, backend });
+        listeners.push(listener);
     }
     Ok(listeners)
 }
@@ -262,11 +286,7 @@ async fn serve_with_runtime(
     #[cfg(unix)] runtime: Option<Arc<crate::state::RuntimeState>>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
-    // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
-    let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
-    heartbeat.start()?;
-    let acceptor = tls.map(TlsAcceptor::from);
-    let mut accept_loops = JoinSet::new();
+    let mut doors = Vec::with_capacity(listeners.len());
     for PublicListener { listener, backend } in listeners {
         let state = FrontDoorState::new(backend, BackendState::Down, auth.clone());
         #[cfg(unix)]
@@ -275,11 +295,24 @@ async fn serve_with_runtime(
             ..state
         };
         let table = RouteTable::new(FAMILIES, routes, &state);
-        accept_loops.spawn(accept(
-            listener,
-            FrontDoor::new(state, table),
-            acceptor.clone(),
-        ));
+        doors.push((listener, FrontDoor::new(state, table)));
+    }
+    serve_doors(doors, tls, shutdown).await
+}
+
+/// Serve prepared backend or node doors on their public listeners.
+pub async fn serve_doors(
+    doors: Vec<(TcpListener, FrontDoor)>,
+    tls: Option<Arc<ServerConfig>>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<()> {
+    // Stage 1 has no timer-driven Rust jobs yet. Strangler ports register here.
+    let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
+    heartbeat.start()?;
+    let acceptor = tls.map(TlsAcceptor::from);
+    let mut accept_loops = JoinSet::new();
+    for (listener, door) in doors {
+        accept_loops.spawn(accept(listener, door, acceptor.clone()));
     }
     let result = tokio::select! {
         () = shutdown => Ok(()),
