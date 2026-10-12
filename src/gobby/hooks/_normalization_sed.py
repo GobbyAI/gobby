@@ -17,6 +17,24 @@ from gobby.hooks._sed_program import sed_write_paths
 from gobby.hooks.code_navigation import sed_line_count, source_read_navigation_metadata
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
+_LONG_OPTIONS = (
+    "--expression",
+    "--file",
+    "--in-place",
+    "--line-length",
+    "--quiet",
+    "--silent",
+    "--debug",
+    "--follow-symlinks",
+    "--help",
+    "--posix",
+    "--regexp-extended",
+    "--sandbox",
+    "--separate",
+    "--unbuffered",
+    "--version",
+)
+
 
 @dataclass(frozen=True)
 class _SedOperands:
@@ -109,6 +127,9 @@ def _sed_file_operands(parts: list[str], raw_parts: tuple[str, ...] | None) -> _
             continue
         if not after_options and word.startswith("--"):
             option, equals, value = word.partition("=")
+            matches = [candidate for candidate in _LONG_OPTIONS if candidate.startswith(option)]
+            if len(matches) == 1:
+                option = matches[0]
             inplace |= option == "--in-place"
             if option in {"--expression", "--file", "--line-length"}:
                 if not equals and index < len(parts):
@@ -125,27 +146,34 @@ def _sed_file_operands(parts: list[str], raw_parts: tuple[str, ...] | None) -> _
             continue
         if not after_options and word.startswith("-") and word != "-":
             for offset, option in enumerate(word[1:], start=1):
-                if option in "efl":
+                if option == "l":
+                    value = word[offset + 1 :]
+                    if value.isdigit():
+                        break
+                    if not value and index < len(parts) and parts[index].isdigit():
+                        index += 1
+                        break
+                    continue
+                if option in "ef":
                     value = word[offset + 1 :]
                     if not value and index < len(parts):
                         source_index = index
                         value = parts[index]
                         index += 1
-                    if option != "l":
-                        explicit_script = True
-                        unresolved_script |= unresolved(value, source_index)
-                        if option == "f" and value:
-                            script_files.append(value)
-                        elif option == "e":
-                            programs.append(value)
+                    explicit_script = True
+                    unresolved_script |= unresolved(value, source_index)
+                    if option == "f" and value:
+                        script_files.append(value)
+                    elif option == "e":
+                        programs.append(value)
                     break
                 if option in "iI":
                     inplace = True
-                    # BSD accepts a separate empty or dot-prefixed backup suffix.
+                    # BSD -I requires a suffix; -i also accepts empty/dot-prefixed suffixes.
                     if (
                         offset == len(word) - 1
                         and index < len(parts)
-                        and (parts[index] == "" or parts[index].startswith("."))
+                        and (option == "I" or parts[index] == "" or parts[index].startswith("."))
                     ):
                         index += 1
                     break
