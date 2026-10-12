@@ -1,20 +1,21 @@
 # Shared Datastores Across Machines
 
 Gobby supports a `datastore_mode: remote` topology in which one hub machine owns
-PostgreSQL, Qdrant, and FalkorDB and every machine that uses them installs a Gobby
-daemon. The datastores are shared over a private Tailscale network; execution stays
-local to each machine.
+PostgreSQL, Qdrant, and FalkorDB and every machine that uses them installs Gobby.
+The datastores are shared over a private Tailscale network. A machine with a remote
+bootstrap is a node: it runs no Python daemon, and `gobby start` refuses there (see
+[Client setup](#client-setup)).
 
 **Exactly one daemon is active per shared hub.** The singleton lease is scoped to the
-shared database, so a second daemon pointed at the same datastores starts as a standby
+shared database, so a second local-bootstrap daemon pointed at the same datastores starts as a standby
 and exposes only the standby health and lease-control surface until it is promoted.
 Operators inspect ownership through `GET /api/admin/lease/status` and request
 promotion or stale-owner recovery through the [native lease administration routes](admin-operations.md#lifecycle-and-recovery).
 Independent simultaneously active hub/node execution remains roadmap work.
 
 ```text
-workstation daemon --+
-laptop daemon -------+-- Tailscale ACL -- datastore hub
+workstation node ----+
+laptop node ---------+-- Tailscale ACL -- datastore hub
                                          |-- PostgreSQL: 60891
                                          |-- Qdrant:     6333
                                          `-- FalkorDB:   16379
@@ -85,8 +86,8 @@ ui_port: 60889
 Set `hub_daemon_url` to the authenticated HTTP(S) origin of the local files owner,
 not this client's origin or a datastore port. A remote bootstrap must not contain
 `files_home`. The owner must be reachable for the installer's profile probe.
-The singleton lease still limits which daemon can serve normal operations: remote
-mode does not promise concurrent active execution or make standby an owner-file server.
+A remote bootstrap makes this machine a node. A node runs no Python daemon and never
+takes the hub's singleton lease; the hub's daemon serves every normal operation.
 
 Copy the hub's shared secret material into the client Gobby home and restrict the
 credentials and bootstrap to the owner:
@@ -96,17 +97,24 @@ scp <hub>:~/.gobby/.secret_kek ~/.gobby/.secret_kek
 chmod 600 ~/.gobby/.secret_kek ~/.gobby/bootstrap.yaml
 ```
 
-Enroll this node, then run the remote installer and start the client daemon.
+Enroll this node, then run the remote installer.
 Use an HTTPS hub; an intentional non-loopback HTTP connection requires
 `gobby auth login --insecure`:
 
 ```bash
 gobby auth login
 gobby install
-gobby start
-gobby status
-gobby health
 ```
+
+Do not start a daemon on the client. `gobby start`, `gobby restart`, and
+`gobby cutover` refuse on a node before launching, stopping, building, or promoting
+anything:
+
+```text
+datastore_mode: remote is a node; a node runs no Python daemon and never takes the hub lease. See docs/guides/shared-stack.md (Client setup).
+```
+
+The node's own front door arrives with the node relay.
 
 In remote mode, `gobby install` skips Docker checks and local datastore provisioning.
 Its preflight checks the shared secret KEK and enrolled API key, probes the owner's `/api/files/user-md`,

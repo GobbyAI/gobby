@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from gobby.cli.daemon import _services_start
-from gobby.cli.daemon_lifecycle import _do_stop
-from gobby.cli.daemon_start import _start_dependency_errors
+import click
+import pytest
+from click.testing import CliRunner
+
+from gobby.cli import cli
+from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
-from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import load_bootstrap
+
+NODE_REFUSAL = (
+    "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
+    "the hub lease. See docs/guides/shared-stack.md (Client setup)."
+)
 
 
 def _write_remote_bootstrap(gobby_home: Path) -> Path:
@@ -24,62 +29,37 @@ def _write_remote_bootstrap(gobby_home: Path) -> Path:
     return bootstrap_path
 
 
-def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
-    bootstrap_path = _write_remote_bootstrap(tmp_path)
-    config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
+def test_start_refuses_node_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_remote_bootstrap(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    forbidden = AssertionError("a node must not launch or check managed services")
 
     with (
-        patch("gobby.cli.daemon_lifecycle.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.daemon_start.collect_dependency_report") as collect_dependencies,
-        patch("gobby.cli.daemon_start.required_dependency_errors", return_value=[]),
+        patch("gobby.cli.daemon_start.worktree_daemon_refusal", return_value=None),
+        patch("gobby.storage.schema_divergence.binary_set_apply_refusal", return_value=None),
+        patch("gobby.cli.daemon_start.collect_dependency_report", side_effect=forbidden),
+        patch("gobby.runner_pid_file.adopt_inherited_claim", side_effect=forbidden),
+        patch("subprocess.Popen", side_effect=forbidden),
     ):
-        assert _start_dependency_errors() == []
-    collect_dependencies.assert_called_once_with(managed_services=False, include_srt=False)
+        result = CliRunner().invoke(cli, ["start"])
 
-    with patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")):
-        result = _services_start(tmp_path)
+    assert result.exit_code == 1, result.output
+    assert NODE_REFUSAL in result.output
+    assert not (tmp_path / "gobby.pid").exists()
 
-    assert result.outcome == "skipped"
-    assert "100.64.0.10" in result.detail
 
-    runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
-    with (
-        patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
-        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
-        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
-        patch("gobby.cli.daemon_lifecycle.protect_pending_handoffs"),
-        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True),
-        patch("gobby.cli.daemon_lifecycle._services_stop") as services_stop,
+def test_restart_start_proof_refuses_node_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_remote_bootstrap(tmp_path)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    ctx = click.Context(click.Command("restart"))
+
+    with patch(
+        "gobby.cli.daemon_preflight._open_hub",
+        side_effect=AssertionError("a node must not open the hub to prove a start"),
     ):
-        assert _do_stop(MagicMock(), docker_flag=True)
-    services_stop.assert_not_called()
-
-
-def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
-    bootstrap_path = _write_remote_bootstrap(tmp_path)
-    config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
-    runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
-
-    with (
-        patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
-        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
-        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
-        patch("gobby.cli.daemon_lifecycle.protect_pending_handoffs"),
-        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True) as stop_daemon,
-        patch("gobby.cli.daemon_lifecycle._services_stop") as services_stop,
-        patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")),
-    ):
-        assert _do_stop(MagicMock(), docker_flag=True, shutdown_intent="restart")
-        start_result = _services_start(tmp_path)
-
-    stop_daemon.assert_called_once_with(
-        quiet=False,
-        shutdown_intent="restart",
-        shutdown_source="cli_restart",
-        drain_terminals=False,
-    )
-    services_stop.assert_not_called()
-    assert start_result.outcome == "skipped"
+        assert restart_start_refusal(ctx) == NODE_REFUSAL
 
 
 def test_compose_runtime_rejects_remote_mode(tmp_path: Path) -> None:

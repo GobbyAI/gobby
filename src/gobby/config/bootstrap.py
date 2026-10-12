@@ -191,6 +191,16 @@ def _default_bootstrap_config() -> BootstrapConfig:
     return BootstrapConfig()
 
 
+def node_daemon_refusal(bootstrap: BootstrapConfig) -> str | None:
+    """Name why this bootstrap must not run the Python daemon, or None."""
+    if bootstrap.datastore_mode != "remote":
+        return None
+    return (
+        "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
+        "the hub lease. See docs/guides/shared-stack.md (Client setup)."
+    )
+
+
 def bootstrap_from_mapping(
     data: dict[str, Any], *, resolve_database_url: bool = False
 ) -> BootstrapConfig:

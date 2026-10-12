@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import click
 import pytest
 from click.testing import CliRunner, Result
 
@@ -21,6 +22,46 @@ from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 cutover_module = importlib.import_module("gobby.cli.cutover")
 
 pytestmark = pytest.mark.unit
+
+
+def test_cutover_refuses_node_bootstrap_before_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    node_home = tmp_path / "node-home"
+    node_home.mkdir()
+    bootstrap_path = node_home / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "datastore_mode: remote\n"
+        "hub_daemon_url: http://hub.example.test:60887\n"
+        "database_url: postgresql://gobby:secret@100.64.0.10:5432/gobby\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    monkeypatch.setenv("GOBBY_HOME", str(node_home))
+    reached: list[str] = []
+
+    def forbid(name: str) -> Callable[..., None]:
+        def forbidden(*_args: object, **_kwargs: object) -> None:
+            reached.append(name)
+            raise AssertionError(f"a node cutover must not reach {name}")
+
+        return forbidden
+
+    monkeypatch.setattr(cutover_module, "_build_artifacts", forbid("build"))
+    monkeypatch.setattr(cutover_module, "_run", forbid("subprocess"))
+    monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", forbid("promote"))
+    monkeypatch.setattr(
+        cutover_module, "restart", click.Command("restart", callback=forbid("restart"))
+    )
+    monkeypatch.setattr(subprocess, "run", forbid("subprocess"))
+    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
+    assert result.exit_code != 0, result.output
+    assert (
+        "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
+        "the hub lease. See docs/guides/shared-stack.md (Client setup)."
+    ) in result.output
+    assert reached == []
+
 
 SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 VERSION = "0.5.0"

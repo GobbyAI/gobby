@@ -9,12 +9,13 @@ leave the running daemon alone on refusal.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
 import click
 
-from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, probe_set_member_identity
 from gobby.paths import get_install_dir
 from gobby.storage.hub.protocol import HubDatabase
@@ -47,6 +48,10 @@ def restart_start_refusal(
     """
     from gobby.storage.schema_divergence import binary_set_apply_refusal, schema_apply_refusal
 
+    # An unreadable bootstrap is not a refusal here; _hub_url reads it the same way.
+    with contextlib.suppress(BootstrapConfigError):
+        if refusal := node_daemon_refusal(load_bootstrap()):
+            return refusal
     if refusal := worktree_daemon_refusal():
         return refusal
 

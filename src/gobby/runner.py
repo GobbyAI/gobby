@@ -385,7 +385,7 @@ async def run_gobby(
     from contextlib import suppress
 
     from gobby.cli.utils import get_gobby_home
-    from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
+    from gobby.config.bootstrap import load_bootstrap, node_daemon_refusal, resolve_bootstrap_path
     from gobby.deployment import deployment_token
     from gobby.runner_backend import watch_supervisor
     from gobby.runner_init import StartRefusal
@@ -401,6 +401,8 @@ async def run_gobby(
         bootstrap = load_bootstrap(
             str(config_path) if config_path else None, resolve_database_url=True
         )
+        if refusal := node_daemon_refusal(bootstrap):
+            raise RuntimeError(refusal)
         if bootstrap.run_mode() != "node" and (platform_error := unsupported_platform_error()):
             raise StartRefusal(platform_error)
         bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))

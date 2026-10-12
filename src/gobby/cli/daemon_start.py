@@ -19,7 +19,7 @@ from gobby.cli.daemon_singleton import (
     admit_direct_start,
     service_backend_name,
 )
-from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_pid_file import cancel_service_reservation, convert_held_claim_to_reservation
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
@@ -65,6 +65,8 @@ def _start_dependency_errors() -> list[str]:
         bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
     except BootstrapConfigError as exc:
         return [f"Invalid bootstrap.yaml: {exc}"]
+    if refusal := node_daemon_refusal(bootstrap):
+        return [refusal]
     managed_services = (
         bootstrap.datastore_mode == "local"
         and (gobby_home / "services" / "docker-compose.yml").is_file()
