@@ -269,7 +269,10 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "Check lanes, work with orchestrator to address blockers, keep agents working" in (
         prompt
     )
-    assert "edit requests to the Orchestrator" in prompt
+    assert "Report through the Inbox Manager" in prompt
+    assert "Send task edit requests through the Inbox Manager" in prompt
+    assert "Found work goes to the Inbox Manager" in prompt
+    assert "blockers to the Orchestrator" not in prompt
     assert "sent unprompted to the Assistant" in prompt
     assert "the project's operating policy" in prompt
 
@@ -341,6 +344,8 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "with wake=true" in prompt
     assert 'single word "steady"' in prompt
     assert "close backlog above 10" in prompt
+    assert "found work that blocks a lane task or its landing" in prompt
+    assert "a HOLD or RESUME ACK" in prompt
     assert "close backlog above 5" not in prompt
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
     assert "local_cli_token" not in prompt
