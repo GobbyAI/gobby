@@ -447,7 +447,7 @@ def _shell_input_scripts(command: str) -> list[str]:
                 scripts.extend(
                     tokens[index + 1].value
                     for index, token in enumerate(tokens[:-1])
-                    if not token.quoted and token.value == "<<<"
+                    if not token.quoted and token.value.lstrip("0123456789") == "<<<"
                 )
     return scripts
 

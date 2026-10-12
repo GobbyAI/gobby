@@ -50,7 +50,7 @@ _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 # opening files, so it is neither a mutating redirection nor a segment separator.
 # The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
 # ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
-_FD_DUP_SCAN_RE = re.compile(r"\d*[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
+_FD_DUP_SCAN_RE = re.compile(r"[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -304,6 +304,7 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             # Only a whole unquoted digit word adjacent to < or > is an IO_NUMBER.
             if (
                 operator[0] in "<>"
+                and command[index : index + 2] not in {"<(", ">("}
                 and current
                 and not quoted
                 and heredoc_operator is None

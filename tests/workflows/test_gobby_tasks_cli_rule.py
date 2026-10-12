@@ -215,6 +215,8 @@ def test_uv_hidden_global_value_options(
         (f"echo '{_MUTATION}' | bash", True),
         (f"printf '{_MUTATION}\\n' | sh", True),
         (f"bash <<< '{_MUTATION}'", True),
+        (f"bash 0<<< '{_MUTATION}'", True),
+        (f"sh 0<<< '{_MUTATION}'", True),
         (f"find . -exec {_MUTATION} \\;", True),
         (f"find . -exec {_MUTATION} {{}} +", True),
         (f"python -m {_MUTATION}", True),

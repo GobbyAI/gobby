@@ -3672,6 +3672,8 @@ def test_search_fd_redirect_scope_matches_unnumbered(
         ("cat 0<<EOF\nP\nEOF", ["cat", "0<<", "EOF", "\n"]),
         ("cat 0<<-EOF\n\tP\n\tEOF", ["cat", "0<<-", "EOF", "\n"]),
         ("cat 0<<<P", ["cat", "0<<<", "P"]),
+        ("cat 0<(true)", ["cat", "0", "<", "(true)"]),
+        ("echo 1>(true)", ["echo", "1", ">", "(true)"]),
         ("cat <<2<file\nP\n2", ["cat", "<<", "2", "<", "file", "\n"]),
     ],
 )
@@ -3683,6 +3685,24 @@ def test_fd_redirect_token_boundaries(command: str, expected: list[str]) -> None
     for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
         if not token.quoted:
             assert command[start:end] == token.value
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat 0<(touch X)",
+        "cat 12<(touch X)",
+        "diff 3<(touch X) R/a.py",
+        "echo x 1>(touch X)",
+    ],
+)
+def test_numbered_process_substitution_keeps_writes(command: str) -> None:
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert "X" in data["canonical_file_paths"]
 
 
 @pytest.mark.parametrize("arguments", ["--max-depth 1", "--threads 4"])
