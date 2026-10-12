@@ -4,6 +4,7 @@
 //! only the PID claim and NodeServices, without a native runtime or database.
 
 use crate::{
+    front_door::relay::HubRelay,
     lease::{ActiveDaemonLease, LeaseState},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
@@ -22,7 +23,7 @@ use tokio::sync::{Mutex, watch};
 /// Enrollment and hub destination for a node's front door.
 pub struct NodeServices {
     pub bootstrap_path: PathBuf,
-    pub hub_daemon_url: String,
+    pub relay: HubRelay,
 }
 
 impl NodeServices {
@@ -41,13 +42,29 @@ impl NodeServices {
             .hub_daemon_url
             .as_ref()
             .context("node bootstrap requires hub_daemon_url")?;
+        let pem = if hub_daemon_url.starts_with("https://") {
+            let cert = bootstrap.hub_cert.as_ref().with_context(|| {
+                format!(
+                    "node bootstrap {} has no hub_cert for an https hub; \
+                     run `gobby auth login` again",
+                    path.display()
+                )
+            })?;
+            Some(
+                std::fs::read(cert)
+                    .with_context(|| format!("cannot read pinned hub certificate {cert}"))?,
+            )
+        } else {
+            None
+        };
+        let relay = HubRelay::new(hub_daemon_url, pem.as_deref())?;
         let Some(claim) = claim_from_environment(&home.join("gobby.pid"))? else {
             return Ok(None);
         };
         Ok(Some((
             Arc::new(Self {
                 bootstrap_path: path.to_owned(),
-                hub_daemon_url: hub_daemon_url.clone(),
+                relay,
             }),
             claim,
         )))

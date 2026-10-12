@@ -5,6 +5,7 @@ use axum::http::header::{CONNECTION, UPGRADE};
 use axum::http::{HeaderMap, Request, Response, StatusCode, Uri};
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use super::FrontDoorState;
@@ -25,14 +26,21 @@ pub fn is_upgrade(headers: &HeaderMap) -> bool {
 /// Forward the upgrade request on a dedicated backend connection. When the backend
 /// answers 101, both legs are upgraded and bytes are copied verbatim until either
 /// side closes, so extensions, ping/pong, close codes and backpressure pass through.
-pub async fn splice(state: &FrontDoorState, mut request: Request<Body>) -> Response<Body> {
+pub async fn splice(state: &FrontDoorState, request: Request<Body>) -> Response<Body> {
     let target = state.target;
-    let client_upgrade = hyper::upgrade::on(&mut request);
-
     let stream = match TcpStream::connect(target).await {
         Ok(stream) => stream,
         Err(_) => return unavailable(target, state.backend_state),
     };
+    splice_over(stream, request, &target.to_string()).await
+}
+
+/// Run the same upgrade exchange over an already connected TCP or pinned TLS stream.
+pub async fn splice_over<S>(stream: S, mut request: Request<Body>, target: &str) -> Response<Body>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let client_upgrade = hyper::upgrade::on(&mut request);
     let (mut sender, connection) = match http1::handshake(TokioIo::new(stream)).await {
         Ok(pair) => pair,
         Err(error) => return bad_gateway(target, error),
