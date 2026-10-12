@@ -2,8 +2,8 @@
 
 After Change 2b, _set_context_for_request delegates to the shared
 resolve_and_seed_contexts helper. These tests verify the HTTP-specific
-bootstrap (deriving project_id from the X-Gobby-Session-Id header when
-the incoming ref is #N/numeric) and that wrapper session headers own
+bootstrap (deriving project_id from the X-Gobby-Session-Id header independently
+of body session targets) and that wrapper session headers own
 workflow/session context when body arguments target another session.
 """
 
