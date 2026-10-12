@@ -153,6 +153,7 @@ class CommitReviewScope:
 
     has_reviewable_paths: bool
     session_owned_reviewable_paths: tuple[str, ...] | None
+    records_only_plan_paths: bool = False
 
 
 def parse_commit_scope(command: str | None) -> CommitScope | None:
@@ -381,16 +382,18 @@ async def inspect_commit_review_scope(
         for path in paths
         if PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS
     }
+    records_only_plan_paths = all(path.startswith(".gobby/plans/") for path in paths)
     if variables is None:
-        return CommitReviewScope(bool(reviewable), None)
+        return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
 
     checkout_root = await resolve_git_worktree_root_async(inspect_cwd, project_path)
     if checkout_root is None:
-        return CommitReviewScope(bool(reviewable), None)
+        return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
     owned = session_dirty_file_set_for_checkout(variables, checkout_root)
     return CommitReviewScope(
         bool(reviewable),
         tuple(sorted(reviewable & owned)),
+        records_only_plan_paths,
     )
 
 

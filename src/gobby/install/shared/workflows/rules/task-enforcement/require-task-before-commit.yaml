@@ -10,6 +10,10 @@ rules:
       variables.get('require_task_before_edit')
       and source != 'pipeline'
       and not variables.get('task_claimed')
+      and not (
+        variables.get('_agent_type') == 'plan-writer'
+        and commit_records_only_plan_paths
+      )
     effects:
       - type: block
         tools: [Bash]

@@ -446,6 +446,110 @@ def gate_handler(
     return handler, session, project
 
 
+@pytest.fixture
+def plan_commit_handler(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+) -> tuple[WorkflowHookHandler, Session, Project]:
+    temp_db.execute(
+        "UPDATE rule_definitions SET enabled = (name = %s)",
+        ("require-task-before-commit",),
+    )
+    _, session, _ = gate_handler
+    SessionVariableManager(temp_db).merge_variables(
+        session.id,
+        {
+            "_variable_defaults_loaded": True,
+            "require_task_before_edit": True,
+            "task_claimed": False,
+            "_agent_type": "plan-writer",
+        },
+    )
+    return gate_handler
+
+
+@pytest.mark.parametrize(
+    "command,staged_source,dirty_source,expected",
+    [
+        ("git commit -m plan", False, False, "allow"),
+        ("git commit -m plan", False, True, "allow"),
+        ("git commit -m plan", True, False, "block"),
+        ("git commit -am plan", False, True, "block"),
+        ("git commit --all -m plan", False, True, "block"),
+        ("git commit -m plan -- .gobby/plans/", True, True, "allow"),
+        ("git commit -m plan .gobby/plans/", True, True, "allow"),
+        ("git commit -m plan -- .gobby/plans/ src/app.py", False, True, "block"),
+        ("git commit -i -m plan -- .gobby/plans/", True, False, "block"),
+        ("git commit --amend -m plan", False, False, "block"),
+        ("git add src/app.py && git commit -m plan", False, True, "block"),
+        ("git commit -m plan; git commit -am source", False, True, "block"),
+        ("GIT_INDEX_FILE=other git commit -m plan", False, False, "block"),
+        ("git commit -m plan -- docs/", False, False, "block"),
+    ],
+)
+async def test_plan_writer_commit_exemption_checks_recorded_paths(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+    command: str,
+    staged_source: bool,
+    dirty_source: bool,
+    expected: str,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    if staged_source or dirty_source:
+        _edit(repo, "src/app.py", "value = 2\n")
+    if staged_source:
+        _git(repo, "add", "src/app.py")
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, repo))
+
+    assert response.decision == expected
+    if expected == "block":
+        assert "require-task-before-commit" in str(response.reason)
+
+
+@pytest.mark.parametrize("agent_type", ["developer", "plan-adversary", "default", None])
+async def test_plan_only_commit_exemption_is_writer_only(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+    agent_type: str | None,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    SessionVariableManager(temp_db).merge_variables(session.id, {"_agent_type": agent_type})
+
+    response = await handler._evaluate_rules(
+        _gate_event("git commit -m plan", session, project, repo)
+    )
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
+async def test_plan_writer_rename_from_source_stays_blocked(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+) -> None:
+    handler, session, project = plan_commit_handler
+    (repo / ".gobby/plans").mkdir(parents=True)
+    _git(repo, "mv", "src/app.py", ".gobby/plans/app.py")
+
+    response = await handler._evaluate_rules(
+        _gate_event("git commit -m plan", session, project, repo)
+    )
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
 def _gate_event(command: str, session: Session, project: Project, repo: Path) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
