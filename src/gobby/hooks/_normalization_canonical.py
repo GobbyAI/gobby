@@ -495,6 +495,10 @@ def _classify_shell_segment(
     shell_stdin = piped_stdin or has_shell_input_redirection(tokens)
     if plain_tokens and not plain_tokens[0].quoted and stdin_parts:
         body = stdin_parts[0]
+        # In command position Bash parses ``!(...)`` as a negated subshell;
+        # operand-position extglobs remain ordinary arguments.
+        if body.startswith("!("):
+            body = body[1:]
         if body.startswith("(") and body.endswith(")") and not body.startswith("(("):
             stdin_parts = ["sh", "-c", body[1:-1]]
     stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)

@@ -1212,6 +1212,28 @@ def test_parenthesized_subshell_attributes_writes(tmp_path: Path, command: str) 
     ] == expected
 
 
+@pytest.mark.parametrize("prefix", ["", "true && ", "true; ", "! "])
+@pytest.mark.parametrize("body", ["touch x.py", "echo ready > x.py", "touch x.py; touch y.py"])
+def test_adjacent_negated_subshell_matches_spaced_mutation(
+    tmp_path: Path, prefix: str, body: str
+) -> None:
+    adjacent = _invocation_metadata(f"{prefix}!({body})", tool_cwd=tmp_path, project_path=tmp_path)
+    spaced = _invocation_metadata(f"{prefix}! ({body})", tool_cwd=tmp_path, project_path=tmp_path)
+    assert adjacent["canonical_tool_kind"] == spaced["canonical_tool_kind"] == "write"
+    assert adjacent["canonical_repo_mutation"] is spaced["canonical_repo_mutation"] is True
+    assert adjacent["canonical_file_paths"] == spaced["canonical_file_paths"]
+    assert adjacent["canonical_file_paths"]
+
+
+@pytest.mark.parametrize(
+    "command", ["! true", "!(true)", "echo '!touch x.py'", "echo '!(touch x.py)'", "cat !(x.py)"]
+)
+def test_negated_subshell_readonly_and_literal_controls(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == ("read" if command.startswith("cat ") else "execute")
+    assert data.get("canonical_repo_mutation", False) is False
+
+
 @pytest.mark.parametrize("command", ["cp", "mv"])
 @pytest.mark.parametrize("destination", [".", "tests"])
 def test_file_transfer_records_exact_directory_destination(
