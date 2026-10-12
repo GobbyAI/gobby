@@ -2578,6 +2578,8 @@ def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: 
         ("case x in x) cd sub  # go\n;& d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub  # go\n;;& d) touch e.py;; esac", "sub/e.py"),
         ("case x in x) cd sub & ;& d) touch e.py;; esac", "e.py"),
+        ("case x in x) cd sub \\\n& ;& d) touch e.py;; esac", "e.py"),
+        ("case x in x) cd sub \\\n& ;;& d) touch e.py;; esac", "e.py"),
         ("case x in x) cd sub & # bg\n;& d) touch e.py;; esac", "e.py"),
         ("case x in x) cd sub  # a & b\n;& d) touch e.py;; esac", "sub/e.py"),
         ("cd sub & touch x.py", "x.py"),
