@@ -166,6 +166,8 @@ class AgentDefinitionBody(BaseModel):
     # send_message target modes a spawned agent of this type may use, enforced by
     # the bundled rule scope-spawned-agent-send-message
     send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
+    # Explicit grants for the enrolled-operator DM tool; no agent gets one by default.
+    operator_message_channels: list[StrictStr] = Field(default_factory=list)
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")

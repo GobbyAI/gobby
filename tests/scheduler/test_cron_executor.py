@@ -16,6 +16,7 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_children import ChildActionType
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
+from gobby.workflows.agent_models import AgentDefinitionBody
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -276,6 +277,81 @@ async def test_execute_agent_spawn_no_runner(
     result = await executor.execute(job, run)
     assert result.status == "failed"
     assert "not configured" in (result.error or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_override", [None, "claude"])
+async def test_execute_agent_spawn_forwards_definition(
+    cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
+    provider_override: str | None,
+) -> None:
+    """Cron preserves the definition's identity and restrictions at the spawn boundary."""
+    body = AgentDefinitionBody.model_validate(
+        {
+            "name": "reporter",
+            "provider": "codex",
+            "timeout": 900,
+            "prompts": {"agent": "Deliver the status report."},
+            "workflows": {
+                "rule_selectors": {"include": ["tag:worker-safety"]},
+                "rules": ["reporting-rule"],
+                "variables": {"status_only": True},
+            },
+            "send_message_targets": ["session"],
+            "blocked_tools": ["Write"],
+        }
+    )
+    session_manager = SessionManager(temp_db)
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=MagicMock(),
+        services=_agent_spawn_services(session_manager=session_manager),
+    )
+    config: dict[str, Any] = {
+        "prompt": "Report mode: delta",
+        "agent_definition": "reporter",
+        "timeout_seconds": 900,
+    }
+    if provider_override is not None:
+        config["provider"] = provider_override
+    job = _make_job(cron_storage, "agent_spawn", config)
+    run = _create_run(cron_storage, job)
+    agent_runs = LocalAgentRunManager(temp_db)
+
+    async def spawn_agent(**kwargs: Any) -> dict[str, object]:
+        child = agent_runs.create(
+            parent_session_id=str(kwargs["parent_session_id"]),
+            provider=str(kwargs["provider"]),
+            prompt=str(kwargs["prompt"]),
+        )
+        return {"success": True, "run_id": child.id}
+
+    with (
+        patch("gobby.workflows.agent_resolver.resolve_agent", return_value=body) as resolve,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+            new_callable=AsyncMock,
+            side_effect=spawn_agent,
+        ) as spawn,
+    ):
+        result = await executor.execute(job, run)
+
+    assert result.status == "dispatched"
+    resolve.assert_called_once_with("reporter", temp_db, project_id=job.project_id)
+    spawn.assert_awaited_once()
+    assert spawn.call_args is not None
+    kwargs = spawn.call_args.kwargs
+    assert kwargs.get("agent_body") is body
+    assert kwargs.get("agent_lookup_name") == "reporter"
+    assert kwargs.get("initial_variables") == {
+        "_agent_type": "reporter",
+        "_agent_rules": ["reporting-rule"],
+        "status_only": True,
+    }
+    assert kwargs["prompt"] == "Report mode: delta"
+    assert kwargs["provider"] == (provider_override or "codex")
+    assert kwargs["timeout"] == 900
 
 
 @pytest.mark.asyncio
@@ -1106,7 +1182,7 @@ async def test_execute_handler_json_failure_result_records_failed_run(
 async def test_execute_agent_spawn_with_agent_definition(
     cron_storage: CronJobStorage,
 ) -> None:
-    """agent_spawn with agent_definition prepends preamble to prompt and uses its provider."""
+    """Named cron agents delegate prompt assembly and use their configured provider."""
     mock_runner = MagicMock()
     executor = CronExecutor(
         storage=cron_storage,
@@ -1124,10 +1200,14 @@ async def test_execute_agent_spawn_with_agent_definition(
     )
     run = _create_run(cron_storage, job)
 
-    # Mock resolve_agent to return an agent with preamble
-    mock_body = MagicMock()
-    mock_body.prompt_for.return_value = "## Agent\nYou are a developer"
-    mock_body.provider = "grok"
+    mock_body = AgentDefinitionBody.model_validate(
+        {
+            "name": "test-agent",
+            "prompts": {"agent": "## Agent\nYou are a developer"},
+            "provider": "grok",
+            "workflows": {"rule_selectors": {"include": []}},
+        }
+    )
 
     mock_result = {"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0def"}
     with (
@@ -1142,11 +1222,10 @@ async def test_execute_agent_spawn_with_agent_definition(
 
     assert result.status == "dispatched"
     call_kwargs = mock_spawn.call_args
-    # Check preamble was prepended to prompt
-    prompt = call_kwargs.kwargs.get("prompt", "")
-    assert "## Agent" in prompt
-    mock_body.prompt_for.assert_called_once_with("agent")
-    assert "Fix the bug" in prompt
+    assert call_kwargs is not None
+    assert call_kwargs.kwargs["prompt"] == "Fix the bug"
+    assert call_kwargs.kwargs["agent_body"] is mock_body
+    assert call_kwargs.kwargs["initial_variables"] == {"_agent_type": "test-agent"}
     # Provider from agent definition should be used (no explicit provider in config)
     assert call_kwargs.kwargs.get("provider") == "grok"
 

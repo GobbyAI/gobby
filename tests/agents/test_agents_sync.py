@@ -1110,6 +1110,10 @@ class TestSyncBundledAgents:
         close_reviewer = mgr.get_by_name("task-close-reviewer")
         assert close_reviewer is not None
         assert _parse_body(close_reviewer).reasoning_effort == "medium"
+        for name in ("reporter", "assistant"):
+            status_sender = mgr.get_by_name(name)
+            assert status_sender is not None
+            assert _parse_body(status_sender).operator_message_channels == ["gobby-telegram"]
         assert all(
             n in names
             for n in (
