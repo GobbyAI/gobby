@@ -50,6 +50,8 @@ class _ShellSegmentMetadata:
     shell_raw_words: tuple[str, ...] = ()
     # A trusted tool cwd is already literal; only the rebased operand expands.
     literal_path_root: str | None = None
+    # Read operands of a segment classified as a write; navigation judges these.
+    navigation_paths: tuple[str, ...] = ()
 
 
 def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:

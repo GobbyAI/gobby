@@ -191,7 +191,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                     navigation_scope_unknown = True
                 elif path not in navigation_scope_paths:
                     navigation_scope_paths.append(path)
-            for path in item.paths:
+            for path in item.navigation_paths or item.paths:
                 if not _path_is_unresolved(path, item.literal_path_root):
                     continue
                 reference = _plain_loop_binding_reference(
@@ -279,7 +279,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         # Preserve actual edits in mixed commands and nested shell wrappers.
         extra["canonical_edit_file_paths"] = edit_paths
     extra["canonical_code_navigation_segments"] = [
-        {**dict(item.extra), "canonical_file_paths": list(item.paths)}
+        {**dict(item.extra), "canonical_file_paths": list(item.navigation_paths or item.paths)}
         for item in active
         if item.extra and item.extra.get("canonical_code_navigation_action")
     ]

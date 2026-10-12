@@ -92,9 +92,35 @@ def _classify_sed_operands(
     bsd: bool = False,
 ) -> _ShellSegmentMetadata:
     positional = _shell_positional_args(parts)
+    read_operands = [*operands.script_files, *operands.inputs]
+    paths = _rebase_navigation_shell_paths(
+        [
+            item
+            for item in read_operands
+            if _looks_file_like(item) or _contains_unexpanded_shell_reference(item)
+        ],
+        cwd,
+    )
+    line_count = (
+        None if operands.unresolved or operands.script_files else sed_line_count(parts, positional)
+    )
+    navigation = (
+        {}
+        if operands.inplace
+        else source_read_navigation_metadata(
+            paths,
+            line_count=line_count,
+            read_scope="line_range" if line_count is not None else "full_file",
+        )
+    )
     if operands.unresolved:
         # Expanded sed programs can contain file-writing commands.
-        return _ShellSegmentMetadata("write", repo_mutation=True)
+        return _ShellSegmentMetadata(
+            "write",
+            repo_mutation=True,
+            extra=navigation or None,
+            navigation_paths=tuple(paths) if navigation else (),
+        )
     programs = list(operands.programs)
     unresolved = len(operands.script_files) > SCRIPT_READ_BUDGET
     script_base = base_cwd if cwd is None else Path(cwd) if Path(cwd).is_absolute() else None
@@ -112,35 +138,20 @@ def _classify_sed_operands(
     inplace = operands.inplace
     if inplace:
         writes = [item for item in operands.inputs if _looks_path_target(item)] + writes
-    read_operands = [*operands.script_files, *operands.inputs]
-    paths = _rebase_navigation_shell_paths(
-        [
-            item
-            for item in read_operands
-            if _looks_file_like(item) or _contains_unexpanded_shell_reference(item)
-        ],
-        cwd,
-    )
     if inplace or writes or unresolved:
         write_paths = tuple(dict.fromkeys(_rebase_shell_paths(writes, cwd)))
+        extra = dict(navigation)
+        if unresolved:
+            extra["_canonical_repo_mutation_scope_unknown"] = True
         return _ShellSegmentMetadata(
             "write",
             paths=write_paths,
             write_paths=write_paths,
             repo_mutation=True,
-            extra={"_canonical_repo_mutation_scope_unknown": True} if unresolved else None,
+            extra=extra or None,
+            navigation_paths=tuple(paths) if navigation else (),
         )
-    line_count = sed_line_count(parts, positional)
-    read_scope = "line_range" if line_count is not None else "full_file"
-    return _ShellSegmentMetadata(
-        "read",
-        paths=tuple(paths),
-        extra=source_read_navigation_metadata(
-            paths,
-            line_count=line_count,
-            read_scope=read_scope,
-        ),
-    )
+    return _ShellSegmentMetadata("read", paths=tuple(paths), extra=navigation)
 
 
 def _sed_file_operands(
