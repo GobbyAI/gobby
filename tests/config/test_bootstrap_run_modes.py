@@ -16,7 +16,6 @@ class ModeCase(TypedDict, total=False):
     hub_daemon_url: str | None
     hub_cert: str | None
     error: str
-    error_type: str
 
 
 _CORPUS = Path(__file__).parents[1] / "fixtures" / "bootstrap_run_modes.json"
@@ -26,8 +25,7 @@ _CASES = cast(list[ModeCase], json.loads(_CORPUS.read_text(encoding="utf-8"))["c
 @pytest.mark.parametrize("case", _CASES, ids=[case["name"] for case in _CASES])
 def test_shared_vectors_match_rust(case: ModeCase) -> None:
     if "error" in case:
-        error_type = ValueError if case.get("error_type") == "ValueError" else BootstrapConfigError
-        with pytest.raises(error_type) as caught:
+        with pytest.raises(BootstrapConfigError) as caught:
             bootstrap_from_mapping(case["bootstrap"])
         assert str(caught.value) == case["error"]
     else:
@@ -35,3 +33,10 @@ def test_shared_vectors_match_rust(case: ModeCase) -> None:
         assert config.run_mode() == case["mode"]
         assert config.hub_daemon_url == case["hub_daemon_url"]
         assert config.hub_cert == case.get("hub_cert")
+
+
+@pytest.mark.parametrize("value", [42, True, [], {}])
+def test_non_string_files_home_names_expected_type(value: object) -> None:
+    with pytest.raises(BootstrapConfigError) as caught:
+        bootstrap_from_mapping({"files_home": value})
+    assert str(caught.value) == "files_home must be a string"

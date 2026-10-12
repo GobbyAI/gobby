@@ -65,3 +65,39 @@ fn shared_vectors_match_python() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn files_home_invalid_ports_name_field_and_range() {
+    for port in ["+443", "-443", "44x", "٤٤٣", "65536", "4'4", "443:80"] {
+        let yaml = format!("datastore_mode: remote\nhub_daemon_url: https://hub.example:{port}\n");
+        let error = gobby_core::bootstrap::parse_files_home_view(&yaml).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "hub_daemon_url port must be an integer between 0 and 65535",
+            "{port}"
+        );
+    }
+}
+
+#[test]
+fn files_home_non_string_names_expected_type() {
+    for value in ["42", "true", "[]", "{}"] {
+        let yaml = format!("files_home: {value}\n");
+        let error = gobby_core::bootstrap::parse_files_home_view(&yaml).unwrap_err();
+        assert_eq!(error.to_string(), "files_home must be a string", "{value}");
+    }
+}
+
+#[test]
+fn files_home_remote_hub_is_refused() {
+    for hub in ["true", "yes", "ON"] {
+        let yaml =
+            format!("datastore_mode: remote\nhub: {hub}\nhub_daemon_url: https://hub.example\n");
+        let error = gobby_core::bootstrap::parse_files_home_view(&yaml).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "hub: true requires datastore_mode: local",
+            "{hub}"
+        );
+    }
+}

@@ -326,6 +326,13 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
             ));
         }
     };
+    let hub =
+        run_mode::hub_flag(map).map_err(|error| FilesHomeError::Invalid(error.to_string()))?;
+    if datastore_mode == DatastoreMode::Remote && hub {
+        return Err(FilesHomeError::Invalid(
+            "hub: true requires datastore_mode: local".to_owned(),
+        ));
+    }
     match datastore_mode {
         DatastoreMode::Local => {
             if run_mode::configured_value(map, "hub_daemon_url") {
@@ -333,16 +340,17 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
                     run_mode::LOCAL_HUB_URL_REFUSAL.to_owned(),
                 ));
             }
-            let Some(raw) = optional_string_field(map, "files_home")
-                .map_err(|error| FilesHomeError::Invalid(error.to_string()))?
-            else {
+            if !run_mode::configured_value(map, "files_home") {
                 return Err(FilesHomeError::Invalid(
                     "files_home is required for datastore_mode: local".to_string(),
                 ));
-            };
+            }
+            let raw = map["files_home"]
+                .as_str()
+                .ok_or_else(|| FilesHomeError::Invalid("files_home must be a string".to_owned()))?;
             Ok(FilesHomeView {
                 datastore_mode,
-                files_home: Some(parse_absolute_files_home(&raw)?),
+                files_home: Some(parse_absolute_files_home(raw.trim())?),
                 hub_daemon_url: None,
             })
         }
