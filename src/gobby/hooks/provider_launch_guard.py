@@ -127,6 +127,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     expansions: list[str] = []
     quote = ""
     cases = CaseSyntax()
+    brace_ends: dict[int, int] | None = None
     index = 0
     line_start = 0
     while index < len(command):
@@ -178,16 +179,19 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             if char == "(":
                 end = _substitution_end(command, index + 1, False, depth)
             else:
-                nesting = 1
-                group_scan = scan_shell_command(command[index + 1 :])
-                for token, span in zip(group_scan.tokens, group_scan.spans, strict=True):
-                    if not token.quoted and token.value in {"{", "}"}:
-                        nesting += 1 if token.value == "{" else -1
-                        if nesting == 0:
-                            end = index + 1 + span[0]
-                            break
-                else:
+                if brace_ends is None:
+                    brace_ends = {}
+                    openers = [index]
+                    group_scan = scan_shell_command(command[index + 1 :])
+                    for token, span in zip(group_scan.tokens, group_scan.spans, strict=True):
+                        position = index + 1 + span[0]
+                        if not token.quoted and token.value == "{":
+                            openers.append(position)
+                        elif not token.quoted and token.value == "}" and openers:
+                            brace_ends[openers.pop()] = position
+                if index not in brace_ends:
                     raise ValueError("Unclosed shell group")
+                end = brace_ends[index]
             output.append(f"__gobby_group_{len(expansions)}__")
             expansions.append(command[index + 1 : end])
             index = end + 1

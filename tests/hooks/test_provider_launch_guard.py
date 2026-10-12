@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import pytest
@@ -17,6 +18,21 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_rule_file
 
 pytestmark = pytest.mark.unit
+
+
+def test_brace_heavy_command_preserves_group_results_within_bound() -> None:
+    command = "{ echo hi; }; " * 2000
+    started = perf_counter()
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+    assert perf_counter() - started < 2.0
+    for brace_command, blocked in (
+        ("{ claude -p hi; }", True),
+        ("{ { claude -p hi; }; }", True),
+        ("{ echo 'claude -p hi'; } | bash", True),
+        ("{ echo '}'; echo hi; }", False),
+        ("{ echo {; echo hi; } | bash", True),
+    ):
+        assert blocks_direct_provider_launch("Bash", {"command": brace_command}) is blocked
 
 
 @pytest.mark.parametrize(
