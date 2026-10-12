@@ -190,7 +190,7 @@ decisions on 2026-10-05 from the sources cited.
 - Leaf 1.2 changes `gobby-code`. The change is live only after the
   workspace binary set is rebuilt and promoted through
   `promote_workspace_binary_set`, and the Orchestrator schedules that per
-  the #22801 (Lane 5 - Rust) lane rule. The leaf closes on its tests.
+  the #22801 (Lane 4 - Rust) lane rule. The leaf closes on its tests.
 - No daemon restart, push, or migration is needed.
 
 ## P1: Current evidence and one read order
