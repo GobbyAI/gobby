@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.build.service import DispatcherTickSummary
 from gobby.config.tasks import TaskValidationConfig
 from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
 from gobby.mcp_proxy.tools.config import create_config_registry
@@ -37,7 +36,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.mcp_proxy import test_results_tools as result_scenarios
 from tests.mcp_proxy.tools import test_config_values as config_scenarios
-from tests.mcp_proxy.tools import test_mcp_proxy_tools_build as build_scenarios
 from tests.mcp_proxy.tools import test_mcp_proxy_tools_pipeline_resume as pipeline_scenarios
 from tests.mcp_proxy.tools import test_worktrees_lifecycle as workspace_scenarios
 from tests.mcp_proxy.tools.tasks import test_lifecycle_close_orchestration as task_scenarios
@@ -75,7 +73,6 @@ async def test_reference_contract_3_2_1() -> None:
     "scenario",
     [
         "tasks",
-        "planning-build",
         "agent-handoff",
         "pipeline",
         "workspace",
@@ -158,89 +155,6 @@ async def test_reference_contract_3_2_2(
         assert "Do not poll agent runs or re-call close_task." in task_result["message"]
         assert "Oversized" not in task_result["message"]
         assert task_result["close_review_duration_ms"] == 4.25
-    elif scenario == "planning-build":
-        build_registry = build_scenarios._registry(temp_db)
-        build_task = build_registry.get_tool("build_task")
-        expected_build = build_scenarios._small_build_result(
-            initial_lifecycle="in_development",
-            applied_stages_skipped=["qa"],
-            tick_dispatched=1,
-            dispatcher_tick=DispatcherTickSummary(ticks=1, scanned=3, executed=1, skipped=0),
-            dry_run=True,
-        )
-        with patch(
-            "gobby.mcp_proxy.tools.build.build", new=AsyncMock(return_value=expected_build)
-        ) as build_service:
-            build_result = await build_task(
-                input_ref="#42",
-                profile="submit",
-                quick=True,
-                skip_stages=["qa"],
-                workspace_backend="clone",
-                unattended=True,
-                no_merge=False,
-                pr="123",
-                stage=["pr:max_review_rounds=2"],
-                target_branch="release/0.4",
-                agent="backend-developer",
-                clones_dir="/tmp",
-                cwd="/tmp",
-                reset_expansion_output=True,
-                max_active_agents=4,
-                max_retries=0,
-                planning_seed_state="approved",
-                completed_plan_review_rounds=2,
-                dry_run=True,
-                coordinator="#6075",
-                project_id="project-1",
-            )
-        assert build_result == {
-            "task_id": "task-1",
-            "created": False,
-            "initial_lifecycle": "in_development",
-            "applied_stages_skipped": ["qa"],
-            "tick_dispatched": 1,
-            "dispatcher_tick": {
-                "ticks": 1,
-                "scanned": 3,
-                "executed": 1,
-                "skipped": 0,
-                "cap_reached": False,
-                "reason": None,
-            },
-            "manifest": None,
-            "dry_run": True,
-        }
-        build_call = build_service.call_args
-        assert build_call.args[0] == "#42"
-        build_opts = build_call.args[1]
-        assert build_opts.profile == "submit"
-        assert build_opts.quick is True
-        assert build_opts.skip_stages == ["qa"]
-        assert build_opts.checkout_mode == "clone"
-        assert build_opts.checkout_mode_explicit is True
-        assert build_opts.unattended is True
-        assert build_opts.unattended_explicit is True
-        assert str(build_opts.clones_dir) == "/tmp"
-        assert str(build_opts.cwd) == "/tmp"
-        assert build_opts.no_merge is False
-        assert build_opts.pr == "123"
-        assert [
-            (build_item.stage_name, build_item.max_work_attempts, build_item.max_review_rounds)
-            for build_item in build_opts.stage_caps
-        ] == [("pr", None, 2)]
-        assert build_opts.target_branch == "release/0.4"
-        assert build_opts.assigned_agent == "backend-developer"
-        assert build_opts.reset_expansion_output is True
-        assert build_opts.max_active_agents == 4
-        assert build_opts.max_retries == 0
-        assert build_opts.planning_seed_state == "approved"
-        assert build_opts.completed_plan_review_rounds == 2
-        assert build_opts.dry_run is True
-        assert build_opts.coordinator_session_ref == "#6075"
-        assert build_call.kwargs["db"] is temp_db
-        assert build_call.kwargs["project_id"] == "project-1"
-        assert "services" in build_call.kwargs
     elif scenario == "agent-handoff":
         handoff_predecessor = handoff_scenarios._registered_session(reference_session_manager)
         handoff_payload = build_handoff_payload(current_state="Ready.", next_steps=["Continue."])
@@ -532,8 +446,6 @@ def test_all_absorbed_skills_have_one_audit_owner() -> None:
         "plan-review",
         "expand",
         "expansion-agent-selection",
-        "build",
-        "build-coordinator",
         "handoff-discipline",
         "persona",
         "memory",
@@ -671,12 +583,6 @@ SCENARIO_OPERATION_REFERENCES: dict[str, tuple[str, ...]] = {
         "gobby:references/rules/effects.md",
     ),
     "create_coordination_epic": ("gobby:references/tasks/creation.md",),
-    "normalize_leaf_stages": (
-        "gobby:references/tasks/reviews.md",
-        "gobby:references/build/stages.md",
-    ),
-    "launch_build": ("gobby:references/build/starting.md",),
-    "monitor_dispatch": ("gobby:references/build/monitoring.md",),
     "fix_actionable_coordination_bug": ("gobby:references/tasks/implementation.md",),
     "monitor_agents": ("gobby:references/agents/lifecycle.md",),
     "set_handoff_before_agent_wait": ("gobby:references/sessions/handoffs.md",),
@@ -722,7 +628,7 @@ def test_reference_contract_5_2_3() -> None:
                     path,
                     action["path"],
                 )
-    assert migrated == 21
+    assert migrated == 20
 
 
 async def test_pipelines_runbooks_topic_is_registered(temp_db: HubDatabase) -> None:

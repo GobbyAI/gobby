@@ -40,7 +40,6 @@ REDIRECT_RULES = frozenset(
         "prefer-gcode-for-source-read",
         "refuse-task-outside-lane",
         "require-bash-skill",
-        "require-build-coordinator-for-gobby-build",
         "require-c-skill",
         "require-claimed-task-extra-skills",
         "require-code-index-skill",

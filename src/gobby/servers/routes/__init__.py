@@ -8,7 +8,6 @@ from gobby.servers.routes.admin import create_admin_router, create_health_router
 from gobby.servers.routes.agent_spawn import create_agent_spawn_router
 from gobby.servers.routes.agents import create_agents_router
 from gobby.servers.routes.attention import create_attention_router
-from gobby.servers.routes.build import create_build_router
 from gobby.servers.routes.chat import create_chat_router
 from gobby.servers.routes.chat_attachments import create_chat_attachments_router
 from gobby.servers.routes.code_index import create_code_index_router
@@ -31,7 +30,6 @@ from gobby.servers.routes.metrics import create_metrics_router
 from gobby.servers.routes.observations import create_observations_router
 from gobby.servers.routes.pipeline_definitions import create_pipeline_definitions_router
 from gobby.servers.routes.pipelines import create_pipelines_router
-from gobby.servers.routes.profiles import create_profiles_router
 from gobby.servers.routes.projects import create_projects_router
 from gobby.servers.routes.providers import create_providers_router
 from gobby.servers.routes.rules import create_rules_router
@@ -53,7 +51,6 @@ __all__ = [
     "create_agent_spawn_router",
     "create_agents_router",
     "create_attention_router",
-    "create_build_router",
     "create_chat_attachments_router",
     "create_chat_router",
     "create_code_index_router",
@@ -74,7 +71,6 @@ __all__ = [
     "create_pipeline_definitions_router",
     "create_pipelines_router",
     "create_projects_router",
-    "create_profiles_router",
     "create_providers_router",
     "create_rules_router",
     "create_runtime_config_router",

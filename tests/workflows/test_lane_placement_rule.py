@@ -191,9 +191,7 @@ async def test_project_without_an_open_lane_creates_tasks_as_before(
 
 
 @pytest.mark.asyncio
-async def test_expansion_and_plan_import_check_their_target_parent(
-    tasks: LocalTaskManager, project_id: str
-) -> None:
+async def test_expansion_checks_its_target_parent(tasks: LocalTaskManager, project_id: str) -> None:
     lane = _epic(tasks, project_id, "Lane A", labels=["lane"])
     inside = _epic(tasks, project_id, "Plan epic", parent_task_id=lane.id)
     outside = _epic(tasks, project_id, "Loose epic")
@@ -207,12 +205,6 @@ async def test_expansion_and_plan_import_check_their_target_parent(
     assert _refused(
         await _decide(tasks, project_id, "start_expansion_run", expand_outside, server=ops)
     )
-    plan_import = {"input_ref": ".gobby/plans/x.md"}
-    assert _refused(await _decide(tasks, project_id, "build_task", plan_import, server=ops))
-    build_existing = {"input_ref": f"#{inside.seq_num}"}
-    assert (
-        await _decide(tasks, project_id, "build_task", build_existing, server=ops)
-    ).decision == "allow"
 
 
 @pytest.mark.asyncio

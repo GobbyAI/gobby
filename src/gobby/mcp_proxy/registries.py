@@ -219,12 +219,6 @@ def setup_internal_registries(
         manager.add_registry(plan_registry)
         logger.debug("Plans registry initialized")
 
-        from gobby.mcp_proxy.tools.profiles import create_profiles_registry
-
-        profiles_registry = create_profiles_registry(db, default_project_id=project_id)
-        manager.add_registry(profiles_registry)
-        logger.debug("Profiles registry initialized")
-
         from gobby.mcp_proxy.tools.feedback import create_feedback_registry
 
         manager.add_registry(create_feedback_registry(db))

@@ -21,7 +21,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_agent_spawn_router,
         create_agents_router,
         create_attention_router,
-        create_build_router,
         create_chat_attachments_router,
         create_chat_router,
         create_code_index_router,
@@ -42,7 +41,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_observations_router,
         create_pipeline_definitions_router,
         create_pipelines_router,
-        create_profiles_router,
         create_projects_router,
         create_providers_router,
         create_rules_router,
@@ -71,7 +69,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_agents_router(server))
     app.include_router(create_attention_router(server))
     app.include_router(create_terminals_router(server))
-    app.include_router(create_build_router(server))
     app.include_router(create_chat_attachments_router(server))
     app.include_router(create_chat_router(server))
     app.include_router(create_sessions_router(server))
@@ -91,7 +88,6 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_files_router(server))
     app.include_router(create_hub_files_proxy_router())
     app.include_router(create_projects_router(server))
-    app.include_router(create_profiles_router(server))
     app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))
     app.include_router(create_llm_router(server))

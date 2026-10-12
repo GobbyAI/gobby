@@ -31,6 +31,10 @@ usage before changing shared defaults. Deletion is restricted by usage; use the
 reported blocker and preserve user-owned overrides. These operations change
 workflow configuration, not completion evidence.
 
+Operator CLI equivalents remain `gobby stages list`, `show`, `update`, `restore`,
+`delete`, and `defaults`. Inspect each command's `--help` before an authorized
+configuration change; `list` and `show` inspect definitions without changing them.
+
 For planning-review evidence use `$gobby plan`; for epic QA use `$gobby review`;
 for PR/merge review delivery use `$gobby source-control`.
 

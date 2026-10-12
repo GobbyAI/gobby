@@ -1187,20 +1187,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby tasks repair-lifecycle",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
-      "implementation": {
-        "path": "src/gobby/cli/tasks/repair.py",
-        "symbol": "repair_lifecycle_cmd"
-      },
-      "verification": [
-        "cli-declarations",
-        "focused-task-tests"
-      ],
-      "audience": "operator-only"
-    },
-    {
-      "surface": "cli",
       "command": "gobby tasks validation-history",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/backups.md",
       "implementation": {
@@ -1602,19 +1588,93 @@
         "public-cli-inventory"
       ],
       "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "list_stages"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages list"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "show_stage"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages show"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "update_stage"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages update"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "restore_stage"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages restore"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "delete_stage"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages delete"
+    },
+    {
+      "surface": "cli",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
+      "implementation": {
+        "path": "src/gobby/cli/stages.py",
+        "symbol": "defaults"
+      },
+      "verification": [
+        "cli-declarations",
+        "retained-stage-cli"
+      ],
+      "audience": "operator/client",
+      "command": "gobby stages defaults"
     }
   ],
   "delegated_operations": {
-    "build": [
-      "gobby-tasks:get_build_status",
-      "gobby-tasks:explain_dispatch",
-      "gobby-tasks:list_build_history",
-      "gobby-tasks-ops:build_task",
-      "gobby-tasks-ops:build_stop",
-      "gobby-tasks-ops:build_resume",
-      "gobby-tasks-ops:build_clean",
-      "gobby-tasks-ops:build_restart"
-    ],
     "plan": [
       "gobby-tasks-ops:start_expansion_run",
       "gobby-tasks-ops:reset_expansion_output",
@@ -1757,6 +1817,12 @@
       "kind": "cli-introspection",
       "command": "uv run python: recursively inspect visible Click commands, unwrapped callback source identities and parameter declarations without invoking callbacks",
       "result": "Mapped previously omitted public command identities, including operator task/plan equivalents and PostgreSQL administration. All mappings point to existing operation topics; CLI callbacks were not invoked against live state."
+    },
+    {
+      "id": "retained-stage-cli",
+      "kind": "isolated-test",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cron_cli.py -q --no-cov",
+      "result": "63 passed; includes help for all six retained gobby stages commands, retired build command rejection, and cron daemon-error handling."
     }
   ],
   "discrepancies": [

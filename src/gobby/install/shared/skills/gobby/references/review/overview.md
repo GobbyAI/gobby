@@ -17,7 +17,7 @@ Discover feedback evidence through `gobby-feedback`, task records through
 methodology belongs to the standalone `code-review` skill, and plan review to
 [plan](../plan/overview.md).
 
-`$gobby review <epic-ref>` selects an epic review, independent of `gobby build`.
+`$gobby review <epic-ref>` selects an epic review.
 Resolve the epic and interactive/delegated mode before dispatch. Capability help
 and topic menus never launch the `review` pipeline. Feedback review is a separate
 workflow; an epic verdict does not submit a feedback batch.

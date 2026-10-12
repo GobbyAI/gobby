@@ -47,11 +47,9 @@ def creates_task_outside_lane(
     """Return whether a task-creating MCP call would create a task outside every lane.
 
     Covers ``gobby-tasks:create_task``, expansion under a target task
-    (``gobby-tasks-ops:start_expansion_run``) and plan import
-    (``gobby-tasks-ops:build_task`` with a plan file, which creates an
-    unparented epic). A project with no open lane epic is unaffected. A target
-    project or parent that does not resolve is left to the tool, which refuses
-    it and writes nothing.
+    (``gobby-tasks-ops:start_expansion_run``). A project with no open lane epic is
+    unaffected. A target project or parent that does not resolve is left to the
+    tool, which refuses it and writes nothing.
     """
     if not isinstance(tool_input, Mapping):
         return False
@@ -77,14 +75,6 @@ def creates_task_outside_lane(
         if target is None or not open_lane_epics(task_manager, target.project_id):
             return False
         return not _reaches_open_lane_epic(task_manager, target)
-    if server == "gobby-tasks-ops" and tool == "build_task":
-        from gobby.build.input_resolution import looks_like_task_ref
-
-        input_ref = tool_input.get("input_ref")
-        if not isinstance(input_ref, str) or not input_ref or looks_like_task_ref(input_ref):
-            return False
-        project_id = _project_id(task_manager, tool_input.get("project_id"), session_project_id)
-        return bool(project_id) and bool(open_lane_epics(task_manager, str(project_id)))
     return False
 
 

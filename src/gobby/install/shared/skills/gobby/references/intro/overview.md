@@ -9,8 +9,7 @@ first-session onboarding. This menu performs no writes and loads no topic.
 | Onboarding | Resolve storage, installation and injection prerequisites | `$gobby intro references onboarding` |
 
 The working profile is `<files_home>/USER.md` on the hub owner. It is global,
-not repository content. `gobby-profiles` manages **build profiles**; use
-[build profiles](../build/profiles.md) for that separate capability. There is no
+not repository content. There is no
 personal-profile MCP tool. The supported profile transport is the owner's
 `GET`/`PUT /api/files/user-md` or its local files-home path.
 

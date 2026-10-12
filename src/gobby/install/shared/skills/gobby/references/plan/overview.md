@@ -23,8 +23,6 @@ Base validation and explicit user approval are mandatory. [Enhancement](enhancem
 
 ## Constraints and recovery
 The canonical artifact is `.gobby/plans/<slug>.md`. Provider write restrictions still apply. Staged conversation is not a saved or validated plan. Drafting/review creates no synthetic planning or per-round tasks; registration waits for a real implementation root.
-Unattended `gobby build` retains its stage-manifest sequence, installed review
-policy and configured round counts. Do not inject interactive menus into it.
 A menu lists choices without starting them. Existing approval remains valid within its authorized scope; a continued drafting request does not imply implementation approval.
 On unknown IDs inspect registered plans and task ancestry. On stale evidence stop applying it and follow repair guidance; never fabricate hashes, attestations, or a manifest.
 

@@ -9,9 +9,8 @@ pytestmark = pytest.mark.unit
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills"
 WORKFLOWS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
-UPDATED_SKILLS = ("plan/expansion.md", "plan/review.md", "build/coordination.md")
+UPDATED_SKILLS = ("plan/expansion.md", "plan/review.md")
 WAKE_DRIVEN_GUIDANCE = (
-    pytest.param(SKILLS_DIR / "gobby/references/build/coordination.md", id="build-coordinator"),
     pytest.param(
         SKILLS_DIR / "gobby/references/source-control/merge-campaigns.md", id="merge-expert"
     ),

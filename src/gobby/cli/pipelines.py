@@ -16,7 +16,7 @@ import click
 import httpx
 import yaml
 
-from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
+from gobby.cli._daemon_errors import _daemon_error_detail, _daemon_error_message
 from gobby.cli.pipelines_catalog import (
     check_pipeline,
     list_pipelines,

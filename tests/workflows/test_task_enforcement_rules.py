@@ -78,8 +78,6 @@ TASK_REVIEW_OPERATIONS = (
 LANDING_OPERATIONS = ("set_landing_freeze", "land_commit")
 READ_ONLY_TASK_TOOLS = (
     "check_dependency_cycles",
-    "explain_dispatch",
-    "get_build_status",
     "get_dependency_tree",
     "get_session_tasks",
     "get_task",
@@ -89,7 +87,6 @@ READ_ONLY_TASK_TOOLS = (
     "get_task_type_defaults",
     "inspect_task_path_ownership",
     "list_blocked_tasks",
-    "list_build_history",
     "list_ready_tasks",
     "list_stages_registry",
     "list_tasks",
@@ -100,11 +97,6 @@ NON_INTERACTIVE_TASK_OPS = (
     "add_stage",
     "append_description_section",
     "backfill_plan_review_lessons",
-    "build_clean",
-    "build_restart",
-    "build_resume",
-    "build_stop",
-    "build_task",
     "cancel_expansion_run",
     "check_expansion_qa_result",
     "clear_isolation_pair",

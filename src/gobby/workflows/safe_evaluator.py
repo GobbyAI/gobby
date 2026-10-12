@@ -567,7 +567,6 @@ def build_condition_helpers(
         _is_tdd_code_path,
         all_tasks_have_label,
         first_tdd_test_path,
-        is_gobby_build_command,
         is_validation_command,
         paths_written_this_turn,
         shell_command_consumes_code_review,
@@ -644,7 +643,6 @@ def build_condition_helpers(
                 variables,
                 _tdd_project_path(),
             ),
-            "is_gobby_build_command": is_gobby_build_command,
             "is_validation_command": is_validation_command,
             "wrapped_validation_command": lambda command: wrapped_validation_command(
                 command, _get_project_path(ctx)

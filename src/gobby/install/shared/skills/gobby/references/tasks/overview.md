@@ -29,7 +29,7 @@ linking a session does not claim the task.
 
 Choose `$gobby tasks references creation`, `dependencies`, `implementation`,
 `closing`, `reviews`, `artifacts`, `backups`, or `live-work` for the next action.
-For plan expansion use `$gobby plan`; for dispatch use `$gobby build`.
+For plan expansion use `$gobby plan`.
 Unknown names should return choices without executing operations.
 
 Recovery: inspect the returned blocker and current task before changing state.

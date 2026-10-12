@@ -429,7 +429,7 @@ def test_setup_tasks_only_requires_task_manager() -> None:
 
 
 def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> None:
-    """The stage-native build flow no longer exposes front_half_tick."""
+    """Retired dispatch entry points are absent from task operations."""
     from gobby.storage.tasks import LocalTaskManager
 
     mock_config = MagicMock()
@@ -445,7 +445,13 @@ def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> 
 
     tool_names = [tool["name"] for tool in registry.list_tools()]
     assert "front_half_tick" not in tool_names
-    assert "build_task" in tool_names
+    assert {"build_task", "build_stop", "build_resume", "build_clean", "build_restart"}.isdisjoint(
+        tool_names
+    )
+    core_registry = manager.get_registry("gobby-tasks")
+    assert core_registry is not None
+    core_tools = {tool["name"] for tool in core_registry.list_tools()}
+    assert {"get_build_status", "explain_dispatch", "list_build_history"}.isdisjoint(core_tools)
 
 
 def test_setup_merge_requires_both_storage_and_resolver() -> None:

@@ -127,7 +127,6 @@
     }
   ],
   "scope_notes": [
-    "No dedicated personal-profile MCP registry or CLI command exists. The task research pointer mcp_proxy/tools/profiles.py owns build profiles, already mapped in docs/reference-audit/build.json; do not misroute those eight tools to intro.",
     "Profile local filesystem reading/writing and session startup seeding are agent procedures backed by hooks/event_handlers/_session_start/profile.py, not additional MCP operations. Registered owner HTTP GET/PUT and shared install/migration CLI prerequisites are mapped here.",
     "Installation/daemon lifecycle and full migration/backup operations remain operator admin coverage. This leaf verifies only working-profile prerequisites. Rule inspection is shared with rules; no live rule, profile content, credentials, or bootstrap values were modified for validation.",
     "The guide index was read in full and all 100 local intro/index links checked. Descriptive links to unrelated capabilities do not claim a new whole-guide audit; linked guides retain their own receipts."

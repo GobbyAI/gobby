@@ -224,9 +224,8 @@ def _resolve_worktree_diff(artifact_ref: str, *, ctx: EvidenceContextProtocol) -
             _invalid(
                 EvidenceKind.worktree_diff,
                 artifact_ref,
-                "missing base_commit_sha; rerun gobby build to recapture base "
-                "or use set_artifact(base_commit_sha=...) if you can recover it "
-                "out-of-band",
+                "missing base_commit_sha; use set_artifact(base_commit_sha=...) "
+                "to record the verified original base",
             )
         )
 

@@ -21,6 +21,12 @@ pytestmark = [
 ]
 
 
+@pytest.mark.parametrize("path", ["/api/build", "/api/profiles"])
+def test_retired_build_routes_are_unavailable(client: TestClient, path: str) -> None:
+    response = client.post(path, json={})
+    assert response.status_code == 404
+
+
 class StreamableSessionManagerDouble:
     def __init__(self, instances: dict[str, Any]) -> None:
         self._server_instances = instances

@@ -10,14 +10,12 @@ Tools included:
 - Affected files (4): set, get, find_overlaps, wire_from_run
 - Artifacts (5): set/get artifact pointers and append idempotent description sections
 - Reindex (1): reindex_tasks
-- Build (1): build_task
 - Landing (2): set_landing_freeze, land_commit
 """
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from gobby.mcp_proxy.tools.build import create_build_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
@@ -36,22 +34,6 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.review_learning.service import ReviewLearningService
-
-
-class _TaskOpsToolRegistry(InternalToolRegistry):
-    """Ops registry with build_task schema exposed for the build MCP contract."""
-
-    def list_tools(self) -> list[dict[str, Any]]:
-        tools: list[dict[str, Any]] = [dict(tool) for tool in super().list_tools()]
-        schema = self.get_schema("build_task")
-        if schema is None:
-            return tools
-
-        for tool in tools:
-            if tool["name"] == "build_task":
-                tool["inputSchema"] = schema["inputSchema"]
-                break
-        return tools
 
 
 def create_task_ops_registry(
@@ -87,7 +69,7 @@ def create_task_ops_registry(
         review_learning_service=review_learning_service,
     )
 
-    registry = _TaskOpsToolRegistry(
+    registry = InternalToolRegistry(
         name="gobby-tasks-ops",
         description="Task operations - expansion, affected files, reindex",
     )
@@ -109,9 +91,6 @@ def create_task_ops_registry(
 
     # Merge reindex tool (1 tool)
     registry.merge_from(create_reindex_registry(ctx))
-
-    # Merge build automation entry point
-    registry.merge_from(create_build_registry(ctx))
 
     # Merge landing tools
     registry.merge_from(create_landing_registry(ctx))

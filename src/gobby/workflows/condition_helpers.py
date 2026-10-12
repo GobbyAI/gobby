@@ -66,51 +66,6 @@ _SOURCE_FRAGMENT_KEYS = frozenset(
     }
 )
 _NESTED_EDIT_KEYS = frozenset({"changes", "edits"})
-_UV_RUN_OPTIONS_WITH_VALUE = frozenset(
-    {
-        "--allow-insecure-host",
-        "--cache-dir",
-        "--color",
-        "--config-file",
-        "--config-setting",
-        "--default-index",
-        "--directory",
-        "--env-file",
-        "--exclude-newer",
-        "--extra",
-        "--extra-index-url",
-        "--find-links",
-        "--fork-strategy",
-        "--group",
-        "--index",
-        "--index-strategy",
-        "--index-url",
-        "--link-mode",
-        "--no-binary-package",
-        "--no-build-isolation-package",
-        "--no-build-package",
-        "--no-extra",
-        "--no-group",
-        "--only-group",
-        "--package",
-        "--prerelease",
-        "--project",
-        "--python",
-        "--refresh-package",
-        "--reinstall-package",
-        "--resolution",
-        "--upgrade-package",
-        "--with",
-        "--with-editable",
-        "--with-requirements",
-        "-C",
-        "-P",
-        "-f",
-        "-i",
-        "-p",
-        "-w",
-    }
-)
 
 
 def task_commit_project_path_allowlist_violation(
@@ -562,14 +517,6 @@ def is_task_complete(task: Any) -> bool:
     return projected_task_state(task) == "closed"
 
 
-def is_gobby_build_command(command: Any) -> bool:
-    """Return whether a shell command directly invokes ``gobby build``."""
-    if not isinstance(command, str) or not command.strip():
-        return False
-
-    return any(_segment_invokes_gobby_build(segment) for segment in shell_command_segments(command))
-
-
 def paths_written_this_turn(paths: Any, turn_written_paths: Any) -> bool:
     """Return whether every requested path was written in the current turn."""
 
@@ -675,65 +622,11 @@ def _git_subcommand(tokens: list[str]) -> str | None:
     return None
 
 
-def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
-    tokens = _strip_env_assignments(tokens)
-    if not tokens:
-        return False
-
-    executable = _executable_name(tokens[0])
-    if executable == "uv" and len(tokens) > 1 and tokens[1] == "run":
-        return _segment_invokes_gobby_build(_strip_uv_run_options(tokens[2:]))
-    if executable in {"python", "python3"} or executable.startswith("python3."):
-        module_tokens = _python_module_tokens(tokens[1:])
-        return module_tokens is not None and module_tokens[:2] == ["gobby", "build"]
-    return executable == "gobby" and len(tokens) > 1 and tokens[1] == "build"
-
-
 def _strip_env_assignments(tokens: list[str]) -> list[str]:
     index = 0
     while index < len(tokens) and _ENV_ASSIGNMENT_RE.match(tokens[index]):
         index += 1
     return tokens[index:]
-
-
-def _strip_uv_run_options(tokens: list[str]) -> list[str]:
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
-            return tokens[index + 1 :]
-        if not token.startswith("-"):
-            return tokens[index:]
-        if "=" in token:
-            index += 1
-            continue
-        if token in _UV_RUN_OPTIONS_WITH_VALUE:
-            index += 2
-            continue
-        index += 1
-    return []
-
-
-def _python_module_tokens(tokens: list[str]) -> list[str] | None:
-    index = 0
-    options_with_value = {"-W", "-X", "--check-hash-based-pycs"}
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "-m":  # nosec B105 # Python module flag, not a credential.
-            return tokens[index + 1 :]
-        if token == "--":  # nosec B105 # CLI option terminator, not a credential.
-            return None
-        if token in options_with_value and index + 1 < len(tokens):
-            index += 2
-            continue
-        if token.startswith("-W") or token.startswith("-X"):
-            index += 1
-            continue
-        if token.startswith("-"):
-            index += 1
-            continue
-        return None
-    return None
 
 
 def _executable_name(executable: str) -> str:

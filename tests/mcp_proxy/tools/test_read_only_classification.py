@@ -31,9 +31,6 @@ TASK_READ_ONLY_TOOLS = {
     "get_task_stages",
     "list_stages_registry",
     "get_task_type_defaults",
-    "get_build_status",
-    "explain_dispatch",
-    "list_build_history",
     "get_task_diff",
     "inspect_task_path_ownership",
 }

@@ -69,7 +69,10 @@ def test_invalid_when_base_sha_null(tmp_path: Path) -> None:
     )
 
     assert bundle.rows[0].status is EvidenceResolveStatus.invalid
-    assert "missing base_commit_sha; rerun gobby build" in bundle.rows[0].detail
+    assert bundle.rows[0].detail == (
+        "missing base_commit_sha; use set_artifact(base_commit_sha=...) "
+        "to record the verified original base"
+    )
 
 
 def test_invalid_when_base_sha_unresolvable(tmp_path: Path) -> None:

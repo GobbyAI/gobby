@@ -13,7 +13,7 @@ take a current backup when appropriate, then check reported counts. Test restore
 examples only against isolated fixtures or temporary daemon state.
 
 The following task CLI procedures are operator-only: `compact analyze`,
-`compact apply`, `compact stats`, `doctor`, `clean`, `repair-lifecycle`, and
+`compact apply`, `compact stats`, `doctor`, `clean`, and
 `validation-history --clear`. Compaction can replace task detail with a summary;
 repair and cleanup can alter historical state. Inspect their current CLI options
 and dry-run/preview behavior where provided before executing an authorized

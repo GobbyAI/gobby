@@ -133,40 +133,6 @@ def test_coordinator_skills_page_bounded_terminal_captures(skill_name: str) -> N
     assert result.has_behavioral_delta
 
 
-def test_build_coordinator_turns_manual_coordination_into_build_fixes() -> None:
-    """Verify the loaded build coordinator scenario replaces manual waits with build fixes."""
-    result = run_recorded_skill_scenario(
-        SCENARIOS / "build-coordinator/unattended-build-coordination.yaml"
-    )
-
-    assert result.baseline.action_names == (
-        "run_build",
-        "wait_for_agent",
-        "close_target",
-        "respond",
-    )
-    assert result.loaded.action_names == (
-        "create_coordination_epic",
-        "inspect_dependency_tree",
-        "normalize_leaf_stages",
-        "launch_build",
-        "monitor_dispatch",
-        "inspect_coordination_epic_bugs",
-        "fix_actionable_coordination_bug",
-        "monitor_agents",
-        "check_context_health",
-        "set_handoff_before_agent_wait",
-        "wait_for_agent_once_to_subscribe",
-        "end_turn_until_wake",
-        "recheck_wait_for_agent_then_sweep",
-        "verify_build_bugs_closed",
-        "close_target",
-        "close_coordination_epic",
-        "respond",
-    )
-    assert result.has_behavioral_delta
-
-
 def test_coderabbit_verifies_findings_before_fixing() -> None:
     """Verify the loaded CodeRabbit scenario inspects findings before fixing and cleans up reports."""
     result = run_recorded_skill_scenario(SCENARIOS / "coderabbit/verify-before-fixing.yaml")

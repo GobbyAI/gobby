@@ -894,9 +894,6 @@
       "gobby-tasks-ops:set_artifact",
       "gobby-tasks-ops:set_artifacts_atomic"
     ],
-    "build": [
-      "gobby-tasks-ops:build_task"
-    ],
     "pipelines": [
       "gobby-workflows:run_pipeline",
       "gobby-workflows:get_pipeline_status"

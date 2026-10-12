@@ -11,7 +11,7 @@ import click
 import httpx
 from croniter import croniter
 
-from gobby.cli._build_daemon import _daemon_error_detail, _daemon_error_message
+from gobby.cli._daemon_errors import _daemon_error_detail, _daemon_error_message
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_client
