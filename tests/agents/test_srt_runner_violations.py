@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -138,7 +140,10 @@ def test_runner_child_inherits_host_niceness(stub_runner: Path) -> None:
             "--",
             "/bin/sh",
             "-c",
-            'exec /bin/ps -o nice= -p "$$"',
+            "exec "
+            + shlex.join(
+                [sys.executable, "-c", "import os; print(os.getpriority(os.PRIO_PROCESS, 0))"]
+            ),
         ],
         cwd=root,
         capture_output=True,

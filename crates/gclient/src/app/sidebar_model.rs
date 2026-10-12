@@ -164,9 +164,9 @@ impl AgentEntry {
 
     /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
     /// each whitespace run one `-`, with the effort appended. When the display
-    /// name drops the family (`Fable 5.1`), the raw id's first token leads. An
-    /// absent segment leaves no dangling `-`: a run spawned with an effort
-    /// before its model is known reads `xhigh`.
+    /// name drops the family (`Fable 5.1`), a hyphenated raw id's first token
+    /// leads; bare aliases add no prefix. An absent segment leaves no dangling
+    /// `-`: a run spawned with an effort before its model is known reads `xhigh`.
     pub fn model_slug(&self) -> String {
         let model = self
             .model_display_name
@@ -259,9 +259,7 @@ pub fn build(inputs: &SidebarInputs) -> SidebarModel {
     }
 }
 
-/// Roster entries with a terminal, joined to the focused project's sessions
-/// and runs. Terminal rows, sessions, and runs are all fetched for the
-/// focused project, so an entry that joins neither is placed there too.
+/// Trim a model value and exclude empty values and angle-bracket placeholders.
 fn concrete_model(model: Option<&str>) -> Option<String> {
     model
         .map(str::trim)
@@ -269,6 +267,9 @@ fn concrete_model(model: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Roster entries with a terminal, joined to the focused project's sessions
+/// and runs. Terminal rows, sessions, and runs are all fetched for the
+/// focused project, so an entry that joins neither is placed there too.
 fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
     let rows = inputs.rows;
     inputs

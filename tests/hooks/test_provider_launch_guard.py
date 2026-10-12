@@ -57,6 +57,19 @@ def test_process_substitution_blocks_provider_launch(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "echo $(case y in y) codex exec hi;; esac)",
+        "cat <(case y in y) codex exec hi;; esac)",
+        "echo $(true; case y in y) codex exec hi;; esac)",
+        "echo $(echo $(case y in y) codex exec hi;; esac))",
+    ],
+)
+def test_grouped_case_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "diff <(ls a) <(ls b)",
         "cat <(echo 'claude -p hi')",
         "bash <(echo 'echo harmless')",

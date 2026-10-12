@@ -592,11 +592,13 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        opening = command.find("$(", start, end)
-        if opening >= 0:
+        match = re.search(r"\$\(|`|[<>]\(", command[start:end])
+        if match is not None:
+            opening = start + match.start()
+            tick = command[opening] == "`"
             try:
                 split_substitution |= (
-                    _substitution_end(command, opening + 2, False, depth + 1) >= end
+                    _substitution_end(command, opening + (1 if tick else 2), tick, depth + 1) >= end
                 )
             except ValueError:
                 continue
@@ -632,37 +634,16 @@ def _subjects(
             spans=spans_by_token,
         )
         while kept:
-            case_tokens = kept
-            while (
-                case_tokens
-                and not case_tokens[0].quoted
-                and case_tokens[0].value
-                in {
-                    "if",
-                    "then",
-                    "else",
-                    "elif",
-                    "fi",
-                    "while",
-                    "until",
-                    "do",
-                    "done",
-                    "!",
-                    "time",
-                    "{",
-                    "}",
-                }
-            ):
-                word = case_tokens[0].value
-                case_tokens = case_tokens[1:]
-                if word == "time":
-                    for option in ("-p", "--"):
-                        if (
-                            case_tokens
-                            and not case_tokens[0].quoted
-                            and case_tokens[0].value == option
-                        ):
-                            case_tokens = case_tokens[1:]
+            case_tokens = next(
+                (
+                    kept[next(index for index, token in enumerate(kept) if token is head[0]) :]
+                    for stage in _pipeline_stages(kept)
+                    if (head := _command_tokens(stage))
+                    and not head[0].quoted
+                    and head[0].value in {"case", "esac"}
+                ),
+                [],
+            )
             if (
                 not case_tokens
                 or case_tokens[0].quoted
@@ -700,6 +681,25 @@ def _subjects(
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
+            group_scan = scan_shell_command(candidate)
+            group_spans = dict(zip(map(id, group_scan.tokens), group_scan.spans, strict=True))
+            for stage in _pipeline_stages(group_scan.tokens):
+                head = _command_tokens(stage)
+                if not head or head[0].quoted:
+                    continue
+                opening = group_spans[id(head[0])][0]
+                if candidate.startswith("(", opening) and not candidate.startswith("((", opening):
+                    try:
+                        end = _substitution_end(candidate, opening + 1, False, depth + 1)
+                    except ValueError:
+                        continue
+                    subjects.extend(
+                        _subjects(
+                            candidate[opening + 1 : end],
+                            depth + 1,
+                            correlated_subjects=correlations,
+                        )
+                    )
             if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
                 subjects.append(candidate)
             else:
@@ -758,6 +758,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
     out: list[str] = []
     correlated: list[str] = []
     executed: list[str] = []
+    has_correlation = False
     quote = ""
     index = 0
     line_start = 0
@@ -768,7 +769,11 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(subject[index : index + 2])
             index += 2
             continue
-        if quote not in {"'", "$"} and (subject.startswith("$(", index) or char == "`"):
+        if quote not in {"'", "$"} and (
+            subject.startswith("$(", index)
+            or char == "`"
+            or (not quote and subject[index : index + 2] in {"<(", ">("})
+        ):
             tick = char == "`"
             start = index + (1 if tick else 2)
             try:
@@ -777,7 +782,16 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
                 return [subject]
             body = subject[start:end]
             bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
+            if not tick and char in "<>":
+                # Keep the process target in its owner: it determines whether a
+                # heredoc is executable. Add only newly separated arm subjects.
+                executed.extend(part for part in bodies if part != body)
+                out.append(subject[index : end + 1])
+                correlated.append(subject[index : end + 1])
+                index = end + 1
+                continue
             executed.extend(bodies)
+            has_correlation |= bool(bodies)
             out.append(f"{subject[index:start]}{subject[end]}")
             correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
@@ -820,7 +834,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
         out.append(char)
         correlated.append(char)
         index += 1
-    if executed:
+    if has_correlation:
         correlations.append("".join(correlated))
     return ["".join(out), *executed]
 
@@ -885,6 +899,37 @@ def _substitution_spans(body: str) -> list[str]:
         return _prepare(body, 0, data=True)[1]
     except ValueError:
         return [body]
+
+
+def _command_tokens(tokens: list[ShellToken]) -> list[ShellToken]:
+    """Remove shell control prefixes to expose a stage's command position."""
+    while (
+        tokens
+        and not tokens[0].quoted
+        and tokens[0].value
+        in {
+            "if",
+            "then",
+            "else",
+            "elif",
+            "fi",
+            "while",
+            "until",
+            "do",
+            "done",
+            "!",
+            "time",
+            "{",
+            "}",
+        }
+    ):
+        word = tokens[0].value
+        tokens = tokens[1:]
+        if word == "time":
+            for option in ("-p", "--"):
+                if tokens and not tokens[0].quoted and tokens[0].value == option:
+                    tokens = tokens[1:]
+    return tokens
 
 
 def _pipeline_stages(tokens: list[ShellToken]) -> list[list[ShellToken]]:

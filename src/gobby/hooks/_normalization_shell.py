@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c_quote
+from gobby.hooks._case_syntax import CaseSyntax, _balanced_parens_end
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY, strip_shell_wrappers
 from gobby.hooks._normalization_paths import _append_unique_path
 
@@ -355,6 +356,8 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
     """
     if command.startswith("$((", index):
         return _balanced_parens_end(command, index + 1)
+    if command[index] in "?*+@!" and command.startswith("(", index + 1):
+        return _balanced_parens_end(command, index + 1)
     if not word_start:
         return None
     if command.startswith("(", index) and not command.startswith("((", index):
@@ -402,30 +405,6 @@ def _compound_comparison_operators(command: str, start: int, end: int) -> set[in
     return positions
 
 
-def _balanced_parens_end(command: str, index: int) -> int | None:
-    depth = 0
-    quote = ""
-    position = index
-    while position < len(command):
-        char = command[position]
-        if char == "\\" and quote != "'":
-            position += 2
-            continue
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return position + 1
-        position += 1
-    return None
-
-
 def _quoted_substitution_close(command: str, index: int) -> int | None:
     """Index of the ``)`` or backtick closing a command substitution at ``index``.
 
@@ -469,12 +448,14 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     level = 1
     # In arithmetic $((...)) ``<<`` is a shift, and a newline never starts a body.
     arithmetic = not backtick and text.startswith("(", start)
+    cases = CaseSyntax()
     # The current logical line, masked like _prepare output, so the newline that
     # ends it can find the heredocs it opens.
     line: list[str] = []
     index = start
     while index < len(text):
         char = text[index]
+        pattern_paren = not quote and not arithmetic and cases.pattern_paren(text, index, level)
         if char == "\\" and quote != "'":
             line.append(text[index : index + 2])
             index += 2
@@ -517,7 +498,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             index = _skip_heredocs(text, tokens, index + 1)
             line = []
             continue
-        elif not quote and not backtick and char in "()":
+        elif not quote and not backtick and char in "()" and not pattern_paren:
             level += 1 if char == "(" else -1
             if level == 0:
                 return index
