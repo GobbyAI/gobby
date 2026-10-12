@@ -16,6 +16,16 @@ from gobby.hooks._normalization_shell import _contains_unexpanded_shell_referenc
 from gobby.hooks._sed_program import sed_write_paths
 
 
+def _unknown_write_metadata() -> dict[str, Any]:
+    """Fail closed when shell parsing cannot resolve a mutation's scope."""
+    return _build_canonical_tool_metadata(
+        "write",
+        repo_mutation=True,
+        confidence="low",
+        extra={"canonical_repo_mutation_scope_unknown": True},
+    )
+
+
 def _build_canonical_tool_metadata(
     kind: str,
     *,

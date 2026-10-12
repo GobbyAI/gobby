@@ -40,6 +40,7 @@ from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
     _gate_rewritable_scripts,
     _merge_shell_segment_metadata,
+    _unknown_write_metadata,
     _without_code_index_navigation,
 )
 from gobby.hooks._normalization_operands import (
@@ -257,12 +258,7 @@ def _classify_shell_command(
                 raw_by_token,
             )
         except ValueError:
-            return _build_canonical_tool_metadata(
-                "write",
-                repo_mutation=True,
-                confidence="low",
-                extra={"canonical_repo_mutation_scope_unknown": True},
-            )
+            return _unknown_write_metadata()
         pattern_bodies, unreadable = case_pattern_process_bodies(
             segment.tokens, arm_tokens, spans_by_token, command
         )
