@@ -8,7 +8,7 @@ from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan
 
 _FUNCTION_HEADER = re.compile(
     r"(?:(?:function\s+)?([^\s;&|()<>\"'\\$`]+)\s*\(\s*\)"
-    r"|function\s+([^\s;&|()<>\"'\\$`]+))(?:\s|\\\n)*"
+    r"|function\s+([^\s;&|()<>\"'\\$`]+))\s*"
 )
 _FUNCTION_BODY = re.compile(r"(?:[({]|(?:if|while|until|case|for|select)\b)")
 
@@ -17,18 +17,69 @@ def shell_function_bodies(
     command: str, tokens: list[ShellToken], spans: list[tuple[int, int]]
 ) -> tuple[str, dict[int, str]] | None:
     """Blank every header in place; map each body's opening position to its function name."""
+    view: list[str] = []
+    offsets: list[int] = []
+    positions: dict[int, int] = {}
+    quote = ""
+    escaped = False
+    word_start = True
+    in_backtick = False
+    heredoc_ends = (
+        {body.start: body.end for body in scan_shell_command(command).heredocs}
+        if "<<" in command
+        else {}
+    )
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if not quote and not escaped and command.startswith("\\\n", index):
+            index += 2
+            continue
+        end = heredoc_ends.get(index)
+        if end is None and not quote and not escaped and char == "#" and word_start:
+            end = command.find("\n", index)
+            end = len(command) if end == -1 else end
+            if in_backtick:
+                close = command.find("`", index, end)
+                end = end if close == -1 else close
+        if end is not None:
+            for original in range(index, end):
+                positions[original] = len(view)
+                offsets.append(original)
+                view.append(command[original])
+            index = end
+            continue
+        word_start = not quote and not escaped and (char.isspace() or char in ";&|()<>")
+        if not quote and not escaped and char == "`":
+            in_backtick = not in_backtick
+        positions[index] = len(view)
+        offsets.append(index)
+        view.append(char)
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote[-1]:
+                quote = ""
+        elif char in "\"'":
+            quote = "$'" if char == "'" and opens_ansi_c_quote(command, index - 1) else char
+        index += 1
+    offsets.append(len(command))
+    normalized = "".join(view)
     headers: list[tuple[int, int]] = []
     bodies: dict[int, str] = {}
     for index in range(len(tokens)):
         start = spans[index][0]
         if headers and start < headers[-1][1]:
             continue
-        header = _FUNCTION_HEADER.match(command, start)
+        header = _FUNCTION_HEADER.match(normalized, positions[start])
         if header is None:
             continue
-        if _FUNCTION_BODY.match(command, header.end()):
-            headers.append((start, header.end()))
-            bodies[header.end()] = header[1] or header[2]
+        if _FUNCTION_BODY.match(normalized, header.end()):
+            end = offsets[header.end()]
+            headers.append((start, end))
+            bodies[end] = header[1] or header[2]
     masked = list(command)
     for start, end in headers:
         masked[start:end] = " " * (end - start)
