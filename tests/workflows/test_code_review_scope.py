@@ -551,6 +551,36 @@ async def test_plan_writer_rename_from_source_stays_blocked(
 
 
 @pytest.mark.parametrize(
+    "add_operands",
+    ["{src,docs}/new.py", "~/src/new.py", "src/new.py docs/new.py"],
+)
+async def test_plan_writer_chained_add_untracked_source_stays_blocked(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+    add_operands: str,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    (repo / "src/new.py").write_text("value = 2\n", encoding="utf-8")
+    (repo / "docs/new.py").write_text("value = 3\n", encoding="utf-8")
+
+    response = await handler._evaluate_rules(
+        _gate_event(
+            f"git add {add_operands} && git commit -m plan -- .gobby/plans/revision.md src/new.py",
+            session,
+            project,
+            repo,
+        )
+    )
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
+@pytest.mark.parametrize(
     "message,expected",
     [
         ('"$(git add src/app.py; echo plan)"', "block"),

@@ -270,7 +270,9 @@ def _chained_add_paths(segments: Sequence[tuple[str, ...]]) -> tuple[str, ...] |
             return None
         operands = segment[3:] if segment[2:3] == ("--",) else segment[2:]
         if not operands or any(
-            operand.startswith(("-", ":")) or any(char in operand for char in "*?[$`\\")
+            operand.startswith(("-", ":"))
+            or any(char in operand for char in "*?[$`\\")
+            or _unresolved_shell_path(operand)
             for operand in operands
         ):
             return None
