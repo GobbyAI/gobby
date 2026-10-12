@@ -317,7 +317,7 @@ def is_commit_producing(tool_name: str, tool_input: dict[str, Any]) -> bool:
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False
-        from gobby.workflows.commit_guard import parse_git_commit_invocations
+        from gobby.workflows.commit_guard_shell import parse_git_commit_invocations
 
         return bool(parse_git_commit_invocations(command))
 

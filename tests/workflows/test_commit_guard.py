@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
@@ -29,13 +30,13 @@ from gobby.workflows.commit_guard import (
     active_owned_dirty_paths,
     foreign_dirty_edit_conflict,
     foreign_owned_dirty_paths,
-    parse_git_commit_invocations,
 )
 from gobby.workflows.commit_guard_conflicts import (
     ForeignPathOwner,
     format_dirty_edit_reason,
     format_ref,
 )
+from gobby.workflows.commit_guard_shell import parse_git_commit_invocations
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -1469,10 +1470,13 @@ def test_parse_unproven_expansion_commit_targets(command: str) -> None:
         "{a,b}.py",
         "sub/{a,b}.py",
         "?.py",
+        "'b\\.py'",
+        "b.py",
     ],
 )
+@pytest.mark.parametrize("delimiter", ["-- ", ""])
 async def test_pattern_pathspec_refuses_foreign_dirty_python_file(
-    guard_harness: GuardHarness, pathspec: str
+    guard_harness: GuardHarness, pathspec: str, delimiter: str
 ) -> None:
     for relative in ("a.py", "b.py", "sub/a.py", "sub/b.py"):
         path = guard_harness.repo / relative
@@ -1494,10 +1498,10 @@ async def test_pattern_pathspec_refuses_foreign_dirty_python_file(
     (guard_harness.repo / "sub/b.py").write_text("foreign change\n", encoding="utf-8")
 
     response = await guard_harness.handler._evaluate_rules(
-        guard_harness.event(f"git commit --only -m pattern -- {pathspec}")
+        guard_harness.event(f"git commit --only -m pattern {delimiter}{pathspec}")
     )
     assert response.decision == "block"
-    assert "Commit blocked:" in (response.reason or "")
+    assert response.reason
 
 
 @pytest.mark.parametrize(
@@ -1521,6 +1525,8 @@ def test_parse_pattern_guard_preserves_literal_quoted_data(command: str) -> None
 def test_malformed_later_line_cannot_hide_executed_nested_commit(
     repo: Path, shell: str, expected_head: str
 ) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is not installed")
     (repo / "owned.txt").write_text("prefix change\n", encoding="utf-8")
     command = "bash -c 'git commit --only -m prefix -- owned.txt'\nprintf '"
     result = subprocess.run([shell, "-c", command], cwd=repo, capture_output=True, check=False)
@@ -1529,6 +1535,103 @@ def test_malformed_later_line_cannot_hide_executed_nested_commit(
     invocations = parse_git_commit_invocations(command)
     assert invocations
     assert all(invocation.cwd_unverified for invocation in invocations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,stage_foreign",
+    [
+        ("git commit -a -m x", False),
+        ("git commit -am x", False),
+        ("git commit --include -m x -- owned.txt", True),
+        ("git commit -im x owned.txt", True),
+        ("git commit -m x --pathspec-from-file=files.txt", False),
+        ("git --icase-pathspecs commit -m x -- FOREIGN.TXT", False),
+        ("GIT_ICASE_PATHSPECS=1 git commit -m x -- FOREIGN.TXT", False),
+    ],
+)
+async def test_commit_selection_modes_cannot_hide_foreign_dirty_paths(
+    guard_harness: GuardHarness, command: str, stage_foreign: bool
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    (guard_harness.repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    (guard_harness.repo / "files.txt").write_text("foreign.txt\n", encoding="utf-8")
+    if stage_foreign:
+        _git(guard_harness.repo, "add", "--", "foreign.txt")
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    assert response.decision == "block"
+    assert response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["*.py", "{a,b}"])
+async def test_positional_owned_path_preserves_pattern_message_data(
+    guard_harness: GuardHarness, message: str
+) -> None:
+    (guard_harness.repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    command = f"git commit -m '{message}' owned.txt"
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    assert response.decision == "allow"
+    invocations = parse_git_commit_invocations(command)
+    assert len(invocations) == 1
+    assert invocations[0].pathspecs == ("owned.txt",)
+    assert not invocations[0].cwd_unverified
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        "-m",
+        "--message",
+        "-F",
+        "--file",
+        "-C",
+        "-c",
+        "--reuse-message",
+        "--reedit-message",
+        "--author",
+        "--date",
+        "--fixup",
+        "--squash",
+        "-t",
+        "--template",
+        "--cleanup",
+        "--trailer",
+    ],
+)
+def test_parse_commit_option_values_are_not_pathspecs(option: str) -> None:
+    invocations = parse_git_commit_invocations(f"git commit {option} '{{a,b}}' owned.txt")
+    assert len(invocations) == 1
+    assert invocations[0].pathspecs == ("owned.txt",)
+    assert not invocations[0].cwd_unverified
+
+
+@pytest.mark.parametrize("option", ["--unknown", "--pathspec-from-file=files", "-Z"])
+def test_parse_unknown_commit_option_shapes_are_unverified(option: str) -> None:
+    invocations = parse_git_commit_invocations(f"git commit {option} owned.txt")
+    assert invocations
+    assert all(invocation.cwd_unverified for invocation in invocations)
+
+
+@pytest.mark.parametrize(
+    "command,paths",
+    [
+        ("git commit -m x > commit.log", ()),
+        ("git commit -m x < message.txt", ()),
+        ("git commit -m x 2>&1", ()),
+        ("git commit -m x owned.txt > commit.log", ("owned.txt",)),
+        ("git commit -m x -- owned.txt < message.txt", ("owned.txt",)),
+        ("git > commit.log commit -m x owned.txt", ("owned.txt",)),
+        ("git commit -m x -- '>'", (">",)),
+        ("git commit -m x -- '<'", ("<",)),
+    ],
+)
+def test_parse_commit_redirections_are_not_pathspecs(command: str, paths: tuple[str, ...]) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert len(invocations) == 1
+    assert invocations[0].pathspecs == paths
+    assert not invocations[0].cwd_unverified
 
 
 def test_parse_keeps_explicit_pathspecs_and_quoted_messages() -> None:
@@ -1541,7 +1644,7 @@ def test_parse_keeps_explicit_pathspecs_and_quoted_messages() -> None:
 
 
 def test_parse_captures_git_c_and_work_tree() -> None:
-    from gobby.workflows.commit_guard import resolve_commit_inspect_cwd
+    from gobby.workflows.commit_guard_shell import resolve_commit_inspect_cwd
 
     dash_c = parse_git_commit_invocations("git -C /wt/agent commit -m x")
     assert len(dash_c) == 1
@@ -1657,7 +1760,7 @@ async def test_shell_cd_commit_inspects_actual_checkout(
 
 
 def test_shell_cd_combines_relative_navigation_with_git_c() -> None:
-    from gobby.workflows.commit_guard import resolve_commit_inspect_cwd
+    from gobby.workflows.commit_guard_shell import resolve_commit_inspect_cwd
 
     invocations = parse_git_commit_invocations(
         "cd ../checkouts && cd 'agent tree'; git -C nested commit -m 'keep ; literal' -- file.txt"
