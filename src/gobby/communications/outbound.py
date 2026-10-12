@@ -291,10 +291,10 @@ class OutboundCommunications:
             # Caller input: reject before a failed row or daemon error is recorded.
             bounded_callback_ttl(effective_metadata["callback_ttl_seconds"])
         explicit_thread_id = effective_metadata.get("thread_id")
-        if "thread_id" in effective_metadata and explicit_thread_id is None:
-            platform_thread_id = None
-        elif isinstance(explicit_thread_id, str) and explicit_thread_id.strip():
-            platform_thread_id = explicit_thread_id.strip()
+        if "thread_id" in effective_metadata:
+            platform_thread_id = (
+                explicit_thread_id.strip() or None if isinstance(explicit_thread_id, str) else None
+            )
 
         message = CommsMessage(
             id=message_id,

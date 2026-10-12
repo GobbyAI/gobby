@@ -3454,7 +3454,19 @@ async def test_send_message_propagates_thread_id() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_send_message_explicit_thread_id_overrides_tracked_thread() -> None:
+@pytest.mark.parametrize(
+    ("metadata", "expected_thread"),
+    [
+        ({"platform_destination": "42"}, "tracked-thread"),
+        ({"platform_destination": "42", "thread_id": None}, None),
+        ({"platform_destination": "42", "thread_id": ""}, None),
+        ({"platform_destination": "42", "thread_id": "  "}, None),
+        ({"platform_destination": "42", "thread_id": " explicit-thread "}, "explicit-thread"),
+    ],
+)
+async def test_send_message_explicit_thread_id_overrides_tracked_thread(
+    metadata: dict[str, str | None], expected_thread: str | None
+) -> None:
     channel = make_channel(webhook_secret=None)
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -3471,10 +3483,14 @@ async def test_send_message_explicit_thread_id_overrides_tracked_thread() -> Non
         "test-channel",
         "Explicit reply",
         session_id="session-123",
-        metadata={"thread_id": "explicit-thread"},
+        metadata=metadata,
     )
 
-    assert message.platform_thread_id == "explicit-thread"
+    assert message.platform_thread_id == expected_thread
+    sent = mock_adapter.send_message.call_args.args[0]
+    assert sent.platform_thread_id == expected_thread
+    assert sent.metadata_json["platform_destination"] == "42"
+    await manager.stop()
 
 
 @pytest.mark.unit
