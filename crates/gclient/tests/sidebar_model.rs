@@ -531,6 +531,41 @@ fn resumed_agent_falls_back_to_session_model_and_effort() {
 }
 
 #[test]
+fn haiku_alias_uses_the_display_model_family() {
+    for from_run in [true, false] {
+        let rows = SidebarRows {
+            sessions: BTreeMap::from([(
+                PROJECT.to_string(),
+                vec![SessionRow {
+                    id: "haiku-session".to_string(),
+                    model: (!from_run).then(|| "haiku".to_string()),
+                    reasoning_effort: Some("xhigh".to_string()),
+                    ..Default::default()
+                }],
+            )]),
+            runs: BTreeMap::from([(
+                PROJECT.to_string(),
+                vec![RunRow {
+                    run_id: "haiku-run".to_string(),
+                    model: from_run.then(|| "haiku".to_string()),
+                    effective_reasoning_effort: from_run.then(|| "xhigh".to_string()),
+                    ..Default::default()
+                }],
+            )]),
+            ..Default::default()
+        };
+        let mut agent = entry("run:haiku-run", Some("terminal-a"));
+        agent.provider = Some("claude".to_string());
+        agent.model_display_name = Some("Claude Haiku 5.5".to_string());
+        agent.session_id = Some("haiku-session".to_string());
+        agent.run_id = Some("haiku-run".to_string());
+        let sidebar = model(&rows, &[agent], &[pane(1, "terminal-a", false, true)]);
+
+        assert_eq!(sidebar.agents[0].model_slug(), "claude-haiku-5.5-xhigh");
+    }
+}
+
+#[test]
 fn sidebar_ignores_placeholder_models_at_each_fallback() {
     for (entry_model, run_model, session_model, expected) in [
         (
