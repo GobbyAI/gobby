@@ -38,7 +38,12 @@ def excluded_validation_records(
             )
             record = execution_details(run)
             missing = uncovered_paths(run)
-            if prelink:
+            if run.exclusion_reason == "off-task":
+                code, reason = "off-task", "Task was not selected when the run started"
+                remedy = (
+                    f"Re-claim this task, then rerun; runs while away remain uncredited. {rerun}"
+                )
+            elif prelink:
                 code, reason = "pre-link", "Observed before the task/session link window"
                 remedy = f"Link this session to the task, then rerun; prior runs remain uncredited. {rerun}"
             elif (edit := first_invalidating_edit(evidence, run)) is not None:

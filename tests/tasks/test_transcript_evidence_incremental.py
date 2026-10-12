@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 import multiprocessing
+import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
@@ -27,7 +28,10 @@ from gobby.tasks import (
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
-from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
+from gobby.tasks.transcript_evidence_snapshots import (
+    clear_evidence_snapshots,
+    derivation_fingerprint,
+)
 from gobby.tasks.transcript_evidence_transfer import ChunkedPayload, decode
 from gobby.tasks.transcript_tool_arguments import normalize_known_path
 from gobby.workflows.found_work_gate import (
@@ -52,7 +56,7 @@ def _snapshot_key(
     window: datetime | None = BASE_TIME,
     task_files: set[str] | None = None,
 ) -> str:
-    fingerprint = transcript_evidence._derivation_fingerprint(
+    fingerprint = derivation_fingerprint(
         session,
         window,
         DETECTION,
@@ -238,6 +242,10 @@ async def test_worker_owned_snapshot_matches_cold_derive_across_append_truncatio
 async def test_cross_process_resume_parses_from_prior_watermark(
     tmp_path: Path, caller: Caller, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    try:
+        os.sysconf("SC_SEM_NSEMS_MAX")
+    except OSError as exc:
+        pytest.skip(f"nested-SRT sandbox denies process-pool semaphore probe: {exc}")
     calls: list[PoolCall] = []
 
     async def fresh_worker(

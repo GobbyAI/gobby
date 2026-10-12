@@ -690,10 +690,17 @@ async def test_linked_session_that_no_longer_exists_or_has_no_transcript_is_skip
         unreadable=frozenset({IMPLEMENTER}),
     )
 
-    # The deleted session is never parsed; the unreadable one is attempted, then dropped.
+    # Neither missing transcript can grant credit; the gate still explains the missing evidence.
     assert [session_id for session_id, _ in calls] == [QA, IMPLEMENTER]
     assert ctx.session_manager.get.call_count == 3
-    assert merged == [TranscriptEvidence(sessions=(QA,))]
+    assert merged[0] == TranscriptEvidence(sessions=(QA,))
+    assert all(not item.validation_runs and not item.edits for item in merged[1:])
+    diagnostics = [message for item in merged for message in item.degraded_capabilities]
+    assert any(gone in message and "not found" in message for message in diagnostics)
+    assert any(
+        IMPLEMENTER in message and "transcript missing" in message for message in diagnostics
+    )
+    assert "/nope" in {path for item in merged for path in item.attempted_paths}
 
 
 @pytest.mark.asyncio
@@ -1302,13 +1309,17 @@ async def _owner_evidence(
     transcript_claims: tuple[TranscriptTaskClaim, ...],
     runs: tuple[Any, ...],
     edits: tuple[TranscriptEdit, ...] = (),
+    *,
+    selection_history: list[dict[str, str | None]] | None = None,
 ) -> TranscriptEvidence:
     """Derive close evidence where QA alone owns and closes the task."""
     ctx = _context(
         [_link(QA, "claimed", "2026-09-29T20:00:00+00:00")],
         {QA: _session(QA, "2026-09-29T19:00:00+00:00")},
     )
-    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_var_manager.get_variables.return_value = (
+        {"task_selection_history": selection_history} if selection_history is not None else {}
+    )
     ctx.session_task_manager.get_session_tasks.return_value = db_claims
 
     async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
@@ -1346,6 +1357,198 @@ _HANDED_OFF_THEN_NEWER_CLAIM = [
     _session_link("newer-task", "2026-09-29T21:00:00+00:00"),
     _session_link("task", "2026-09-29T20:00:00+00:00"),
 ]
+
+
+@pytest.mark.asyncio
+async def test_owner_handoff_runs_explain_exclusion_and_reclaim_restores_credit() -> None:
+    from gobby.tasks.validation_diagnostics import excluded_validation_records
+
+    before_handoff = _run_at(QA, "2026-09-29T20:30:00+00:00", "success", 1)
+    while_away = _run_at(QA, "2026-09-29T21:30:00+00:00", "success", 2)
+    after_reclaim = _run_at(QA, "2026-09-29T22:30:00+00:00", "success", 3)
+    selection_history: list[dict[str, str | None]] = [
+        {"epoch": "2026-09-29T20:00:00+00:00", "task_id": "task"},
+        {"epoch": "2026-09-29T21:00:00+00:00", "task_id": None},
+        {"epoch": "2026-09-29T22:00:00+00:00", "task_id": "task"},
+    ]
+    evidence = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (_claim("task", "2026-09-29T22:00:00+00:00"),),
+        (before_handoff, while_away, after_reclaim),
+        selection_history=selection_history,
+    )
+
+    assert evidence.validation_runs == (before_handoff, after_reclaim)
+    records = excluded_validation_records(evidence, lambda run: ())
+    # The helper deliberately supplies both command and validation collections.
+    assert len(records) == 2
+    for record in records:
+        assert record["completed_at"] == while_away.completed_at.isoformat()
+        assert record["reason_code"] == "off-task"
+        assert "not selected" in record["reason"]
+        assert "Re-claim" in record["remedy"]
+    unclaimed = await _owner_evidence(
+        _HANDED_OFF_THEN_NEWER_CLAIM,
+        (),
+        (while_away,),
+        selection_history=selection_history[:2],
+    )
+    gate = evaluate_validation_commands(
+        task_category="code", evidence=unclaimed, has_attributed_edits=True
+    )
+    assert not gate.passed
+    assert gate.details["excluded_runs"][0]["reason_code"] == "off-task"
+    assert "not selected" in gate.details["excluded_runs"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_codex_precompact_tdd_survives_later_task_editing_the_same_paths(
+    tmp_path: Path,
+) -> None:
+    start = datetime(2026, 10, 12, 13, tzinfo=UTC)
+    test_path = "crates/gdaemon/tests/run_modes.rs"
+    production_path = "crates/gdaemon/src/state.rs"
+    name = "node_prepare_takes_only_the_claim"
+    body = f"#[test]\nfn {name}() {{ assert!(prepared()); }}"
+    patch_body = body.replace("\n", "\n+")
+    test = AcceptanceTest(reference=f"{test_path}::{name}", path=test_path, symbol=name, body=body)
+    for relative in (test_path, production_path):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body if relative == test_path else "pub fn prepared() -> bool { true }\n")
+    transcript = tmp_path / "rollout.jsonl"
+    session = replace(
+        _claude_edit_session(transcript, IMPLEMENTER, tmp_path / test_path, start),
+        source="codex",
+    )
+    records: list[dict[str, Any]] = [
+        {
+            "timestamp": start.isoformat(),
+            "type": "session_meta",
+            "payload": {"id": IMPLEMENTER, "cwd": str(tmp_path)},
+        }
+    ]
+
+    def tool(offset: int, call_id: str, name: str, arguments: dict[str, Any], output: str) -> None:
+        stamp = (start + timedelta(seconds=offset)).isoformat()
+        records.extend(
+            [
+                {
+                    "timestamp": stamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": json.dumps(arguments),
+                    },
+                },
+                {
+                    "timestamp": (start + timedelta(seconds=offset + 1)).isoformat(),
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    },
+                },
+            ]
+        )
+
+    tool(
+        10,
+        "test",
+        "apply_patch",
+        {
+            "input": f"*** Begin Patch\n*** Add File: {tmp_path / test_path}\n+{patch_body}\n*** End Patch"
+        },
+        "{}",
+    )
+    command = "cargo nextest run -p gobby-daemon --test run_modes"
+    tool(
+        20,
+        "red",
+        "exec_command",
+        {"cmd": command, "workdir": str(tmp_path)},
+        json.dumps(
+            {
+                "exit_code": 100,
+                "output": f"FAIL [0.01s] gobby-daemon::run_modes {name}\nthread '{name}' panicked at {test_path}:2: assertion failed: prepared()",
+            }
+        ),
+    )
+    tool(
+        30,
+        "implementation",
+        "apply_patch",
+        {
+            "input": f"*** Begin Patch\n*** Update File: {tmp_path / production_path}\n@@\n-false\n+true\n*** End Patch"
+        },
+        "{}",
+    )
+    tool(
+        40,
+        "green",
+        "exec_command",
+        {"cmd": command, "workdir": str(tmp_path)},
+        json.dumps({"exit_code": 0, "output": f"PASS [0.01s] gobby-daemon::run_modes {name}"}),
+    )
+    # Codex appends a compaction record to the same rollout; it does not erase earlier records.
+    records.append(
+        {
+            "timestamp": (start + timedelta(seconds=50)).isoformat(),
+            "type": "compacted",
+            "payload": {"message": "handoff", "replacement_history": []},
+        }
+    )
+    tool(
+        70,
+        "foreign-test",
+        "apply_patch",
+        {
+            "input": f"*** Begin Patch\n*** Update File: {tmp_path / test_path}\n@@\n-old\n+new\n*** End Patch"
+        },
+        "{}",
+    )
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    ctx = _context([_link(IMPLEMENTER, "claimed", start.isoformat())], {IMPLEMENTER: session})
+    ctx.session_var_manager.get_variables.return_value = {
+        "task_edited_file_checkouts": {},
+        "task_edited_file_checkouts_history": {
+            "task": {str(tmp_path): [test_path, production_path]},
+            "other-task": {str(tmp_path): [test_path, production_path]},
+        },
+        "task_edited_file_checkouts_history_started_at": start.timestamp(),
+        "task_selection_history": [
+            {"epoch": start.isoformat(), "task_id": "task"},
+            {"epoch": (start + timedelta(seconds=60)).isoformat(), "task_id": "other-task"},
+        ],
+    }
+    with (
+        patch(
+            f"{_SUPPORT}.resolve_validation_detection_config",
+            return_value=default_validation_detection_config(),
+        ),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start=start.isoformat(),
+            task_edited_files={test_path, production_path},
+            repo_path=str(tmp_path),
+        )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed, result.findings
+    assert result.red_runs == (command,)
+    assert result.green_runs == (command,)
+    assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
+        (test_path, start + timedelta(seconds=10)),
+        (production_path, start + timedelta(seconds=30)),
+    ]
 
 
 @pytest.mark.asyncio
