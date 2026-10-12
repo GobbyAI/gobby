@@ -61,6 +61,9 @@ step_workflow:
       description: Load required instructions before inspecting the backlog.
       status_message: |
         Load brevity through gobby-skills:get_skill using mcp__gobby__call_tool.
+        call_tool("gobby-skills", "get_skill", {"name": "brevity", "level": "max"});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
         Follow every page.next_cursor with only cursor until null. Use Gobby's
         proxy for tracked skill loading; do not set loading flags manually.
       allowed_tools:
@@ -83,6 +86,13 @@ step_workflow:
         When explicitly directed to retire, call gobby-agents:end_agent_run with
         current_state summarizing the consolidation result and next_steps naming
         the Orchestrator's next action.
+      status_message: |
+        Inspect the backlog and send proposals to the Orchestrator.
+        Load any required skills through mcp__gobby__call_tool:
+        call_tool("gobby-skills", "get_skill", {"name": <name>});
+        Follow every page.next_cursor with only cursor until null.
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
