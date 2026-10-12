@@ -586,6 +586,9 @@ def _classify_shell_segment(
             extra["canonical_edit_file_paths"] = list(
                 dict.fromkeys([*extra["canonical_edit_file_paths"], *redirection_paths])
             )
+        if redirects_stdout_to_file(tokens):
+            extra.pop("_canonical_deferred_source_read", None)
+            extra.pop("_canonical_pending_source_reads", None)
         if extra.get("canonical_code_navigation_action") == "read" and redirects_stdout_to_file(
             tokens
         ):
@@ -974,7 +977,11 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     ):
         metadata.update(search_navigation_metadata(canonical_file_paths))
 
-    metadata.pop("_canonical_pending_source_reads", None)
+    # Unproved variable operands remain source reads after all enclosing proofs fail.
+    for record in metadata.pop("_canonical_pending_source_reads", ()):
+        metadata.setdefault("canonical_code_navigation_segments", []).append(
+            {**record["scope"], "canonical_file_paths": list(record["paths"])}
+        )
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
     annotate_navigation(data, metadata)
 

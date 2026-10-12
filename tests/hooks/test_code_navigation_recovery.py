@@ -448,6 +448,70 @@ def test_nested_loop_read_exemptions_remain_bounded(repo: Path, command: str) ->
 
 
 @pytest.mark.parametrize(
+    "rebind",
+    [
+        "f=src/short.py",
+        "read f",
+        "printf -v f %s src/short.py",
+        "declare f=src/short.py",
+        "getopts x f",
+        "for f in src/short.py; do :; done",
+        "source env.sh",
+        "eval 'f=src/short.py'",
+    ],
+)
+@pytest.mark.parametrize("reader", ['cat "$f"', """bash -c 'cat "$f"'""", '( cat "$f" )'])
+def test_outer_rebind_reads_are_unknown_source(repo: Path, rebind: str, reader: str) -> None:
+    data = event(repo, f"for f in src/long.py; do {rebind}; {reader}; done; touch /tmp/x")
+    assert navigation_requires_index(data, {}, "read", broad_only=True)
+    segments = data["canonical_code_navigation_segments"]
+    assert any("$" in path for segment in segments for path in segment["canonical_file_paths"])
+    assert data["canonical_file_paths"] == ["/tmp/x"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/long.py; do f=src/long.py; cat "$f"; done; touch /tmp/x',
+        "cat $F; touch /tmp/x",
+        """bash -c 'cat "$F"; touch /tmp/x'""",
+        '( cat "$F" ); touch /tmp/x',
+    ],
+)
+def test_unproven_variable_reads_block_in_write_commands(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize("reader", ['cat "$f"', """bash -c 'cat "$f"'""", '( cat "$f" )'])
+def test_absolute_outer_rebind_cannot_reuse_short_file_proof(repo: Path, reader: str) -> None:
+    command = f"for f in src/long.py; do f={repo / 'src/short.py'}; {reader}; done; touch /tmp/x"
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/long.py; do read f; head -n 10 "$f"; done; touch /tmp/x',
+        'for f in src/long.py; do read f; cat "$f" | head -n 10; done; touch /tmp/x',
+        'head -n 10 "$F"; touch /tmp/x',
+        'cat "$F" > /tmp/x',
+        """bash -c 'cat "$F"' > /tmp/x""",
+        '( cat "$F" ) > /tmp/x',
+        "cat notes.txt; touch /tmp/x",
+    ],
+)
+def test_unknown_source_reads_keep_proven_output_bounds(repo: Path, command: str) -> None:
+    (repo / "notes.txt").write_text("value\n" * 60)
+    assert not broad_read_blocked(repo, command)
+
+
+def test_redirected_unknown_read_preserves_opaque_mutation_scope(repo: Path) -> None:
+    data = event(repo, """bash -c 'cat "$F"; touch "$TARGET"' > /tmp/x""")
+    assert not navigation_requires_index(data, {}, "read", broad_only=True)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         ("rg pattern web/dist/assets", False),
