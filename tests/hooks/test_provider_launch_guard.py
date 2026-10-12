@@ -24,6 +24,35 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("command", "blocked"),
     [
+        (
+            "f() { g; }; g() { bash; }; h() { f() { g; }; g() { cat; }; echo hi | f; }; "
+            "h | python3; echo 'claude -p hi' | f",
+            True,
+        ),
+        (
+            "f() { g; }; g() { python3; }; h() { f() { g; }; g() { cat; }; echo hi | f; }; "
+            "h | bash; echo 'import os; os.system(\"claude -p hi\")' | f",
+            True,
+        ),
+        (
+            "f() { g; }; g() { bash; }; "
+            "bash -c 'f() { g; }; g() { cat; }; echo hi | f'; echo 'claude -p hi' | f",
+            True,
+        ),
+        (
+            "f() { g; }; g() { cat; }; "
+            "bash -c 'f() { g; }; g() { bash; }; echo hi | f'; echo 'claude -p hi' | f",
+            False,
+        ),
+    ],
+)
+def test_function_consumer_memo_isolated_by_evaluation_scope(command: str, blocked: bool) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
         ("f() { cat; }; echo hi | f; f() { bash; }; echo 'claude -p hi' | f", True),
         ("f() { cat; }; f <<< hi; f() { bash; }; f <<< 'claude -p hi'", True),
         ("f() { g; }; g() { cat; }; echo hi | f; g() { bash; }; echo 'claude -p hi' | f", True),

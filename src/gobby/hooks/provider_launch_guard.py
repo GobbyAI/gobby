@@ -576,21 +576,23 @@ def _blocked(
 ) -> bool:
     memo = _blocked_memo.get()
     token = None
-    consumer_token = None
     if memo is None:
         memo = {}
         token = _blocked_memo.set(memo)
-        consumer_token = _function_consumer_memo.set({})
     try:
         key = (command, depth, dialect, output_consumer)
         if key not in memo:
-            memo[key] = _evaluate_blocked(command, depth, dialect, output_consumer=output_consumer)
+            consumer_token = _function_consumer_memo.set({})
+            try:
+                memo[key] = _evaluate_blocked(
+                    command, depth, dialect, output_consumer=output_consumer
+                )
+            finally:
+                _function_consumer_memo.reset(consumer_token)
         return memo[key]
     finally:
         if token is not None:
             _blocked_memo.reset(token)
-        if consumer_token is not None:
-            _function_consumer_memo.reset(consumer_token)
 
 
 def _evaluate_blocked(
