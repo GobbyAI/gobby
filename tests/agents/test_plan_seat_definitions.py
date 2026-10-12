@@ -48,17 +48,32 @@ def test_adversary_stamps_only_after_consensus() -> None:
     assert not HANDOFF_TOOLS.intersection(stamp.blocked_mcp_tools or [])
     assert stamp.allowed_mcp_tools == "all" or HANDOFF_TOOLS <= set(stamp.allowed_mcp_tools or [])
     review = steps["review"]
-    assert [(entry.to, entry.when) for entry in review.transitions] == [("stamp", "vars.consensus")]
+    assert [(entry.to, entry.when) for entry in review.transitions] == [
+        ("stamp", "vars.consensus and not vars.bounced")
+    ]
+    assert [(entry.to, entry.when) for entry in stamp.transitions] == [("review", "vars.bounced")]
     handlers = review.on_mcp_success or []
-    assert len(handlers) == 1
-    handler = handlers[0]
-    assert _field(handler, "server") == "gobby-agents"
-    assert _field(handler, "tool") == "send_message"
-    assert _field(handler, "when") == "'EVENT=CONSENSUS' in str(tool_input.get('content'))"
-    assert _field(handler, "action") == "set_variable"
-    assert _field(handler, "variable") == "consensus"
-    assert _field(handler, "value") is True
+    assert len(handlers) == 2
+    consensus_event = (
+        "any(line.startswith('EVENT=CONSENSUS ') and "
+        "any(field.startswith('SHA=') and 7 <= len(field.split('=', 1)[1]) <= 40 and "
+        "all(char in '0123456789abcdefABCDEF' for char in field.split('=', 1)[1]) "
+        "for field in line.split()) "
+        "for line in str(tool_input.get('content') or '').split('\\n'))"
+    )
+    for handler, variable, value in zip(
+        handlers, ("consensus", "bounced"), (True, False), strict=True
+    ):
+        assert _field(handler, "server") == "gobby-agents"
+        assert _field(handler, "tool") == "send_message"
+        expression = _field(handler, "when")
+        assert isinstance(expression, str)
+        assert " ".join(expression.split()) == consensus_event
+        assert _field(handler, "action") == "set_variable"
+        assert _field(handler, "variable") == variable
+        assert _field(handler, "value") is value
     assert workflow.variables["consensus"] is False
+    assert workflow.variables["bounced"] is False
     assert workflow.exit_condition == "vars.seat_complete"
     assert any(
         _field(entry, "tool") == "end_agent_run"
