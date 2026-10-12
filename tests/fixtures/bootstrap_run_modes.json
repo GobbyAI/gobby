@@ -123,6 +123,56 @@
             "hub_daemon_url": "http://[2001:db8::1]:60887"
         },
         {
+            "name": "hub_unclosed_ipv6_bracket",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[::1"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_bracketed_hostname",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[hub.example]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_bracketed_ipv4",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[127.0.0.1]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "hub_invalid_ipv6",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[2001:db8::xyz]:443"
+            },
+            "error": "hub_daemon_url must be an http(s) origin with a host"
+        },
+        {
+            "name": "node_scoped_ipv6",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[fe80::1%en0]:443"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://[fe80::1%en0]:443"
+        },
+        {
+            "name": "node_ipvfuture",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://[v1.A:B]:443"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://[v1.a:b]:443"
+        },
+        {
             "name": "remote_hub",
             "bootstrap": {
                 "datastore_mode": "remote",

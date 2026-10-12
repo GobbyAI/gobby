@@ -455,7 +455,10 @@ def _parse_files_home_value(value: object) -> str:
 
 def _parse_hub_daemon_url(value: object) -> str:
     text = _parse_str(value, "hub_daemon_url").strip()
-    parsed = urlparse(text)
+    try:
+        parsed = urlparse(text)
+    except ValueError as exc:
+        raise BootstrapConfigError("hub_daemon_url must be an http(s) origin with a host") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise BootstrapConfigError("hub_daemon_url must be an http(s) origin with a host")
     if parsed.username is not None or parsed.password is not None:
