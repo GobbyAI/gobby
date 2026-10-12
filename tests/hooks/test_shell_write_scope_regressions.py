@@ -89,6 +89,19 @@ def test_directory_stack_scope(
     assert bool(data.get("canonical_repo_mutation_scope_unknown")) is unknown
 
 
+@pytest.mark.parametrize("navigation", ["cd", "pushd"])
+def test_tilde_directory_target_keeps_home_repository_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, navigation: str
+) -> None:
+    root = tmp_path / "repo"
+    (root / "sub").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(root))
+    data = _metadata(f"cd /tmp; {navigation} ~/sub; touch y.py", root)
+    assert data["canonical_file_paths"] == ["~/sub/y.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
 @pytest.mark.parametrize(
     "options",
     ["'s/a/b/'", "-e 's/a/b/'", "-es/a/b/", "-ne 's/a/b/'", "--expression=s/a/b/"],
