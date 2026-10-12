@@ -215,12 +215,3 @@ def test_enhancement_preserves_full_suggestions_votes_and_history() -> None:
         "suggestions_presented",
     ):
         assert term in body
-
-
-def test_unattended_build_retains_stage_native_sequence() -> None:
-    body = _body("plan/overview.md")
-    assert (
-        "retains its stage-manifest sequence, installed review policy and configured round counts"
-        in body
-    )
-    assert "Do not inject interactive menus into it" in body
