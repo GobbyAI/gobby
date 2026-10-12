@@ -531,6 +531,36 @@ def test_case_pattern_parentheses_with_harmless_commands_stay_allowed() -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "bash -c 'echo ${x/)(/-}'",
+        "bash -c '(echo ${x/)(/-})'",
+        "bash -c 'echo \")(claude)\"'",
+        "bash -c 'case x in x)(echo ${x/)(/-});; esac'",
+    ],
+)
+def test_literal_parentheses_in_parameter_data_stay_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["echo ${x:-$(claude)}", "echo ${x:-`claude`}", 'echo "${x:-${y:-$(claude)}}"'],
+)
+def test_parameter_data_still_inspects_executable_substitutions(body: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": f"bash -c '{body}'"}) is True
+
+
+@pytest.mark.parametrize("command", ["echo $${", "bash -c 'echo $${'"])
+def test_pid_parameter_with_literal_brace_is_data(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+def test_pid_parameter_with_literal_brace_still_inspects_substitution() -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": "bash -c 'echo $${x:-$(claude)}'"})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "{ echo 'import os; os.system(\"claude -p hi\")'; } > >(tee >(bash) >(python3))",
         "(echo 'import os; os.system(\"claude -p hi\")') > >(tee >(bash) >(python3))",
         "{ echo 'import os; os.system(\"claude -p hi\")'; } | tee >(bash) | python3",

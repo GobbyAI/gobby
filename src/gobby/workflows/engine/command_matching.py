@@ -648,16 +648,15 @@ def _subjects(
             spans=spans_by_token,
         )
         while kept:
-            case_tokens = next(
-                (
-                    kept[next(index for index, token in enumerate(kept) if token is head[0]) :]
-                    for stage in _pipeline_stages(kept)
-                    if (head := _command_tokens(stage))
-                    and not head[0].quoted
-                    and head[0].value in {"case", "esac"}
-                ),
-                [],
-            )
+            case_tokens: list[ShellToken] = []
+            for stage in _pipeline_stages(kept):
+                head = _command_tokens(stage)
+                if head and not head[0].quoted and head[0].value in {"case", "esac"}:
+                    for index, token in enumerate(kept):
+                        if token is head[0]:
+                            case_tokens = kept[index:]
+                            break
+                    break
             if (
                 not case_tokens
                 or case_tokens[0].quoted
@@ -695,11 +694,7 @@ def _subjects(
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
-            try:
-                group_scan = scan_shell_command(candidate)
-            except ValueError:
-                subjects.append(candidate)
-                continue
+            group_scan = scan_shell_command(candidate)
             group_spans = dict(zip(map(id, group_scan.tokens), group_scan.spans, strict=True))
             for stage in _pipeline_stages(group_scan.tokens):
                 head = _command_tokens(stage)

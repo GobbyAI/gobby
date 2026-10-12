@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c_quote
-from gobby.hooks._case_syntax import CaseSyntax, _balanced_parens_end
+from gobby.hooks._case_syntax import CaseSyntax, _balanced_parens_end, pid_parameter_end
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY, strip_shell_wrappers
 from gobby.hooks._normalization_paths import _append_unique_path
 from gobby.hooks._shell_syntax import (
+    _compound_comparison_operators,
     _scan_unquoted_shell_operator,
     joined_prefix_end,
     skip_line_continuations,
@@ -54,8 +55,6 @@ _SHELL_CONTROL_TOKENS = (
 _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 # Fd duplication (``2>&1``, ``>&2``, ``0<&3``, ``2>&-``) rebinds descriptors without
 # opening files, so it is neither a mutating redirection nor a segment separator.
-# The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
-# ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -153,7 +152,8 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
     pending_heredocs: list[_PendingHeredoc] = []
     heredoc_operator: str | None = None
     comparison_operators: set[int] = set()
-    in_backtick = False
+    cases = CaseSyntax()
+    arm_terminator: int | None = None
     # Output redirects of substitutions inside the current double-quoted word.
     quoted_substitution_redirects: list[tuple[ShellToken, tuple[int, int]]] = []
 
@@ -239,23 +239,36 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             index += 1
             continue
 
+        pattern_end = cases.pattern_ends.get(0)
+        pattern_paren = False
+        if token_start is None or char in "();&|\n" or index == pattern_end:
+            pattern_paren = cases.pattern_paren(command, index, 0)
+        if pattern_paren and char == ")" and index == pattern_end:
+            arm_terminator = index
+        if char == "(" and arm_terminator == index - 1:
+            # A case pattern's closing parenthesis ends the word even when
+            # the arm's subshell is glued to it. Quotes/expansions are data.
+            flush(index)
+
         if char == "#" and token_start is None:
             # An unquoted word-initial ``#`` comments out the rest of the line; a
-            # quote inside it opens nothing. The newline still ends the command,
-            # and inside unquoted backticks so does the closing backtick.
+            # quote inside it opens nothing. The newline still ends the command.
             end = command.find("\n", index)
             end = len(command) if end == -1 else end
-            if in_backtick:
-                closing = command.find("`", index, end)
-                end = end if closing == -1 else closing
             index = end
             continue
 
         if char == "`":
-            in_backtick = not in_backtick
+            begin(index)
+            end = _substitution_end(command, index + 1, True, 0) + 1
+            current.append(command[index:end])
+            index = end
+            continue
 
         if char == "\\":
             if index + 1 < len(command) and command[index + 1] == "\n":
+                if arm_terminator == index - 1:
+                    arm_terminator = index + 1
                 index += 2
                 continue
             begin(index)
@@ -292,6 +305,11 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             continue
         compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
         if compound_end is not None:
+            if cases.pattern_ends.get(0) == compound_end - 1:
+                # A parenthesized pattern is consumed as one word. Advance
+                # its syntax frame before scanning a glued executable group.
+                cases.pattern_paren(command, compound_end - 1, 0)
+                arm_terminator = compound_end - 1
             if not (
                 char == "(" and not command.startswith("((", index)
             ) and _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
@@ -365,6 +383,8 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
     Returns None when nothing opens here or the construct never closes, so the
     caller falls back to ordinary word scanning.
     """
+    if command[index] not in "$?*+@!([":
+        return None
     if joined_prefix_end(command, index, "$((") is not None:
         return _balanced_parens_end(command, skip_line_continuations(command, index + 1))
     if command[index] in "?*+@!" and command.startswith("(", index + 1):
@@ -378,42 +398,6 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
     if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
         return _double_bracket_end(command, index + 2)
     return None
-
-
-def _compound_comparison_operators(command: str, start: int, end: int) -> set[int]:
-    """Indexes of ``<``, ``>``, ``&`` and ``|`` in a compound word outside quotes
-    and command substitutions: the compound's own comparisons, never redirects.
-    """
-    positions: set[int] = set()
-    quote = ""
-    depth = 0
-    in_backtick = False
-    position = start
-    while position < end:
-        char = command[position]
-        if char == "\\" and quote != "'":
-            position += 2
-            continue
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char == "`":
-            in_backtick = not in_backtick
-        elif depth or in_backtick:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-        elif command.startswith("$(", position) and not command.startswith("$((", position):
-            depth = 1
-            position += 2
-            continue
-        elif char in "<>&|":
-            positions.add(position)
-        position += 1
-    return positions
 
 
 def _quoted_substitution_close(command: str, index: int) -> int | None:
@@ -457,23 +441,35 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     if depth > _MAX_SUBSTITUTION_DEPTH:
         raise ValueError("Shell nesting limit")
     quote = ""
+    parameter_quotes: list[str] = []
     level = 1
     # In arithmetic $((...)) ``<<`` is a shift, and a newline never starts a body.
     arithmetic = not backtick and text.startswith("(", start)
-    cases = CaseSyntax()
+    cases = CaseSyntax(backtick=backtick)
     # The current logical line, masked like _prepare output, so the newline that
     # ends it can find the heredocs it opens.
     line: list[str] = []
     index = start
     while index < len(text):
         char = text[index]
-        pattern_paren = not quote and not arithmetic and cases.pattern_paren(text, index, level)
+        if backtick and char == "`":
+            return index
+        pattern_paren = (
+            not quote
+            and not arithmetic
+            and not parameter_quotes
+            and (
+                char in ";&|(){}\n"
+                or index == start
+                or text[index - 1].isspace()
+                or text[index - 1] in ";&|(){}"
+            )
+            and cases.pattern_paren(text, index, level)
+        )
         if char == "\\" and quote != "'":
             line.append(text[index : index + 2])
             index += 2
             continue
-        if backtick and char == "`":
-            return index
         if not quote and opens_ansi_c_quote(text, index):
             quote = "$'"
             line.append("$'")
@@ -482,6 +478,10 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
         if quote in {"'", "$'"}:
             if char == "'":
                 quote = ""
+        elif (pid_end := pid_parameter_end(text, index)) is not None:
+            line.append(text[index:pid_end])
+            index = pid_end
+            continue
         elif (opening := joined_prefix_end(text, index, "$(")) is not None or char == "`":
             tick = char == "`"
             start_body = index + 1 if tick else opening
@@ -489,6 +489,14 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             index = _substitution_end(text, start_body, tick, depth + 1) + 1
             line.append("__gobby_expansion__")
             continue
+        elif text.startswith("${", index):
+            parameter_quotes.append(quote)
+            quote = ""
+            line.append("${")
+            index += 2
+            continue
+        elif parameter_quotes and not quote and char == "}":
+            quote = parameter_quotes.pop()
         elif char in "\"'":
             if not quote:
                 quote = char
@@ -496,6 +504,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
                 quote = ""
         elif (
             not quote
+            and not parameter_quotes
             and char == "#"
             and (index == start or text[index - 1].isspace() or text[index - 1] in ";|&(")
         ):
@@ -507,12 +516,18 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             line.append(text[index:end])
             index = end
             continue
-        elif not quote and not arithmetic and char == "\n":
+        elif not quote and not arithmetic and not parameter_quotes and char == "\n":
             tokens = scan_shell_command("".join(line)).tokens
             index = _skip_heredocs(text, tokens, index + 1)
             line = []
             continue
-        elif not quote and not backtick and char in "()" and not pattern_paren:
+        elif (
+            not quote
+            and not backtick
+            and not parameter_quotes
+            and char in "()"
+            and not pattern_paren
+        ):
             level += 1 if char == "(" else -1
             if level == 0:
                 return index
