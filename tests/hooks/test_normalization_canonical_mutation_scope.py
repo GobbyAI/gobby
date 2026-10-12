@@ -1334,7 +1334,6 @@ def test_git_directory_option_rebases_mutation_paths(tmp_path: Path, operation: 
         "checkout feature",
         "checkout -f feature",
         "checkout --force feature",
-        "checkout a.py",
         "checkout -b new",
         "switch feature",
         "switch -c new",
@@ -1356,10 +1355,34 @@ def test_git_branch_checkout_resolves_worktree_scope(
     data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
 
     assert data["canonical_tool_kind"] == "execute"
-    assert data["canonical_file_paths"] == [str(target)]
+    expected_scope = target / "feature" if operation == "checkout feature" else target
+    if operation == "checkout feature" and subdirectory:
+        expected_scope = nested / "feature"
+    assert data["canonical_file_paths"] == [str(expected_scope)]
     assert data["canonical_edit_file_paths"] == []
     assert not data.get("canonical_write_file_paths")
     assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize("operand", ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py"])
+def test_git_checkout_positional_operands_have_checked_scope(tmp_path: Path, operand: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_edit_file_paths"] == []
+    assert (
+        str(tmp_path / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
+    )
+
+
+@pytest.mark.parametrize(
+    "operand", ["-p", "--patch a.py", "--pathspec-from-file=paths", "*.py", ":(glob)*.py"]
+)
+def test_git_checkout_opaque_pathspec_fails_closed(tmp_path: Path, operand: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.parametrize("operation", ["checkout -f feature", "switch --discard-changes feature"])

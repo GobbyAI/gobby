@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -264,11 +265,17 @@ async def foreign_dirty_edit_conflict(
     if data.get("canonical_repo_mutation") is not True:
         return ""
 
-    # Forced branch changes inspect the named checkout, including a foreign worktree.
-    for root in data.get("canonical_git_force_checkout_roots", []):
+    # Checkout operands use the target worktree's ledger, including deleted files.
+    checkout_scopes = {root: [root] for root in data.get("canonical_git_force_checkout_roots", [])}
+    if data.get("canonical_git_checkout_mutation"):
+        for path in data.get("canonical_file_paths", []):
+            if root_path := checkout_root(Path(path)):
+                checkout_scopes.setdefault(str(root_path), []).append(path)
+    for root, paths in checkout_scopes.items():
         scoped_data = dict(data)
         scoped_data.pop("canonical_git_force_checkout_roots", None)
-        scoped_data["canonical_file_paths"] = [root]
+        scoped_data.pop("canonical_git_checkout_mutation", None)
+        scoped_data["canonical_file_paths"] = paths
         reason = await foreign_dirty_edit_conflict(
             db,
             replace(event, data=scoped_data, cwd=root),

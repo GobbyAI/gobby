@@ -165,21 +165,54 @@ def classify_git_mutation(
     operation = parts[index] if index < len(parts) else ""
     arguments = parts[index + 1 :]
     if operation == "switch" or (operation == "checkout" and "--" not in arguments):
+        operands = _shell_positional_args_after(
+            parts, index + 1, option_args={"-b", "-B", "--orphan"}
+        )
+        if operation == "checkout" and any(
+            argument in {"-p", "--patch", "--pathspec-from-file"}
+            or argument.startswith("--pathspec-from-file=")
+            or (argument.startswith("-") and not argument.startswith("--") and "p" in argument[1:])
+            or any(character in argument for character in "*?[")
+            or argument.startswith(":")
+            or _contains_unexpanded_shell_reference(argument)
+            for argument in arguments
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
         forced = any(
-            argument in {"--force", "--discard-changes"}
-            or (argument.startswith("-") and not argument.startswith("--") and "f" in argument[1:])
+            argument in {"--force", "--discard-changes", "--merge"}
+            or (
+                argument.startswith("-")
+                and not argument.startswith("--")
+                and any(flag in argument[1:] for flag in "fm")
+            )
             for argument in arguments
         )
+        head_checkout = operation == "checkout" and arguments == ["HEAD"]
         root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
         if root is None:
-            if operation == "switch" and not forced and not unknown:
+            if (operation == "switch" or head_checkout) and not forced and not unknown:
                 return _ShellSegmentMetadata("execute")
             return _ShellSegmentMetadata("write", repo_mutation=True)
         extra: dict[str, Any] = {"canonical_edit_file_paths": []}
         if forced:
             extra["canonical_git_force_checkout_roots"] = [str(root)]
+        # A positional checkout operand can be either a revision or a path,
+        # even a tracked file deleted on disk. Check every operand rather than guess.
+        checked_paths = (
+            operation == "checkout"
+            and bool(operands)
+            and not head_checkout
+            and not any(argument in {"-b", "-B", "--orphan"} for argument in arguments)
+        )
+        if forced or checked_paths:
+            extra["canonical_git_checkout_mutation"] = True
         return _ShellSegmentMetadata(
-            "execute", paths=(str(root),), repo_mutation=forced, extra=extra
+            "execute",
+            paths=tuple(_rebase_shell_paths(operands, git_cwd))
+            if checked_paths and not forced
+            else (str(root),),
+            repo_mutation=forced or checked_paths,
+            extra=extra,
         )
     if operation in {"rm", "mv"}:
         skip_value = False

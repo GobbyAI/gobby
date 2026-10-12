@@ -7,7 +7,8 @@ rules:
     enabled: true
     priority: 25
     when: >-
-      event.data.get('canonical_tool_kind') == 'write'
+      (event.data.get('canonical_tool_kind') == 'write'
+      or event.data.get('canonical_git_checkout_mutation'))
       and event.data.get('canonical_repo_mutation')
       and event.data.get('canonical_repo_mutation_scope_unknown')
     effects:
