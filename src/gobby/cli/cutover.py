@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -16,6 +17,7 @@ from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protect
 from gobby.cli.daemon_lifecycle import restart
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.runtime import get_cli_runtime
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_set_coherence import (
     REBUILD_REMEDY,
@@ -277,6 +279,10 @@ def run_cutover(
 @click.pass_context
 def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) -> None:
     """Build and activate all schema-aware native binaries as one set."""
+    # A node never runs the Python daemon, so refuse before any build or promotion.
+    with contextlib.suppress(BootstrapConfigError):
+        if refusal := node_daemon_refusal(load_bootstrap()):
+            raise click.ClickException(refusal)
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
 

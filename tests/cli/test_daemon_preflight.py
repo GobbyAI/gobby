@@ -2,21 +2,66 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
 import click
 import pytest
+from click.testing import CliRunner
 
-from gobby.cli import daemon_preflight
+from gobby.cli import cli, daemon_preflight
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import load_bootstrap
 from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.storage import schema_divergence
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
 
 pytestmark = pytest.mark.unit
+
+daemon_module = importlib.import_module("gobby.cli.daemon_lifecycle")
+daemon_start = importlib.import_module("gobby.cli.daemon_start")
+
+
+def test_restart_refuses_node_bootstrap(
+    tmp_path: Path, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "datastore_mode: remote\n"
+        "hub_daemon_url: http://hub.example.test:60887\n"
+        "database_url: postgresql://gobby:secret@100.64.0.10:5432/gobby\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    monkeypatch.setattr(
+        daemon_preflight, "load_bootstrap", lambda: load_bootstrap(str(bootstrap_path))
+    )
+    launched: list[str] = []
+
+    def forbid(name: str) -> Callable[..., None]:
+        def forbidden(*_args: object, **_kwargs: object) -> None:
+            launched.append(name)
+            raise AssertionError(f"a node restart must not reach {name}")
+
+        return forbidden
+
+    monkeypatch.setattr(daemon_module, "_do_stop", forbid("stop"))
+    monkeypatch.setattr(daemon_module, "_restart_backend", forbid("backend"))
+    monkeypatch.setattr(daemon_start, "_services_start", forbid("services"))
+    monkeypatch.setattr(daemon_start, "start", click.Command("start", callback=forbid("start")))
+    result = CliRunner().invoke(cli, ["restart"])
+    assert result.exit_code == 1, result.output
+    assert (
+        "Refusing to restart: datastore_mode: remote is a node; a node runs no Python "
+        "daemon and never takes the hub lease. See docs/guides/shared-stack.md (Client setup)."
+    ) in result.output
+    assert "The running daemon was left alone." in result.output
+    assert launched == []
+    assert plan_calls == []
+
 
 _CANDIDATE = Path("/workspace/target/release/gdaemon")
 _BOOTSTRAP_URL = "postgresql://bootstrap.example/gobby"
@@ -58,7 +103,7 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         daemon_preflight,
         "load_bootstrap",
-        lambda: SimpleNamespace(database_url=_BOOTSTRAP_URL),
+        lambda: SimpleNamespace(datastore_mode="local", database_url=_BOOTSTRAP_URL),
     )
 
 
@@ -212,7 +257,9 @@ def test_no_readable_hub_url_skips_the_plan(
 ) -> None:
     """Unreadable is not a refusal; the start is simply left unproven."""
     monkeypatch.setattr(
-        daemon_preflight, "load_bootstrap", lambda: SimpleNamespace(database_url=None)
+        daemon_preflight,
+        "load_bootstrap",
+        lambda: SimpleNamespace(datastore_mode="local", database_url=None),
     )
 
     assert daemon_preflight.restart_start_refusal(ctx) is None

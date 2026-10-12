@@ -12,6 +12,7 @@ import pytest
 
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner, run_gobby
+from gobby.runner_init import StartRefusal
 from gobby.runner_pid_file import ProbeState, claim_pid_file, probe_daemon_lock
 from gobby.runtime_grants.lease_view import RuntimeLeaseView, current_lease
 from gobby.servers.auth_service import AuthService
@@ -19,6 +20,43 @@ from gobby.servers.grant_auth import LiveLeaseGrantService
 from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("supplied_claim", [False, True])
+async def test_node_bootstrap_refuses_before_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supplied_claim: bool
+) -> None:
+    pid_file = tmp_path / "gobby.pid"
+    ownership = claim_pid_file(pid_file) if supplied_claim else None
+    if supplied_claim:
+        assert ownership is not None
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    bootstrap = BootstrapConfig(
+        datastore_mode="remote", hub_daemon_url="http://hub.example.test:60887"
+    )
+    monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
+    reached: list[str] = []
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        reached.append("runtime authority")
+        raise AssertionError("a node must refuse before native lifecycle or schema work")
+
+    monkeypatch.setattr("gobby.storage.schema_contract.verify_schema", forbidden)
+    monkeypatch.setattr("gobby.runtime_grants.lease_view.RuntimeLeaseView", forbidden)
+    monkeypatch.setattr("gobby.runner_backend.watch_supervisor", forbidden)
+    create = AsyncMock(side_effect=AssertionError("a node must not construct a runner"))
+    monkeypatch.setattr(GobbyRunner, "create", create)
+    with pytest.raises(StartRefusal) as refused:
+        await run_gobby(ownership_resolution=ownership)
+    assert str(refused.value) == (
+        "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
+        "the hub lease. See docs/guides/shared-stack.md (Client setup)."
+    )
+    assert reached == []
+    create.assert_not_awaited()
+    assert not pid_file.exists()
+    assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
 
 
 @pytest.mark.unit
@@ -138,14 +176,20 @@ def test_view_reads_seeded_row_without_acquiring(native_authority: tuple[str, st
 
 @pytest.mark.parametrize("fail_startup", [False, True])
 @pytest.mark.parametrize("supervised", [False, True])
+@pytest.mark.parametrize("hub", [False, True], ids=["standalone", "hub"])
 async def test_contained_runner_seeds_row_and_clears_view(
     native_authority: tuple[str, str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fail_startup: bool,
     supervised: bool,
+    hub: bool,
 ) -> None:
     database_url, token = native_authority
+    monkeypatch.setattr(
+        "gobby.config.bootstrap.load_bootstrap",
+        lambda *_args, **_kwargs: BootstrapConfig(database_url=database_url, hub=hub),
+    )
     runner = MagicMock(spec=GobbyRunner)
     server = MagicMock(spec=HTTPServer)
     server.auth_service = MagicMock(spec=AuthService)
