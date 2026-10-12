@@ -54,36 +54,45 @@ def compact_tasks(
         blockers = [
             ctx.task_manager.get_task(task_id) for task_id in sorted(task.active_blocked_by)
         ]
-        rows.append(
+        row = [
+            f"#{task.seq_num}" if task.seq_num else task.id,
+            task.title,
+            task.path_cache,
+            task.task_type,
+            task.claimed_by_session_id,
+            datetime_to_iso(task.closed_at),
+            datetime_to_iso(task.escalated_at),
+            task.escalation_reason,
             [
-                f"#{task.seq_num}" if task.seq_num else task.id,
-                task.title,
-                task.path_cache,
-                task.task_type,
-                task.claimed_by_session_id,
-                datetime_to_iso(task.closed_at),
-                datetime_to_iso(task.escalated_at),
-                task.escalation_reason,
-                [
-                    [f"#{blocker.seq_num}" if blocker.seq_num else blocker.id, blocker.title]
-                    for blocker in blockers
-                ],
-                task_discovery_payload(task)["state"],
-                datetime_to_iso(candidate_times.get(task.id)),
-                [
-                    [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
-                    for receipt in list_close_receipts(ctx.task_manager.db, task.id)
-                ],
-                task.commits[-1] if task.commits else None,
+                [f"#{blocker.seq_num}" if blocker.seq_num else blocker.id, blocker.title]
+                for blocker in blockers
+            ],
+            task_discovery_payload(task)["state"],
+            datetime_to_iso(candidate_times.get(task.id)),
+            [
+                [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
+                for receipt in list_close_receipts(ctx.task_manager.db, task.id)
+            ],
+            task.commits[-1] if task.commits else None,
+        ]
+        single_row_page = {**result, "rows": [row], "count": 1, "next_offset": None}
+        if len(json.dumps(single_row_page, default=str, indent=2).encode()) >= 14_000:
+            ref = row[0]
+            row = [
+                ref,
+                f"Row elided: exceeds compact page budget; get_task(task_id='{ref}', brief=false)",
+                *([None] * (len(columns) - 2)),
             ]
-        )
+        rows.append(row)
         result["count"] = len(rows)
         if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
             rows.pop()
             result["count"] = len(rows)
             result["next_offset"] = index
             if not rows:
-                return {"error": "One task exceeds compact page budget", "ref": f"#{task.seq_num}"}
+                return {
+                    "error": "Ref errors leave no room for a compact row; reduce the refs batch"
+                }
             break
     return result
 

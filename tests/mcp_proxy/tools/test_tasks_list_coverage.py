@@ -205,6 +205,47 @@ async def test_compact_ref_page_budget_preserves_source_offsets(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("oversized_position", [0, 1, 2])
+async def test_compact_page_elides_oversized_row_without_losing_neighbors(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    oversized_position: int,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            "Oversized " + "x" * 16_000 if number == oversized_position else f"Queue {number}",
+            validation_criteria="An oversized row must not prevent reading neighboring tasks.",
+        )
+        for number in range(3)
+    ]
+    refs = ["missing-task", *(f"#{task.seq_num}" for task in tasks)]
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": sample_project["id"]}
+        result = await registry.call("list_tasks", {"refs": refs, "view": "compact"})
+
+    assert "error" not in result
+    assert result["count"] == 3
+    assert result["next_offset"] is None
+    rows = [dict(zip(result["columns"], row, strict=True)) for row in result["rows"]]
+    assert [row["ref"] for row in rows] == refs[1:]
+    for number, row in enumerate(rows):
+        if number == oversized_position:
+            assert "elided" in row["title"]
+            assert "get_task" in row["title"]
+            assert row["ref"] in row["title"]
+            assert "brief=false" in row["title"]
+        else:
+            assert row["title"] == tasks[number].title
+    assert [(error["ref"], error["offset"]) for error in result["ref_errors"]] == [
+        ("missing-task", 0)
+    ]
+    assert len(json.dumps(result, default=str, indent=2).encode()) < 14_000
+
+
+@pytest.mark.asyncio
 async def test_list_tasks_resolves_ordered_refs_and_recent_escalations(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
