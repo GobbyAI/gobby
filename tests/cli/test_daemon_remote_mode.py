@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import click
@@ -10,6 +11,8 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import load_bootstrap
 
 NODE_REFUSAL = (
     "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
@@ -74,3 +77,24 @@ def test_compose_runtime_rejects_remote_mode(tmp_path: Path) -> None:
             )
         else:
             raise AssertionError("remote compose management must fail")
+
+
+def test_stop_skips_services_in_remote_mode(tmp_path: Path) -> None:
+    bootstrap_path = _write_remote_bootstrap(tmp_path)
+    config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
+    runtime = SimpleNamespace(config=config, read_only_operational_config=lambda: config)
+    with (
+        patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
+        patch("gobby.cli.daemon_lifecycle.get_service_status", return_value={}),
+        patch("gobby.cli.daemon_lifecycle.fetch_protected_runs", return_value=[]),
+        patch("gobby.cli.daemon_lifecycle.protect_pending_handoffs"),
+        patch("gobby.cli.daemon_lifecycle.stop_daemon_util", return_value=True) as stop_daemon,
+        patch("gobby.cli.daemon_lifecycle._services_stop") as services_stop,
+        patch("shutil.which", side_effect=AssertionError("Docker must not be inspected")) as which,
+    ):
+        result = CliRunner().invoke(cli, ["stop", "--docker"])
+    assert result.exit_code == 0, result.output
+    assert "Stopping Docker containers" not in result.output
+    stop_daemon.assert_called_once()
+    services_stop.assert_not_called()
+    which.assert_not_called()

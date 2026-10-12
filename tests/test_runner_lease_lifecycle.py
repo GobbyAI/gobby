@@ -12,6 +12,7 @@ import pytest
 
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner, run_gobby
+from gobby.runner_init import StartRefusal
 from gobby.runner_pid_file import ProbeState, claim_pid_file, probe_daemon_lock
 from gobby.runtime_grants.lease_view import RuntimeLeaseView, current_lease
 from gobby.servers.auth_service import AuthService
@@ -46,7 +47,7 @@ async def test_node_bootstrap_refuses_before_lease(
     monkeypatch.setattr("gobby.runner_backend.watch_supervisor", forbidden)
     create = AsyncMock(side_effect=AssertionError("a node must not construct a runner"))
     monkeypatch.setattr(GobbyRunner, "create", create)
-    with pytest.raises(RuntimeError) as refused:
+    with pytest.raises(StartRefusal) as refused:
         await run_gobby(ownership_resolution=ownership)
     assert str(refused.value) == (
         "datastore_mode: remote is a node; a node runs no Python daemon and never takes "

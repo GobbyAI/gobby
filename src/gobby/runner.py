@@ -402,8 +402,8 @@ async def run_gobby(
             str(config_path) if config_path else None, resolve_database_url=True
         )
         if refusal := node_daemon_refusal(bootstrap):
-            raise RuntimeError(refusal)
-        if bootstrap.run_mode() != "node" and (platform_error := unsupported_platform_error()):
+            raise StartRefusal(refusal)
+        if platform_error := unsupported_platform_error():
             raise StartRefusal(platform_error)
         bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
     except Exception:
@@ -445,25 +445,22 @@ async def run_gobby(
     try:
         watcher = asyncio.create_task(watch_supervisor(supervisor_gone), name="supervisor-liveness")
         database_url = bootstrap.database_url
-        if database_url is None and bootstrap.run_mode() != "node":
+        if database_url is None:
             raise RuntimeError("bootstrap database_url is required for runtime authority")
-        if database_url is not None:
-            try:
-                await asyncio.to_thread(verify_schema, database_url)
-            except SchemaVerifyRefusal as exc:
-                raise StartRefusal(str(exc)) from exc
+        try:
+            await asyncio.to_thread(verify_schema, database_url)
+        except SchemaVerifyRefusal as exc:
+            raise StartRefusal(str(exc)) from exc
         try:
             await asyncio.to_thread(ensure_break_glass_credential, daemon_bootstrap_path().parent)
         except Exception:
             logger.warning("Could not create break-glass credential", exc_info=True)
-        if bootstrap.run_mode() != "node":
-            assert database_url is not None
-            lease = RuntimeLeaseView(
-                database_url,
-                machine_id=require_machine_id(),
-                deployment_token=deployment_token(),
-            )
-            await asyncio.to_thread(lease.bind)
+        lease = RuntimeLeaseView(
+            database_url,
+            machine_id=require_machine_id(),
+            deployment_token=deployment_token(),
+        )
+        await asyncio.to_thread(lease.bind)
         from gobby.providers.version_gate import probe_and_publish_agy_support
 
         await probe_and_publish_agy_support()
