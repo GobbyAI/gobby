@@ -307,6 +307,35 @@ class TestMcpFailed:
 
 
 class TestToolCallSucceeded:
+    @pytest.mark.parametrize("json_response", [False, True])
+    @pytest.mark.parametrize(
+        "tool_name,payload",
+        [
+            ("mcp__x__query", {"data": [1, 2], "error": None}),
+            ("mcp__github__get_job", {"id": 1, "status": "failed", "name": "ci"}),
+            ("mcp__x__list", {"result": [{"status": "error", "id": 2}]}),
+            ("mcp__x__run", {"exitCode": 1, "stdout": "grep found nothing"}),
+        ],
+    )
+    def test_claude_third_party_mcp_domain_data_stays_successful(
+        self, tool_name: str, payload: dict[str, Any], json_response: bool
+    ) -> None:
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "input_data": {
+                    "session_id": "test-session",
+                    "tool_name": tool_name,
+                    "tool_input": {},
+                    "tool_response": json.dumps(payload) if json_response else payload,
+                },
+            }
+        )
+        evaluator = _build_evaluator({"variables": {}, "event": event})
+
+        assert evaluator.evaluate("tool_call_succeeded()") is True
+        assert evaluator.evaluate("tool_call_failed()") is False
+
     @pytest.mark.parametrize("success", [False, True])
     @pytest.mark.parametrize("content_block", [False, True])
     def test_claude_mcp_payload_outcome(self, success: bool, content_block: bool) -> None:

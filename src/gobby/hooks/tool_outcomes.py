@@ -343,12 +343,16 @@ def normalize_tool_outcome(
             trust=(_OutcomeTrust.NESTED_RESULT if wrapper_tool else _OutcomeTrust.DIRECT_RESULT),
         )
 
-    # A successful provider hook proves transport completion. MCP tools can
-    # still return a failed semantic payload after that successful transport.
+    # A successful provider hook proves transport completion. Gobby MCP tools
+    # can still return a failed semantic payload. Third-party domain data does
+    # not follow Gobby's result contract (e.g. a query can return failed jobs).
     if (
         explicit_success is True
         and output_field is not None
-        and (_normalized_tool_name(data).startswith("mcp__") or data.get("mcp_server"))
+        and (
+            _normalized_tool_name(data) == "call_tool"
+            or _normalized_tool_name(data).startswith("mcp__gobby__")
+        )
         and classify_raw_tool_result(data[output_field]).succeeded is False
     ):
         explicit_success = False
@@ -434,7 +438,7 @@ def hook_event_tool_outcome(data: object, metadata: object) -> ToolOutcome:
     """Canonical outcome of an after-tool event.
 
     A provider failure is authoritative. Provider success proves transport
-    completion; MCP payload failure can still make the semantic call fail.
+    completion; Gobby MCP payload failure can still make the semantic call fail.
     Other result-body signals, including stale ``is_error``, remain subordinate.
     """
     is_failure = metadata.get("is_failure") if isinstance(metadata, Mapping) else None
