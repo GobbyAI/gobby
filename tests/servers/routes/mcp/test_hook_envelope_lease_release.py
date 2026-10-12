@@ -111,6 +111,65 @@ async def test_cancelled_execution_stops_renewal_and_releases_the_claim(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancelled_worker_releases_claim_and_cancels_renewal(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    renewal_tasks: list[asyncio.Task[None]],
+) -> None:
+    server = _server(session_storage)
+    started = asyncio.Event()
+    worker: Future[dict[str, Any]] = Future()
+    worker.set_exception(asyncio.CancelledError("workflow runtime shutdown"))
+
+    async def cancelled_adapter(*args: object, **kwargs: object) -> dict[str, Any]:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            raise adapter_execution.AdapterHookCancelled(worker) from exc
+        return {"continue": True}
+
+    envelope = _envelope()
+    envelope["hook_type"] = "PreToolUse"
+    envelope["input_data"] = {"tool_name": "Bash", "tool_input": {"command": "true"}}
+    request: asyncio.Task[Any] | None = None
+    try:
+        async with server.app.router.lifespan_context(server.app):
+            with patch.object(hooks_route, "_run_adapter_hook", cancelled_adapter):
+                async with AsyncClient(
+                    transport=ASGITransport(app=server.app), base_url="http://test"
+                ) as client:
+                    request = asyncio.create_task(
+                        client.post(
+                            "/api/hooks/execute",
+                            headers={ENVELOPE_ID_HEADER: ENVELOPE_ID},
+                            json=envelope,
+                        )
+                    )
+                    await asyncio.wait_for(started.wait(), timeout=2)
+                    request.cancel()
+                    outcomes = await asyncio.gather(request, return_exceptions=True)
+                    assert isinstance(outcomes[0], asyncio.CancelledError)
+
+                    assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is None
+                    assert len(renewal_tasks) == 1
+                    assert renewal_tasks[0].cancelling() == 1
+                    await asyncio.gather(*renewal_tasks, return_exceptions=True)
+                    assert renewal_tasks[0].cancelled()
+                    assert (
+                        claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir)
+                        is not None
+                    )
+    finally:
+        if request is not None:
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        for renewal in renewal_tasks:
+            renewal.cancel()
+        await asyncio.gather(*renewal_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("worker_fails", [False, True])
 async def test_cancelled_request_retains_claim_until_worker_finalizes(
     session_storage: SessionManager,
