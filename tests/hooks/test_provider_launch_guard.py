@@ -22,6 +22,18 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "bash 0<<<'claude -p hi'",
+        "sh 0<<<'codex exec hi'",
+        "python3 0<<<'import os; os.system(\"claude -p hi\")'",
+    ],
+)
+def test_numbered_here_string_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "echo $$'\\' ; codex exec hi ; echo '\\'",
         "echo $$'\\'' ; codex exec hi ; echo \\'",
         "echo $(echo $$'\\') ; codex exec hi ; echo ')'\\'",

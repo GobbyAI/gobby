@@ -700,7 +700,7 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
             python_piped = _piped_to_shell(scan.tokens, end, python=True)
             if python_stdin:
                 for index, token in enumerate(segment[:-1]):
-                    if not token.quoted and token.value == "<<<":
+                    if not token.quoted and token.value.lstrip("0123456789") == "<<<":
                         if _python_launch(segment[index + 1].value, depth + 1, dialect):
                             return True
             if python_piped:
@@ -724,7 +724,11 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                         break
                 # Literal here-strings are executable input as well.
                 for index, token in enumerate(segment[:-1]):
-                    if _shell_stdin(words) and not token.quoted and token.value == "<<<":
+                    if (
+                        _shell_stdin(words)
+                        and not token.quoted
+                        and token.value.lstrip("0123456789") == "<<<"
+                    ):
                         if _blocked(segment[index + 1].value, depth + 1, inner):
                             return True
             if _shell_stdin(words) or piped:

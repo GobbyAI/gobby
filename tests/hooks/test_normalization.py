@@ -3594,6 +3594,117 @@ def test_rg_null_stdin_preserves_search_root(
     )
 
 
+@pytest.mark.parametrize(
+    ("command", "expected_paths"),
+    [
+        ("rg P 0</dev/null", ["{cwd}", "/dev/null"]),
+        ("grep -r P 2>/dev/null R/", ["R"]),
+        ("rg P R/a.py 2>&1", ["R/a.py"]),
+        ("rg P R/ 1>/dev/null 2>>/dev/null", ["R"]),
+        ("rg P 12</dev/null", ["{cwd}", "/dev/null"]),
+        ("rg P 0 <<EOF\nP\nEOF", ["0"]),
+        ("rg P 0 </dev/null", ["{cwd}/0", "/dev/null"]),
+        ("rg P '0'</dev/null", ["{cwd}/0", "/dev/null"]),
+        (r"rg P \0</dev/null", ["{cwd}/0", "/dev/null"]),
+        ("rg P R2>/dev/null", ["R2"]),
+        ("rg P R2>&1", ["R2"]),
+        ("rg P '2'>/dev/null", ["2"]),
+        ("rg P ²>/dev/null", ["²"]),
+    ],
+)
+def test_search_fd_redirects_preserve_real_operands(
+    tmp_path: Path, command: str, expected_paths: list[str]
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(tmp_path),
+        "project_path": str(tmp_path),
+        "tool_input": {"command": command},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_file_paths"] == [path.format(cwd=tmp_path) for path in expected_paths]
+    assert data["canonical_code_navigation_repo_scope"] is True
+
+
+@pytest.mark.parametrize(
+    ("numbered", "unnumbered"),
+    [
+        ("rg P 0</dev/null", "rg P </dev/null"),
+        ("grep -r P 2>/dev/null R/", "grep -r P >/dev/null R/"),
+        ("rg P R/a.py 2>&1", "rg P R/a.py >&1"),
+    ],
+)
+def test_search_fd_redirect_scope_matches_unnumbered(
+    tmp_path: Path, numbered: str, unnumbered: str
+) -> None:
+    results: list[dict[str, Any]] = []
+    for command in (numbered, unnumbered):
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(tmp_path),
+            "project_path": str(tmp_path),
+            "tool_input": {"command": command},
+        }
+        normalize_tool_fields(data)
+        results.append(data)
+
+    for field in (
+        "canonical_tool_kind",
+        "canonical_file_paths",
+        "canonical_code_navigation_repo_scope",
+    ):
+        assert results[0][field] == results[1][field]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("rg P 0</dev/null", ["rg", "P", "0<", "/dev/null"]),
+        ("rg P 2>>log", ["rg", "P", "2>>", "log"]),
+        ("rg P R2>&1", ["rg", "P", "R2", ">&1"]),
+        ("rg P '2'>log", ["rg", "P", "2", ">", "log"]),
+        (r"rg P \2>log", ["rg", "P", "2", ">", "log"]),
+        ("rg P 2 >log", ["rg", "P", "2", ">", "log"]),
+        ("rg P ²>log", ["rg", "P", "²", ">", "log"]),
+        ("cat 0<<EOF\nP\nEOF", ["cat", "0<<", "EOF", "\n"]),
+        ("cat 0<<-EOF\n\tP\n\tEOF", ["cat", "0<<-", "EOF", "\n"]),
+        ("cat 0<<<P", ["cat", "0<<<", "P"]),
+        ("cat 0<(true)", ["cat", "0", "<", "(true)"]),
+        ("echo 1>(true)", ["echo", "1", ">", "(true)"]),
+        ("cat <<2<file\nP\n2", ["cat", "<<", "2", "<", "file", "\n"]),
+    ],
+)
+def test_fd_redirect_token_boundaries(command: str, expected: list[str]) -> None:
+    scan = scan_shell_command(command)
+
+    assert shell_token_values(scan.tokens) == expected
+    assert len(scan.tokens) == len(scan.spans)
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        if not token.quoted:
+            assert command[start:end] == token.value
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat 0<(touch X)",
+        "cat 12<(touch X)",
+        "diff 3<(touch X) R/a.py",
+        "echo x 1>(touch X)",
+    ],
+)
+def test_numbered_process_substitution_keeps_writes(command: str) -> None:
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert "X" in data["canonical_file_paths"]
+
+
 @pytest.mark.parametrize("arguments", ["--max-depth 1", "--threads 4"])
 @pytest.mark.parametrize("change_directory", [False, True])
 def test_git_grep_value_options_preserve_worktree_scope(

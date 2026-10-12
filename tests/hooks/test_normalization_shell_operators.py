@@ -8,26 +8,17 @@ from gobby.hooks._normalization_shell import _scan_unquoted_shell_operator
 
 pytestmark = pytest.mark.unit
 
-_FD_DUP_SCAN_RE = re.compile(r"\d*[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
+_FD_DUP_SCAN_RE = re.compile(r"[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
 
 
 def _reference_operator(command: str, index: int) -> str | None:
-    """The probe before its operator-start fast path, kept as the oracle."""
+    """Punctuation-only probe; the word-aware lexer attaches fd numbers."""
     char = command[index]
     if char == "\n":
         return "\n"
     fd_dup = _FD_DUP_SCAN_RE.match(command, index)
     if fd_dup:
         return fd_dup.group(0)
-    if char.isdigit():
-        cursor = index
-        while cursor < len(command) and command[cursor].isdigit():
-            cursor += 1
-        if command.startswith(">>", cursor):
-            return f"{command[index:cursor]}>>"
-        if command.startswith(">", cursor):
-            return f"{command[index:cursor]}>"
-        return None
     for operator in (
         "<<<",
         "<<-",
@@ -95,4 +86,4 @@ def test_operator_probe_corpus_reaches_every_operator_shape() -> None:
         ">&",
         ">",
     } <= found
-    assert {"\n", "2>&1", ">&2", "2>&-", "0<&3", "1>>", "12>>", "7>", "²>"} <= found
+    assert {"\n", ">&1", ">&2", ">&-", "<&3"} <= found
