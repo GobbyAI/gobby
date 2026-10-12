@@ -2696,6 +2696,9 @@ def test_bsd_install_safe_directory_mode_keeps_dynamic_target_unknown(tmp_path: 
         ("case x in x) cd sub \\\n& ;;& d) touch e.py;; esac", "e.py"),
         ("case x in x) cd sub & # bg\n;& d) touch e.py;; esac", "e.py"),
         ("case x in x) cd sub  # a & b\n;& d) touch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub  # x ;&\ntouch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub  # x\ntouch e.py;; esac", "sub/e.py"),
+        ("case x in x) cd sub ;\\\n& d) touch e.py;; esac", "sub/e.py"),
         ("cd sub & touch x.py", "x.py"),
     ],
 )
@@ -2711,5 +2714,6 @@ def test_case_fallthrough_cd_is_not_a_background_job(
 
     normalize_tool_fields(data)
 
+    assert data["canonical_tool_kind"] == "write"
     assert data["canonical_file_paths"] == [expected]
     assert data["canonical_repo_mutation"] is True
