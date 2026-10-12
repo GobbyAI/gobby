@@ -1,7 +1,7 @@
 """#23120 QA: gclient pane addresses for an adopted tmux pane.
 
 Evidence driver for R2, run only under an explicit QA admission. It needs
-``QA_GCLIENT``, exactly this worktree's ``target/debug/gclient``, used only as
+``QA_GCLIENT``, exactly this worktree's configured Cargo debug ``gclient``, used only as
 build input: the viewer launches a fixture-owned copy verified against the build
 receipt's ``QA_GCLIENT_SHA256`` and ``QA_GCLIENT_VERSION``. Evidence goes to
 ``QA_23120_EVIDENCE_DIR``, which must resolve physically inside the worktree.
@@ -28,13 +28,14 @@ import pytest
 from tests._timing import wait_for_condition
 from tests.e2e import test_external_terminal_attach as attach
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, daemon_token
+from tests.fixtures.gdaemon_binary import checkout_debug_dir
 
 # The gterm host and its socket dir come from the external-attach setup.
 e2e_pre_daemon_setup = attach.e2e_pre_daemon_setup
 isolated_tmux = attach.isolated_tmux
 
 WORKTREE = Path(__file__).resolve().parents[2]
-WORKTREE_GCLIENT = WORKTREE / "target" / "debug" / "gclient"
+WORKTREE_GCLIENT = checkout_debug_dir(WORKTREE, os.environ) / "gclient"
 WORKSPACE = "qa-23120-tmux"
 VIEWER_COLS, VIEWER_ROWS = 150, 46
 ANSI = re.compile(r"\x1b\[[0-9;:?]*[A-Za-z]")

@@ -38,6 +38,7 @@ from tests.e2e.conftest import (
     daemon_health_unavailable,
     wait_for_daemon_health,
 )
+from tests.fixtures.gdaemon_binary import checkout_debug_dir
 
 pytestmark = pytest.mark.e2e
 
@@ -142,7 +143,7 @@ def e2e_pre_daemon_setup(
     summary_llm_server: _SummaryLLMServer,
 ) -> None:
     del e2e_config
-    debug = Path(__file__).resolve().parents[2] / "target" / "debug"
+    debug = checkout_debug_dir(_repo_root(), os.environ)
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(debug))
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
     from tests.fixtures.postgres import (
@@ -220,14 +221,14 @@ def _repo_root() -> Path:
 
 
 def _native_bin(name: str) -> Path:
-    debug = _repo_root() / "target" / "debug" / name
+    debug = checkout_debug_dir(_repo_root(), os.environ) / name
     if debug.is_file():
         return debug
     from gobby.utils.native_bin import resolve_native_bin
 
     found = resolve_native_bin(name)
     if found is None:
-        pytest.fail(f"{name} binary is not available in target/debug or PATH")
+        pytest.fail(f"{name} binary is not available in {debug.parent} or PATH")
     return Path(found)
 
 
@@ -681,7 +682,7 @@ class BoundaryHarness:
         env["GOBBY_HOME"] = str(self.home)
         env["GOBBY_DAEMON_URL"] = self.daemon.http_url
         env.pop("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None)
-        env["PATH"] = f"{_repo_root() / 'target' / 'debug'}:{env.get('PATH', '')}"
+        env["PATH"] = f"{checkout_debug_dir(_repo_root(), env)}:{env.get('PATH', '')}"
         for key in (
             "GCODE_DATABASE_URL",
             "GWIKI_DATABASE_URL",
@@ -1032,6 +1033,8 @@ def test_restore_replay_rejected(
     postgres_schema: str,
     tmp_path: Path,
 ) -> None:
+    if _compose_falkor_password() is None:
+        pytest.skip("FalkorDB credential unavailable inside the seat sandbox")
     upstream = os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_proxy = _start_qdrant_key_proxy(upstream, "e2e")
     try:

@@ -4,16 +4,69 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from tests.fixtures.gdaemon_binary import (
     CHECKOUT_BINARY_ENV,
     CheckoutBinaryError,
+    checkout_debug_dir,
     select_test_gdaemon,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("configured", [None, "cargo-cache", "absolute"])
+@pytest.mark.parametrize("binary_name", ["gcode", "gdaemon", "ghook"])
+def test_runtime_boundary_resolves_cargo_debug_binaries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured: str | None, binary_name: str
+) -> None:
+    from tests.e2e import test_runtime_boundary
+
+    repo_root = tmp_path / "checkout"
+    if configured is None:
+        monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+        target = repo_root / "target"
+    else:
+        target = tmp_path / "cargo-cache" if configured == "absolute" else repo_root / configured
+        monkeypatch.setenv(
+            "CARGO_TARGET_DIR", str(target) if configured == "absolute" else configured
+        )
+    debug = target / "debug"
+    debug.mkdir(parents=True)
+    binary = debug / binary_name
+    binary.write_bytes(b"fixture binary")
+    monkeypatch.setattr(test_runtime_boundary, "_repo_root", lambda: repo_root)
+
+    assert checkout_debug_dir(repo_root, os.environ) == debug
+    assert test_runtime_boundary._native_bin(binary_name) == binary
+
+
+def test_single_active_daemon_keeps_parent_cargo_target_after_environment_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tests.e2e import test_single_active_daemon
+
+    target = tmp_path / "cargo-cache"
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(target))
+    home = tmp_path / "daemon-home"
+    (home / "logs").mkdir(parents=True)
+
+    def cleaned_env(*, home_dir: Path) -> dict[str, str]:
+        assert home_dir == home
+        return {"PATH": "base-path"}
+
+    monkeypatch.setattr(test_single_active_daemon, "prepare_daemon_env", cleaned_env)
+    with patch("tests.e2e.test_single_active_daemon.subprocess.Popen") as spawn:
+        spawn.return_value.pid = 123
+        daemon = test_single_active_daemon._spawn_daemon(
+            tmp_path, home / "bootstrap.yaml", 12345, 12346
+        )
+
+    assert daemon.env["PATH"] == f"{target / 'debug'}:base-path"
+    assert "CARGO_TARGET_DIR" not in daemon.env
 
 
 def _write(path: Path, mtime_ns: int) -> Path:
