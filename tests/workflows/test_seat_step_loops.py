@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.workflows._variables import set_variable
@@ -311,3 +312,51 @@ async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -
     run = SeatRun(temp_db, name)
     await DRIVERS[name](run)
     assert run.step in {"claim", "await", "tick", "stamp"}
+
+
+@pytest.mark.parametrize("envelope", ["direct", "content", "structured"])
+async def test_code_reviewer_failed_verdict_send_keeps_unit(
+    temp_db: HubDatabase, envelope: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    await run.set_flag("candidate_task", "#101")
+    await run.set_flag("candidate_received", True)
+    await run.set_flag("verdict_ready", True)
+    report = "EVENT=CANDIDATE_VERDICT TASK=#101 SHA=abc VERDICT=BOUNCE NOTE=HIGH finding"
+    failure: dict[str, Any] = {
+        "success": False,
+        "error": "health check did not respond within 2s",
+        "code": "DAEMON_UNAVAILABLE",
+    }
+    output = failure
+    if envelope == "content":
+        output = {"isError": False, "content": [{"type": "text", "text": json.dumps(failure)}]}
+    elif envelope == "structured":
+        output = {"isError": False, "structuredContent": failure}
+
+    adapter = ClaudeCodeAdapter()
+    native_event: dict[str, Any] = {
+        "hook_type": "post-tool-use",
+        "input_data": {
+            "session_id": SESSION_ID,
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": SEND[0],
+                "tool_name": SEND[1],
+                "arguments": {"content": report},
+            },
+            "tool_response": output,
+        },
+    }
+    event = adapter.translate_to_hook_event(native_event)
+    await run._evaluate(event)
+    assert run.step == "verdict"
+    assert run.vars["candidate_task"] == "#101"
+    assert run.vars["candidate_received"] is True
+    assert run.vars["verdict_ready"] is True
+
+    native_event["input_data"]["tool_response"] = {"success": True}
+    await run._evaluate(adapter.translate_to_hook_event(native_event))
+    assert run.step == "await"
+    assert run.vars["candidate_task"] is None
