@@ -361,6 +361,35 @@ def test_deep_substitution_function_matches_blocks(mask_quoted: bool, levels: in
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "f() \\\n{ gem push x; }; f",
+        "function f \\\n{ gem push x; }; f",
+        "f\\\n() { gem push x; }; f",
+        "f(\\\n) { gem push x; }; f",
+        "f (\\\n) { gem push x; }; f",
+        "function \\\nf { gem push x; }; f",
+        "function f\\\n() { gem push x; }; f",
+        "f\\\noo() { gem push x; }; foo",
+        "# '\nf\\\n() { gem push x; }; f",
+        "echo $'x\\'y'; f\\\n() { gem push x; }; f",
+        "cat <<'EOF'\n'\nEOF\nf\\\n() { gem push x; }; f",
+        "bash <<'EOF'\nf\\\n() { gem push x; }; f\nEOF",
+        "bash <<'EOF'\nf() { gem push x; }; f\nEOF",
+    ],
+)
+def test_function_continuation_and_heredoc_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_quoted_function_header_continuation_stays_literal(mask_quoted: bool) -> None:
+    command = "echo 'f\\\n() { gem push x; }'"
+    assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 def test_nine_nested_function_definitions_match_blocks(mask_quoted: bool) -> None:
     command = "gem push x"
     for index in range(9):

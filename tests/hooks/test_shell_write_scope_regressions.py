@@ -106,6 +106,27 @@ def test_function_compound_context_reports_write(tmp_path: Path, command: str) -
 @pytest.mark.parametrize(
     "command",
     [
+        "f() \\\n(touch a.py); f",
+        "f\\\n() (touch a.py); f",
+        "f(\\\n) (touch a.py); f",
+        "function f\\\n() { touch a.py; }; f",
+        "f\\\noo() (touch a.py); foo",
+    ],
+)
+def test_function_header_continuation_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_file_paths"] == ["a.py"]
+
+
+def test_quoted_function_header_continuation_stays_literal(tmp_path: Path) -> None:
+    metadata = _metadata("echo 'f\\\n() (touch a.py)'", tmp_path)
+    assert not metadata.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "cd ..; f() { touch a.py; }; cd 'ROOT'; f",
         "f(){ touch a.py; }; f",
         "echo $(f() { cd /tmp; }; touch a.py)",
