@@ -1,6 +1,7 @@
 """Resolve shell programs, executable signatures and bounded shell-script bodies."""
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 
 SHELL_WRAPPER_DEPTH = 8
+shell_startup_unproven: ContextVar[bool] = ContextVar("shell_startup_unproven", default=False)
 # Larger script bodies stay opaque.
 SCRIPT_BODY_LIMIT = 64 * 1024
 # Script bodies one command may read in all, since each body can run more scripts.
@@ -48,6 +50,7 @@ class ShellExecution:
     # The word naming the file a shell reads its program from, when that file is
     # known; a script file without one stays opaque.
     script_word: str | None = None
+    pipeline_subshell: bool = False
 
 
 def preserves_directory(words: list[str]) -> bool:
@@ -94,13 +97,20 @@ def path_execution(words: list[str], base: Path | None) -> ShellExecution | None
     first_line = header.split(b"\n", 1)[0]
     if header[:4] in _NATIVE_EXECUTABLE_MAGIC and b"\x00" in first_line:
         return None
+    interpreter = None
     if first_line.startswith(b"#!"):
         interpreter = _shebang_interpreter(first_line[2:])
         if interpreter is None:
             return ShellExecution(script_file=True)
         if interpreter not in _SHELLS:
             return None
-    return ShellExecution(script_file=True, script_word=str(path))
+    return ShellExecution(
+        script_file=True,
+        script_word=str(path),
+        pipeline_subshell=interpreter in {"bash", "sh"}
+        and b"lastpipe" not in first_line
+        and not shell_startup_unproven.get(),
+    )
 
 
 def _shebang_interpreter(line: bytes) -> str | None:
@@ -147,6 +157,9 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         return ShellExecution(script_file=len(words) > 1)
     if not words or shell_command_name(words[0]) not in _SHELLS:
         return None
+    pipeline_subshell = (
+        shell_command_name(words[0]) in {"bash", "sh"} and not shell_startup_unproven.get()
+    )
     index = 1
     stdin_program = False
     while index < len(words):
@@ -159,11 +172,15 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         if not arg.startswith(("-", "+")):
             break
         if arg in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
+            if arg == "-O" and words[index + 1 : index + 2] == ["lastpipe"]:
+                pipeline_subshell = False
             index += 2
             continue
         if arg.startswith("-") and not arg.startswith("--"):
             stdin_program = stdin_program or "s" in arg
         if not arg.startswith(("--", "++")) and ("o" in arg or "O" in arg):
+            if arg.startswith("-") and "O" in arg and words[index + 1 : index + 2] == ["lastpipe"]:
+                pipeline_subshell = False
             index += 2
             continue
         if arg.startswith("-") and not arg.startswith("--"):
@@ -171,10 +188,15 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
                 program = words[index + 1 : index + 3]
                 if program[:1] == ["--"]:
                     program = program[1:]
-                return ShellExecution(command=program[0]) if program else ShellExecution()
+                return (
+                    ShellExecution(command=program[0], pipeline_subshell=pipeline_subshell)
+                    if program
+                    else ShellExecution()
+                )
         index += 1
     operand = index < len(words) and not stdin_program
     return ShellExecution(
         script_file=stdin_program or index < len(words) or stdin,
         script_word=words[index] if operand else None,
+        pipeline_subshell=pipeline_subshell,
     )
