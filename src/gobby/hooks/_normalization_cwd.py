@@ -324,13 +324,13 @@ class ShellDirectoryState:
                     branch.cwd = self.cwd
                     branch.stack = self.stack
                     branch.in_condition = False
-            elif word in {"for", "while", "until"}:
+            elif word in {"for", "select", "while", "until"}:
                 self.branches.append(
                     _Branch("loop", self.cwd, loop=self.loops_opened, stack=self.stack)
                 )
                 self.list_ops.append(False)
                 self.loops_opened += 1
-                if word == "for":
+                if word in {"for", "select"}:
                     break  # Keep the header for loop binding attribution.
                 self._enter_loop_body()
             elif word == "done":

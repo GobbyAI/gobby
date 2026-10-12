@@ -810,9 +810,6 @@ def test_quoted_process_substitution_text_is_not_a_write(tmp_path: Path, command
         "env -u HOME bash probe.sh",
         "command -p bash probe.sh",
         "bash /tmp/scratchpad/probe.sh",
-        "source /tmp/scratchpad/probe.sh",
-        ". /tmp/scratchpad/probe.sh",
-        "bash -c 'source /tmp/scratchpad/probe.sh'",
         "bash < /tmp/scratchpad/probe.sh",
         "bash -s < /tmp/scratchpad/probe.sh",
         "bash <<'EOF'\ntouch /project/x.py\nEOF",
@@ -831,6 +828,23 @@ def test_script_file_execution_requires_only_a_claim(tmp_path: Path, command: st
     assert not data.get("canonical_repo_mutation")
     assert not data.get("canonical_write_file_paths")
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source /tmp/scratchpad/probe.sh",
+        ". /tmp/scratchpad/probe.sh",
+        "bash -c 'source /tmp/scratchpad/probe.sh'",
+    ],
+)
+def test_sourced_script_requires_conservative_mutation_scope(tmp_path: Path, command: str) -> None:
+    data = _shell_write_metadata(command, tmp_path)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data.get("canonical_script_execution") is True
+    assert data.get("canonical_repo_mutation") is True
+    assert data.get("canonical_repo_mutation_scope_unknown") is True
 
 
 @pytest.mark.parametrize(

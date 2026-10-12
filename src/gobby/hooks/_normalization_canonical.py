@@ -146,6 +146,7 @@ def _normalize_shell_tool_metadata(
     depth: int = 0,
     base_cwd: Path | None = None,
     pipeline_subshell: bool = False,
+    deferred_functions: bool = False,
 ) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments.
 
@@ -171,7 +172,7 @@ def _normalize_shell_tool_metadata(
             if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
                 command, bodies = function_program
                 first = min(bodies)
-                unknown = any(
+                unknown = deferred_functions or any(
                     token.value in {"cd", "pushd", "popd", "eval"}
                     for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
                     if start > first
@@ -755,6 +756,16 @@ def _classify_shell_segment_without_redirection(
 
     execution = path_execution(parts, base_cwd) or shell_execution(parts, stdin=shell_stdin)
     if execution is not None:
+        if cmd in {"source", "."}:
+            # Sourced code can export functions whose later call directory is unknowable.
+            return _ShellSegmentMetadata(
+                "write",
+                repo_mutation=True,
+                extra={
+                    "canonical_script_execution": True,
+                    "_canonical_repo_mutation_scope_unknown": True,
+                },
+            )
         command = execution.command
         script: tuple[Path, str] | None = None
         reads_left = _script_reads_left.get()
@@ -774,6 +785,7 @@ def _classify_shell_segment_without_redirection(
                 depth=depth + 1,
                 base_cwd=base_cwd,
                 pipeline_subshell=execution.pipeline_subshell,
+                deferred_functions=cmd == "eval",
             )
             if script is not None:
                 nested["canonical_script_bodies"] = sorted(

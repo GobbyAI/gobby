@@ -76,6 +76,57 @@ def test_function_called_after_directory_change_has_conservative_scope(tmp_path:
     assert metadata["canonical_repo_mutation"] is True
 
 
+@pytest.mark.parametrize("loader", ["eval", "source", "."])
+@pytest.mark.parametrize("body", ["{ touch a.py; }", "(touch a.py)"])
+def test_indirect_function_uses_call_directory(tmp_path: Path, loader: str, body: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+    definition = f"f() {body}"
+    script = scratch / "functions.sh"
+    script.write_text(definition)
+    setup = f"eval '{definition}'" if loader == "eval" else f"{loader} '{script}'"
+    command = f"cd '{scratch}'; {setup}; cd '{root}'; f"
+
+    metadata = _metadata(command, root)
+
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata.get("canonical_repo_mutation_scope_unknown") is True
+
+
+@pytest.mark.parametrize("loop", ["select d in x", "select d"])
+def test_select_directory_change_leaves_followup_scope_unknown(tmp_path: Path, loop: str) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    command = f"{loop}; do cd '{scratch}'; break; done; touch a.py"
+
+    metadata = _metadata(command, tmp_path)
+
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata.get("canonical_repo_mutation_scope_unknown") is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "eval 'touch a.py'",
+        "eval 'f() { printf ready; }'; f",
+        "select d in x; do printf ready; break; done; touch a.py",
+    ],
+)
+def test_indirect_and_select_controls_keep_external_scope(tmp_path: Path, command: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+
+    metadata = _metadata(command, root, cwd=scratch)
+
+    assert not metadata.get("canonical_repo_mutation")
+    assert not metadata.get("canonical_repo_mutation_scope_unknown")
+
+
 def test_function_definition_retains_known_external_scope(tmp_path: Path) -> None:
     metadata = _metadata("cd ..; f() (touch a.py); f", tmp_path)
     assert metadata["canonical_tool_kind"] == "write"
@@ -423,6 +474,9 @@ def scope_engine(hub_db: HubDatabase) -> RuleEngine:
         ("sed 's/a/b/' in.py > out.py", True),
         ('sed "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
         ('sed -e "$PROGRAM" /tmp/scratch/in.py > /tmp/scratch/out.py', True),
+        ("cd /tmp; eval 'f() { touch a.py; }'; cd -; f", True),
+        ("source /tmp/functions.sh; f", True),
+        ("select d in x; do cd /tmp; break; done; touch a.py", True),
     ],
 )
 async def test_literal_write_scope_enforcement_without_claim(
