@@ -92,6 +92,50 @@ def test_malformed_grouped_case_matching_does_not_raise(mask_quoted: bool) -> No
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(true)$(case y in y) touch x;; esac)",
+        "echo $(true)$(true)$(case y in y) touch x;; esac)",
+        "echo `true`$(case y in y) touch x;; esac)",
+        "echo $(true)`case y in y) touch x;; esac`",
+    ],
+)
+def test_adjacent_case_substitutions_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(
+        command, pattern=r"(^|(?<=[;&|(`\n]))\s*touch\b", mask_quoted=mask_quoted
+    )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '$(true)$(case y in y) touch x;; esac)'",
+        "echo $(true)$(echo 'case y in y) touch x;; esac')",
+    ],
+)
+def test_adjacent_case_substitution_literals_stay_data(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(
+        command, pattern=r"(^|(?<=[;&|(`\n]))\s*touch\b", mask_quoted=mask_quoted
+    )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        '(case x in x) touch x; echo "unterminated;; esac)',
+        "echo $(case x in x) touch x; echo 'unterminated;; esac)",
+        "(case x in x) touch x;; esac)\\",
+    ],
+)
+def test_malformed_case_quotes_keep_fail_closed_matching(command: str, mask_quoted: bool) -> None:
+    assert executable_command_subjects(command) == [command]
+    assert command_patterns_match(command, pattern=r"\btouch\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
     "command,expected",
     [
         pytest.param("{ case x in x) gem push x;; esac; }", True, id="R1"),
