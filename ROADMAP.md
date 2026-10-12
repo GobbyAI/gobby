@@ -248,8 +248,10 @@ epics are not complete.
 
 ### Stage 2 — strangler absorption behind the front door (#21544)
 
-Ordered so story B emerges mid-port; hook ingress lands late because the rule
-engine is entangled with sessions and MCP dispatch. Each family lands as its own
+Ordered so story B emerges mid-port. S2.7 and S2.11 each split into a node half
+and a hub half (decision 17, amended 2026-10-12): the node halves feed story B
+and wait only on Stage 1. The S2.11 hub half lands late because the rule engine
+is entangled with sessions and MCP dispatch. Each family lands as its own
 workspace-private crate (decision 16), added to the workspace when its epic is
 claimed; S2.3 is the template.
 
@@ -261,11 +263,15 @@ claimed; S2.3 is the template.
 | **S2.4** · #21560 | Tasks family — reduced list, then get, then the write path (#21561, which hosts the hub authority contract #20822), stages, dependencies, the MCP server |
 | **S2.5** · #21562 | Sessions and transcripts — including the resumability decision |
 | **S2.6** · #21563 | Memory and search — repositories, recall injection, dream |
-| **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only |
+| **S2.7** · #21564 | Attention, agents, dispatch, and worktrees with machine scoping — where node semantics become HTTP-only; closes with its two halves |
+| **S2.7 node** · #24148 | Node-local agent spawn and worktrees in `gdaemon`, driven by the hub over the node channel |
+| **S2.7 hub** · #24149 | Machine-scoped attention, hub-wide roster, response routing, and the dispatch gate in Rust; replaces S4.2's Python routing |
 | **S2.8** · #21565 | Daemon-side `gterm` adoption and terminal WS |
 | **S2.9** · #21567 | Workflows, rules, pipelines, build, and validation |
 | **S2.10** · #21566 | External-MCP transport multiplexer as a delegated backend |
-| **S2.11** · #21569 | Hook ingress and the node-local envelope ledger |
+| **S2.11** · #21569 | Hook ingress and the node-local envelope ledger; closes with its two halves |
+| **S2.11 node** · #24150 | `gdaemon` node-local envelope ledger that drains the `ghook` spool and forwards each envelope to the hub's `POST /api/hooks/execute` |
+| **S2.11 hub** · #24151 | Hub-side hook ingress and the rule engine in Rust |
 | **S2.12** · #21570 | MCP front door flip — the last MCP step |
 | **S2.13** · #21568 | Remaining route families — thirteen children, enumerated now so nothing is discovered late |
 
@@ -276,9 +282,11 @@ dependency-ready work can proceed while Stage 1 is open (decision 21).
 
 Edges: `S2` ← `S1`; `S2.3` ← `S1.5`, `S2.1`;
 `S2.4` ← `S2.3`; `S2.5` ← `S2.4`, `S2.2`;
-`S2.6` ← `S2.4`; `S2.7` ← `S2.4`, `S1.4`;
+`S2.6` ← `S2.4`; `S2.7` ← `S2.7 node`, `S2.7 hub`;
+`S2.7 node` ← `S1.4`; `S2.7 hub` ← `S2.4`, `S1.4`;
 `S2.9` ← `S2.5`, `S2.7`;
-`S2.10` ← `S2.4`; `S2.11` ← `S2.5`, `S2.9`, `S2.10`;
+`S2.10` ← `S2.4`; `S2.11` ← `S2.11 node`, `S2.11 hub`;
+`S2.11 node` ← `S1.4`; `S2.11 hub` ← `S2.5`, `S2.9`, `S2.10`;
 `S2.12` ← `S2.10`, `S2.11`; `S2.13` ← `S2.4`, `S2.2`.
 
 S2.8's M1 adoption/epoch work has no S2.2 transport dependency. Its D2
@@ -304,8 +312,8 @@ begin. The naming switch and the Python retirement follow it.
 | Ref | Piece |
 | --- | --- |
 | **S4.1** · #17436 | Node mode: the per-machine daemon that holds no datastore credentials and runs only local duties |
-| **S4.1b** · #21579 | Rust node duties — cross-reference to S2.7, S2.8, S2.11; closes when a node runs `gdaemon` alone |
-| **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone` |
+| **S4.1b** · #21579 | Rust node duties — cross-reference to the S2.7 node half, S2.8's M1 adoption milestone, and the S2.11 node half; closes when a node runs `gdaemon` alone |
+| **S4.2** · #21575 | Hub mode: everything database-backed runs only in `hub` and `standalone`, and the Python hub routes dispatch, roster, and attention responses to remote nodes until the S2.7 hub half redoes that routing in Rust |
 | **S4.3** · #20202 | Remote `gobby` attach — planning waits on #19600 two-machine acceptance |
 | **S4.4** · #17769 | Per-user auth and multi-user; labeled `later` |
 | **S4.5** · #21577 | Configure `gcode` on nodes (closed) |
@@ -313,12 +321,15 @@ begin. The naming switch and the Python retirement follow it.
 | **S4.7** · #20203 | Hosted terminal-relay privacy stance — `hosted`, off-spine |
 | **S4.8** · #21576 | Move Telegram and comms attachments onto hub `files_home` |
 
-Edges: `S4` ← `S1`; `S4.1b` ← `S2.7`, `S2.8`, `S2.11`, #21549 machine-scoped terminals;
+Edges: `S4` ← `S1`; `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
+S2.8 M1 #23205, #21549 machine-scoped terminals;
 `S4.2` ← `S1.2`; `S4.4` ← `S1.4`.
 
-**Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2 runs right
-after S1.2 so the first hub-node pair test in S1.4 has a node running no
-maintenance. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes its
+**Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2's mode gate
+landed right after S1.2 (#23111), so the first hub-node pair test in S1.4 has a
+node running no maintenance. Story B does not wait on S2.4, S2.5, S2.9, or
+S2.10: those edges stay on the S2.7 and S2.11 hub halves, which are off its
+critical path. Stage 4 as a whole closes with S4.1b. `gcode` on a node writes its
 index through hub HTTP routes owned by whichever Stage 2 family absorbs the
 code-index routes (decision 17).
 
@@ -465,9 +476,15 @@ separate planning effort before implementation.
     security, no datastore TLS: PostgreSQL, Qdrant, and FalkorDB never leave the
     hub network, and the public surface is HTTP and WS behind the front door.
     A node is `gdaemon` in node mode with machine-local duties only (decision
-    13); per-invocation binaries (`ghook`, `gcode`, `gobby`) call the hub over
-    HTTP with the machine's key. Story B therefore arrives with S4.1b, after the
-    Stage 2 families for agents, terminals, and hook ingress. Credentials: an
+    13); per-invocation binaries (`gcode`, `gobby`) call the hub over HTTP with
+    the machine's key, and `ghook` posts through the local node. Story B
+    therefore arrives with S4.1b, after the node halves of the Stage 2 families
+    for agents (S2.7 node #24148) and hook ingress (S2.11 node #24150) and S2.8's
+    M1 adoption milestone (#23205). Amended 2026-10-12 (Josh approved decisions
+    A-D as presented): S2.7 and S2.11 split into node and hub halves; the hub
+    halves (#24149, #24151) keep their Stage 2 edges and are off story B's
+    critical path; until #24149 lands, the Python hub routes dispatch, roster,
+    and attention responses to nodes under S4.2 (#21575). Credentials: an
     API key is a user credential bound to one machine at issue (`user_id`,
     `machine_id`, hash, label, revocation); there is no separate machine key,
     and the single shared `local_cli_token` retires when every caller holds a
@@ -479,8 +496,9 @@ separate planning effort before implementation.
     user on one box is a second machine. Deferred, in order of cost: login
     providers (login is the seam and issues the same browser session), key
     scopes and unbound tokens, teams on one hub and per-user privacy inside a
-    hub. Open at S2.11: whether `ghook` posts to the hub directly or through
-    the local node; the envelope spool stays local either way (decision 9).
+    hub. Settled 2026-10-12: `ghook` posts through the local node, whose
+    envelope ledger stays local (decision 9) and forwards each envelope to the
+    hub.
 18. **All timer-driven periodic work in the daemon runs on the gdaemon
     heartbeat host** (2026-09-16; `.gobby/plans/gdaemon-front-door.md` §1.2
     runtime). The host lands in Stage 1 (#21543) with an empty roster as the
