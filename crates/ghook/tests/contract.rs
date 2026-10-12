@@ -1766,6 +1766,17 @@ fn enqueue_failure_uses_enqueue_error_as_failure_action() -> TestResult {
         "enqueue failures should report the enqueue error, not mask it with direct-post failure"
     );
 
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure["failure_kind"], "direct_post_after_enqueue_failure");
+    assert!(
+        failure["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("enqueue failed") && s.contains("direct post failed"))
+    );
+    assert_eq!(failure["envelope_id"], Value::Null);
+
     Ok(())
 }
 
