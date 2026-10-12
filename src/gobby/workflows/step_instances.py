@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
@@ -217,6 +218,10 @@ class AgentStepInstanceManager:
             return instance
         if definition is not None and definition.step_workflow is not None:
             instance.current_definition = definition.step_workflow
+            instance.variables = {
+                **deepcopy(definition.step_workflow.variables),
+                **instance.variables,
+            }
         return instance
 
     def save(
