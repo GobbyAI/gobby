@@ -17,13 +17,13 @@ from psycopg_pool import PoolTimeout
 
 from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import (
-    _COMMAND_SUBSTITUTION,
     ShellToken,
     _contains_unexpanded_shell_reference,
     _literal_cd_target,
     shell_token_values,
     tokenize_shell_command,
 )
+from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -98,13 +98,17 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
     if not command.strip():
         return ()
     try:
-        shell_tokens = tokenize_shell_command(command)
+        prepared, expansions = _prepare(command, 0)
+        shell_tokens = tokenize_shell_command(prepared)
         cwd_unverified = False
     except ValueError:
         shell_tokens = [ShellToken(part) for part in command.split()]
+        expansions = []
         cwd_unverified = True
 
     invocations: list[GitCommitInvocation] = []
+    if any(parse_git_commit_invocations(text) for text in expansions):
+        invocations.append(GitCommitInvocation(pathspecs=(), cwd_unverified=True))
     shell_chdir: str | None = None
     conditional_chdir = False
     segments = _split_shell_segments(_without_shell_comments(shell_tokens))
@@ -219,7 +223,10 @@ def _unmodeled_navigation(tokens: list[ShellToken]) -> bool:
         if token.value.startswith("CDPATH=") or (position and token.value in _NAVIGATION_WORDS):
             return True
         if not token.quoted and (
-            token.value in {"{", "}"} or any(char in token.value for char in "()`")
+            token.value in {"{", "}"}
+            or any(char in token.value for char in "()`")
+            or token.value.startswith(("__gobby_group_", "__gobby_process_"))
+            or token.value == "__gobby_expansion__"
         ):
             return True
     # Position-independent so assignments and wrappers (`command env`, `FOO=x env`)
@@ -243,15 +250,9 @@ def _nested_shell_texts(tokens: list[ShellToken]) -> list[str]:
             and any(_SHELL_C_FLAG.fullmatch(later) for later in values[index + 1 :])
         ):
             return values[index + 1 :]
-    return [
-        token.value[1:-1]
-        for token in tokens
-        if not token.quoted and token.value.startswith("(") and token.value.endswith(")")
-    ] + [
-        token.value
-        for token in tokens
-        if token.quoted and _COMMAND_SUBSTITUTION.search(token.value)
-    ]
+    # Expansions and groups are extracted from raw source by _prepare, before
+    # token decoding discards the quotes that distinguish data from execution.
+    return []
 
 
 def _skip_git_global_options(
