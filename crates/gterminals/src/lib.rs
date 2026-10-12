@@ -13,6 +13,7 @@ pub mod control;
 pub mod family;
 pub mod frames;
 pub mod host;
+pub mod leases;
 pub mod reconcile;
 pub mod repository;
 
