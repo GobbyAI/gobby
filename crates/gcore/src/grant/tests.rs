@@ -197,7 +197,7 @@ fn acquire_with_explicit_project_id_needs_no_project_root() {
 
 struct PoisonedEnv {
     _lock: MutexGuard<'static, ()>,
-    saved: [(&'static str, Option<OsString>); 5],
+    saved: [(&'static str, Option<OsString>); 7],
 }
 
 impl PoisonedEnv {
@@ -211,6 +211,8 @@ impl PoisonedEnv {
             "GOBBY_MANAGED_EXECUTION_ID",
             crate::local_token::AGENT_API_TOKEN_ENV,
             "GOBBY_DAEMON_URL",
+            "GOBBY_SESSION_ID",
+            "GOBBY_PROJECT_ID",
         ]
         .map(|name| (name, std::env::var_os(name)));
         // SAFETY: TEST_ENV_LOCK serializes env mutation; Drop restores every
@@ -1751,13 +1753,22 @@ fn operator_runtime_config_fetch_sends_no_identity_headers() {
 }
 
 fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
+    spawn_managed_challenge_with_settings(token, grant, json!({}), 1)
+}
+
+fn spawn_managed_challenge_with_settings(
+    token: &str,
+    grant: GrantBundle,
+    settings: Value,
+    config_reads: usize,
+) -> Scripted {
     let claims = parse_capability_token(token).expect("claims");
     let secret = claims.signature.clone();
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let url = format!("http://{}", listener.local_addr().unwrap());
     let requests = thread::spawn(move || {
         let mut captured = Vec::new();
-        for step in 0..3 {
+        for step in 0..2 + config_reads {
             let (mut stream, request) = loop {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return captured;
@@ -1769,6 +1780,13 @@ fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
                 }
             };
             captured.push(request.clone());
+            if step == 0 && request.starts_with("GET /api/runtime/config ") {
+                let body = json!({"code": "wrong_schema", "error": "wrong_schema",
+                    "message": "grant schema identity does not match"})
+                .to_string();
+                write!(stream, "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).expect("schema rejection");
+                return captured;
+            }
             let (status, body) = if step == 0 {
                 let nonce = request
                     .split("\"nonce\":\"")
@@ -1792,7 +1810,7 @@ fn spawn_managed_challenge(token: &str, grant: GrantBundle) -> Scripted {
                     200,
                     json!({
                         "config_revision": grant.config_revision,
-                        "settings": {}
+                        "settings": settings
                     })
                     .to_string(),
                 )
@@ -1968,6 +1986,69 @@ fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cach
     let offline = acquire_with(&request).expect("reuse refreshed managed cache offline");
     assert_eq!(offline.bundle.schema_identity, expected_schema_identity());
     assert_eq!(offline.bundle.principal, fresh.principal);
+}
+
+#[test]
+#[cfg(feature = "ai")]
+fn managed_effective_config_refreshes_stale_schema() {
+    let harness = Harness::new();
+    let now = unix_now();
+    let mut fresh = fixture_grant(PrincipalKind::AgentRun);
+    fresh.issued_at = now - 100;
+    fresh.expires_at = now + 3500;
+    fresh = fresh.with_checksum();
+    let mut stale = fresh.clone();
+    stale.schema_identity.latest_version -= 1;
+    stale = stale.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &stale).expect("private launch grant");
+    let token = envelope_token(now + 60, PROJECT);
+    let mut envelope = serde_json::to_value(&stale).expect("launch envelope");
+    envelope["managed_api_token"] = json!(token);
+    let bytes = serde_json::to_vec(&envelope).expect("envelope bytes");
+    fs::write(&path, &bytes).expect("daemon-published envelope");
+    let _env = PoisonedEnv::apply(&path);
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores all changed variables.
+    unsafe {
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "exec-1");
+        std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
+        std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
+        std::env::set_var("GOBBY_SESSION_ID", "cli");
+        std::env::set_var("GOBBY_PROJECT_ID", PROJECT);
+    }
+    let scripted = spawn_managed_challenge_with_settings(
+        &token,
+        fresh.clone(),
+        json!({"ai.embeddings.model": "nomic"}),
+        2,
+    );
+    let result = crate::ai::effective_config::daemon_mode_layers_at(&scripted.url, &harness.home);
+    let mut layers = result.expect("managed effective config refreshes stale schema");
+    let requests = join(scripted);
+    assert_eq!(layers.revision(), fresh.config_revision);
+    assert_eq!(
+        crate::config::ConfigSource::config_value(&mut layers, "ai.embeddings.model"),
+        Some("nomic".into())
+    );
+    assert_eq!(
+        fs::read(path).expect("launch envelope remains daemon-owned"),
+        bytes
+    );
+    assert_eq!(requests.len(), 4);
+    let refreshed_header = encode_grant_header(&fresh).expect("refreshed grant header");
+    assert!(requests[2..].iter().all(|request| {
+        header_value(request, GRANT_HEADER).as_deref() == Some(refreshed_header.as_str())
+    }));
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains(&format!("Bearer {TOKEN}")))
+    );
+    assert!(
+        requests[1..]
+            .iter()
+            .all(|request| request.contains(&format!("Bearer {token}")))
+    );
 }
 
 #[test]
