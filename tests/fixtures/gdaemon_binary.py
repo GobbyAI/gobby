@@ -23,6 +23,14 @@ class CheckoutBinaryError(RuntimeError):
     """The checkout's debug gdaemon was requested but cannot be trusted."""
 
 
+def checkout_debug_dir(repo_root: Path, env: Mapping[str, str]) -> Path:
+    """Resolve debug artifacts from the configured Cargo target or the checkout."""
+    target = Path(env.get("CARGO_TARGET_DIR") or "target")
+    if not target.is_absolute():
+        target = repo_root / target
+    return target / "debug"
+
+
 def newest_source(repo_root: Path) -> tuple[Path, int] | None:
     """Return the newest binary input, excluding conventional test-only Rust paths.
 
@@ -68,10 +76,7 @@ def select_test_gdaemon(
             f"{CHECKOUT_BINARY_ENV}={selector!r} is not recognized; use "
             f"{CHECKOUT_BINARY_VALUE!r} or {INSTALLED_BINARY_VALUE!r}"
         )
-    target_dir = Path(env.get("CARGO_TARGET_DIR") or "target")
-    if not target_dir.is_absolute():
-        target_dir = repo_root / target_dir
-    binary = target_dir / "debug" / binary_name
+    binary = checkout_debug_dir(repo_root, env) / binary_name
     if not binary.is_file():
         raise CheckoutBinaryError(
             f"{CHECKOUT_BINARY_ENV}={CHECKOUT_BINARY_VALUE} but {binary} does not exist; "

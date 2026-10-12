@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from tests.e2e.conftest import (
     wait_for_daemon_health,
     wait_for_port,
 )
+from tests.fixtures.gdaemon_binary import checkout_debug_dir
 
 pytestmark = pytest.mark.e2e
 
@@ -128,7 +130,7 @@ def _spawn_daemon(
     env = prepare_daemon_env(home_dir=home)
     env["GOBBY_CONFIG"] = str(config_path)
     env["GOBBY_HOME"] = str(home)
-    target_debug = Path(__file__).parents[2] / "target" / "debug"
+    target_debug = checkout_debug_dir(Path(__file__).resolve().parents[2], os.environ)
     env["PATH"] = f"{target_debug}:{env.get('PATH', '')}"
     command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
     with log_file.open("wb") as log_handle, error_log_file.open("wb") as error_handle:
