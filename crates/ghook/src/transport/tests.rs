@@ -1,0 +1,615 @@
+use super::*;
+use crate::test_http::read_http_request;
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::net::TcpListener;
+use std::thread;
+use tempfile::tempdir;
+
+#[cfg(unix)]
+#[test]
+fn enqueue_makes_inbox_owner_only() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for initial_mode in [None, Some(0o755), Some(0o555), Some(0o700)] {
+        let home = tempdir()?;
+        let inbox = home.path().join("inbox");
+        if let Some(mode) = initial_mode {
+            fs::create_dir(&inbox)?;
+            fs::set_permissions(&inbox, fs::Permissions::from_mode(mode))?;
+        }
+        let envelope = Envelope::new(
+            true,
+            "session-start".into(),
+            serde_json::json!({"session_id":"s"}),
+            "claude".into(),
+            BTreeMap::new(),
+        );
+        let path = enqueue_to(&envelope, &inbox)?;
+        assert_eq!(fs::metadata(&inbox)?.permissions().mode() & 0o7777, 0o700);
+        let stored: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+        assert_eq!(stored["hook_type"], "session-start");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn quarantine_malformed_makes_inbox_owner_only() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for initial_mode in [None, Some(0o755), Some(0o555), Some(0o700)] {
+        let home = tempdir()?;
+        let inbox = home.path().join("inbox");
+        let quarantine = inbox.join("quarantine");
+        if let Some(mode) = initial_mode {
+            fs::create_dir_all(&quarantine)?;
+            fs::set_permissions(&quarantine, fs::Permissions::from_mode(mode))?;
+            fs::set_permissions(&inbox, fs::Permissions::from_mode(mode))?;
+        }
+        let body = quarantine_malformed_at(&inbox, b"not json", "expected value", false)?;
+        assert_eq!(fs::metadata(&inbox)?.permissions().mode() & 0o7777, 0o700);
+        assert_eq!(
+            fs::metadata(&quarantine)?.permissions().mode() & 0o7777,
+            0o700
+        );
+        assert_eq!(body.parent(), Some(quarantine.as_path()));
+        let stored: serde_json::Value = serde_json::from_slice(&fs::read(body)?)?;
+        assert_eq!(stored["stdin_bytes_b64"], "bm90IGpzb24=");
+    }
+    Ok(())
+}
+
+#[test]
+fn permission_request_timeout_outlasts_telegram_hold() {
+    let source = include_str!("../../../../src/gobby/communications/telegram_questions.py");
+    let hold: u64 = source
+        .lines()
+        .find_map(|line| line.strip_prefix("QUESTION_TIMEOUT_SECONDS = "))
+        .expect("Telegram hold constant")
+        .parse()
+        .expect("Telegram hold seconds");
+    let timeout = post_timeout("permission-request").as_secs();
+    assert!(timeout > hold, "hook client must outlast the answer window");
+    assert!(
+        timeout < 120,
+        "hook client must finish before the provider deadline"
+    );
+    assert_eq!(post_timeout("permission-request"), Duration::from_secs(115));
+    assert_eq!(post_timeout("PermissionRequest"), Duration::from_secs(30));
+    assert_eq!(post_timeout("post-tool-use"), Duration::from_secs(30));
+}
+
+fn with_transport_test_env<R>(home: &std::path::Path, closure: impl FnOnce() -> R) -> R {
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            (gobby_core::grant::MANAGED_BOOTSTRAP_ENV, None),
+            ("GOBBY_SESSION_ID", None),
+            ("GOBBY_PARENT_SESSION_ID", None),
+            (gobby_core::local_token::AGENT_API_TOKEN_ENV, None),
+            ("GOBBY_DAEMON_URL", None),
+            ("GOBBY_PORT", None),
+            ("GOBBY_DAEMON_PORT", None),
+        ],
+        closure,
+    )
+}
+
+#[test]
+fn ts13_is_13_digits() {
+    let s = ts13();
+    assert_eq!(s.len(), 13);
+    assert!(s.chars().all(|c| c.is_ascii_digit()));
+}
+
+#[test]
+fn filename_prefix_reflects_critical() {
+    assert!(envelope_filename(true).starts_with('c'));
+    assert!(envelope_filename(false).starts_with('n'));
+}
+
+fn report_with(status_code: Option<u16>, response_body: Option<&str>) -> DeliveryReport {
+    DeliveryReport {
+        outcome: DeliveryOutcome::Enqueued,
+        failure_kind: Some(DeliveryFailureKind::Http),
+        status_code,
+        response_body: response_body.map(str::to_string),
+        transport_error: None,
+    }
+}
+
+#[test]
+fn retry_backpressure_requires_503_and_retry_status_body() {
+    assert!(report_with(Some(503), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+    // Extra fields alongside "status" are fine.
+    assert!(
+        report_with(
+            Some(503),
+            Some(r#"{"status":"retry","detail":"missing run id"}"#)
+        )
+        .is_retry_backpressure()
+    );
+}
+
+#[test]
+fn retry_backpressure_rejects_non_retry_outcomes() {
+    // 503 without the retry body keeps failure semantics.
+    assert!(!report_with(Some(503), Some(r#"{"error":"unavailable"}"#)).is_retry_backpressure());
+    assert!(!report_with(Some(503), Some(r#"{"status":"error"}"#)).is_retry_backpressure());
+    assert!(!report_with(Some(503), Some("not json")).is_retry_backpressure());
+    assert!(!report_with(Some(503), None).is_retry_backpressure());
+    // The retry body only counts on 503.
+    assert!(!report_with(Some(500), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+    assert!(!report_with(None, Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+}
+
+#[test]
+fn typed_unavailable_503_classifies_as_connect() {
+    for state in ["down", "starting"] {
+        let body = format!(
+            r#"{{"status":"unavailable","backend":{{"state":"{state}","target":"127.0.0.1:60888"}}}}"#
+        );
+        assert_eq!(
+            classify_http_failure(503, Some(&body)),
+            DeliveryFailureKind::Connect
+        );
+    }
+}
+
+#[test]
+fn other_http_failures_stay_http() {
+    for (status, body) in [
+        (503, Some(r#"{"status":"retry"}"#)),
+        (503, Some(r#"{"error":"unavailable"}"#)),
+        (503, Some("not json")),
+        (503, None),
+        (502, Some(r#"{"status":"unavailable"}"#)),
+        (500, Some(r#"{"status":"unavailable"}"#)),
+    ] {
+        assert_eq!(
+            classify_http_failure(status, body),
+            DeliveryFailureKind::Http,
+            "{status} {body:?}"
+        );
+    }
+}
+
+#[test]
+fn adapter_timeout_retry_kind_is_not_ingress_backpressure() {
+    assert!(
+        !report_with(
+            Some(503),
+            Some(r#"{"status":"retry","retry_kind":"adapter_timeout"}"#)
+        )
+        .is_retry_backpressure()
+    );
+}
+
+#[test]
+fn atomic_write_creates_parent_dirs() {
+    let dir = tempdir().unwrap();
+    let nested = dir.path().join("a/b/c/out.json");
+    atomic_write(&nested, b"{}").unwrap();
+    assert!(nested.exists());
+    assert_eq!(fs::read(&nested).unwrap(), b"{}");
+}
+
+#[test]
+fn atomic_write_leaves_no_tmp_on_success() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ok.json");
+    atomic_write(&path, b"{}").unwrap();
+    let tmp = dir.path().join("ok.json.tmp");
+    assert!(!tmp.exists());
+}
+
+#[test]
+fn atomic_write_removes_its_tmp_when_the_rename_fails() {
+    // A non-empty directory cannot be replaced by a rename, which fails the
+    // write with the tmp file already created, fsynced and closed.
+    let dir = tempdir().unwrap();
+    let occupied = dir.path().join("taken.json");
+    fs::create_dir(&occupied).unwrap();
+    fs::write(occupied.join("child"), b"x").unwrap();
+
+    let err = atomic_write(&occupied, b"{}").unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("rename"),
+        "unexpected failure: {err:#}"
+    );
+    assert!(
+        !dir.path().join("taken.json.tmp").exists(),
+        "a failed write left its temp file behind"
+    );
+}
+
+/// Which step of the tmp write this fake fails at.
+#[derive(Clone, Copy)]
+enum FailAt {
+    Write,
+    Sync,
+}
+
+/// A real on-disk tmp file that fails one step of the write.
+///
+/// Neither failure is reachable from the filesystem -- a write to a local
+/// file fails on a full disk or a signal, an fsync on a device error -- so
+/// the guard is proven at those two steps by substituting the tmp file
+/// rather than by breaking the filesystem under it. Creation still goes
+/// through `File::create`, so the entry the guard has to remove is a real
+/// one on the real path.
+struct FailingTempFile {
+    file: File,
+    fail_at: FailAt,
+}
+
+impl FailingTempFile {
+    fn open(path: &Path, fail_at: FailAt) -> std::io::Result<Self> {
+        Ok(Self {
+            file: File::create(path)?,
+            fail_at,
+        })
+    }
+}
+
+impl Write for FailingTempFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.fail_at {
+            FailAt::Write => Err(std::io::Error::other("simulated write failure")),
+            FailAt::Sync => self.file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl TempWrite for FailingTempFile {
+    fn sync(&self) -> std::io::Result<()> {
+        match self.fail_at {
+            FailAt::Sync => Err(std::io::Error::other("simulated fsync failure")),
+            FailAt::Write => self.file.sync_all(),
+        }
+    }
+}
+
+#[test]
+fn atomic_write_removes_its_tmp_when_the_write_fails() {
+    let dir = tempdir().unwrap();
+    let final_path = dir.path().join("half-written.json");
+
+    let err = atomic_write_with(&final_path, b"{}", |tmp| {
+        FailingTempFile::open(tmp, FailAt::Write)
+    })
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("write tmp"),
+        "unexpected failure: {err:#}"
+    );
+    assert!(
+        !dir.path().join("half-written.json.tmp").exists(),
+        "a failed write left its temp file behind"
+    );
+    assert!(!final_path.exists());
+}
+
+#[test]
+fn atomic_write_removes_its_tmp_when_the_fsync_fails() {
+    let dir = tempdir().unwrap();
+    let final_path = dir.path().join("unsynced.json");
+
+    let err = atomic_write_with(&final_path, b"{}", |tmp| {
+        FailingTempFile::open(tmp, FailAt::Sync)
+    })
+    .unwrap_err();
+
+    assert!(
+        format!("{err:#}").contains("fsync tmp"),
+        "unexpected failure: {err:#}"
+    );
+    assert!(
+        !dir.path().join("unsynced.json.tmp").exists(),
+        "a failed write left its temp file behind"
+    );
+    assert!(!final_path.exists());
+}
+
+#[test]
+fn atomic_write_leaves_an_entry_it_did_not_create() {
+    // The create is what arms the cleanup. When it fails there is nothing
+    // this write owns, and whatever is sitting on the tmp path is not ours.
+    let dir = tempdir().unwrap();
+    let squatter = dir.path().join("blocked.json.tmp");
+    fs::create_dir(&squatter).unwrap();
+
+    assert!(atomic_write(&dir.path().join("blocked.json"), b"{}").is_err());
+    assert!(
+        squatter.is_dir(),
+        "the cleanup removed an entry it did not create"
+    );
+}
+
+#[test]
+fn enqueue_writes_envelope_to_inbox() {
+    let dir = tempdir().unwrap();
+    let env = Envelope::new(
+        true,
+        "session-start".into(),
+        serde_json::json!({"session_id":"s"}),
+        "claude".into(),
+        BTreeMap::new(),
+    );
+    let path = enqueue_to(&env, dir.path()).unwrap();
+    assert!(path.exists());
+    let name = path.file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with('c'));
+    assert!(name.ends_with(".json"));
+    assert!(!name.ends_with(".tmp.json"));
+}
+
+#[test]
+fn quarantine_writes_pair() {
+    let dir = tempdir().unwrap();
+    let body = quarantine_malformed_at(dir.path(), b"not json", "expected value", false).unwrap();
+    let stem = body.file_stem().unwrap().to_str().unwrap().to_owned();
+    let meta = body.with_file_name(format!("{stem}.meta.json"));
+    assert!(body.exists());
+    assert!(meta.exists());
+    let meta_val: serde_json::Value = serde_json::from_slice(&fs::read(&meta).unwrap()).unwrap();
+    assert_eq!(meta_val["reason"], "malformed_stdin");
+    assert_eq!(meta_val["json_error"], "expected value");
+    assert!(meta_val["stdin_bytes_b64"].is_string());
+}
+
+#[test]
+fn post_and_cleanup_captures_success_response_body() {
+    let dir = tempdir().unwrap();
+    let inbox = dir.path().join("inbox");
+    let mut headers = BTreeMap::new();
+    headers.insert("X-Gobby-Session-Id".to_string(), "s".to_string());
+    let envelope = Envelope::new(
+        false,
+        "SessionStart".into(),
+        serde_json::json!({"session_id":"s"}),
+        "codex".into(),
+        headers,
+    );
+    let path = enqueue_to(&envelope, &inbox).unwrap();
+    let envelope_id = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".json"))
+        .unwrap()
+        .to_string();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_http_request(&mut stream);
+        assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+        assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
+        assert!(request.contains("X-Gobby-Session-Id: s"));
+        assert!(request.contains("\"hook_type\":\"SessionStart\""));
+        assert!(request.contains("\"input_data\":{\"session_id\":\"s\"}"));
+        assert!(request.contains("\"source\":\"codex\""));
+        assert!(request.contains("\"schema_version\":1"));
+        assert!(request.contains("\"enqueued_at\""));
+        assert!(request.contains("\"critical\":false"));
+        assert!(request.contains("\"headers\":{\"X-Gobby-Session-Id\":\"s\"}"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\n\r\n{\"decision\":\"accept\",\"reason\":\"ok\"}",
+            )
+            .unwrap();
+    });
+
+    let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+    handle.join().unwrap();
+
+    assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+    assert_eq!(report.failure_kind, None);
+    assert_eq!(report.status_code, Some(200));
+    assert_eq!(
+        report.response_body,
+        Some("{\"decision\":\"accept\",\"reason\":\"ok\"}".to_string())
+    );
+    assert!(path.exists());
+}
+
+#[test]
+fn post_and_cleanup_sends_droid_source_to_unified_hooks_endpoint() {
+    let dir = tempdir().unwrap();
+    let inbox = dir.path().join("inbox");
+    let envelope = Envelope::new(
+        false,
+        "PreToolUse".into(),
+        serde_json::json!({
+            "session_id": "droid-session",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "src/main.rs"}
+        }),
+        "droid".into(),
+        BTreeMap::new(),
+    );
+    let path = enqueue_to(&envelope, &inbox).unwrap();
+    let envelope_id = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".json"))
+        .unwrap()
+        .to_string();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_http_request(&mut stream);
+        assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+        assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
+        assert!(request.contains("\"hook_type\":\"PreToolUse\""));
+        assert!(request.contains("\"source\":\"droid\""));
+        assert!(request.contains("\"schema_version\":1"));
+        assert!(request.contains("\"critical\":false"));
+        assert!(request.contains("\"input_data\":{\"hook_event_name\":\"PreToolUse\""));
+        assert!(request.contains("\"tool_input\":{\"file_path\":\"src/main.rs\"}"));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+            )
+            .unwrap();
+    });
+
+    let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+    handle.join().unwrap();
+
+    assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+    assert_eq!(report.failure_kind, None);
+    assert_eq!(report.status_code, Some(200));
+    assert_eq!(report.response_body, Some("{}".to_string()));
+    assert!(path.exists());
+}
+
+#[test]
+fn post_includes_bearer_when_token_present() {
+    let home = tempdir().unwrap();
+    fs::write(
+        home.path().join("bootstrap.yaml"),
+        "api_key: ghook-test-token\n",
+    )
+    .unwrap();
+
+    with_transport_test_env(home.path(), || {
+        let inbox = home.path().join("inbox");
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            AUTHORIZATION_HEADER.to_string(),
+            "Bearer stale-token".to_string(),
+        );
+        let envelope = Envelope::new(
+            false,
+            "PreToolUse".into(),
+            serde_json::json!({"session_id": "auth-test"}),
+            "codex".into(),
+            headers,
+        );
+        let path = enqueue_to(&envelope, &inbox).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert!(request.lines().any(|line| {
+                line.eq_ignore_ascii_case("Authorization: Bearer ghook-test-token")
+            }));
+            let request_headers = request.split("\r\n\r\n").next().unwrap();
+            assert!(!request_headers.contains("Bearer stale-token"));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                .unwrap();
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+        handle.join().unwrap();
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+    });
+}
+
+#[test]
+fn post_omits_authorization_when_token_missing() {
+    let home = tempdir().unwrap();
+
+    with_transport_test_env(home.path(), || {
+        let inbox = home.path().join("inbox");
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            AUTHORIZATION_HEADER.to_string(),
+            "Bearer stale-token".to_string(),
+        );
+        let envelope = Envelope::new(
+            false,
+            "PreToolUse".into(),
+            serde_json::json!({"session_id": "anonymous-test"}),
+            "codex".into(),
+            headers,
+        );
+        let path = enqueue_to(&envelope, &inbox).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            let request_headers = request.split("\r\n\r\n").next().unwrap();
+            assert!(
+                !request_headers
+                    .lines()
+                    .any(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+            );
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                .unwrap();
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+        handle.join().unwrap();
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+    });
+}
+
+#[test]
+fn post_and_cleanup_captures_http_error_body() {
+    let dir = tempdir().unwrap();
+    let inbox = dir.path().join("inbox");
+    let envelope = Envelope::new(
+        true,
+        "Stop".into(),
+        serde_json::json!({"session_id":"s"}),
+        "codex".into(),
+        BTreeMap::new(),
+    );
+    let path = enqueue_to(&envelope, &inbox).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = read_http_request(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nnope",
+            )
+            .unwrap();
+    });
+
+    let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+    handle.join().unwrap();
+
+    assert_eq!(report.outcome, DeliveryOutcome::Enqueued);
+    assert_eq!(report.failure_kind, Some(DeliveryFailureKind::Http));
+    assert_eq!(report.status_code, Some(500));
+    assert_eq!(report.response_body, Some("nope".to_string()));
+    assert!(path.exists());
+}
+
+#[test]
+fn classify_transport_error_text_recognizes_connect_and_timeout_failures() {
+    assert_eq!(
+        classify_transport_error_text("Connection refused (os error 61)"),
+        DeliveryFailureKind::Connect
+    );
+    assert_eq!(
+        classify_transport_error_text("request timed out while posting hook"),
+        DeliveryFailureKind::Timeout
+    );
+    assert_eq!(
+        classify_transport_error_text("TLS certificate is invalid"),
+        DeliveryFailureKind::Other
+    );
+}

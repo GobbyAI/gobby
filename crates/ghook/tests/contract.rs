@@ -1696,7 +1696,7 @@ fn daemon_connect_failure_writes_failure_and_keeps_envelope_for_replay() -> Test
 
 #[cfg(unix)]
 #[test]
-fn enqueue_failure_followed_by_direct_post_failure_writes_artifact() -> TestResult {
+fn readonly_inbox_is_repaired_before_failed_post_writes_artifact() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
 
     let home = tempfile::tempdir()?;
@@ -1716,23 +1716,23 @@ fn enqueue_failure_followed_by_direct_post_failure_writes_artifact() -> TestResu
         VALID_STDIN,
         &[],
     )?;
-    fs::set_permissions(&inbox, fs::Permissions::from_mode(0o755))?;
+    assert_eq!(fs::metadata(&inbox)?.permissions().mode() & 0o7777, 0o700);
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("Hook failure on critical hook 'SessionStart'"));
+    assert!(stderr.contains("Daemon connection failed"), "{stderr}");
 
     let failures = read_failure_artifacts(gobby_home.path())?;
     assert_eq!(failures.len(), 1);
     let failure = &failures[0];
-    assert_eq!(failure["failure_kind"], "direct_post_after_enqueue_failure");
-    assert!(
-        failure["error"]
-            .as_str()
-            .is_some_and(|s| s.contains("enqueue failed") && s.contains("direct post failed"))
-    );
-    assert_eq!(failure["envelope_id"], Value::Null);
+    assert_eq!(failure["failure_kind"], "connect");
+    let envelope_id = failure["envelope_id"]
+        .as_str()
+        .ok_or("missing envelope id")?;
+    let envelope: Value =
+        serde_json::from_slice(&fs::read(inbox.join(format!("{envelope_id}.json")))?)?;
+    assert_eq!(envelope["hook_type"], "SessionStart");
 
     Ok(())
 }
@@ -1766,6 +1766,44 @@ fn enqueue_failure_uses_enqueue_error_as_failure_action() -> TestResult {
         "enqueue failures should report the enqueue error, not mask it with direct-post failure"
     );
 
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_only_inbox_permission_failure_uses_direct_post() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let hooks = gobby_home.path().join("hooks");
+    let inbox = hooks.join("inbox");
+    fs::create_dir(&hooks)?;
+    fs::set_permissions(&hooks, fs::Permissions::from_mode(0o555))?;
+    assert_eq!(
+        fs::create_dir(&inbox).unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    let body = r#"{"decision":"accept","reason":"ok"}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+    let result = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    );
+    fs::set_permissions(&hooks, fs::Permissions::from_mode(0o755))?;
+    let output = result?;
+    let request = join_daemon(daemon)?;
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::from_str(body)?)?;
+    assert_stderr_empty(&output, "permission failure direct post")?;
+    assert!(request.contains("PreToolUse"));
+    assert!(request.contains("test-session"));
+    assert!(!inbox.exists(), "direct POST must succeed without an inbox");
     Ok(())
 }
 
