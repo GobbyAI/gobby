@@ -253,6 +253,26 @@ def test_compound_cwd_followups(tmp_path: Path, command: str, expected: list[str
     assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
+@pytest.mark.parametrize("separator", ["|", "&&", "||"])
+@pytest.mark.parametrize("continuation", ["\n", " # c\n", "\n\n"])
+def test_chain_newline_preserves_cwd_scope(
+    tmp_path: Path, separator: str, continuation: str
+) -> None:
+    tail = "cat; touch e.py" if separator == "|" else "touch e.py"
+    single_line = _invocation_metadata(
+        f"cd sub {separator} {tail}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    continued = _invocation_metadata(
+        f"cd sub {separator}{continuation} {tail}", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert continued.get("canonical_file_paths") == single_line.get("canonical_file_paths")
+    assert continued.get("canonical_repo_mutation_scope_unknown") == single_line.get(
+        "canonical_repo_mutation_scope_unknown"
+    )
+    if separator == "|":
+        assert continued["canonical_file_paths"] == ["e.py"]
+
+
 @pytest.mark.parametrize(
     ("command", "expected_paths", "expected_unknown"),
     [
