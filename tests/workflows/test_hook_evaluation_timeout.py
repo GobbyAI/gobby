@@ -125,6 +125,7 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60, method="thread")
 async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
     tmp_path: Path,
 ) -> None:
