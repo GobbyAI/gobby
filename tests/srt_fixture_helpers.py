@@ -3,7 +3,12 @@
 import gzip
 from pathlib import Path
 
-from gobby.agents.srt_package_patch import HTTP_PROXY_PATH, MUX_PROXY_PATH, apply_srt_proxy_patch
+from gobby.agents.srt_package_patch import (
+    HTTP_PROXY_PATH,
+    MACOS_PROFILE_PATH,
+    MUX_PROXY_PATH,
+    apply_srt_proxy_patch,
+)
 
 
 def upstream_proxy_bytes(name: str = "http-proxy") -> bytes:
@@ -16,6 +21,7 @@ def write_srt_proxy_fixture(root: Path, *, patched: bool = True) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(upstream_proxy_bytes())
     (root / MUX_PROXY_PATH).write_bytes(upstream_proxy_bytes("mux-proxy"))
+    (root / MACOS_PROFILE_PATH).write_bytes(upstream_proxy_bytes("macos-sandbox-utils"))
     if patched:
         apply_srt_proxy_patch(root)
     return path
