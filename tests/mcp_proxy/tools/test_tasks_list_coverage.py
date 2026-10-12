@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -44,7 +45,10 @@ async def test_candidate_filter_uses_sent_event_and_deduplicates_review_recipien
     )
     manager.link_commit(linked.id, "a" * 40)
     messages = InterSessionMessageManager(temp_db)
-    event = f"LANE=1 EVENT=CANDIDATE TASK=#{candidate.seq_num} TASK_TITLE=Waiting RUN=run"
+    event = (
+        f"LANE=1 EVENT=CANDIDATE TASK=#{candidate.seq_num} TASK_TITLE=Waiting RUN=run "
+        f"NOTE=quotes TASK=#{linked.seq_num}"
+    )
     first = messages.create_message(seat.id, seat.id, event)
     messages.create_message(seat.id, seat.id, event)
     messages.create_message(seat.id, seat.id, f"EVENT=CANDIDATE TASK=#{linked.seq_num}0 fake")
@@ -63,6 +67,92 @@ async def test_candidate_filter_uses_sent_event_and_deduplicates_review_recipien
     assert row["ref"] == f"#{candidate.seq_num}"
     assert row["candidate_sent_at"] == first.sent_at.isoformat()
     assert row["receipts"] == []
+    with patch.object(temp_db, "fetchall", wraps=temp_db.fetchall) as fetchall:
+        times = manager.get_candidate_sent_times([candidate.id, linked.id])
+    assert times == {candidate.id: first.sent_at}
+    statement, params = fetchall.call_args.args
+    plan = temp_db.fetchall("EXPLAIN " + statement, params)
+    assert "SubPlan" not in "\n".join(str(row["QUERY PLAN"]) for row in plan)
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_caps_only_compact_view() -> None:
+    manager = MagicMock()
+    manager.list_tasks.return_value = []
+    manager.get_candidate_sent_times.return_value = {}
+    registry = create_task_registry(manager, MagicMock())
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": "project"}
+        await registry.call("list_tasks", {"limit": 500})
+        assert manager.list_tasks.call_args.kwargs["limit"] == 500
+        await registry.call("list_tasks", {"limit": 500, "view": "compact"})
+        assert manager.list_tasks.call_args.kwargs["limit"] == 100
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_reports_bad_refs_without_losing_valid_rows(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Valid queue item {number}",
+            validation_criteria="Partial batches preserve order and report missing refs.",
+        )
+        for number in range(2)
+    ]
+    refs = [f"#{tasks[0].seq_num}", "missing-task", f"#{tasks[1].seq_num}"]
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": sample_project["id"]}
+        first = await registry.call("list_tasks", {"refs": refs, "view": "compact", "limit": 2})
+        second = await registry.call(
+            "list_tasks",
+            {"refs": refs, "view": "compact", "limit": 2, "offset": first["next_offset"]},
+        )
+    assert first["count"] == second["count"] == 1
+    assert first["next_offset"] == 2
+    assert second["next_offset"] is None
+    assert first["rows"][0][0] == refs[0]
+    assert second["rows"][0][0] == refs[2]
+    assert first["ref_errors"][0]["ref"] == "missing-task"
+    assert first["ref_errors"][0]["offset"] == 1
+    assert "error" in first["ref_errors"][0]
+
+
+@pytest.mark.asyncio
+async def test_compact_ref_page_budget_preserves_source_offsets(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Long queue item {number} " + "x" * 6_000,
+            validation_criteria="Byte-limited ref pages preserve remaining task positions.",
+        )
+        for number in range(3)
+    ]
+    refs = ["missing-task", *(f"#{task.seq_num}" for task in tasks)]
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": sample_project["id"]}
+        first = await registry.call("list_tasks", {"refs": refs, "view": "compact"})
+        second = await registry.call(
+            "list_tasks",
+            {"refs": refs, "view": "compact", "offset": first["next_offset"]},
+        )
+    assert first["count"] == 2
+    assert first["next_offset"] == 3
+    assert second["count"] == 1
+    assert second["next_offset"] is None
+    assert [row[0] for page in (first, second) for row in page["rows"]] == refs[1:]
+    assert all(
+        len(json.dumps(page, default=str, indent=2).encode()) < 15_000 for page in (first, second)
+    )
 
 
 @pytest.mark.asyncio

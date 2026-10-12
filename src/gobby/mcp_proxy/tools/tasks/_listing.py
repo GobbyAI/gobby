@@ -21,7 +21,12 @@ class TaskStateFilters(TypedDict, total=False):
     labels: list[str]
 
 
-def compact_tasks(tasks: list[Task], ctx: RegistryContext, offset: int) -> dict[str, Any]:
+def compact_tasks(
+    tasks: list[Task],
+    ctx: RegistryContext,
+    offset: int,
+    ref_errors: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return every task field needed for fleet sections in a bounded page."""
     candidate_times = ctx.task_manager.get_candidate_sent_times([task.id for task in tasks])
     columns = [
@@ -40,6 +45,10 @@ def compact_tasks(tasks: list[Task], ctx: RegistryContext, offset: int) -> dict[
         "latest_linked_commit",
     ]
     result: dict[str, Any] = {"columns": columns, "rows": [], "count": 0, "next_offset": None}
+    if ref_errors:
+        result["ref_errors"] = ref_errors
+        if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
+            return {"error": "Ref errors exceed compact page budget; reduce the refs batch"}
     rows: list[list[Any]] = result["rows"]
     for index, task in enumerate(tasks, start=offset):
         blockers = [
@@ -115,30 +124,40 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
                 raise ValueError("updated_since requires a timezone")
         except ValueError as exc:
             return {"error": str(exc)}
-        limit = min(limit, 100)
+        if view == "compact":
+            limit = min(limit, 100)
         if refs is not None:
             if len(refs) > 100:
                 return {"error": "Resolve at most 100 refs per call"}
-            try:
-                tasks = [
-                    ctx.task_manager.get_task(
+            tasks = []
+            positions: list[int] = []
+            ref_errors: list[dict[str, Any]] = []
+            for position, ref in enumerate(refs[offset : offset + limit], start=offset):
+                try:
+                    task = ctx.task_manager.get_task(
                         resolve_task_id_for_mcp(
                             ctx.task_manager,
                             ref,
                             project_id,
                         )
                     )
-                    for ref in refs[offset : offset + limit]
-                ]
-            except (TaskNotFoundError, ValueError) as exc:
-                return {"error": str(exc)}
+                except (TaskNotFoundError, ValueError) as exc:
+                    ref_errors.append({"ref": ref, "error": str(exc), "offset": position})
+                else:
+                    tasks.append(task)
+                    positions.append(position)
             result = (
-                compact_tasks(tasks, ctx, offset)
+                compact_tasks(tasks, ctx, offset, ref_errors)
                 if view == "compact"
                 else {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
             )
-            if result.get("next_offset") is None and offset + len(tasks) < len(refs):
-                result["next_offset"] = offset + len(tasks)
+            next_offset = result.get("next_offset")
+            if isinstance(next_offset, int):
+                result["next_offset"] = positions[next_offset - offset]
+            elif offset + limit < len(refs):
+                result["next_offset"] = offset + limit
+            if ref_errors and view == "default":
+                result["ref_errors"] = ref_errors
             return result
 
         # Resolve parent_task_id if it's a reference format
@@ -181,11 +200,12 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             **state_filters,
             **closed_filter,
         )
-        result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
         if view == "compact":
             result = compact_tasks(tasks, ctx, offset)
             if result.get("next_offset") is None and len(tasks) == limit:
                 result["next_offset"] = offset + limit
+        else:
+            result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
         if parent_task_id:
             result["open_count"] = ctx.task_manager.count_tasks(
                 current_stage_state=current_stage_filter,

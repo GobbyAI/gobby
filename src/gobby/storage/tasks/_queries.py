@@ -299,8 +299,9 @@ def _candidate_message_sql() -> str:
         SELECT m.sent_at FROM inter_session_messages m
         JOIN sessions sender ON sender.id = m.from_session
         WHERE sender.project_id = tasks.project_id
+          AND m.content LIKE '%%EVENT=CANDIDATE%%'
           AND SUBSTRING(m.content FROM
-              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]].*TASK=#([0-9]+)(?:[[:space:]]|$)')
+              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]]+TASK=#([0-9]+)(?:[[:space:]]|$)')
               = tasks.seq_num::text
     """
 
@@ -309,10 +310,17 @@ def candidate_sent_times(db: HubDatabase, task_ids: list[str]) -> dict[str, date
     if not task_ids:
         return {}
     rows = db.fetchall(
-        f"""
-        SELECT tasks.id, (SELECT MIN(sent_at) FROM ({_candidate_message_sql()}) events)
-            AS candidate_sent_at
-        FROM tasks WHERE id = ANY(%s::uuid[])
+        """
+        SELECT tasks.id, MIN(m.sent_at) AS candidate_sent_at
+        FROM tasks
+        JOIN sessions sender ON sender.project_id = tasks.project_id
+        JOIN inter_session_messages m ON m.from_session = sender.id
+        WHERE tasks.id = ANY(%s::uuid[])
+          AND m.content LIKE '%%EVENT=CANDIDATE%%'
+          AND SUBSTRING(m.content FROM
+              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]]+TASK=#([0-9]+)(?:[[:space:]]|$)')
+              = tasks.seq_num::text
+        GROUP BY tasks.id
         """,
         (task_ids,),
     )
