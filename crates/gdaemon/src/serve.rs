@@ -154,6 +154,7 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
         read_hub_database_bootstrap_file(path)?.unwrap_or_else(|| HubDatabaseBootstrap {
             mode: gobby_core::bootstrap::RunMode::Standalone,
             hub_daemon_url: None,
+            hub_cert: None,
             database_url: None,
             api_key: None,
             daemon_url: None,

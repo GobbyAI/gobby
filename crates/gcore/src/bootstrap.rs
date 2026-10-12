@@ -18,12 +18,14 @@
 use std::path::{Path, PathBuf};
 
 mod front_door;
+mod run_mode;
 
 use front_door::parse_front_door;
 pub use front_door::{
     DEFAULT_FRONT_DOOR_CERT, DEFAULT_FRONT_DOOR_KEY, FrontDoorBootstrap, RouteBackend,
     TlsBootstrap, TlsMode, is_loopback_host,
 };
+use run_mode::parse_hub_origin;
 
 /// Default daemon port when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_DAEMON_PORT: u16 = 60887;
@@ -43,6 +45,7 @@ const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 pub struct HubDatabaseBootstrap {
     pub mode: RunMode,
     pub hub_daemon_url: Option<String>,
+    pub hub_cert: Option<String>,
     pub database_url: Option<String>,
     pub api_key: Option<String>,
     pub daemon_url: Option<String>,
@@ -65,6 +68,9 @@ impl std::fmt::Debug for HubDatabaseBootstrap {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HubDatabaseBootstrap")
+            .field("mode", &self.mode)
+            .field("hub_daemon_url", &self.hub_daemon_url)
+            .field("hub_cert", &self.hub_cert)
             .field("database_url", &self.database_url)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("daemon_url", &self.daemon_url)
@@ -226,22 +232,19 @@ pub fn parse_hub_database_bootstrap(
         .map(str::to_owned)
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
     let front_door = parse_front_door(map.get("front_door"), &bind_host)?;
+    let daemon_port = port_field(&yaml, "daemon_port", DEFAULT_DAEMON_PORT);
+    let daemon_url = optional_string_field(map, "daemon_url")?;
+    let (mode, hub_daemon_url) =
+        run_mode::parse_mode_fields(map, &bind_host, daemon_port, daemon_url.as_deref())?;
     Ok(Some(HubDatabaseBootstrap {
-        mode: match optional_string_field(map, "datastore_mode")?.as_deref() {
-            Some("remote") => RunMode::Node,
-            None | Some("local") => match map.get("hub") {
-                None | Some(serde_yaml::Value::Bool(false)) => RunMode::Standalone,
-                Some(serde_yaml::Value::Bool(true)) => RunMode::Hub,
-                _ => anyhow::bail!("bootstrap hub must be a boolean"),
-            },
-            _ => anyhow::bail!("bootstrap datastore_mode must be local or remote"),
-        },
-        hub_daemon_url: optional_string_field(map, "hub_daemon_url")?,
+        mode,
+        hub_daemon_url,
+        hub_cert: optional_string_field(map, "hub_cert")?,
         database_url: optional_string_field(map, "database_url")?,
         api_key: optional_string_field(map, "api_key")?,
-        daemon_url: optional_string_field(map, "daemon_url")?,
+        daemon_url,
         bind_host,
-        daemon_port: port_field(&yaml, "daemon_port", DEFAULT_DAEMON_PORT),
+        daemon_port,
         websocket_port: port_field(&yaml, "websocket_port", DEFAULT_WEBSOCKET_PORT),
         front_door,
     }))
@@ -325,7 +328,8 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
         DatastoreMode::Local => {
             if hub_daemon_url.is_some() {
                 return Err(FilesHomeError::Invalid(
-                    "hub_daemon_url is not allowed on a local bootstrap".to_string(),
+                    "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
+                        .to_string(),
                 ));
             }
             let Some(raw) = files_home else {
@@ -374,38 +378,14 @@ fn parse_absolute_files_home(value: &str) -> Result<PathBuf, FilesHomeError> {
     Ok(path)
 }
 
-fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
-    let trimmed = value.trim().trim_end_matches('/');
-    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
-        ("https", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        ("http", rest)
-    } else {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must be an http(s) origin with a host".to_string(),
-        ));
-    };
-    if rest.is_empty()
-        || rest.contains('@')
-        || rest.contains('?')
-        || rest.contains('#')
-        || rest.contains('/')
-    {
-        return Err(FilesHomeError::Invalid(
-            "hub_daemon_url must be an http(s) origin with a host".to_string(),
-        ));
-    }
-    Ok(format!("{scheme}://{rest}"))
-}
-
 fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Result<Option<String>> {
     let key = serde_yaml::Value::String(name.to_string());
     match map.get(&key) {
+        Some(serde_yaml::Value::Null) | None => Ok(None),
         Some(value) => match value.as_str() {
             Some(text) => Ok(non_empty_trimmed(text)),
             None => anyhow::bail!("bootstrap.yaml field `{name}` must be a string"),
         },
-        None => Ok(None),
     }
 }
 

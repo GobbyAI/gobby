@@ -341,7 +341,7 @@ def test_ensure_daemon_config_persists_caller_files_home(tmp_path: Path) -> None
     shared.write_text("datastore_mode: local\ndaemon_port: 60887\nbind_host: localhost\n")
 
     with (
-        patch("gobby.cli.install_setup.Path.expanduser", return_value=target),
+        patch("gobby.cli.install_setup.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.install_setup.get_install_dir", return_value=tmp_path / "install"),
         patch("shutil.copy2") as copy2,
     ):
@@ -363,7 +363,7 @@ def test_ensure_daemon_config_generated_fallback_includes_files_home(tmp_path: P
     files_home.mkdir()
 
     with (
-        patch("gobby.cli.install_setup.Path.expanduser", return_value=target),
+        patch("gobby.cli.install_setup.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.install_setup.get_install_dir", return_value=tmp_path / "missing-install"),
     ):
         result = ensure_daemon_config(files_home=files_home)

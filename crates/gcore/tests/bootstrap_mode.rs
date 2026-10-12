@@ -6,8 +6,10 @@ fn native_mode_matches_python_bootstrap() -> Result<()> {
     for (yaml, expected) in [
         ("{}", RunMode::Standalone),
         ("datastore_mode: local\nhub: true", RunMode::Hub),
-        ("datastore_mode: remote\nhub: true", RunMode::Node),
-        ("datastore_mode: remote", RunMode::Node),
+        (
+            "datastore_mode: remote\nhub_daemon_url: https://hub.example",
+            RunMode::Node,
+        ),
     ] {
         assert_eq!(
             parse_hub_database_bootstrap(yaml)?.expect("mapping").mode,
@@ -16,5 +18,7 @@ fn native_mode_matches_python_bootstrap() -> Result<()> {
     }
     assert!(parse_hub_database_bootstrap("datastore_mode: typo").is_err());
     assert!(parse_hub_database_bootstrap("hub: string").is_err());
+    assert!(parse_hub_database_bootstrap("datastore_mode: remote\nhub: true").is_err());
+    assert!(parse_hub_database_bootstrap("datastore_mode: remote").is_err());
     Ok(())
 }
