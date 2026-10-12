@@ -799,7 +799,8 @@ class TestSessionLifecycleManager:
         transcript_path = tmp_path / "transcript.jsonl"
         with open(transcript_path, "w") as f:
             f.write(
-                '{"type": "message", "message": {"content": "hello"}, "timestamp": "2024-01-01T00:00:00Z"}\n'
+                '{"type": "message", "message": {"content": "hello"}, '
+                '"timestamp": "2024-01-01T00:00:00Z"}\n'
             )
 
         message_mock = MagicMock()
@@ -958,7 +959,8 @@ class TestSessionLifecycleManager:
         """Test error handling in process loop (single iteration logic)."""
         manager.session_manager.get_pending_transcript_sessions.side_effect = Exception("DB Error")
 
-        # Should propagate or handle? _process_pending_transcripts does NOT catch its own top-level errors (the loop does)
+        # Should propagate or handle? _process_pending_transcripts does NOT catch its own
+        # top-level errors (the loop does)
         with pytest.raises(Exception, match="DB Error"):
             await manager._process_pending_transcripts(manager._capture_active())
 
@@ -2057,7 +2059,9 @@ class TestProcessSessionTranscriptTokenPreservation:
     async def test_zero_tokens_updates_when_existing_also_zero(
         self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
-        """When both transcript and existing are 0, update_usage is still called (nothing to preserve)."""
+        """When both transcript and existing are 0, update_usage is still called
+        (nothing to preserve).
+        """
         from gobby.sessions.transcripts.base import ParsedMessage
 
         transcript_path = tmp_path / "transcript.jsonl"
