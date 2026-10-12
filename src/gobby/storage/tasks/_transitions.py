@@ -62,6 +62,18 @@ def clear_closure_in_txn(conn: Any, task_id: str) -> bool:
     return True
 
 
+def withdraw_memory_reviews(db: HubDatabase, task_id: str) -> None:
+    """Retire a reopened closure's queued memory review on every session.
+
+    Every transition that clears ``closed_at`` from a worked leaf calls this.
+    Ancestors reopened alongside it are never queued, since a task with
+    children is never queued.
+    """
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    SessionVariableManager(db).withdraw_memory_reviews(task_id)
+
+
 def reopen_closed_ancestors_in_txn(conn: Any, task_id: str) -> list[str]:
     """Reopen every closed ancestor of a task, inside the caller's transaction.
 
@@ -466,6 +478,7 @@ def reopen_task(
         by_actor="system",
     )
     _reopen_closed_ancestors(db, task_id)
+    withdraw_memory_reviews(db, task_id)
     return get_task(db, task_id)
 
 

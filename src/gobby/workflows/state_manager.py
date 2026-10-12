@@ -13,6 +13,7 @@ from gobby.storage.definitions.revisions import (
     get_definitions_revision,
     register_revision_listener,
 )
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import (
     HubDatabase,
     SessionVariableMutation,
@@ -20,6 +21,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.sessions import startup_claim as _startup_claim
 from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
+from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
     load_variable_defaults,
@@ -208,6 +210,49 @@ class SessionVariableManager(SessionEditLedger):
                 "_memory_task_review_records",
             ),
         )
+
+    def withdraw_memory_reviews(self, task_id: str) -> None:
+        """Withdraw a reopened task's queued closure after its transition commits."""
+        ambient = ambient_transaction(self.db)
+        if ambient is not None:
+            ambient.after_commit(lambda: self.withdraw_memory_reviews(task_id))
+            return
+
+        def withdraw(variables: dict[str, Any]) -> tuple[None, bool]:
+            stored = variables.get("_memory_pending_task_reviews")
+            if not isinstance(stored, list):
+                return None, False
+            pending = [
+                item
+                for item in stored
+                if not (isinstance(item, Mapping) and item.get("task_id") == task_id)
+            ]
+            if len(pending) == len(stored):
+                return None, False
+            variables["_memory_pending_task_reviews"] = pending
+            if pending_memory_reviews_complete(variables):
+                variables["_memory_review_stop_delivered"] = True
+            return None, True
+
+        try:
+            rows = self.db.fetchall(
+                "SELECT session_id FROM session_variables "
+                "WHERE variables->'_memory_pending_task_reviews' @> %s::jsonb",
+                (json.dumps([{"task_id": task_id}]),),
+            )
+            for row in rows:
+                self._mutate_variables(
+                    str(row["session_id"]),
+                    withdraw,
+                    keys=(
+                        "_memory_pending_task_reviews",
+                        "_memory_task_review_records",
+                        "_memory_review_stop_delivered",
+                    ),
+                )
+        except Exception:
+            # Queue failures must not undo a committed task transition.
+            logger.warning("Failed to withdraw memory review for task %s", task_id, exc_info=True)
 
     def _mutate_variables(
         self,

@@ -18,6 +18,7 @@ from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory
 from gobby.storage.tasks._stage_state_rows import StageStateRows
 from gobby.storage.tasks._stage_types import IllegalStageTransitionError, StageState, StageState5
 from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
+from gobby.storage.tasks._transitions import withdraw_memory_reviews
 
 logger = logging.getLogger(__name__)
 
@@ -575,6 +576,7 @@ class StageStateTransitions:
             """,
             (preserve_escalation, preserve_escalation, preserve_escalation, now, task_id),
         )
+        withdraw_memory_reviews(self.db, task_id)
         conn.execute(
             """
             UPDATE task_stage_states
@@ -669,6 +671,7 @@ class StageStateTransitions:
                     """,
                     (preserved_claim, now, task_id),
                 )
+                withdraw_memory_reviews(self.db, task_id)
 
                 for row in stages:
                     to_state: StageState5 = "done" if row.position < target.position else "ready"

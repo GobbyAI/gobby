@@ -24,17 +24,24 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.memory_review_conditions import classify_memory_review_close
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -721,6 +728,114 @@ class TestPostCloseMemoryReviewRules:
         assert variables["_memory_review_stop_delivered"] is True
         assert "check-memory-guidance-on-initial-stop" not in (second.reason or "")
         assert "review-closed-task-memories-on-stop" not in (second.reason or "")
+
+
+class TestReopenedClosureMemoryReview:
+    """A reopen withdraws its closure's queued memory review (#23201)."""
+
+    @pytest.fixture
+    def tasks(self, db: HubDatabase) -> LocalTaskManager:
+        _sync_bundled(db)
+        db.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (
+                SESSION_ID,
+                "reopen-review",
+                "21000000-0000-4000-8000-000000000001",
+                "codex",
+                PERSONAL_PROJECT_ID,
+            ),
+        )
+        SessionVariableManager(db).merge_variables(SESSION_ID, _review_variables())
+        return LocalTaskManager(db)
+
+    @staticmethod
+    def _close_and_queue(db: HubDatabase, tasks: LocalTaskManager, task_id: str) -> None:
+        tasks.close_task(task_id, reason="completed", closed_in_session_id=SESSION_ID)
+        candidate = classify_memory_review_close(
+            tasks,
+            task_id=task_id,
+            changes_summary="Fixed the reopen path.",
+            reason="completed",
+            commit_shas=["abc1234"],
+        )
+        assert candidate is not None
+        SessionVariableManager(db).queue_memory_review(SESSION_ID, candidate)
+
+    @staticmethod
+    async def _stop(db: HubDatabase) -> tuple[Any, dict[str, Any]]:
+        variables = SessionVariableManager(db).get_variables(SESSION_ID)
+        response = await RuleEngine(db).evaluate(_turn_end_event(), SESSION_ID, variables)
+        return response, variables
+
+    @staticmethod
+    def _worked_task(tasks: LocalTaskManager) -> Any:
+        return tasks.create_task(
+            project_id=PERSONAL_PROJECT_ID,
+            title="Reopened closure",
+            category="code",
+            task_type="task",
+            validation_criteria="The closure is reviewed once.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_ordinary_close_still_demands_review(
+        self, db: HubDatabase, tasks: LocalTaskManager
+    ) -> None:
+        task = self._worked_task(tasks)
+        self._close_and_queue(db, tasks, task.id)
+
+        response, _ = await self._stop(db)
+
+        assert response.decision == "block"
+        assert f"#{task.seq_num} (task_id `{task.id}`)" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_reopen_withdraws_pending_review_and_allows_stop(
+        self, db: HubDatabase, tasks: LocalTaskManager
+    ) -> None:
+        task = self._worked_task(tasks)
+        self._close_and_queue(db, tasks, task.id)
+
+        tasks.reopen_task(task.id, reason="closure did not stand")
+        response, variables = await self._stop(db)
+
+        assert variables["_memory_pending_task_reviews"] == []
+        assert response.decision == "allow", response.reason
+
+    @pytest.mark.asyncio
+    async def test_reclose_after_reopen_demands_review_until_reviewed(
+        self, db: HubDatabase, tasks: LocalTaskManager
+    ) -> None:
+        task = self._worked_task(tasks)
+        self._close_and_queue(db, tasks, task.id)
+        tasks.reopen_task(task.id, reason="closure did not stand")
+        self._close_and_queue(db, tasks, task.id)
+
+        demanded, _ = await self._stop(db)
+        memory_manager = MagicMock()
+        memory_manager.search_memories = AsyncMock(return_value=[])
+        registry = create_memory_registry(
+            lambda: memory_manager,
+            task_manager=tasks,
+            session_manager=SessionManager(db),
+        )
+        review = await registry.call(
+            "review_task_memories",
+            {
+                "task_id": task.id,
+                "changes_summary": "Fixed the reopen path.",
+                "session_id": SESSION_ID,
+            },
+        )
+        released, _ = await self._stop(db)
+
+        assert demanded.decision == "block"
+        assert f"#{task.seq_num} (task_id `{task.id}`)" in (demanded.reason or "")
+        assert review["success"] is True, review
+        assert review["pending_reviews_complete"] is True
+        assert released.decision == "allow", released.reason
 
 
 # ═══════════════════════════════════════════════════════════════════════
