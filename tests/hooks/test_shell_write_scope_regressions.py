@@ -102,6 +102,7 @@ def test_sed_script_is_not_a_file_operand(tmp_path: Path, options: str) -> None:
 
 @pytest.mark.parametrize("option", ["-f script.sed", "-fscript.sed", "--file=script.sed"])
 def test_sed_file_script_retains_read_scope(tmp_path: Path, option: str) -> None:
+    (tmp_path / "script.sed").write_text("s/a/b/\n", encoding="utf-8")
     data = _metadata(f"sed {option} in.py", tmp_path)
     assert data["canonical_file_paths"] == ["script.sed", "in.py"]
     assert data["canonical_tool_kind"] == "read"
