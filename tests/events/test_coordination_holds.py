@@ -214,12 +214,14 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
 @pytest.mark.parametrize("owner_shape", ["uuid_active", "ref_paused"])
 @pytest.mark.parametrize("ingress", ["async", "sync"])
 @pytest.mark.parametrize("registration", ["registry", "proxy"])
+@pytest.mark.parametrize("current_step", ["implement", "submit"])
 async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     harness: CoordinationHarness,
     ending: str,
     owner_shape: str,
     ingress: str,
     registration: str,
+    current_step: str,
     evaluation_runtime: WorkflowEvaluationRuntime,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -283,7 +285,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     }
     workflow: dict[str, Any] = {
         "variables": {},
-        "steps": [{"name": "submit", "allowed_tools": "all"}],
+        "steps": [{"name": current_step, "allowed_tools": "all"}],
     }
     row = AgentDefinitionManager(harness.db).upsert_with_steps(
         "coordination-seat", definition, workflow
@@ -294,7 +296,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
             body,
             session_id=harness.waiter,
             step_workflow_id=row.step_workflow_id,
-            current_step="submit",
+            current_step=current_step,
         )
     )
     variables: dict[str, Any] = {
@@ -367,11 +369,11 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
     assert diagnostic["has_durable_stop_wait"] is False
     assert diagnostic["active_coordination_wait_count"] == 0
     assert diagnostic["decision"] == "block"
-    assert diagnostic["current_step"] == "submit"
+    assert diagnostic["current_step"] == current_step
     assert decisions[0].getMessage() == (
         f"Step completion stop decision: resolved_session_id={harness.waiter} "
         f"external_session_id={external_id} has_durable_stop_wait=False "
-        "active_coordination_wait_count=0 decision=block current_step=submit"
+        f"active_coordination_wait_count=0 decision=block current_step={current_step}"
     )
 
 
