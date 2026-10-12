@@ -2,13 +2,13 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
-from time import perf_counter
 from typing import Any
 
 import pytest
 import yaml
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.hooks import provider_launch_guard
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -20,11 +20,9 @@ from gobby.workflows.sync_rules import sync_rule_file
 pytestmark = pytest.mark.unit
 
 
-def test_brace_heavy_command_preserves_group_results_within_bound() -> None:
+def test_brace_heavy_command_preserves_group_results() -> None:
     command = "{ echo hi; }; " * 2000
-    started = perf_counter()
     assert not blocks_direct_provider_launch("Bash", {"command": command})
-    assert perf_counter() - started < 2.0
     for brace_command, blocked in (
         ("{ claude -p hi; }", True),
         ("{ { claude -p hi; }; }", True),
@@ -33,6 +31,49 @@ def test_brace_heavy_command_preserves_group_results_within_bound() -> None:
         ("{ echo {; echo hi; } | bash", True),
     ):
         assert blocks_direct_provider_launch("Bash", {"command": brace_command}) is blocked
+
+
+@pytest.mark.parametrize(
+    "shape", ["{ X; } | bash", "bash <(X)", "{ X; } > >(bash)", "{ X; } | python3"]
+)
+def test_nested_chain_evaluation_count_is_linear(
+    monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    prepare = provider_launch_guard._prepare
+    calls = 0
+
+    def counted_prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
+        nonlocal calls
+        calls += 1
+        assert calls <= 16 * 12
+        return prepare(command, depth, data=data)
+
+    monkeypatch.setattr(provider_launch_guard, "_prepare", counted_prepare)
+    command = "echo hi"
+    for _ in range(12):
+        command = shape.replace("X", command)
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+    assert calls <= 16 * 12
+
+    calls = 0
+    command = "claude -p hi"
+    for _ in range(12):
+        command = shape.replace("X", command)
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize("outer", ["{ X; } | bash", "bash <(X)", "{ X; } > >(bash)"])
+def test_memo_preserves_output_consumer_through_unpiped_groups(outer: str) -> None:
+    command = "echo 'claude -p hi'"
+    for _ in range(11):
+        command = "{ X; }".replace("X", command)
+    command = outer.replace("X", command)
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+def test_blocked_memo_is_scoped_per_classification() -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": "echo hi"})
+    assert provider_launch_guard._blocked_memo.get() is None
 
 
 @pytest.mark.parametrize(

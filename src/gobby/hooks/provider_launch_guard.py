@@ -10,6 +10,7 @@ import ast
 import re
 import shlex
 from collections.abc import Collection, Mapping
+from contextvars import ContextVar
 from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
@@ -37,6 +38,9 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 _MAX_DEPTH = 24
 _MAX_LENGTH = 131_072
+_blocked_memo: ContextVar[dict[tuple[str, int, ShellDialect, str | None], bool] | None] = (
+    ContextVar("_blocked_memo", default=None)
+)
 
 # Subcommands that answer a literal help request, by provider. A word maps to
 # its child subcommands; an empty mapping is a leaf, which may take a prompt.
@@ -821,6 +825,28 @@ def _process_input_consumer(
 
 
 def _blocked(
+    command: str,
+    depth: int,
+    dialect: ShellDialect = "bash",
+    *,
+    output_consumer: Literal["shell", "python"] | None = None,
+) -> bool:
+    memo = _blocked_memo.get()
+    token = None
+    if memo is None:
+        memo = {}
+        token = _blocked_memo.set(memo)
+    try:
+        key = (command, depth, dialect, output_consumer)
+        if key not in memo:
+            memo[key] = _evaluate_blocked(command, depth, dialect, output_consumer=output_consumer)
+        return memo[key]
+    finally:
+        if token is not None:
+            _blocked_memo.reset(token)
+
+
+def _evaluate_blocked(
     command: str,
     depth: int,
     dialect: ShellDialect = "bash",
