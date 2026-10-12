@@ -157,6 +157,41 @@ def test_bash_script_startup_options_keep_pipeline_scope_unknown(
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+@pytest.mark.parametrize("shell", ["bash", "sh"])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "case a in (a) cd sub; touch a.py;; esac",
+        "case a in a) cd sub; touch a.py;; esac",
+        "case a in a) cd sub\ntouch a.py;; esac",
+        "case a in a) cd sub && touch a.py;; esac",
+        "case a in a) { cd sub; }; touch a.py;; esac",
+        "case a in a) ! { cd sub; }; touch a.py;; esac",
+        "case a in a) echo x | case a in a) cd sub; touch a.py;; esac;; esac",
+        "if cd sub; then touch a.py; fi",
+        "while cd sub; do touch a.py; break; done",
+        "until cd sub; do touch a.py; break; done",
+        "for v in a; do cd sub; touch a.py; done",
+        "select v in a; do cd sub; touch a.py; break; done",
+    ],
+)
+def test_compound_pipeline_directory_change_keeps_scope_unknown(
+    tmp_path: Path, shell: str, stage: str
+) -> None:
+    data = _metadata(f"{shell} -c 'echo x | {stage}; touch z.py'", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("option", ["-qs", "-sq"])
+def test_bash_clustered_shopt_options_keep_pipeline_scope_unknown(
+    tmp_path: Path, option: str
+) -> None:
+    data = _metadata(
+        f"bash -c 'shopt {option} lastpipe; echo x | {{ cd sub; }}; touch z.py'", tmp_path
+    )
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 @pytest.mark.parametrize(
     "body, expected",
     [

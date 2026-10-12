@@ -245,7 +245,16 @@ def _classify_shell_command(
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
-    directory.prepare_groups(segments, spans_by_token, command)
+    try:
+        directory.prepare_groups(segments, spans_by_token, command)
+    except ValueError:
+        return _build_canonical_tool_metadata(
+            "write",
+            repo_mutation=True,
+            confidence="low",
+            extra={"canonical_repo_mutation_scope_unknown": True},
+        )
+    compound_directory_change = False
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
@@ -377,6 +386,7 @@ def _classify_shell_command(
             continue
 
         if parts[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd"}:
+            compound_directory_change |= directory.compound_pipeline
             if (
                 segment.separator_before == "|"
                 and not directory.group_entry
@@ -460,7 +470,11 @@ def _classify_shell_command(
         directory.apply_opaque_change(parts)
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
-    return _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
+    result = _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
+    if compound_directory_change and result.get("canonical_repo_mutation"):
+        # Without whole-stage ownership, neither inner nor followup cwd is proven.
+        result["canonical_repo_mutation_scope_unknown"] = True
+    return result
 
 
 def _classify_shell_segment(

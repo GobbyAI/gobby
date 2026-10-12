@@ -34,6 +34,7 @@ class _Branch:
 class ShellDirectoryState:
     cwd: str | None
     pipeline_subshell: bool = False
+    compound_pipeline: bool = False
     stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
@@ -98,6 +99,18 @@ class ShellDirectoryState:
         for index, segment in enumerate(segments):
             tokens = segment.tokens
             before = segment.separator_before
+            if before == "|" and tokens and not tokens[0].quoted:
+                # Compound stage ownership extends through esac/fi/done, beyond a segment.
+                self.compound_pipeline |= tokens[0].value in {
+                    "case",
+                    "if",
+                    "while",
+                    "until",
+                    "for",
+                    "select",
+                    "!",
+                    "time",
+                }
             if spans is not None and command is not None:
                 consuming_pattern = pending
                 start = min(spans[id(token)][0] for token in tokens)
@@ -428,7 +441,13 @@ class ShellDirectoryState:
 
     def apply_opaque_change(self, parts: list[str]) -> None:
         """Calls and eval may change cwd without a provable literal exit directory."""
-        if parts[:1] in (["eval"], ["source"], ["."]) or (parts[:1] == ["shopt"] and "-s" in parts):
+        if parts[:1] in (["eval"], ["source"], ["."]) or (
+            parts[:1] == ["shopt"]
+            and any(
+                word.startswith("-") and not word.startswith("--") and "s" in word[1:]
+                for word in parts[1:]
+            )
+        ):
             self.pipeline_subshell = False
         if self._clears_stack(parts):
             self.stack = None
