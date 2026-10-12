@@ -1033,6 +1033,8 @@ def test_restore_replay_rejected(
     postgres_schema: str,
     tmp_path: Path,
 ) -> None:
+    if _compose_falkor_password() is None:
+        pytest.skip("FalkorDB credential unavailable inside the seat sandbox")
     upstream = os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333")
     qdrant_proxy = _start_qdrant_key_proxy(upstream, "e2e")
     try:
