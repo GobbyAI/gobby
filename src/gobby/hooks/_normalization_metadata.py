@@ -218,12 +218,13 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 else:
                     navigation_paths.append(path)
             navigation_extra = dict(item.extra)
-            if navigation_extra.pop("_canonical_deferred_source_read", False):
+            deferred = navigation_extra.pop("_canonical_deferred_source_read", None)
+            if deferred:
                 navigation_extra = source_read_navigation_metadata(
                     navigation_paths,
-                    line_count=navigation_extra.get("canonical_source_line_count"),
-                    byte_count=navigation_extra.get("canonical_source_byte_count"),
-                    read_scope=navigation_extra["canonical_source_read_scope"],
+                    line_count=deferred.get("canonical_source_line_count"),
+                    byte_count=deferred.get("canonical_source_byte_count"),
+                    read_scope=deferred["canonical_source_read_scope"],
                 )
             if navigation_extra.get("canonical_code_navigation_action"):
                 navigation_segments.append(

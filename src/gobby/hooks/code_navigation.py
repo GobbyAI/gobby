@@ -212,8 +212,8 @@ def source_read_navigation_metadata(
     if byte_count is not None:
         metadata["canonical_source_byte_count"] = byte_count
     if not source_paths:
-        metadata.pop("canonical_code_navigation_action")
-        metadata["_canonical_deferred_source_read"] = True
+        # Unproven operands must not suppress the read-kind fallback.
+        return {"_canonical_deferred_source_read": metadata}
     return metadata
 
 

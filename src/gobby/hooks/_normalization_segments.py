@@ -102,20 +102,23 @@ def _bound_pipeline_reads(
         if segments[prior + 1].separator_before != "|":
             break
         item = metadata[prior]
-        if (
-            item.extra
-            and (
-                item.extra.get("canonical_code_navigation_action") == "read"
-                or item.extra.get("_canonical_deferred_source_read")
-            )
-            and item.extra.get("canonical_code_navigation_broad")
+        if not item.extra:
+            continue
+        deferred = item.extra.get("_canonical_deferred_source_read")
+        navigation = deferred if deferred else item.extra
+        if navigation.get("canonical_code_navigation_action") == "read" and navigation.get(
+            "canonical_code_navigation_broad"
         ):
             narrowed = {
                 "canonical_code_navigation_broad": False,
                 "canonical_narrow_source_context": True,
                 "canonical_source_line_count": bound,
             }
-            extra = {**item.extra, **narrowed}
+            extra = (
+                {**item.extra, "_canonical_deferred_source_read": {**deferred, **narrowed}}
+                if deferred
+                else {**item.extra, **narrowed}
+            )
             if "canonical_code_navigation_segments" in extra:
                 extra["canonical_code_navigation_segments"] = [
                     {**segment, **narrowed}

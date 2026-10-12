@@ -381,6 +381,26 @@ def test_bound_and_non_source_loop_reads_remain_exempt(repo: Path, command: str)
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/*.py; do cat "$f"; done',
+        'for f in src/long.py; do f=src/long.py; cat "$f"; done',
+        'for f in src/long.py; do mystery_tool; cat "$f"; done',
+        'for f in src/long.py "$X"; do cat "$f"; done',
+        'cd src; for f in long.py; do cat "$f"; done',
+    ],
+)
+def test_unresolved_loop_reads_keep_source_fallback(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+def test_non_source_loop_read_has_no_navigation_payload(repo: Path) -> None:
+    (repo / "notes.txt").write_text("value\n" * 60)
+    data = event(repo, 'for f in notes.txt; do cat "$f"; done')
+    assert "canonical_code_navigation_broad" not in data
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         ("rg pattern web/dist/assets", False),
