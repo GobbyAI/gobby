@@ -89,6 +89,15 @@ fn files_home_non_string_names_expected_type() {
 }
 
 #[test]
+fn files_home_non_boolean_hub_is_refused() {
+    let error = gobby_core::bootstrap::parse_files_home_view(
+        "files_home: /tmp/gobby-vector-files\nhub: maybe\n",
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "hub must be a boolean");
+}
+
+#[test]
 fn files_home_remote_hub_is_refused() {
     for hub in ["true", "yes", "ON"] {
         let yaml =
