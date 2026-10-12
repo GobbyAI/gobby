@@ -22,6 +22,67 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "bash <(echo 'claude -p hi')",
+        "bash \"\"<(echo 'claude -p hi')",
+        "bash +x <(echo 'claude -p hi')",
+        "bash +e <(echo 'claude -p hi')",
+        "bash <(cat <<< 'claude -p hi')",
+        "bash < <(cat <<< 'claude -p hi')",
+        "python3 <(cat <<< 'import os; os.system(\"claude -p hi\")')",
+        "bash <(cat 0<<< 'claude -p hi')",
+        "cat <<< 'claude -p hi' | bash",
+        "bash <(echo $'\\claude -p hi')",
+        "bash < <(echo $'\\claude -p hi')",
+        "bash <(printf $'\\claude -p hi')",
+        "bash <(cat <(echo 'claude -p hi'))",
+        "cat <(echo 'claude -p hi') | bash",
+        "bash <(cat < <(echo 'claude -p hi'))",
+        "python3 <(cat <(echo 'import os; os.system(\"claude\")'))",
+        "bash < <(echo 'claude -p hi')",
+        "bash 0< <(echo 'claude -p hi')",
+        "python3 < <(echo 'import os; os.system(\"claude -p hi\")')",
+        "python3 <(printf '%s' 'import os; os.system(\"codex exec hi\")')",
+        "env bash -- <(printf '%s' 'codex exec hi')",
+        "bash <(echo 'claude -p hi'; echo 'true')",
+        "bash <(cat <<'EOF'\nclaude -p hi\nEOF\n)",
+        "bash <(bash <(echo 'claude -p hi'))",
+        "bash <(sh -c \"echo 'claude -p hi'\")",
+        'python3 <(sh -c "echo \'import os; os.system(\\"claude\\")\'")',
+    ],
+)
+def test_process_substitution_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "diff <(ls a) <(ls b)",
+        "cat <(echo 'claude -p hi')",
+        "bash <(echo 'echo harmless')",
+        "python3 <(echo 'print(\"claude -p hi\")')",
+        "bash script.sh <(echo 'claude -p hi')",
+        "bash -c 'echo harmless' <(echo 'claude -p hi')",
+        "bash -s <(echo 'claude -p hi')",
+        "bash 2< <(echo 'claude -p hi')",
+        "bash --rcfile <(echo 'echo harmless') script.sh",
+        "python3 -X <(echo 'import os; os.system(\"claude\")') script.py",
+        "python3 -c 'print(1)' < <(echo 'import os; os.system(\"claude\")')",
+        "echo '<(claude -p hi)'",
+        "bash +e <(cat <<< 'echo harmless')",
+        "bash <(cat input.txt <<< 'claude -p hi')",
+        "bash <(cat 2<<< 'claude -p hi')",
+        "bash <(cat <(echo 'echo harmless'))",
+        "cat <(cat <(echo 'claude -p hi'))",
+    ],
+)
+def test_process_substitution_data_stays_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash 0<<<'claude -p hi'",
         "sh 0<<<'codex exec hi'",
         "python3 0<<<'import os; os.system(\"claude -p hi\")'",
