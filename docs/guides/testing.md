@@ -22,6 +22,22 @@ not supply a test database:
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -v
 ```
 
+The live-hub guard always refuses the default operator identity
+`localhost:60891/gobby`, including loopback aliases. For a custom operator hub,
+the harness must export `GOBBY_TEST_OPERATOR_DATABASE_URL` before starting pytest:
+
+```bash
+export GOBBY_TEST_OPERATOR_DATABASE_URL="host=hub.example.invalid port=5432 dbname=operator"
+```
+
+Supply the operator's host, port and database name, without credentials. The
+PostgreSQL plugin captures this value at import, before home isolation, and
+refuses matching `DATABASE_URL` values before collection. Its process-wide
+psycopg and schema-command guards also refuse later connections to either
+identity. Invalid supplied conninfo aborts pytest. An absent value leaves the
+default identity guarded; pytest never reads the operator's bootstrap to infer
+custom coordinates. Keep `DATABASE_URL` pointed at the isolated test hub.
+
 Run a package or marker slice when the affected surface spans more than one
 file. Export the isolated DSN before the remaining examples, and keep the
 `GOBBY_TEST_PROTECT=1` prefix:
