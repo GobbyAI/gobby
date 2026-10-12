@@ -454,6 +454,64 @@ async def test_normalized_bash_dirty_foreign_edit_blocks(guard_harness: GuardHar
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["checkout -f HEAD", "switch -f --detach HEAD", "switch --discard-changes --detach HEAD"],
+)
+@pytest.mark.parametrize("directory_form", ["git_option", "cd"])
+@pytest.mark.parametrize("location", ["foreign.txt", "sibling/foreign.txt", "sub/foreign.txt"])
+@pytest.mark.parametrize("state", ["dirty", "untracked", "clean"])
+async def test_forced_branch_change_checks_target_worktree_owners(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    operation: str,
+    directory_form: str,
+    location: str,
+    state: str,
+) -> None:
+    harness = guard_harness
+    target = tmp_path / "other"
+    _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
+    (target / "sub").mkdir()
+    if state == "untracked":
+        location = str(Path(location).with_name("untracked.txt"))
+    path = target / location
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if state != "untracked":
+        path.write_text("base\n", encoding="utf-8")
+        _git(target, "add", location)
+        _git(target, "commit", "-q", "-m", "foreign base")
+    if state != "clean":
+        path.write_text("foreign change\n", encoding="utf-8")
+    SessionVariableManager(harness.db).merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: [location]},
+            "task_edited_file_checkouts": {harness.foreign_task.id: {str(target): [location]}},
+        },
+    )
+    directory = target / "sub"
+    prefix = f"git -C {directory}" if directory_form == "git_option" else f"cd {directory} && git"
+    event = harness.event(f"{prefix} {operation}")
+    response = await harness.handler._evaluate_rules(event)
+    assert event.data["canonical_file_paths"] == [str(target)]
+    assert response.decision == ("allow" if state == "clean" else "block")
+    if state != "clean":
+        assert response.reason is not None
+        assert location in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["checkout HEAD", "switch --detach HEAD", "switch -c new"])
+async def test_nonforce_branch_change_keeps_git_conflict_handling(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(f"git {operation}"))
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
 async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
 

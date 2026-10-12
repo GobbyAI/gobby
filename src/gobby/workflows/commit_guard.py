@@ -7,7 +7,7 @@ import logging
 import os
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -263,6 +263,21 @@ async def foreign_dirty_edit_conflict(
     data = event.data if isinstance(event.data, dict) else {}
     if data.get("canonical_repo_mutation") is not True:
         return ""
+
+    # Forced branch changes inspect the named checkout, including a foreign worktree.
+    for root in data.get("canonical_git_force_checkout_roots", []):
+        scoped_data = dict(data)
+        scoped_data.pop("canonical_git_force_checkout_roots", None)
+        scoped_data["canonical_file_paths"] = [root]
+        reason = await foreign_dirty_edit_conflict(
+            db,
+            replace(event, data=scoped_data, cwd=root),
+            session_id=session_id,
+            project_id=project_id,
+            project_path=root,
+        )
+        if reason:
+            return reason
 
     try:
         mutation_paths = _canonical_mutation_paths(event, project_path)

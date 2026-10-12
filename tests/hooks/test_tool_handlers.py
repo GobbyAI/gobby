@@ -20,6 +20,7 @@ from gobby.skills.parser import ParsedSkill
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_dirty_state import task_dirty_paths
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     patch_local_machine_id,
@@ -1057,6 +1058,16 @@ class TestToolHandlerEdgeCases:
 
     @pytest.mark.parametrize("directory", [".", "nested"])
     @pytest.mark.parametrize("copy_file", [False, True], ids=["scope-only", "mixed-copy"])
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            "revert --quit",
+            "checkout -f feature",
+            "switch --discard-changes feature",
+            "checkout feature",
+            "switch feature",
+        ],
+    )
     def test_sequencer_directory_scope_does_not_enter_edit_ledger(
         self,
         mock_dependencies: dict[str, Any],
@@ -1065,6 +1076,7 @@ class TestToolHandlerEdgeCases:
         monkeypatch: pytest.MonkeyPatch,
         directory: str,
         copy_file: bool,
+        operation: str,
     ) -> None:
         self._land_file(tmp_path, "owned.py")
         (tmp_path / "nested").mkdir()
@@ -1081,12 +1093,20 @@ class TestToolHandlerEdgeCases:
         write_project_marker(tmp_path, project_id=project.id, name=project.name)
         session_id = session.id
         manager = SessionVariableManager(temp_db)
+        peer = SessionManager(temp_db).register(
+            external_id="branch-ledger-peer",
+            machine_id=machine_id,
+            source="claude",
+            project_id=project.id,
+        )
+        assert manager.select_task_claim(peer.id, "other-task", "#456")
+        assert manager.record_edited_files(peer.id, ["foreign.py"], checkout_root=str(tmp_path))
         assert manager.select_task_claim(session_id, "task-123", "#123")
         assert manager.record_edited_files(session_id, ["owned.py"], checkout_root=str(tmp_path))
         mock_dependencies["session_manager"].db = temp_db
         handlers = EventHandlers(**mock_dependencies)
         target = tmp_path / directory
-        command = "git revert --quit" if directory == "." else f"git -C {target} revert --quit"
+        command = f"git -C {target} {operation}"
         if copy_file:
             command += f" && cp {tmp_path}/source/copied.py {target}"
             (target / "copied.py").write_text("copied = True\n", encoding="utf-8")
@@ -1101,10 +1121,13 @@ class TestToolHandlerEdgeCases:
         )
         event.cwd = str(tmp_path)
         normalize_tool_fields(event.data)
-        assert event.data["canonical_repo_mutation"] is True
+        guarded_scope = operation not in {"checkout feature", "switch feature"}
+        assert bool(event.data.get("canonical_repo_mutation")) is (guarded_scope or copy_file)
         copied = str(target / "copied.py")
+        scope = target if operation == "revert --quit" else tmp_path
+        scope_paths = [str(scope)] if guarded_scope or not copy_file else []
         assert event.data["canonical_file_paths"] == (
-            [str(target), copied] if copy_file else [str(target)]
+            scope_paths + [copied] if copy_file else scope_paths
         )
         assert event.data["canonical_edit_file_paths"] == ([copied] if copy_file else [])
 
@@ -1116,6 +1139,11 @@ class TestToolHandlerEdgeCases:
         assert after["task_edited_files"] == {"task-123": expected_paths}
         assert after["session_dirty_files"] == expected_paths
         assert after["task_edited_file_checkouts"] == {"task-123": {str(tmp_path): expected_paths}}
+        assert manager.get_variables(peer.id)["session_dirty_files"] == ["foreign.py"]
+        # Close gate 9 sees only task edits, never the unrelated untracked foreign.py.
+        assert task_dirty_paths(set(expected_paths), str(tmp_path)) == (
+            {copied_relative} if copy_file else set()
+        )
 
     @pytest.mark.parametrize("flag", ["--quit", "--skip", "--continue", "--abort"])
     @pytest.mark.parametrize("operation", ["revert", "cherry-pick"])
@@ -1183,6 +1211,28 @@ class TestToolHandlerEdgeCases:
                 handlers._assert_edit_path_selection(event, "session-123")
         else:
             handlers._assert_edit_path_selection(event, "session-123")
+
+    @pytest.mark.parametrize(
+        "operation", ["checkout -f feature", "switch --discard-changes feature"]
+    )
+    def test_branch_checkout_allows_other_checkout_selection(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path, operation: str
+    ) -> None:
+        own = tmp_path / "own"
+        foreign = tmp_path / "foreign"
+        (own / ".git").mkdir(parents=True)
+        (foreign / ".git").mkdir(parents=True)
+        mock_dependencies["session_manager"].get.return_value.workspace_path = str(own)
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": f"git -C {foreign} {operation}"}},
+        )
+        event.cwd = str(own)
+        event.data["cwd"] = str(own)
+        normalize_tool_fields(event.data)
+        assert event.data["canonical_edit_file_paths"] == []
+        handlers._assert_edit_path_selection(event, "session-123")
 
     def test_sequencer_scope_skips_live_edit_path_selection(
         self, mock_dependencies: dict[str, Any], tmp_path: Path

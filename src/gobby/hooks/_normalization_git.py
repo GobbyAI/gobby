@@ -2,6 +2,7 @@
 
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
 from gobby.hooks._normalization_operands import (
@@ -21,6 +22,7 @@ from gobby.hooks._normalization_shell import (
     _strip_shell_wrappers,
     scan_shell_command,
 )
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.code_navigation import search_navigation_metadata, shell_command_name
 
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
@@ -162,6 +164,23 @@ def classify_git_mutation(
     index = 1
     operation = parts[index] if index < len(parts) else ""
     arguments = parts[index + 1 :]
+    if operation == "switch" or (operation == "checkout" and "--" not in arguments):
+        forced = any(
+            argument in {"--force", "--discard-changes"}
+            or (argument.startswith("-") and not argument.startswith("--") and "f" in argument[1:])
+            for argument in arguments
+        )
+        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        if root is None:
+            if operation == "switch" and not forced and not unknown:
+                return _ShellSegmentMetadata("execute")
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        extra: dict[str, Any] = {"canonical_edit_file_paths": []}
+        if forced:
+            extra["canonical_git_force_checkout_roots"] = [str(root)]
+        return _ShellSegmentMetadata(
+            "execute", paths=(str(root),), repo_mutation=forced, extra=extra
+        )
     if operation in {"rm", "mv"}:
         skip_value = False
         for argument in arguments:
@@ -195,9 +214,6 @@ def classify_git_mutation(
             candidates = arguments[arguments.index("--") + 1 :]
         elif operation == "restore":
             candidates = _git_restore_positional_args_after(parts, index + 1)
-        elif git_cwd:
-            # Without a path separator, checkout may replace the whole working tree.
-            return _ShellSegmentMetadata("write", paths=(git_cwd,), repo_mutation=True)
         else:
             candidates = []
         paths = [
@@ -216,7 +232,10 @@ def classify_git_mutation(
                 "write",
                 paths=(git_cwd,),
                 repo_mutation=True,
-                extra={"canonical_edit_file_paths": []},
+                extra={
+                    "canonical_edit_file_paths": [],
+                    "canonical_git_sequencer_scope_paths": [git_cwd],
+                },
             )
         return _ShellSegmentMetadata("write", repo_mutation=True)
     return None
