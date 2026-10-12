@@ -33,6 +33,7 @@ class _Branch:
 @dataclass
 class ShellDirectoryState:
     cwd: str | None
+    pipeline_subshell: bool = False
     stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
@@ -45,6 +46,7 @@ class ShellDirectoryState:
     altered_loops: set[int] = field(default_factory=set)
     loops_opened: int = 0
     group_isolation: dict[int, bool] = field(default_factory=dict)
+    group_spans: dict[int, tuple[int, int]] = field(default_factory=dict)
     group_last_pipeline: set[int] = field(default_factory=set)
     pipeline_group_changes: list[bool | None] = field(default_factory=list)
     group_functions: dict[int, str] = field(default_factory=dict)
@@ -84,17 +86,41 @@ class ShellDirectoryState:
         return cwd
 
     def prepare_groups(
-        self, segments: list[_ShellSegment], spans: dict[int, tuple[int, int]] | None = None
+        self,
+        segments: list[_ShellSegment],
+        spans: dict[int, tuple[int, int]] | None = None,
+        command: str | None = None,
     ) -> None:
         """Identify pipeline members and function bodies before consuming braces."""
+        self.group_spans = spans if spans is not None else {}
         openings: list[tuple[int, int]] = []
+        case_depth, pending, previous_end = 0, False, 0
         for index, segment in enumerate(segments):
-            for position, token in enumerate(segment.tokens):
+            tokens = segment.tokens
+            before = segment.separator_before
+            if spans is not None and command is not None:
+                consuming_pattern = pending
+                start = min(spans[id(token)][0] for token in tokens)
+                gap = command[previous_end:start]
+                previous_end = max(spans[id(token)][1] for token in tokens)
+                tokens, case_depth, pending = case_arm_tokens(
+                    tokens,
+                    case_depth=case_depth,
+                    new_arm=pending or ";;" in gap or ";&" in gap,
+                    command=command,
+                    spans=spans,
+                )
+                if (consuming_pattern and not pending) or (
+                    case_depth and (";;" in gap or ";&" in gap)
+                ):
+                    before = ";"
+            for position, token in enumerate(tokens):
                 if token.quoted:
                     continue
                 if token.value == "{":
+                    group = self._group_key(token)
                     header_tokens = (
-                        segment.tokens[:position]
+                        tokens[:position]
                         if position
                         else segments[index - 1].tokens
                         if index
@@ -102,7 +128,7 @@ class ShellDirectoryState:
                     )
                     function: str | None = None
                     if spans and (name := self.function_bodies.get(spans[id(token)][0])):
-                        function = self.group_functions[id(token)] = name
+                        function = self.group_functions[group] = name
                     if function is None:
                         for start in range(len(header_tokens)):
                             header = header_tokens[start:]
@@ -112,26 +138,23 @@ class ShellDirectoryState:
                             )
                             if match and all(not t.quoted for t in header):
                                 function = match[1] or match[2]
-                                self.group_functions[id(token)] = function
+                                self.group_functions[group] = function
                                 self.function_headers[id(header[0])] = len(header)
                                 break
-                    if function is None and not self._brace_command_position(
-                        segment.tokens[:position]
-                    ):
+                    if function is None and not self._brace_command_position(tokens[:position]):
                         continue  # A brace argument cannot consume a later group's closer.
-                    openings.append((index, id(token)))
+                    openings.append((index, group))
                     first_group = not any(
-                        prior.value == "{" and not prior.quoted
-                        for prior in segment.tokens[:position]
+                        prior.value == "{" and not prior.quoted for prior in tokens[:position]
                     )
-                    if segment.separator_before == "|" and first_group and function is None:
-                        self.group_last_pipeline.add(id(token))
-                    self.group_isolation[id(token)] = (
-                        segment.separator_before == "|" and first_group
+                    if before == "|" and first_group and function is None:
+                        self.group_last_pipeline.add(group)
+                    self.group_isolation[group] = (
+                        before == "|" and first_group
                     ) or function is not None
                 elif (
                     token.value == "}"
-                    and self._brace_command_position(segment.tokens[:position])
+                    and self._brace_command_position(tokens[:position])
                     and openings
                 ):
                     _, opener = openings.pop()
@@ -141,6 +164,11 @@ class ShellDirectoryState:
                             self.group_isolation[opener] = True
                         if after in {"|", "&"}:
                             self.group_last_pipeline.discard(opener)
+
+    def _group_key(self, token: ShellToken) -> int:
+        """Case-arm retokenization preserves source positions, not token identities."""
+        span = self.group_spans.get(id(token))
+        return span[0] if span is not None else id(token)
 
     @staticmethod
     def _brace_command_position(prefix: list[ShellToken]) -> bool:
@@ -306,10 +334,13 @@ class ShellDirectoryState:
                         tokens = tokens[1:]
                 continue
             elif word == "{":
-                isolated = self.group_isolation.get(id(tokens[0]), False)
-                function = self.group_functions.get(id(tokens[0]))
+                group = self._group_key(tokens[0])
+                isolated = self.group_isolation.get(group, False)
+                function = self.group_functions.get(group)
                 self.pipeline_group_changes.append(
-                    False if id(tokens[0]) in self.group_last_pipeline else None
+                    False
+                    if group in self.group_last_pipeline and not self.pipeline_subshell
+                    else None
                 )
                 self.groups.append(
                     (
@@ -397,6 +428,8 @@ class ShellDirectoryState:
 
     def apply_opaque_change(self, parts: list[str]) -> None:
         """Calls and eval may change cwd without a provable literal exit directory."""
+        if parts[:1] == ["shopt"] and "lastpipe" in parts:
+            self.pipeline_subshell = False
         if self._clears_stack(parts):
             self.stack = None
             self.mark_changed()

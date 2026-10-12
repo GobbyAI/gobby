@@ -57,12 +57,68 @@ def test_brace_argument_does_not_open_group(tmp_path: Path, argument: str, prefi
     assert data["canonical_write_file_paths"] == ["y.py"]
 
 
-@pytest.mark.parametrize("wrapper", ["", "bash -c", "zsh -c"])
+@pytest.mark.parametrize("wrapper", ["", "zsh -c"])
 def test_zsh_last_pipeline_stage_cd(tmp_path: Path, wrapper: str) -> None:
     body = "echo x | { cd sub; }; touch z.py"
     command = f"{wrapper} '{body}'" if wrapper else body
     data = _metadata(command, tmp_path)
     assert data.get("canonical_write_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh"])
+@pytest.mark.parametrize("body_write", ["", " touch y.py;"])
+def test_proven_shell_last_pipeline_group_isolated(
+    tmp_path: Path, shell: str, body_write: str
+) -> None:
+    data = _metadata(f"{shell} -c 'echo x | {{ cd sub;{body_write} }}; touch z.py'", tmp_path)
+    expected = ["sub/y.py", "z.py"] if body_write else ["z.py"]
+    assert data["canonical_write_file_paths"] == expected
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh"])
+@pytest.mark.parametrize("invocation", ["./probe.sh", "{shell} probe.sh"])
+def test_proven_shell_script_last_pipeline_group_isolated(
+    tmp_path: Path, shell: str, invocation: str
+) -> None:
+    (tmp_path / "probe.sh").write_text(
+        f"#!/bin/{shell}\necho x | {{ cd sub; touch y.py; }}; touch z.py\n"
+    )
+    data = _metadata(invocation.format(shell=shell), tmp_path)
+    assert data["canonical_write_file_paths"] == ["sub/y.py", "z.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("pattern", ["a", "(a", '"a"', "a|b"])
+@pytest.mark.parametrize("space", ["", " "])
+def test_case_arm_pipeline_brace_group_isolated(tmp_path: Path, pattern: str, space: str) -> None:
+    data = _metadata(f"case a in {pattern}){space}{{ cd sub; }} | cat;; esac; touch y.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["y.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    "setup,prefix",
+    [("-O lastpipe -c", ""), ("-eO lastpipe -c", ""), ("-c", "shopt -s lastpipe; ")],
+)
+def test_bash_lastpipe_mode_keeps_followup_scope_unknown(
+    tmp_path: Path, setup: str, prefix: str
+) -> None:
+    data = _metadata(f"bash {setup} '{prefix}echo x | {{ cd sub; }}; touch z.py'", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_case_pattern_pipe_does_not_isolate_parent_brace(tmp_path: Path) -> None:
+    data = _metadata("case a in a|b) { cd sub; };; esac; touch y.py", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_bash_lastpipe_shebang_keeps_followup_scope_unknown(tmp_path: Path) -> None:
+    (tmp_path / "probe.sh").write_text(
+        "#!/usr/bin/env -S bash -O lastpipe\necho x | { cd sub; }; touch z.py\n"
+    )
+    data = _metadata("./probe.sh", tmp_path)
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 

@@ -7,7 +7,6 @@ from typing import Any
 
 from gobby.hooks._inline_interpreter_classifier import (
     _classify_inline_interpreter,
-    _classify_interpreter_source,
     _InlineProgramClassification,
 )
 from gobby.hooks._normalization_bindings import (
@@ -35,6 +34,10 @@ from gobby.hooks._normalization_git import (
     exported_git_selector,
     git_environment_parts,
     git_selector_setup,
+)
+from gobby.hooks._normalization_interpreter_segments import (
+    _classify_stdin_python,
+    _python_write_segment,
 )
 from gobby.hooks._normalization_metadata import (
     _build_canonical_tool_metadata,
@@ -102,10 +105,8 @@ from gobby.hooks._path_scope import (
 )
 from gobby.hooks._python_pipeline_classifier import (
     _classify_python_pipeline_evidence,
-    _classify_python_source_evidence,
     _inline_interpreter_parts,
     _PythonExecutionClassification,
-    _PythonMutationEvidence,
 )
 from gobby.hooks.code_navigation import (
     count_option_byte_count,
@@ -138,7 +139,12 @@ _script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0
 
 
 def _normalize_shell_tool_metadata(
-    command: str, *, cwd: str | None = None, depth: int = 0, base_cwd: Path | None = None
+    command: str,
+    *,
+    cwd: str | None = None,
+    depth: int = 0,
+    base_cwd: Path | None = None,
+    pipeline_subshell: bool = False,
 ) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments.
 
@@ -176,6 +182,7 @@ def _normalize_shell_tool_metadata(
                 function_bodies=bodies,
                 function_scope_unknown=unknown,
                 opaque=opaque,
+                pipeline_subshell=pipeline_subshell,
             )
             result = _classify_shell_command(
                 command, directory=directory, depth=depth, base_cwd=base_cwd
@@ -233,7 +240,7 @@ def _classify_shell_command(
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
-    directory.prepare_groups(segments, spans_by_token)
+    directory.prepare_groups(segments, spans_by_token, command)
     # Only the bare assignments that open a command always run in this shell.
     leading_assignments = True
     for index, segment in enumerate(segments):
@@ -370,6 +377,7 @@ def _classify_shell_command(
                 and not directory.group_entry
                 and next_separator not in {"|", "&"}
                 and not env_directories
+                and not directory.pipeline_subshell
             ):
                 directory.invalidate()
             if (
@@ -448,52 +456,6 @@ def _classify_shell_command(
 
     metadata = _classify_stdin_python(metadata, heredoc_bodies)
     return _merge_shell_segment_metadata(_gate_rewritable_scripts(metadata))
-
-
-def _classify_stdin_python(
-    metadata: list[_ShellSegmentMetadata],
-    heredoc_bodies: list[str],
-) -> list[_ShellSegmentMetadata]:
-    """Reclassify a lone interpreter heredoc from its body evidence.
-
-    Python mutations carry literal targets as write paths. Ambiguous shell
-    shapes keep their conservative unscoped write classification.
-    """
-    flagged = [item for item in metadata if item.stdin_program_interpreter]
-    if len(flagged) != 1 or len(heredoc_bodies) != 1:
-        return metadata
-    interpreter = flagged[0].stdin_program_interpreter
-    mutation: _PythonMutationEvidence | None = None
-    if interpreter in {"python", "python3"}:
-        python_classification, mutation = _classify_python_source_evidence(heredoc_bodies[0])
-        is_mutation = python_classification is _PythonExecutionClassification.MUTATION
-        is_read_only = python_classification is _PythonExecutionClassification.READ_ONLY
-    else:
-        inline_classification = _classify_interpreter_source(interpreter or "", heredoc_bodies[0])
-        is_mutation = inline_classification is _InlineProgramClassification.MUTATION
-        is_read_only = inline_classification is _InlineProgramClassification.READ_ONLY
-    if is_mutation:
-        replacement = _python_write_segment(mutation, flagged[0].cwd)
-    else:
-        replacement = _ShellSegmentMetadata(
-            "execute",
-            confidence="high" if is_read_only else "low",
-        )
-    return [replacement if item.stdin_program_interpreter else item for item in metadata]
-
-
-def _python_write_segment(
-    mutation: _PythonMutationEvidence | None, cwd: str | None
-) -> _ShellSegmentMetadata:
-    """A proven interpreter write carrying its literal targets, rebased onto ``cwd``."""
-    targets = tuple(_rebase_shell_paths(list(mutation.targets or ()), cwd)) if mutation else ()
-    return _ShellSegmentMetadata(
-        "write",
-        paths=targets,
-        write_paths=targets,
-        repo_mutation=True,
-        unverified_write_scope=mutation is not None and mutation.unverified,
-    )
 
 
 def _classify_shell_segment(
@@ -788,7 +750,11 @@ def _classify_shell_segment_without_redirection(
             return _ShellSegmentMetadata("execute", extra={"canonical_script_execution": True})
         if command is not None:
             nested = _normalize_shell_tool_metadata(
-                command, cwd=cwd, depth=depth + 1, base_cwd=base_cwd
+                command,
+                cwd=cwd,
+                depth=depth + 1,
+                base_cwd=base_cwd,
+                pipeline_subshell=execution.pipeline_subshell,
             )
             if script is not None:
                 nested["canonical_script_bodies"] = sorted(
