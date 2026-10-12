@@ -53,7 +53,7 @@ def classify_sed_segment(
     bsd_operands = _sed_file_operands(parts, raw_parts, bsd_inplace_suffix=True)
     if operands == bsd_operands:
         return primary
-    alternate = _classify_sed_operands(parts, cwd, bsd_operands, base_cwd)
+    alternate = _classify_sed_operands(parts, cwd, bsd_operands, base_cwd, bsd=True)
     # A bare -i may consume any following word as its extension on BSD.
     # Keep both readings: a known scratch target must not hide the other's writes.
     writes = tuple(dict.fromkeys((*primary.write_paths, *alternate.write_paths)))
@@ -65,17 +65,31 @@ def classify_sed_segment(
             for item in (primary, alternate)
         )
     )
+    extra: dict[str, object] = {"_canonical_repo_mutation_scope_unknown": True} if unknown else {}
+    if (
+        bsd_operands.unresolved
+        and not operands.unresolved
+        and not (primary.extra and primary.extra.get("_canonical_repo_mutation_scope_unknown"))
+        and not bsd_operands.script_files
+        and len(bsd_operands.programs) == 1
+    ):
+        extra["_canonical_sed_bsd_program"] = bsd_operands.programs[0]
     return _ShellSegmentMetadata(
         "write",
         paths=writes,
         write_paths=writes,
         repo_mutation=True,
-        extra={"_canonical_repo_mutation_scope_unknown": True} if unknown else None,
+        extra=extra or None,
     )
 
 
 def _classify_sed_operands(
-    parts: list[str], cwd: str | None, operands: _SedOperands, base_cwd: Path | None
+    parts: list[str],
+    cwd: str | None,
+    operands: _SedOperands,
+    base_cwd: Path | None,
+    *,
+    bsd: bool = False,
 ) -> _ShellSegmentMetadata:
     positional = _shell_positional_args(parts)
     if operands.unresolved:
@@ -92,7 +106,7 @@ def _classify_sed_operands(
             programs.append(script[1])
     writes: list[str] = []
     for program in programs:
-        destinations, unknown = sed_write_paths(program)
+        destinations, unknown = sed_write_paths(program, bsd=bsd)
         writes.extend(destinations)
         unresolved |= unknown
     inplace = operands.inplace

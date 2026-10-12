@@ -224,17 +224,48 @@ def test_bare_inplace_union_keeps_gnu_and_bsd_write_destinations(tmp_path: Path)
     assert {"/tmp/gnu-output", "out.txt"} <= set(data["canonical_write_file_paths"])
 
 
-def test_bare_inplace_loop_input_does_not_prove_bsd_program_scope(tmp_path: Path) -> None:
-    data = _metadata('for f in a.py b.py; do sed -i "s/x/y/" "$f"; done', tmp_path)
-    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+@pytest.mark.parametrize("paths", ["a.py b.py", "src/a.py e2e/b.py"])
+def test_bare_inplace_loop_bound_inert_program_keeps_known_scope(
+    tmp_path: Path, paths: str
+) -> None:
+    data = _metadata(f'for f in {paths}; do sed -i "s/x/y/" "$f"; done', tmp_path)
+    assert data["canonical_file_paths"] == paths.split()
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_bare_inplace_loop_bound_write_program_keeps_unknown_scope(tmp_path: Path) -> None:
+    data = _metadata('for f in wout.txt b.py; do sed -i "s/x/y/" "$f"; done', tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_bare_inplace_unbound_program_keeps_unknown_scope(tmp_path: Path) -> None:
+    data = _metadata('sed -i "s/x/y/" "$f"', tmp_path)
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.parametrize("options", ["-i", "-i -e"])
-def test_common_gnu_inplace_form_preserves_known_scope(tmp_path: Path, options: str) -> None:
-    data = _metadata(f"sed {options} 's/a/b/' f.py", tmp_path)
-    assert data["canonical_write_file_paths"] == ["f.py"]
+@pytest.mark.parametrize(
+    "path", ["f.py", "src/x.py", "scripts/x.sh", "e2e/x.py", "yarn.lock", "src/gobby/router.py"]
+)
+def test_common_gnu_inplace_form_preserves_known_scope(
+    tmp_path: Path, options: str, path: str
+) -> None:
+    data = _metadata(f"sed {options} 's/a/b/' {path}", tmp_path)
+    assert data["canonical_write_file_paths"] == [path]
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("program,path", [("w/tmp/x", "/tmp/x"), ("s/a/b/w /tmp/y", "/tmp/y")])
+def test_bare_inplace_bsd_program_preserves_actual_write(
+    tmp_path: Path, program: str, path: str
+) -> None:
+    data = _metadata(f"sed -i 's/a/b/' '{program}'", tmp_path)
+    assert path in data["canonical_write_file_paths"]
+
+
+def test_gnu_unterminated_sed_program_stays_unknown(tmp_path: Path) -> None:
+    data = _metadata("sed 's/a' in.py", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def test_invalid_sed_command_keeps_earlier_compile_time_write(tmp_path: Path) -> None:
