@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -429,16 +430,34 @@ def test_native_win32_is_gated_and_reported(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
-def test_timeout_reaps_process_group(tmp_path: Path) -> None:
-    marker = tmp_path / "late-write"
-    child_code = (
-        f"import pathlib,time; time.sleep(0.8); pathlib.Path({str(marker)!r}).write_text('late')"
-    )
+def test_timeout_reaps_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pgid_file = tmp_path / "pgid"
+    child_code = "import signal; signal.pause()"
     parent_code = (
-        "import subprocess,sys,time; "
+        "import os,signal,subprocess,sys; "
         f"subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
-        "time.sleep(30)"
+        f"open({str(pgid_file)!r}, 'w').write(str(os.getpgrp())); "
+        "print('ready', flush=True); signal.pause()"
     )
+    communicate = subprocess.Popen.communicate
+    started = False
+
+    def communicate_started(
+        process: subprocess.Popen[str],
+        input: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[str, str]:
+        nonlocal started
+        if not started:
+            started = True
+            # Start the timeout only once both processes belong to the new group.
+            assert process.stdout is not None
+            ready, _, _ = select.select([process.stdout], [], [], 10)
+            assert ready, "process group did not signal readiness"
+            assert process.stdout.readline() == "ready\n"
+        return communicate(process, input=input, timeout=timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", communicate_started)
 
     with pytest.raises(installer.ImpeccableInstallError, match="timed out"):
         installer._run_owned_process(
@@ -449,8 +468,9 @@ def test_timeout_reaps_process_group(tmp_path: Path) -> None:
             owner_record=tmp_path / "owner.json",
         )
 
-    threading.Event().wait(1.0)
-    assert not marker.exists()
+    pgid = int(pgid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.killpg(pgid, 0)
     assert not (tmp_path / "owner.json").exists()
 
 
