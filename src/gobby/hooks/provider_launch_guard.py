@@ -31,7 +31,7 @@ from gobby.hooks._python_pipeline_classifier import (
     _inline_interpreter_parts,
 )
 from gobby.hooks._sed_arguments import _sed_file_operands
-from gobby.hooks._sed_program import sed_execution_commands
+from gobby.hooks._sed_program import sed_execution
 from gobby.hooks._shell_execution_words import _unwrap
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "agy"})
@@ -209,6 +209,7 @@ def _piped_to_shell(
     dialect: ShellDialect = "bash",
     *,
     python: bool = False,
+    functions: Mapping[str, str] | None = None,
 ) -> bool:
     while end < len(tokens) and tokens[end].value == "|":
         start = end + 1
@@ -217,7 +218,9 @@ def _piped_to_shell(
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1
-        if _segment_consumes(tokens[start:end], expansions or [], depth, dialect, python=python):
+        if _segment_consumes(
+            tokens[start:end], expansions or [], depth, dialect, python=python, functions=functions
+        ):
             return True
     return False
 
@@ -368,6 +371,7 @@ def _process_output_to_shell(
     dialect: ShellDialect,
     *,
     python: bool = False,
+    functions: Mapping[str, str] | None = None,
 ) -> bool:
     """Inspect every redirected descriptor conservatively, including fd forwarding."""
     words = _unwrap(_executable_words(segment))
@@ -380,7 +384,9 @@ def _process_output_to_shell(
         expansion_index = int(match[1])
         if expansion_index >= len(expansions):
             continue
-        if _stream_consumes(expansions[expansion_index], depth + 1, dialect, python=python):
+        if _stream_consumes(
+            expansions[expansion_index], depth + 1, dialect, python=python, functions=functions
+        ):
             return True
     return False
 
@@ -392,23 +398,45 @@ def _segment_consumes(
     dialect: ShellDialect,
     *,
     python: bool,
+    functions: Mapping[str, str] | None = None,
 ) -> bool:
     words = _unwrap(_executable_words(segment))
+    if not python and words and words[0].rsplit("/", 1)[-1] in {"sed", "gsed"}:
+        if any(
+            sed_execution(program).reads_pattern
+            for program in _sed_file_operands(words, None).programs
+        ):
+            return True
+    if words and functions and words[0] in functions:
+        return _stream_consumes(
+            functions[words[0]], depth + 1, dialect, python=python, functions=functions
+        )
     if _python_program(words)[1] if python else _shell_stdin(words):
         return True
     script = _shell_script(words)
     if not python and script is not None and depth < _MAX_DEPTH:
-        if _stream_consumes(script, depth + 1, dialect, python=False):
+        if _stream_consumes(script, depth + 1, dialect, python=False, functions=functions):
             return True
     for word in words:
         match = re.fullmatch(r"__gobby_group_([0-9]+)__", word)
         if match is not None and int(match[1]) < len(expansions):
-            if _stream_consumes(expansions[int(match[1])], depth + 1, dialect, python=python):
+            if _stream_consumes(
+                expansions[int(match[1])], depth + 1, dialect, python=python, functions=functions
+            ):
                 return True
-    return _process_output_to_shell(segment, expansions, depth, dialect, python=python)
+    return _process_output_to_shell(
+        segment, expansions, depth, dialect, python=python, functions=functions
+    )
 
 
-def _stream_consumes(command: str, depth: int, dialect: ShellDialect, *, python: bool) -> bool:
+def _stream_consumes(
+    command: str,
+    depth: int,
+    dialect: ShellDialect,
+    *,
+    python: bool,
+    functions: Mapping[str, str] | None = None,
+) -> bool:
     if depth > _MAX_DEPTH:
         return True
     prepared, expansions = _prepare(command, depth)
@@ -416,7 +444,9 @@ def _stream_consumes(command: str, depth: int, dialect: ShellDialect, *, python:
     start = 0
     for end in range(len(tokens) + 1):
         if end == len(tokens) or _separator(tokens[end]):
-            if _segment_consumes(tokens[start:end], expansions, depth, dialect, python=python):
+            if _segment_consumes(
+                tokens[start:end], expansions, depth, dialect, python=python, functions=functions
+            ):
                 return True
             start = end + 1
     return False
@@ -430,6 +460,7 @@ def _process_input_consumer(
     expansions: list[str],
     depth: int,
     dialect: ShellDialect,
+    functions: Mapping[str, str] | None = None,
 ) -> Literal["shell", "python"] | None:
     """Identify an input substitution used as stdin or the first script operand."""
     if marker in words:
@@ -453,7 +484,9 @@ def _process_input_consumer(
         ):
             if _cat_stdin(words) and output_consumer is not None:
                 return output_consumer
-            if _segment_consumes(segment, expansions, depth, dialect, python=False):
+            if _segment_consumes(
+                segment, expansions, depth, dialect, python=False, functions=functions
+            ):
                 return "shell"
             if _python_program(words)[1]:
                 return "python"
@@ -486,6 +519,39 @@ def _shell_script(words: list[str]) -> str | None:
                 script = script[1:]
             return script[0] if script else None
     return None
+
+
+def _literal_producer(tokens: list[ShellToken]) -> bool:
+    words = _unwrap(_executable_words(tokens))
+    return (
+        bool(words)
+        and not any(_separator(token) for token in tokens)
+        and words[0].rsplit("/", 1)[-1] in {"echo", "printf"}
+        and all("$" not in word and "__gobby_" not in word for word in words)
+    )
+
+
+def _sed_known_input(
+    segment: list[ShellToken],
+    expansions: list[str],
+    incoming: list[ShellToken],
+    payloads: list[str],
+    depth: int,
+) -> bool:
+    if payloads and all("$" not in body for body in payloads):
+        return True
+    for index, token in enumerate(segment[:-1]):
+        if token.quoted or not _stdin_redirect(token.value, segment):
+            continue
+        value = segment[index + 1].value
+        if token.value.lstrip("0123456789") == "<<<" and "$" not in value:
+            return True
+        marker = re.fullmatch(r"__gobby_process_input_([0-9]+)__", value)
+        if marker is not None and int(marker[1]) < len(expansions):
+            prepared, _ = _prepare(expansions[int(marker[1])], depth + 1)
+            if _literal_producer(scan_shell_command(prepared).tokens):
+                return True
+    return _literal_producer(incoming)
 
 
 def _blocked(
@@ -533,6 +599,12 @@ def _evaluate_blocked(
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
                 continue
             segment = scan.tokens[start:end]
+            incoming: list[ShellToken] = []
+            if start > 0 and scan.tokens[start - 1].value == "|":
+                previous = start - 2
+                while previous >= 0 and not _separator(scan.tokens[previous]):
+                    previous -= 1
+                incoming = scan.tokens[previous + 1 : start - 1]
             raw_words = _executable_words(segment)
             words = _unwrap(raw_words)
             bodies = [body for body in scan.heredocs if start <= body.opener < end]
@@ -552,14 +624,22 @@ def _evaluate_blocked(
             piped = (
                 output_consumer == "shell"
                 or persistent_shell
-                or _piped_to_shell(scan.tokens, end, expansions, depth, dialect)
-                or _process_output_to_shell(segment, expansions, depth, dialect)
+                or _piped_to_shell(
+                    scan.tokens, end, expansions, depth, dialect, functions=functions
+                )
+                or _process_output_to_shell(
+                    segment, expansions, depth, dialect, functions=functions
+                )
             )
             python_piped = (
                 output_consumer == "python"
                 or persistent_python
-                or _piped_to_shell(scan.tokens, end, expansions, depth, dialect, python=True)
-                or _process_output_to_shell(segment, expansions, depth, dialect, python=True)
+                or _piped_to_shell(
+                    scan.tokens, end, expansions, depth, dialect, python=True, functions=functions
+                )
+                or _process_output_to_shell(
+                    segment, expansions, depth, dialect, python=True, functions=functions
+                )
             )
             producer_consumer = output_consumer
             if producer_consumer is None:
@@ -570,21 +650,23 @@ def _evaluate_blocked(
                     if group is not None and int(group[1]) < len(expansions):
                         functions[name[:-2]] = expansions[int(group[1])]
                 continue
-            if name in functions and _blocked(
-                functions[name], depth + 1, dialect, output_consumer=producer_consumer
-            ):
-                return True
             has_input_payload = bool(bodies) or any(
                 not token.quoted and token.value.lstrip("0123456789") == "<<<" for token in segment
             )
             shell_input = has_input_payload and _segment_consumes(
-                segment, expansions, depth, dialect, python=False
+                segment, expansions, depth, dialect, python=False, functions=functions
             )
             group_consumers: list[Literal["shell", "python"]] = []
             if piped:
                 group_consumers.append("shell")
             if python_piped:
                 group_consumers.append("python")
+            consumers: list[Literal["shell", "python"] | None] = [None, *group_consumers]
+            if name in functions and any(
+                _blocked(functions[name], depth + 1, dialect, output_consumer=consumer)
+                for consumer in consumers
+            ):
+                return True
             for token in segment:
                 group = re.fullmatch(r"__gobby_group_([0-9]+)__", token.value)
                 if group is not None and int(group[1]) < len(expansions):
@@ -604,7 +686,7 @@ def _evaluate_blocked(
                     continue
                 marker = token.value
                 consumer = _process_input_consumer(
-                    segment, words, marker, producer_consumer, expansions, depth, dialect
+                    segment, words, marker, producer_consumer, expansions, depth, dialect, functions
                 )
                 if consumer is not None and _blocked(
                     expansions[index], depth + 1, dialect, output_consumer=consumer
@@ -612,14 +694,29 @@ def _evaluate_blocked(
                     return True
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
-            if name == "sed":
-                programs = _sed_file_operands(words, None).programs
+            if name in {"sed", "gsed"}:
+                operands = _sed_file_operands(words, None)
+                executions = [sed_execution(program) for program in operands.programs]
                 if any(
                     _blocked(script, depth + 1, dialect)
-                    for program in programs
-                    for script in sed_execution_commands(program)
+                    for execution in executions
+                    for script in execution.commands
                 ):
                     return True
+                if any(execution.unknown_execution for execution in executions):
+                    return True
+                if any(execution.substitutes for execution in executions):
+                    if any(execution.pattern_modified for execution in executions) or any(
+                        word == "--null-data"
+                        or (word.startswith("-") and not word.startswith("--") and "z" in word)
+                        for word in words[1:]
+                    ):
+                        return True
+                if any(execution.reads_pattern for execution in executions):
+                    if any(path != "-" for path in operands.inputs) or not _sed_known_input(
+                        segment, expansions, incoming, [body.text for body in bodies], depth
+                    ):
+                        return True
             # Budget executable words; code operands and heredoc payloads belong
             # to their consumers, whose process operands are checked recursively.
             python_script, python_stdin, _ = _python_program(words)
@@ -667,8 +764,9 @@ def _evaluate_blocked(
                         script = words[index + 1 : index + 3]
                         if script[:1] == ["--"]:
                             script = script[1:]
-                        if script and _blocked(
-                            script[0], depth + 1, inner, output_consumer=producer_consumer
+                        if script and any(
+                            _blocked(script[0], depth + 1, inner, output_consumer=consumer)
+                            for consumer in consumers
                         ):
                             return True
                         break
@@ -680,18 +778,22 @@ def _evaluate_blocked(
                         and token.value.lstrip("0123456789") == "<<<"
                         and _stdin_redirect(token.value, segment)
                     ):
-                        if _blocked(
-                            segment[index + 1].value,
-                            depth + 1,
-                            inner,
-                            output_consumer=producer_consumer,
+                        if any(
+                            _blocked(
+                                segment[index + 1].value,
+                                depth + 1,
+                                inner,
+                                output_consumer=consumer,
+                            )
+                            for consumer in consumers
                         ):
                             return True
             if shell_input or piped:
                 body_dialect = inner if shell_input else dialect
                 if any(
-                    _blocked(body.text, depth + 1, body_dialect, output_consumer=output_consumer)
+                    _blocked(body.text, depth + 1, body_dialect, output_consumer=consumer)
                     for body in bodies
+                    for consumer in consumers
                 ):
                     return True
             for body in bodies:

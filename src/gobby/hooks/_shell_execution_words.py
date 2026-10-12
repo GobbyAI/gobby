@@ -152,6 +152,7 @@ def _unwrap(words: list[str]) -> list[str]:
             "if",
             "while",
             "until",
+            "coproc",
         }:
             words = words[1:]
         elif name in {

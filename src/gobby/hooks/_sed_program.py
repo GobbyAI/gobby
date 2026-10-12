@@ -1,5 +1,26 @@
 """Bounded, conservative extraction of sed program write destinations."""
 
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class SedExecution:
+    commands: tuple[str, ...]
+    reads_pattern: bool
+    unknown_execution: bool
+    parser_unknown: bool
+    substitutes: bool
+    pattern_modified: bool
+
+
+@dataclass
+class _ExecutionCollector:
+    commands: list[str] = field(default_factory=list)
+    reads_pattern: bool = False
+    unknown_execution: bool = False
+    substitutes: bool = False
+    pattern_modified: bool = False
+
 
 def _bracket_end(program: str, start: int) -> int | None:
     index = start + 1
@@ -76,12 +97,21 @@ def sed_write_paths(program: str, *, bsd: bool = False) -> tuple[list[str], bool
     return list(dict.fromkeys([*plain_paths, *bracket_paths])), plain_unknown or bracket_unknown
 
 
-def sed_execution_commands(program: str) -> list[str]:
-    """Return literal GNU e operands using the same address/command grammar."""
-    commands: list[str] = []
+def sed_execution(program: str) -> SedExecution:
+    """Keep executable effects distinct from unrecognized non-executable grammar."""
+    execution = _ExecutionCollector()
+    unknown = False
     for brackets in (False, True):
-        _program_write_paths(program, regex_brackets=brackets, execution_commands=commands)
-    return list(dict.fromkeys(commands))
+        _, unproven = _program_write_paths(program, regex_brackets=brackets, execution=execution)
+        unknown |= unproven
+    return SedExecution(
+        tuple(dict.fromkeys(execution.commands)),
+        execution.reads_pattern,
+        execution.unknown_execution or (execution.substitutes and execution.pattern_modified),
+        unknown,
+        execution.substitutes,
+        execution.pattern_modified,
+    )
 
 
 def _program_write_paths(
@@ -89,7 +119,7 @@ def _program_write_paths(
     *,
     regex_brackets: bool,
     bsd: bool = False,
-    execution_commands: list[str] | None = None,
+    execution: _ExecutionCollector | None = None,
 ) -> tuple[list[str], bool]:
     """Return destinations and whether any program behavior remains unproven.
 
@@ -123,6 +153,8 @@ def _program_write_paths(
         command = program[index]
         index += 1
         if command in "{}dDgGhHnNpPxz=F":
+            if execution is not None and command in "gGhHNxz":
+                execution.pattern_modified = True
             continue
         if command == "#":
             index = _line_end(program, index)
@@ -132,7 +164,9 @@ def _program_write_paths(
                 return paths, not bsd
             delimiter = program[index]
             index += 1
+            sections: list[str] = []
             for section in range(2):
+                begin = index
                 end = _delimited_end(
                     program,
                     index,
@@ -141,16 +175,39 @@ def _program_write_paths(
                 )
                 if end is None:
                     return paths, not bsd
+                sections.append(program[begin : end - 1])
                 index = end
             if command == "y":
+                if execution is not None:
+                    execution.pattern_modified = True
                 continue
+            flags_start = index
+            executes = False
             while index < len(program) and program[index] not in ";\n}":
                 flag = program[index]
                 if flag == "w":
                     break
-                if flag == "e" or (not flag.isdigit() and flag not in "gpIiMm \t"):
+                if flag == "e":
+                    if execution is None:
+                        return paths, not bsd
+                    pattern, replacement = sections
+                    executes = True
+                    execution.substitutes = True
+                    if "&" in replacement or "\\" in replacement:
+                        execution.unknown_execution = True
+                    else:
+                        execution.commands.append(replacement)
+                    execution.reads_pattern |= pattern != "^.*$"
+                    index += 1
+                    continue
+                if not flag.isdigit() and flag not in "gpIiMm \t":
                     return paths, not bsd
                 index += 1
+            if execution is not None:
+                if executes and any(flag in program[flags_start:index] for flag in "Mm"):
+                    execution.unknown_execution = True
+                if not executes:
+                    execution.pattern_modified = True
             if index >= len(program) or program[index] != "w":
                 continue
             index += 1
@@ -191,10 +248,14 @@ def _program_write_paths(
             while index < len(program) and (program[index].isdigit() or program[index] in " .\t"):
                 index += 1
         elif command == "e":
-            if execution_commands is None:
+            if execution is None:
                 return paths, not bsd
             end = _line_end(program, index)
-            execution_commands.append(program[index:end].strip())
+            operand = program[index:end].strip()
+            if operand:
+                execution.commands.append(operand)
+            else:
+                execution.reads_pattern = True
             index = end
         else:
             # Unsupported command letters fail during compilation. Keep any earlier

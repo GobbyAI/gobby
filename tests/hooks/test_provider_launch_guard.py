@@ -24,6 +24,66 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "function f { claude -p hi; }; f",
+        "function f() { claude -p hi; }; f",
+        "f () { claude -p hi; }; f",
+        "coproc { claude -p hi; }",
+        "coproc claude -p hi",
+        "for i in $(claude -p hi); do :; done",
+        "f() { echo 'import os; os.system(\"claude -p hi\")'; }; f > >(tee >(bash) >(python3))",
+        "f() { echo 'import os; os.system(\"claude -p hi\")'; }; f | tee >(bash) | python3",
+        'bash -c \'echo "import os; os.system(\\"claude -p hi\\")"\' > >(tee >(bash) >(python3))',
+        "bash <<'EOF' | bash\necho 'claude -p hi'\nEOF",
+        "bash <<'EOF' | python3\necho 'import os; os.system(\"claude -p hi\")'\nEOF",
+        "f() { bash; }; f < <(echo 'claude -p hi')",
+        "f() { bash; }; f <<< 'claude -p hi'",
+        "sed 's/x/claude -p hi/e' f",
+        "echo 'claude -p hi' | sed e",
+        "gsed '1e claude -p hi' f",
+        "sed e input.txt",
+        "sed 's/x/y/e' input.txt",
+        "sed 'N;s/^.*$/echo hi/e' f",
+        "sed 'H;s/^.*$/echo hi/e' f",
+        "sed 'G;s/^.*$/echo hi/e' f",
+        "sed 's/^.*$/echo hi/eM' f",
+        "sed 's/^.*$/echo hi/Me' f",
+        "sed 's/^.*$/&/e' f",
+        r"sed 's/^.*$/\1/e' f",
+        r"sed 's/^.*$/echo\nhi/e' f",
+        "sed -z 's/^.*$/echo hi/e' f",
+        "sed -e N -e 's/^.*$/echo hi/e' f",
+    ],
+)
+def test_provider_review_correction_blocks_launches(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for claude in 1; do echo $claude; done",
+        "for codex in a b; do echo $codex; done",
+        "select grok in a; do break; done",
+        "function f { echo hi; }; f",
+        "f () { echo hi; }; f",
+        "sed '1e echo hi' f",
+        "gsed 's/x/y/' f",
+        "echo hi | sed e",
+        "sed 's/^.*$/echo hi/e' f",
+        "sed 'N;s/^.*$/echo hi/' f",
+        "sed 'H;s/^.*$/echo hi/' f",
+        "sed 'G;s/^.*$/echo hi/' f",
+        "sed 's/^.*$/echo hi/M' f",
+        "sed e <<< 'echo hi'",
+    ],
+)
+def test_provider_review_correction_allows_data(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "source <(echo 'claude -p hi')",
         ". <(echo 'claude -p hi')",
         "echo 'claude -p hi' | source /dev/stdin",

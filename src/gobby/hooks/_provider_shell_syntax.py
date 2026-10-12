@@ -2,10 +2,40 @@
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._case_syntax import CaseSyntax
-from gobby.hooks._normalization_shell import _skip_heredocs, _substitution_end, scan_shell_command
+from gobby.hooks._normalization_shell import (
+    ShellToken,
+    _skip_heredocs,
+    _substitution_end,
+    scan_shell_command,
+)
 
 
-def _group_spans(command: str) -> tuple[dict[int, int], dict[int, tuple[int, int, int]]]:
+def _function_header(tokens: list[ShellToken], index: int) -> tuple[str, int] | None:
+    """Recognize the literal function header forms accepted by Bash and zsh."""
+    first = index
+    if tokens[index].quoted:
+        return None
+    keyword = tokens[index].value == "function"
+    if keyword:
+        index += 1
+    if index >= len(tokens) or tokens[index].quoted:
+        return None
+    word = tokens[index].value
+    attached = word.endswith("()")
+    name = word[:-2] if attached else word
+    if not name.isidentifier():
+        return None
+    if not attached and index + 1 < len(tokens) and tokens[index + 1] == ShellToken("()"):
+        index += 1
+        attached = True
+    if not keyword and not attached:
+        return None
+    return name, max(first, index)
+
+
+def _group_spans(
+    command: str,
+) -> tuple[dict[int, int], dict[int, tuple[int, int, int]], dict[int, tuple[str, int]]]:
     """Match reserved group words only where the shell expects a command.
 
     Substitutions and heredoc payloads are already opaque scanner tokens.
@@ -14,6 +44,7 @@ def _group_spans(command: str) -> tuple[dict[int, int], dict[int, tuple[int, int
     scan = scan_shell_command(command)
     braces: dict[int, int] = {}
     compounds: dict[int, tuple[int, int, int]] = {}
+    functions: dict[int, tuple[str, int]] = {}
     stack: list[tuple[str, int, int]] = []
     position = True
     closing = {
@@ -25,12 +56,28 @@ def _group_spans(command: str) -> tuple[dict[int, int], dict[int, tuple[int, int
         "case": "esac",
         "{": "}",
     }
-    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+    skip = -1
+    for index, (token, (start, end)) in enumerate(zip(scan.tokens, scan.spans, strict=True)):
+        if index <= skip:
+            continue
         word = token.value
         if not token.quoted and word in {";", "\n", "|", "|&", "&", "&&", "||", ";;", ";&", ";;&"}:
             position = True
             continue
         if position and not token.quoted:
+            header = _function_header(scan.tokens, index)
+            if header is not None:
+                name, skip = header
+                functions[start] = (name, scan.spans[skip][1])
+                continue
+            if word == "coproc":
+                if (
+                    index + 2 < len(scan.tokens)
+                    and scan.tokens[index + 1].value.isidentifier()
+                    and scan.tokens[index + 2].value in {"{", "("}
+                ):
+                    skip = index + 1
+                continue
             if word in closing:
                 stack.append((word, start, end))
                 position = word not in {"for", "select", "case"}
@@ -52,7 +99,7 @@ def _group_spans(command: str) -> tuple[dict[int, int], dict[int, tuple[int, int
     for opener, start, _ in stack:
         if opener == "{":
             braces[start] = -1
-    return braces, compounds
+    return braces, compounds, functions
 
 
 def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
@@ -65,12 +112,16 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     expansions: list[str] = []
     quote = ""
     cases = CaseSyntax()
-    brace_ends, compounds = ({}, {}) if data else _group_spans(command)
+    brace_ends, compounds, functions = ({}, {}, {}) if data else _group_spans(command)
     index = 0
     line_start = 0
     while index < len(command):
         char = command[index]
         pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
+        if index in functions and not quote:
+            name, index = functions[index]
+            output.append(f"{name}()")
+            continue
         if index in compounds and not quote:
             body, body_end, end = compounds[index]
             output.append(f"__gobby_group_{len(expansions)}__")
@@ -78,7 +129,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             # Omit the closer so this body is not extracted again recursively.
             expansions.append(
                 command[index:body_end]
-                if command.startswith("case", index)
+                if command.startswith(("case", "for", "select"), index)
                 else command[body:body_end]
             )
             index = end
