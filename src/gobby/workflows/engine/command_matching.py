@@ -592,11 +592,13 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        opening = command.find("$(", start, end)
-        if opening >= 0:
+        match = re.search(r"\$\(|`|[<>]\(", command[start:end])
+        if match is not None:
+            opening = start + match.start()
+            tick = command[opening] == "`"
             try:
                 split_substitution |= (
-                    _substitution_end(command, opening + 2, False, depth + 1) >= end
+                    _substitution_end(command, opening + (1 if tick else 2), tick, depth + 1) >= end
                 )
             except ValueError:
                 continue
@@ -700,6 +702,15 @@ def _subjects(
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
+            if candidate.startswith("(") and not candidate.startswith("(("):
+                try:
+                    end = _substitution_end(candidate, 1, False, depth + 1)
+                except ValueError:
+                    pass
+                else:
+                    subjects.extend(
+                        _subjects(candidate[1:end], depth + 1, correlated_subjects=correlations)
+                    )
             if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
                 subjects.append(candidate)
             else:
@@ -758,6 +769,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
     out: list[str] = []
     correlated: list[str] = []
     executed: list[str] = []
+    has_correlation = False
     quote = ""
     index = 0
     line_start = 0
@@ -768,7 +780,11 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             correlated.append(subject[index : index + 2])
             index += 2
             continue
-        if quote not in {"'", "$"} and (subject.startswith("$(", index) or char == "`"):
+        if quote not in {"'", "$"} and (
+            subject.startswith("$(", index)
+            or char == "`"
+            or (not quote and subject[index : index + 2] in {"<(", ">("})
+        ):
             tick = char == "`"
             start = index + (1 if tick else 2)
             try:
@@ -777,7 +793,16 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
                 return [subject]
             body = subject[start:end]
             bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
+            if not tick and char in "<>":
+                # Keep the process target in its owner: it determines whether a
+                # heredoc is executable. Add only newly separated arm subjects.
+                executed.extend(part for part in bodies if part != body)
+                out.append(subject[index : end + 1])
+                correlated.append(subject[index : end + 1])
+                index = end + 1
+                continue
             executed.extend(bodies)
+            has_correlation |= bool(bodies)
             out.append(f"{subject[index:start]}{subject[end]}")
             correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
             index = end + 1
@@ -820,7 +845,7 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
         out.append(char)
         correlated.append(char)
         index += 1
-    if executed:
+    if has_correlation:
         correlations.append("".join(correlated))
     return ["".join(out), *executed]
 

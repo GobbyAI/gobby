@@ -133,8 +133,8 @@ def case_arm_tokens(
             (
                 index
                 for index, token in enumerate(parts[2:], 2)
-                if not token.quoted
-                and (token.value == "in" or command[slice(*spans[id(token)])].startswith("in("))
+                if (not token.quoted and token.value == "in")
+                or command[slice(*spans[id(token)])].startswith("in(")
             ),
             len(parts),
         )

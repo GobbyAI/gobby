@@ -26,6 +26,72 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
+    "command",
+    [
+        "(case x in x) gem push x;; esac)",
+        "( case x in x) gem push x;; esac )",
+        "(case x in (x) gem push x;; esac)",
+        "(true; case x in x) gem push x;; esac)",
+        "echo $(case y in y) gem push x;; esac)",
+        "echo <(case y in (y) gem push x;; esac)",
+        "echo `case y in y) gem push x;; esac`",
+        "echo >(case y in (y) gem push x;; esac)",
+        "(case x in x) case y in y) gem push x;; esac;; esac)",
+        "case x in x) (case y in y) gem push x;; esac);; esac",
+        "(case x in ')') gem push x;; esac)",
+        "(case x in x) gem push x;& y) true;; esac)",
+        "(case x in x) true;;& x) gem push x;; esac)",
+        "(case x in\nx) gem push x\n;;\nesac)",
+    ],
+)
+def test_grouped_case_commands_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_nested_case_closes_only_its_own_frame(mask_quoted: bool) -> None:
+    command = "(case x in x) case y in y) true;; esac;; z) gem push x;; esac)"
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "shopt -s extglob\ncase x in @(x|y)) gem push x;; esac",
+        'case "x)" in("x)")gem push x;; esac',
+        'case x in("x")gem push x;; esac',
+    ],
+)
+def test_case_pattern_headers_match_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("(echo case x in x) && gem push x", True),
+        ("echo $(echo case x in y) ; gem push x", True),
+        ("echo $(echo case) gem push x", False),
+    ],
+)
+def test_case_words_in_arguments_keep_command_matching(
+    command: str, expected: bool, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is expected
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_malformed_grouped_case_matching_does_not_raise(mask_quoted: bool) -> None:
+    result = command_patterns_match(
+        "(case x in x) gem push x)", pattern=GEM_PUSH, mask_quoted=mask_quoted
+    )
+    assert isinstance(result, bool)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
     "command,expected",
     [
         pytest.param("{ case x in x) gem push x;; esac; }", True, id="R1"),
