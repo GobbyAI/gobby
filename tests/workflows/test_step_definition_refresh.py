@@ -30,6 +30,70 @@ from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_
 pytestmark = pytest.mark.integration
 
 
+@pytest.mark.parametrize("added_default", [False, True])
+@pytest.mark.asyncio
+async def test_reloaded_definition_supplies_missing_variable_defaults(
+    hub_db: HubDatabase,
+    seat_ids: tuple[str, str],
+    caplog: pytest.LogCaptureFixture,
+    added_default: bool,
+) -> None:
+    session_id, _ = seat_ids
+    original = _definition("R1", "get_task")
+    assert original.step_workflow is not None
+    manager = AgentDefinitionManager(hub_db)
+    row = manager.upsert_with_steps(
+        original.name, original.model_dump(), original.step_workflow.model_dump()
+    )
+    preserved = {"handed_off": False, "assigned_task_id": "retained-task", "nullable": None}
+    instance = build_step_instance(
+        original,
+        session_id=session_id,
+        step_workflow_id=row.step_workflow_id,
+        variables=preserved,
+    )
+    instance_mgr = AgentStepInstanceManager(hub_db)
+    instance_mgr.save(instance)
+    updated = _definition("R2", "get_task")
+    assert updated.step_workflow is not None
+    updated.step_workflow.variables.update(
+        {"bounced": added_default, "handed_off": True, "nullable": "new-default"}
+    )
+    updated.step_workflow.steps[0].transitions[0].when = (
+        f"vars.bounced == {added_default} and not vars.handed_off "
+        "and vars.assigned_task_id == 'retained-task' and vars.nullable == None"
+    )
+    manager.upsert_with_steps(
+        updated.name, updated.model_dump(), updated.step_workflow.model_dump()
+    )
+    active = instance_mgr.get_active_for_session(session_id)
+    assert active is not None
+    # Reading current policy does not rewrite immutable activation provenance or storage.
+    stored = instance_mgr.get_for_session(session_id)
+    assert stored is not None and stored.variables == preserved
+    assert stored.snapshot == instance.snapshot
+    engine = RuleEngine(hub_db)
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-sessions", "tool_name": "get_handoff"},
+            "tool_output": {"success": True},
+        },
+    )
+    await engine.evaluate(event, session_id=session_id, variables={"finished": False})
+    assert "Failed to evaluate condition" not in caplog.text
+    assert active.variables == {"bounced": added_default, **preserved}
+    transitioned = instance_mgr.get_for_session(session_id)
+    assert transitioned is not None and transitioned.current_step == "review"
+    assert transitioned.variables == {"bounced": added_default, **preserved}
+    assert transitioned.snapshot == instance.snapshot
+    assert transitioned.id == instance.id
+
+
 def _definition(revision: str, tool: str) -> AgentDefinitionBody:
     return AgentDefinitionBody.model_validate(
         {
