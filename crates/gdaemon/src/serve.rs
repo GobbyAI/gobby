@@ -92,18 +92,24 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let home = path.parent().context("bootstrap has no parent directory")?;
-        if bootstrap.mode == RunMode::Node {
-            let Some((node, claim)) = crate::state::NodeServices::prepare(&bootstrap, &path, home)? else {
+        let Some((secret, auth, (backend_http, backend_ws))) = native else {
+            let Some((node, claim)) =
+                crate::state::NodeServices::prepare(&bootstrap, &path, home)?
+            else {
                 return Ok(());
             };
-            let mut listeners = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
-            listeners.extend(bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?);
-            let doors = listeners.into_iter().map(|listener| (listener, FrontDoor::node(node.clone()))).collect();
-            let result = serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
+            let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
+            let ws = bind_listeners(&bootstrap.bind_host, bootstrap.websocket_port).await?;
+            let doors = http.into_iter()
+                .map(|listener| (listener, FrontDoor::node(node.clone(), false)))
+                .chain(ws.into_iter()
+                    .map(|listener| (listener, FrontDoor::node(node.clone(), true))))
+                .collect();
+            let result =
+                serve_doors(doors, tls.map(|loaded| loaded.config), shutdown_signal()).await;
             drop(claim);
             return result;
-        }
-        let (secret, auth, (backend_http, backend_ws)) = native.context("native runtime configuration missing")?;
+        };
         let Some((state, supervisor)) =
             crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
         else {

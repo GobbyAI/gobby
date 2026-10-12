@@ -5,6 +5,7 @@ pub mod auth;
 pub mod challenge;
 pub mod health;
 pub mod proxy;
+pub mod relay;
 pub mod routes;
 pub mod tls;
 pub mod ws;
@@ -61,7 +62,10 @@ enum Door {
         table: Arc<RouteTable>,
     },
     #[cfg(unix)]
-    Node(Arc<crate::state::NodeServices>),
+    Node {
+        node: Arc<crate::state::NodeServices>,
+        ws_listener: bool,
+    },
 }
 
 impl FrontDoor {
@@ -75,9 +79,9 @@ impl FrontDoor {
     }
 
     #[cfg(unix)]
-    pub fn node(node: Arc<crate::state::NodeServices>) -> Self {
+    pub fn node(node: Arc<crate::state::NodeServices>, ws_listener: bool) -> Self {
         Self {
-            door: Door::Node(node),
+            door: Door::Node { node, ws_listener },
         }
     }
 
@@ -93,14 +97,20 @@ impl FrontDoor {
         let (backend_state, table) = match &self.door {
             Door::Backend { state, table } => (state, table),
             #[cfg(unix)]
-            Door::Node(node) => {
+            Door::Node { node, ws_listener } => {
                 if request.method() == axum::http::Method::POST
                     && request.uri().path() == "/api/runtime/handshake/challenge"
-                    && let Err(response) = challenge::answer(&node.bootstrap_path, request).await
                 {
-                    return *response;
+                    request = match challenge::answer(&node.bootstrap_path, request).await {
+                        Ok(request) => request,
+                        Err(response) => return *response,
+                    };
                 }
-                return health::unavailable(&node.hub_daemon_url, BackendState::Down);
+                return if ws::is_upgrade(request.headers()) {
+                    node.relay.splice(request, *ws_listener).await
+                } else {
+                    node.relay.forward(request).await
+                };
             }
         };
         let state = backend_state.clone();

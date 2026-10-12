@@ -2522,6 +2522,7 @@ dependencies = [
  "hmac 0.12.1",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "libc",
  "num-bigint",

@@ -31,6 +31,7 @@ gobby-terminals = { path = "../gterminals" }
 http-body-util = "0.1"
 hmac = "0.12"
 hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-rustls = { version = "0.27.7", default-features = false, features = ["http1", "ring", "tls12"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 # ring only, matching the workspace's rustls; aws-lc-rs stays out of the build.
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }

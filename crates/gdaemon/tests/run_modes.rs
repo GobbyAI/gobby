@@ -36,7 +36,7 @@ fn node_prepare_takes_only_the_claim() {
         .expect("prepare node")
         .expect("PID claim");
     assert_eq!(services.bootstrap_path, path);
-    assert_eq!(services.hub_daemon_url, HUB);
+    assert_eq!(services.relay.origin, HUB);
     assert!(claim.fileno().is_some());
     assert!(home.path().join("gobby.pid").exists());
     drop(claim);
@@ -189,7 +189,15 @@ async fn challenge(port: u16) {
 }
 
 fn write_node(home: &Path, ports: [u16; 2], extra: &str) {
-    std::fs::write(home.join("bootstrap.yaml"), format!("datastore_mode: remote\nhub_daemon_url: {HUB}\napi_key: {KEY}\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n{extra}", ports[0], ports[1])).expect("write bootstrap");
+    std::fs::write(
+        home.join("bootstrap.yaml"),
+        format!(
+            "datastore_mode: remote\nhub_daemon_url: {HUB}\napi_key: {KEY}\n\
+             bind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n{extra}",
+            ports[0], ports[1]
+        ),
+    )
+    .expect("write bootstrap");
 }
 
 #[tokio::test]
@@ -221,7 +229,7 @@ async fn node_serve_takes_only_the_claim() {
     let (status, body) = request(ports[0], bearer).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["backend"]["target"], HUB);
-    assert_ne!(body["code"], "key_resolver_unavailable");
+    assert_eq!(body["status"], "unavailable");
     assert!(first.0.try_wait().expect("poll first").is_none());
     assert!(!home.path().join("backend-started").exists());
     let mut second = spawn(home.path(), "second.log");

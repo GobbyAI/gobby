@@ -96,7 +96,7 @@ where
 
 /// RFC 9110 section 7.6.1 applies to trailer fields too: drop the `removed` names
 /// from trailer frames as they stream past.
-fn strip_trailers<B>(body: B, removed: Vec<HeaderName>) -> Body
+pub(super) fn strip_trailers<B>(body: B, removed: Vec<HeaderName>) -> Body
 where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<axum::BoxError>,
