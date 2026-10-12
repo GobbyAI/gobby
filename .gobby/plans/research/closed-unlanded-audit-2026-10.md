@@ -3877,6 +3877,7 @@ for line in original.splitlines():
 inventory.sort(key=lambda row: (row[0]["closed_at"] or "", row[0]["seq_num"]), reverse=True)
 assert len(inventory) == 89
 batch = REPORT.split("## Semantic recovery review: batch 3", 1)[1]
+batch = re.split(r"\n## Semantic recovery review:", batch, maxsplit=1)[0]
 classification = batch.split("### Batch 3 classifications", 1)[1].split("Batch totals:", 1)[0]
 rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (missing|delivered|intentionally superseded) \|", classification)
 assert [(int(n), sha) for n, sha, _ in rows] == [(t["seq_num"], oids[0][:10]) for t, oids in inventory[30:45]]
@@ -3894,7 +3895,7 @@ for (n, prefix, present, absent), (task, oids) in zip(path_rows, inventory[30:45
     paths = git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", oids[0]).decode().splitlines()
     found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{path}"], capture_output=True).returncode == 0 for path in paths)
     assert (found, len(paths)-found) == (int(present), int(absent))
-    assert not git("for-each-ref", f"--contains={oids[0]}")
+    assert not git("for-each-ref", f"--contains={oids[0]}", "refs/heads", "refs/remotes")
 for task, oids in inventory[30:45]:
     if any(n == str(task["seq_num"]) and v == "missing" for n, _, v in rows):
         assert oids[0] in batch
@@ -3937,5 +3938,315 @@ row and cumulative totals. Its historical query documentation is missing alongsi
 The old replay-only artifacts and generated-recovery guidance remain retired.
 This correction changes the 45 classified tasks to **16 delivered, 9 intentionally
 superseded, 20 missing**; **44 tasks remain**. Batch 4 research is in progress.
+
+## Semantic recovery review: batch 4 (60 of 89 cumulative)
+
+This addendum reviews positions 46–60 in the unchanged newest-first snapshot.
+Evidence remains bound to commit `4ccb3e966ed18fe13cd9f268d55143128d034048`,
+tree `428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`, gcode checkout project
+`19b73420-3946-5c6a-8a06-4c7522f77543`. Before edits, the clean report branch
+was fast-forwarded to the batch 3 follow-up landing
+`af678a70afd222f8e7220cc58fe0f95357d39889` on the Lane Manager’s direction.
+That changes neither the evidence pin nor the audit inventory.
+
+### Batch 4 classifications
+
+| Task and title | Unproven revision | Classification | Pinned evidence and disposition |
+| --- | --- | --- | --- |
+| #19142 — Arbitrate synthetic tmux input safely across providers | `85668288c0` | intentionally superseded | The authoritative task explicitly says BACKED OUT, names 7e2a555681b20299de27ed18d15cf098af7b32c2 **Compaction identity without arbiter**, and directs lost-work audits not to recover this revision. Its retired migration 346 and the entire arbiter rollout were withdrawn. The task separately identifies #19752 **Live-wake cancellation** as the residual fix. This disposition rests on explicit withdrawal, not the absence of the 13 retired paths. |
+| #19007 — Fix CodeRabbit packet 09: Servers, sessions, WebSocket, and runtime boundaries | `e95f9be14b` | delivered | Named replacement #19173 **Server/session/runtime reconciliation**, c3c13e0ed4af73e6dc103322c559f16ffa5e5bd5, is a pin ancestor. Surviving tmux command construction, context/offload, deployment credentials, ASGI cleanup, Codex dedup/registration rollback, telemetry ownership and test/fixture changes remain or are adapted. D1 retains probe-before-atomic-config-write semantics; D3–D4 retain corrupt-log handling and bounded counts. D2 uses the explicitly redesigned #23117 **Bounded transcript search** journal/source-window contract; it does not claim the old full-prefix digest remains in use. |
+| #19006 — Fix CodeRabbit packet 08: MCP proxy and Hub services | `6d121d19bf` | delivered | Named replacement #19172 **MCP/Hub reconciliation**, 9c34494c6ce5d1c6f8688fea7c042804907b3136, carries or adapts the independent proxy/Hub hardening. D5 proves the current full-snapshot tool returns structured errors for corrupt stored snapshots and retains PostgreSQL/I/O handling for bind operations. Old automatic-recall paths and their tests were explicitly removed by #21009 **Retire automatic memory recall injection**, 8358d7bba6973b5ba58ea9340b0437bbb492be46; agents use on-demand search. Other surviving deltas were checked individually against the reconciliation ledger. |
+| #19005 — Fix CodeRabbit packet 07: Workflows, skills, and orchestration | `f8dbf6d929` | delivered | Named replacement #19171 **Workflow/skills reconciliation**, 1242097f2fb0abd571b70c4339b462b9e4131390, carries the surviving workflow, variable, skill, runner and regression changes. D6 uses an evidence handle plus get_plan_review_snapshot instead of inline bytes, so inline nonce protection is obsolete. D7 retains offloaded memory suppliers. The unresolved-error reservation inside the old digest-based summary action was removed by #21140 **Structured session handoffs**, 5694253eb6232fc0cae9dc6a27521b176dea98d5; D8 caps the replacement transcript input. Retired transport/digest tests need no replay. |
+| #19004 — Fix CodeRabbit packet 06: Tasks, plans, and review learning | `7daf01cf55` | missing | Partial loss: six independent improvements remain absent in live coverage, finding and lesson-selection interfaces (D12–D17). Named replacement #19170 **Task/plan/review reconciliation**, da44e2fa9e42fc149a7414c1b1492dda48af6269, carried them, but #19368 **Restore pre-experiment plan-adversary flow** removed them. That task explicitly preserves unrelated improvements. Atomic manifest application, approval locking, direct run IDs and shared digests survive (D9–D11); retired receipt/convergence mechanisms stay retired. Recover only the six named losses below and adapt their regressions. |
+| #18970 — Harden idle, prompt, stall, and pane-monitor behavior | `79486d6f34` | delivered | Prompt, stall and lifecycle deltas survive. The old pane monitor is replaced by attention_tracker and interactive_attention_monitor: D18–D20 retain classification payloads, offloaded storage, provider-specific detection and capture-timeout handling; D21 retains complete machine-run and live-session pagination. The retired pane-monitor tests are mapped to the replacement attention surface rather than treated as missing solely by path name. |
+| #18984 — Integrate hardened managed sandbox startup into 0.5.0 | `58e05a93f7` | delivered | All nine touched paths survive. D22 records startup failure against the run manager, returns a failed SpawnResult and offloads enforcement storage. D23 retains portable Node preflight, provider TMPDIR restoration, signal cleanup and unsubscribe. The runner/helper decomposition preserves the tagged launch-or-failure contract; current sandbox regression modules remain. |
+| #18971 — Harden sandbox, spawn, and SRT runtime contracts | `1e17d29420` | delivered | The same startup/cleanup contracts are retained in D22–D23 and all nine paths survive. The task’s bounded package-root follow-up 5396812e8902bc278cd21405d08f5bc88e3fe83d is a pin ancestor. Provider-optional sandbox policy, spawn run-manager wiring and contextual failure logging remain; no runtime sandbox execution is claimed. |
+| #18267 — Fold web-core retry fork into review-fixes/16966-web-core lane | `16a1cca3d2` | delivered | Its hydration fix is delivered by #16695 **Selection hydration**, e87998c1399a3fe149184da14e0749e03c97c07c. D24 preserves touched guards, both callbacks and persistence gates; D25–D26 preserve deferred-response regression semantics after #19968 **Browser configuration migration**, b6294eb62ec86e0b44ac069596459bc6adff0f37. D27 retains the bundle warning threshold and robust React vendor splitting. All four changed paths survive. |
+| #16695 — Stop UI-settings hydration clobbering selections made during load | `404411584c` | delivered | Same-task landed replacement e87998c1399a3fe149184da14e0749e03c97c07c is a pin ancestor. D24 prevents late persisted settings from replacing user-touched project/provider selections and persists early edits. The renamed test in D25–D26 still edits both selections before resolving stale configuration, asserts both final selections and checks both revision-carrying PATCH bodies. The specialized PUT endpoint is intentionally replaced by universal configuration. |
+| #18250 — Resolve web-components-b JIT-merge conflict in cron storage validation tests | `30539f3ad5` | delivered | The merge has no ordinary changed-path delta. Its remerge conflict resolution keeps invalid-cron coverage and uses an expired one-shot schedule for the separate invalid-enabled-schedule test. D28 retains both rejection cases and empty-storage assertions. This is semantic test-resolution evidence, not an ancestry claim for the unlanded merge. |
+| #16615 — Restore the focus indicator on the font-size slider | `dcd4644bfc` | delivered | Same-task replacement 6019aa7a68221fe828bc89af72fad02569ee62f4 is a pin ancestor. D29–D30 retain the focus-visible accent outline, offset and actual slider-focus regression; the old settings.css rule is replaced by utilities on AppearanceSection. D27 retains the revision’s robust React chunk matching. |
+| #16582 — Add keyboard parity to clickable divs, rows and SVG across 15+ surfaces | `31ae7bf0ae` | delivered | Same-task replacement 169bffaddb3ccf94404774826c265f045576e2c5 is a pin ancestor. D32–D34 retain Enter/Space activation, nested-target guards and preventDefault; D37–D40 map menu/dialog/filter presentation changes to current shared primitives and the primary-mousedown overlay contract. Surviving activity/file-change/trace/integration/memory/skills regressions remain or adapt. FilesPage and legacy wiki paths are explicitly retired by #20103 **Prettier adoption** and #21816 **Legacy wiki UI retirement**; their deleted tests are not independent live losses. |
+| #16071 — FilesPage failed save must preserve the editor and unsaved edits | `afe1e1a63a` | delivered | Same-task replacement d1ef17cbab0f4e9b7c1ff2a358f70ab77a3b6a1b is a pin ancestor. D35 keeps failure separate in saveError, clears saving and preserves content/edit state by file identity; D36 retains failed-save/retry coverage. D31 closes the current shared editor only on successful onSave. The dead FilesPage and its stylesheet/component tests were explicitly removed by #20103 **Prettier adoption**, 927af24ab739527f160a10b2cf3b4bcd0a7d672e. That retirement does not erase the surviving hook fix. |
+| #17462 — Write Codex goal prompt for fable fixes orchestration | `4ee2c63b30` | intentionally superseded | The only changed path, .gobby/goals/fable-fixes.md, is an old provider-native goal orchestration prompt. Josh explicitly retired native goal loops for developer lanes; current seat policy requires Gobby task/handoff/Lane Manager continuity. Memory 9215aba2-b193-5b35-b1f1-24162643ec3d records the decision and coordination failure it prevents. No product source or independent regression is changed. The object remains on 0.4.44; do not reactivate its obsolete orchestration instructions. |
+
+Batch totals: **12 delivered, 2 intentionally superseded, 1 missing**.
+Cumulative totals: **28 delivered, 11 intentionally superseded, 21 missing**;
+**29 tasks remain**. These classify source and explicit decisions; they do not
+assert fresh runtime test passes, installed registry state or activation.
+
+### Batch 4 recovery referral
+
+Inbox Manager receipt `7f719a24-e8a6-4e13-8bb9-ee73adf3cdce` and Lane Manager
+copy `db116bc8-3028-4307-8307-f5b3f7cd340e` carry the full missing-partial
+referral to the Orchestrator. Both messages name the task, full SHA, current
+archive ref, absence of a holding branch, missing behaviors and affected paths.
+The Lane Manager confirms the Orchestrator filed #24128 **Recover packet 06
+review-learning hardening**; it remains queued behind this audit.
+
+| Task and title | Full unlanded SHA | Missing behavior and paths | Holding branch |
+| --- | --- | --- | --- |
+| #19004 — Fix CodeRabbit packet 06: Tasks, plans, and review learning | `7daf01cf5552fc65d2e07ffaca06016ac7db6fa5` | Coverage source-resolution errors and stable field error codes, named threshold constants, Markdown-structure guards, positional candidate handling, and evidence-scoped invalid-payload diagnostics. Source: src/gobby/plans/review_coverage.py, src/gobby/plans/review_findings.py, src/gobby/review_learning/round_diff.py. Adapt regressions in tests/plans/test_review_coverage.py, tests/storage/test_stage_review_findings.py and tests/review_learning/test_round_diff.py. | none; preserved by refs/audit/24076/7daf01cf5552fc65d2e07ffaca06016ac7db6fa5 |
+
+The six losses correspond to packet findings 531, 532, 533, 539, 543 and 544:
+
+- D12 resolves the root outside structured handling and maps every citation
+  OSError to retryable source_drift. The revision distinguishes disappearance
+  from non-retryable source_io_error.
+- D13 derives error codes from owner prose instead of explicit caller codes:
+  invalid_lane_results, invalid_candidate, invalid_dispositions and
+  invalid_source_citation. New coverage fields need current-schema adaptation.
+- D14 repeats 8/24/12/4 in routing and metadata. The numeric behavior is retained;
+  the missing improvement shares named constants.
+- D15–D16 validate strings but omit the revision’s rejection of fenced blocks
+  and heading-like description/fix/prevention lines. Rendering inserts those
+  strings into durable Markdown.
+- D17 uses object identity to exclude already-selected candidates, collapsing
+  repeated references to the same object. The revision tracks ranked positions.
+  Its current no-fix-policy lesson class must remain.
+- D17 silently returns None for invalid previous payloads; the revision records
+  evidence-scoped DEBUG diagnostics without changing classifications.
+
+The landed reconciliation ledger marks these improvements carried/adapted.
+They disappear in `a2b779f60ff0020d8e5704bb37ecc345f1f6e754` under #19368
+**Restore pre-experiment plan-adversary flow**. Its authoritative description
+says to “preserve approved planning controls and unrelated improvements.”
+The current interfaces still consume citations, render finding strings and
+select lesson candidates. No separate withdrawal covers these guards.
+By contrast, D9–D11 prove manifest re-fetch/verification/render/intent/write/
+completion remain under mutation transactions and approval reuses the pre-held
+mutex. Recovery must preserve that architecture and the named retirements.
+
+### Batch 4 touched-path and replacement audit
+
+Every unproven revision’s full path inventory was checked against the fixed pin;
+surviving production and test deltas were compared individually. The large packet
+reconciliations were checked against their finding-by-finding ledgers, now retained
+under .gobby/plans/completed/coderabbit-fixes/. Exact-line retention was a navigation
+screen, not sufficient proof of semantic delivery. Changed interfaces were followed
+to their current helpers and regressions.
+
+| Task and title | Revision | Paths present at pin | Paths absent at pin |
+| --- | --- | --- | --- |
+| #19142 — Tmux input arbitration | `85668288c0` | 42 | 13 |
+| #19007 — Server/session/runtime packet | `e95f9be14b` | 49 | 4 |
+| #19006 — MCP/Hub packet | `6d121d19bf` | 49 | 7 |
+| #19005 — Workflow/skills packet | `f8dbf6d929` | 34 | 8 |
+| #19004 — Task/plan/review packet | `7daf01cf55` | 35 | 2 |
+| #18970 — Idle/prompt/stall hardening | `79486d6f34` | 9 | 3 |
+| #18984 — Managed sandbox integration | `58e05a93f7` | 9 | 0 |
+| #18971 — Sandbox/spawn/SRT contracts | `1e17d29420` | 9 | 0 |
+| #18267 — Web-core retry integration | `16a1cca3d2` | 4 | 0 |
+| #16695 — Selection hydration | `404411584c` | 4 | 0 |
+| #18250 — Cron merge resolution | `30539f3ad5` | 0 | 0 |
+| #16615 — Slider focus | `dcd4644bfc` | 2 | 1 |
+| #16582 — Keyboard parity | `31ae7bf0ae` | 12 | 4 |
+| #16071 — Failed-save preservation | `afe1e1a63a` | 3 | 3 |
+| #17462 — Native-goal prompt | `4ee2c63b30` | 0 | 1 |
+
+Path-retirement mappings:
+
+- The arbiter task explicitly withdraws its whole 55-path rollout, including
+  independent-looking compaction edits; named compaction replacement is an
+  ancestor. Migration 346 belongs to the retired lineage.
+- Packet 09’s historical archived test paths moved to current provider,
+  deployment and telemetry tests. Sandbox records use incremental byte counts
+  and replacement-decoded recent JSON (D3–D4). The transcript journal redesign
+  deliberately replaces repeated full-prefix verification with bounded source
+  windows and identity checks (D2); claim no equivalent whole-prefix guarantee.
+- Packet 08’s automatic memory recall modules/tests are explicitly retired.
+  Cleanup, health, communications-root security and Hub/proxy deltas survive
+  in the current split helpers. Snapshot transport was later restored to a
+  full UTF-8 snapshot tool under #19368 **Baseline review flow**; D5 is the
+  current corrupt-snapshot proof, not the old paged-service name.
+- Packet 07’s removed runner_maintenance.py is split into lifecycle.py (D7).
+  Old summary_actions.py split into session modules, then #21140 **Structured
+  handoffs** replaced the digest/reserved-error input. Current transcript bounds
+  remain (D8). Variable transactions, structured summary logging and surviving
+  skill/runner regressions retain their purposes.
+- Packet 06’s receipt admission/validation helpers and corresponding deleted
+  tests belong to the explicitly retired checklist-close design. Shared digest,
+  manifest, transition, criteria normalization and tagged-commit parser changes
+  survive. Its live coverage/finding/selection guards remain missing separately.
+- The three absent idle-hardening paths are the pane monitor and its old tests;
+  attention components retain provider-specific classification, offloading,
+  capture handling and complete pagination (D18–D21).
+- Browser persistence migrates from UI-settings PUT to revision-carrying config
+  PATCH under #19968 **Browser configuration migration**. The renamed regression
+  still verifies the original race and both writes (D25–D26), not just a new name.
+- FilesPage was explicitly dead and retired by #20103 **Prettier adoption**;
+  CodePage was removed by #16899 **Web-core nits**, a718a4fd9797f4c6a7365c992f5b3b78360555a2;
+  legacy wiki components were retired by #21816 **Legacy wiki UI retirement**,
+  200d7aa0503dff8d4afab28694b47217bcb5a839. Surviving useFiles and shared editor
+  contracts preserve failed saves (D31/D35–D36). Keyboard changes survive in
+  current tree items/helper and shared menu/dialog/filter primitives (D32–D40).
+  Old settings.css focus styling is replaced by current slider utilities.
+
+The first 14 revisions now have archive refs under refs/audit/24076/; they have
+no local or remote holding branch. #17462 **Native-goal prompt** remains on
+refs/heads/0.4.44. Archive refs preserve objects; they establish neither landing
+nor semantic delivery. No refs were created or changed by this developer.
+
+Found work in the report validator is fixed here: batch 3’s all-refs-empty
+assertion now checks holding branches and permits archive refs created after
+its earlier observation. Its section selection stops at the next batch.
+Historical “no refs” observations remain dated evidence, not current claims.
+
+### Batch 4 bound gcode excerpts
+
+Each range was served by gcode evidence with the exact fixed binding and
+complete=true. Each SHA-256 was checked against raw UTF-8, including its final
+newline. Ranges ending past EOF hash only the actual returned lines.
+
+| Evidence | Path | Lines | Excerpt SHA-256 |
+| --- | --- | --- | --- |
+| D1 | `src/gobby/servers/routes/configuration_generation_endpoints.py` | 43–124 | `29bcaca8f0f90b808a16cd821df157587bb729bc241bbe6dceced5153ac7c9bf` |
+| D2 | `src/gobby/sessions/transcript_index_sidecar.py` | 535–576 | `7787097502706a4a653fbe172a9792b70fbe140c065196370d262043e51c4cb7` |
+| D3 | `src/gobby/storage/agents/_sandbox_records.py` | 155–195 | `2f4f172b0258ba0ff4aba902ef2574b18d7270c02f913c1a47457117fcc17227` |
+| D4 | `src/gobby/storage/agents/_sandbox_records.py` | 230–275 | `bc9b6898824b407f344a5ac482103f0174971716e7972ca7ef3868db1555633b` |
+| D5 | `src/gobby/mcp_proxy/tools/plans/review_evidence.py` | 125–160 | `be09ddfdccbcb6cf406720e1d1c75d4d33e5d88ac86ff008d39f4257f1d28118` |
+| D6 | `src/gobby/dispatch/prompts.py` | 170–200 | `8bd929186ba2d7410653a1bb63c978ddf7c249972eaa9081d9559fa211dcf1fe` |
+| D7 | `src/gobby/runner_maintenance/lifecycle.py` | 20–55 | `16d82201b1ddb0a15fbe494e5511f25cd64f781b016da7aff0d99ba784012805` |
+| D8 | `src/gobby/sessions/summary_transcripts.py` | 260–278 | `f011ca7c065392d1ea0257f522b9e8be9a68acd2bac6adef89884f6b6652d41a` |
+| D9 | `src/gobby/plans/review_manifest_service.py` | 188–300 | `a4281c1f3949ef28f6498989ff14f8e79ef8e903f9b40dbafde11d6025fef726` |
+| D10 | `src/gobby/plans/review_manifest_service.py` | 295–336 | `44bfe9b51d7b9b8a2845e70e29dac26dd6ecf3dc03f36a7404b7e8186ee6626e` |
+| D11 | `src/gobby/storage/tasks/_review_transitions.py` | 200–255 | `0ac3cd52ffa1ff3d88a56be1011deac72c77b909dfea97607bca04c4211382e0` |
+| D12 | `src/gobby/plans/review_coverage.py` | 759–817 | `78cece999f7d3ec507efc1863325a5f1f13659310267a9633f91a294707e5e9c` |
+| D13 | `src/gobby/plans/review_coverage.py` | 840–850 | `98c7dca5c0ad7c2a3c28ffa2f78eae2056ccb612f74bc9b29332a31d16b5a388` |
+| D14 | `src/gobby/plans/review_coverage.py` | 204–238 | `c147b58f36464e337d684bbc9ec9bad3d4ca97b7bb11fa4047f71704115a8982` |
+| D15 | `src/gobby/plans/review_findings.py` | 100–170 | `28e35668a2609ff24915e3a8fa1a7a41f3ce0689b4ab06fe59fbca4f399820cd` |
+| D16 | `src/gobby/plans/review_findings.py` | 170–225 | `6206d01450f9a53f4c85ccf972dc2d89e70a08bc464d992e5aa3efb71c5efae9` |
+| D17 | `src/gobby/review_learning/round_diff.py` | 65–145 | `fbb07990702e34f3a3db3228df3dec890607d37fa4b164c5701f480b634bae97` |
+| D18 | `src/gobby/agents/attention_tracker.py` | 80–130 | `09cbff07e0c3050b42cda37c41604bd376ef70fde311fba6ed43442f017f3ae0` |
+| D19 | `src/gobby/agents/interactive_attention_monitor.py` | 188–240 | `7ae0dd9cb2c8b64197315482696448f9ea589a2fb0bd137192f5b931bcc69218` |
+| D20 | `src/gobby/agents/interactive_attention_monitor.py` | 244–315 | `cde8ac229f6a5c5f79b93d8d1321113561a16524186572631627f161cab9e563` |
+| D21 | `src/gobby/agents/interactive_attention_monitor.py` | 383–433 | `d51a9d7a49e2fc23fa6b48757c15be8196436b09b95b530eaef7576d7b753051` |
+| D22 | `src/gobby/agents/spawn_executor_providers.py` | 170–225 | `ef896dfa8f5ba51009d9acec464848d1b250b0903a6705811b9d8657cbc250e6` |
+| D23 | `src/gobby/agents/srt_runner.mjs` | 80–149 | `30cc5ce50a00dc694b5aa2ccb422329e05d0e979086b21a086deb12b0622b2e2` |
+| D24 | `web/src/components/app/useAppProjectSelection.ts` | 95–193 | `0d76b1b84e27374c89260f568af9cfe6cdfad1e0fdab7d80e3c08af635ae43f2` |
+| D25 | `web/src/components/app/__tests__/useAppProjectSelection.test.tsx` | 1–130 | `4f9b110d62a36cd087eaa451bcb06af2df31293fc0679f39a36f6500f364434b` |
+| D26 | `web/src/components/app/__tests__/useAppProjectSelection.test.tsx` | 130–175 | `35cb0031818ffc49edf343d447d947c5c4f4274bbf30aa3febf81c098da4d23a` |
+| D27 | `web/vite.config.ts` | 80–129 | `192ccf76c3256bf103562fa34807096751b3de2ab689c25d8ef5c641275d4e3d` |
+| D28 | `tests/scheduler/test_cron_storage.py` | 220–253 | `009e6bce416c7b5b5373b53f59f92f14e22a10db6fd396428bb8fb3804df41f4` |
+| D29 | `web/src/components/settings/sections/AppearanceSection.tsx` | 180–206 | `8ab4605ef440a6b86fa9e09bd7bd3c6f9a82e2bf74d9751187786f390b2d31f8` |
+| D30 | `web/src/__tests__/settingsSliderFocus.test.ts` | 1–86 | `b6b0c30417496b91f1b7dda9f6a7d12dbbe70e218faab4af8627a2895d74bd0d` |
+| D31 | `web/src/components/shared/editableContent.ts` | 72–115 | `af6b122a1181af0fed6c53c5c861c5b1f113a42e98f5f43f1dcd234d53fc14b6` |
+| D32 | `web/src/components/activity/FilesTabTree.tsx` | 190–215 | `80aa32ead4f9ee2adc2b9e6b5f777fc9eff27d1c98e1b331c540131aff9f061f` |
+| D33 | `web/src/components/activity/FilesTabTree.tsx` | 276–300 | `4c459db2454ac71495c23ead754941f8c64b22bf32acfdfdf6832d4eb688677e` |
+| D34 | `web/src/lib/keyboard.ts` | 1–20 | `7686f899c0301089c37e96eba100ac2b4711d22365116170a88862102fc43670` |
+| D35 | `web/src/hooks/useFiles.ts` | 419–475 | `bf14e8a5fdbd68af965e0c6931ed690e0111a262ef8fa04be2c52f6fe27bc1ab` |
+| D36 | `web/src/hooks/__tests__/useFiles.save.test.tsx` | 45–75 | `09cd5ffe127928e1efcba51079428259bc9331499ce777bc0a31b1da4167533f` |
+| D37 | `web/src/components/activity/SessionsTabMenu.tsx` | 20–106 | `0bf5fddff7a084aef11d97564ffa21b613f47020e29eaee9d1212e08ae89e93d` |
+| D38 | `web/src/components/activity/TaskCloseDialog.tsx` | 58–76 | `4af036a99533c0620a0b1271d023514ad8fc12fdd35000853fdcd3f8963a3bde` |
+| D39 | `web/src/components/activity/TasksTabFilters.tsx` | 60–90 | `924de0cc5e99512b6769cadce28cc219a9da4e0ca62693b1b84d0fed90558920` |
+| D40 | `web/src/components/activity/FilterPrimitives.tsx` | 126–178 | `3949c2ac427a02a3085a6a9558545b866e68c2df575aef3931294d88b318b208` |
+
+### Batch 4 reproducible report validation
+
+Run this focused report/source check from a checkout containing the report,
+historical Git objects and preserved audit refs. It reconstructs the fixed
+inventory from the committed report, checks all four batches’ totals, and
+runs no runtime test suite.
+
+```bash
+uv run python - <<'PY'
+# batch-4-audit
+import hashlib
+import re
+import subprocess
+from collections import Counter
+from pathlib import Path
+
+PIN = "4ccb3e966ed18fe13cd9f268d55143128d034048"
+REPORT = Path(".gobby/plans/research/closed-unlanded-audit-2026-10.md").read_text()
+EXCLUDE = {23201, 23252, 23304, 23345, 23519, 23626, 23269}
+
+def git(*args):
+    return subprocess.check_output(["/usr/bin/git", *args])
+
+original = REPORT.split("## Every closed task with an unlanded commit\n", 1)[1].split("\n## Per-commit", 1)[0]
+proof = REPORT.split("## Per-commit supersession and recovery evidence", 1)[1].split("## Every closed task", 1)[0]
+needs_inspection = {
+    sha for sha, body in re.findall(r"### `([0-9a-f]{40})`\n(.*?)(?=\n### `|\Z)", proof, re.S)
+    if "\nMissing linked revision, semantic supersession not proven." in body
+}
+inventory = []
+for line in original.splitlines():
+    if not line.startswith("| #") or not line.endswith("Missing linked revision, semantic supersession not proven |"):
+        continue
+    columns = line.strip("| ").split(" | ")
+    seq_num = int(re.match(r"#(\d+)", columns[0])[1])
+    oids = [oid for oid in re.findall(r"`([0-9a-f]{40})`", columns[2]) if oid in needs_inspection]
+    if oids and seq_num not in EXCLUDE:
+        inventory.append(({"seq_num": seq_num, "closed_at": columns[1]}, oids))
+inventory.sort(key=lambda row: (row[0]["closed_at"] or "", row[0]["seq_num"]), reverse=True)
+assert len(inventory) == 89
+batch = REPORT.split("## Semantic recovery review: batch 4", 1)[1]
+batch = re.split(r"\n## Semantic recovery review:", batch, maxsplit=1)[0]
+classification = batch.split("### Batch 4 classifications", 1)[1].split("Batch totals:", 1)[0]
+rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (missing|delivered|intentionally superseded) \|", classification)
+assert [(int(n), sha) for n, sha, _ in rows] == [(t["seq_num"], oids[0][:10]) for t, oids in inventory[45:60]]
+assert Counter(v for _, _, v in rows) == {"delivered": 12, "intentionally superseded": 2, "missing": 1}
+assert "29 tasks remain" in batch
+totals = Counter()
+for number in range(1, 5):
+    section = REPORT.split(f"## Semantic recovery review: batch {number}", 1)[1]
+    section = re.split(r"\n## Semantic recovery review:", section, maxsplit=1)[0]
+    section = section.split("Batch totals:", 1)[0]
+    totals.update(re.findall(r"\| (missing|delivered|intentionally superseded) \|", section))
+assert totals == {"delivered": 28, "intentionally superseded": 11, "missing": 21}
+hashes = re.findall(r"\| D\d+ \| `([^`]+)` \| (\d+)–(\d+) \| `([0-9a-f]{64})`", batch)
+assert len(hashes) == 40
+for path, start, end, expected in hashes:
+    excerpt = b"".join(git("show", f"{PIN}:{path}").splitlines(keepends=True)[int(start)-1:int(end)])
+    assert hashlib.sha256(excerpt).hexdigest() == expected, path
+path_rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (\d+) \| (\d+) \|", batch)
+assert len(path_rows) == 15
+for (n, prefix, present, absent), (task, oids) in zip(path_rows, inventory[45:60], strict=True):
+    assert int(n) == task["seq_num"] and prefix == oids[0][:10]
+    paths = git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", oids[0]).decode().splitlines()
+    found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{path}"], capture_output=True).returncode == 0 for path in paths)
+    assert (found, len(paths)-found) == (int(present), int(absent))
+    holding = git("for-each-ref", f"--contains={oids[0]}", "--format=%(refname)", "refs/heads", "refs/remotes").decode().splitlines()
+    if task["seq_num"] == 17462:
+        assert holding == ["refs/heads/0.4.44"]
+    else:
+        assert not holding
+        assert git("rev-parse", f"refs/audit/24076/{oids[0]}").decode().strip() == oids[0]
+assert "7daf01cf5552fc65d2e07ffaca06016ac7db6fa5" in batch
+assert "7f719a24-e8a6-4e13-8bb9-ee73adf3cdce" in batch
+assert "db116bc8-3028-4307-8307-f5b3f7cd340e" in batch
+ancestors = (
+    "da44e2fa9e42fc149a7414c1b1492dda48af6269",
+    "1242097f2fb0abd571b70c4339b462b9e4131390",
+    "9c34494c6ce5d1c6f8688fea7c042804907b3136",
+    "c3c13e0ed4af73e6dc103322c559f16ffa5e5bd5",
+    "e87998c1399a3fe149184da14e0749e03c97c07c",
+    "6019aa7a68221fe828bc89af72fad02569ee62f4",
+    "169bffaddb3ccf94404774826c265f045576e2c5",
+    "d1ef17cbab0f4e9b7c1ff2a358f70ab77a3b6a1b",
+    "5396812e8902bc278cd21405d08f5bc88e3fe83d",
+    "8358d7bba6973b5ba58ea9340b0437bbb492be46",
+    "a2b779f60ff0020d8e5704bb37ecc345f1f6e754",
+    "5694253eb6232fc0cae9dc6a27521b176dea98d5",
+    "292bcb1711a816ded4fc5bab46104d14a1abed08",
+    "927af24ab739527f160a10b2cf3b4bcd0a7d672e",
+    "a718a4fd9797f4c6a7365c992f5b3b78360555a2",
+    "200d7aa0503dff8d4afab28694b47217bcb5a839",
+    "b6294eb62ec86e0b44ac069596459bc6adff0f37",
+    "7e2a555681b20299de27ed18d15cf098af7b32c2",
+)
+for ancestor in ancestors:
+    subprocess.run(["/usr/bin/git", "merge-base", "--is-ancestor", ancestor, PIN], check=True)
+for packet in ("06-tasks-plans-review-learning.md", "07-workflows-skills-orchestration.md", "08-mcp-proxy-hub-services.md", "09-servers-sessions-runtime.md"):
+    git("show", f"{PIN}:.gobby/plans/completed/coderabbit-fixes/{packet}")
+assert sum(line.startswith("```") for line in REPORT.splitlines()) % 2 == 0
+assert REPORT.endswith("_Last verified: 2026-10-12_\n")
+print("PASS: 89 inventory; batch 4 order/counts; 60 cumulative classifications; 40 hashes; 15 path/holding checks; archive refs; referral; 18 ancestors; packet ledgers; Markdown/footer")
+PY
+```
+
+Validation records the focused audit above and `git diff --check`; no heavy
+command or full suite is needed. The batch 3 validator is also rerun after
+the ref/scoping repair.
 
 _Last verified: 2026-10-12_
