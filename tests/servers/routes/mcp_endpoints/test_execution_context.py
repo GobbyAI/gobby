@@ -71,8 +71,8 @@ def _make_request(
 class TestSetContextForRequest:
     """Tests for _set_context_for_request after helper extraction."""
 
-    async def test_hash_n_ref_forwarded_to_helper_with_header_project_scope(self) -> None:
-        """#N reference is forwarded to resolve_and_seed_contexts with the header project scope."""
+    async def test_hash_n_target_does_not_supply_caller_with_header_project_scope(self) -> None:
+        """Body #N stays a target while the project header seeds project context."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
 
@@ -84,13 +84,13 @@ class TestSetContextForRequest:
 
         mock_helper.assert_called_once()
         kwargs = mock_helper.call_args.kwargs
-        assert kwargs["session_ref"] == "#5"
+        assert kwargs["session_ref"] is None
         assert kwargs["project_ref"] == PROJECT_ID
         assert kwargs["session_ref_origin"] == "ambient"
         assert kwargs["project_ref_is_fallback"] is True
 
-    async def test_uuid_session_id_forwarded_verbatim_to_helper(self) -> None:
-        """UUID-shaped refs are handed to the helper; the resolver resolves external_id → id."""
+    async def test_uuid_target_does_not_supply_caller(self) -> None:
+        """UUID-shaped body refs are target arguments, never caller identity."""
         server = _make_server()
         request = _make_request(project_id=PROJECT_ID)
 
@@ -101,8 +101,7 @@ class TestSetContextForRequest:
             external_uuid = str(uuid.uuid4())
             await _set_context_for_request(server, {"session_id": external_uuid}, request)
 
-        # Flip of the old lock-in: UUID-shaped refs no longer bypass resolution.
-        assert mock_helper.call_args.kwargs["session_ref"] == external_uuid
+        assert mock_helper.call_args.kwargs["session_ref"] is None
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
     async def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
