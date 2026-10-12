@@ -47,6 +47,7 @@ def apply_path_scope_metadata(
     cwd = current_tool_cwd(event_data)
 
     if metadata.get("canonical_tool_kind") == "write":
+        metadata.pop("_canonical_sed_bsd_program", None)
         scope_resolved_by_loop_binding = bool(
             metadata.pop("_canonical_repo_mutation_scope_resolved_by_loop_binding", False)
         )

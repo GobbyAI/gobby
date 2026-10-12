@@ -231,6 +231,7 @@ def test_bare_inplace_loop_bound_inert_program_keeps_known_scope(
     data = _metadata(f'for f in {paths}; do sed -i "s/x/y/" "$f"; done', tmp_path)
     assert data["canonical_file_paths"] == paths.split()
     assert not data.get("canonical_repo_mutation_scope_unknown")
+    assert "_canonical_sed_bsd_program" not in data
 
 
 def test_bare_inplace_loop_bound_write_program_keeps_unknown_scope(tmp_path: Path) -> None:
