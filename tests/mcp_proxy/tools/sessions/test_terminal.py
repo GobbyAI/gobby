@@ -1463,6 +1463,8 @@ def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     )
     continuation = build_handoff_continue_prompt()
     assert "Call `get_handoff()`" in continuation
+    assert "allowed and required during a restart or cutover hold" in continuation
+    assert "do not wait for DAEMON BACK" in continuation
     assert "do not call `set_handoff` again" in continuation
     assert _gate_decision(engine, session_id, "get_handoff")[0] == "allow"
     assert _gate_decision(engine, session_id)[0] == "allow"

@@ -89,7 +89,9 @@ and provides retry guidance. Retry `set_handoff` after correcting that failure;
 a staging retry does not require duplicate feedback.
 
 On continuation, call `get_handoff()` without lookup arguments. It atomically
-consumes the pending compact or direct-predecessor clear marker. A second read,
+consumes the pending compact or direct-predecessor clear marker. This call is
+allowed and required during a restart or cutover hold: do not wait for DAEMON BACK,
+because shutdown waits for the acknowledgment. Keep other held work paused. A second read,
 manual compact/clear, or absent marker returns empty. Do not pass `session_id`,
 search for another session's summary, or create an archival summary to recover
 it. Separately, a parent or its bound clear successor may idempotently read a

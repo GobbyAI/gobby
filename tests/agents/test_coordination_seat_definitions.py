@@ -185,12 +185,23 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "You coordinate the fleet" in prompt
     assert "Run restarts and cutovers with a global notice before the daemon stops" in prompt
     assert "a DAEMON BACK notice after it is healthy" in prompt
+    assert "get_handoff is allowed and required during the hold" in prompt
     assert "send the Archivist an update on every land" in prompt
     assert "with decisions as buttons" in prompt
     assert "Edit tasks as needed" in prompt
     assert "other seats' edit requests" in prompt
     assert "Recover stalled sessions" in prompt
     assert "Report each recovery to the Assistant" in prompt
+
+
+def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubDatabase) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    row = RuleDefinitionManager(temp_db).get_by_name("inject-seat-common")
+    assert row is not None
+    prompt = flat(row.definition_json["effects"][0]["template"])
+    assert "restart or cutover hold" in prompt
+    assert "`gobby-sessions:get_handoff` is always allowed and required" in prompt
+    assert "Do not wait for DAEMON BACK to consume it" in prompt
 
 
 def test_root_panes_keep_interactive_git_guards_without_worker_rules(temp_db: HubDatabase) -> None:

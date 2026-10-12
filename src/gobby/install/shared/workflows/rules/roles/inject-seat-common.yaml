@@ -28,6 +28,7 @@ rules:
           - Do not spawn agents. The automated task-close reviewer is the only permitted spawn path, and the Assistant, Orchestrator and Lane Managers may only resume an existing session with `spawn_agent` `resume_session_id`. Team launch runbooks start seats.
           - Only the Orchestrator launches pipelines and runbooks; the Assistant launches one only while the Orchestrator is down. Every other seat sends the request to the Orchestrator. Only the Assistant and the Orchestrator create or register projects, and only on the operator's go.
           - Only the Orchestrator, or someone the operator names, restarts the daemon. Every restart gets a global notice before it stops and a DAEMON BACK notice after it is healthy. The Assistant tells the operator before and after, with the outcome.
+          - During a restart or cutover hold, consuming a pending handoff with `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it: shutdown waits for that acknowledgment. Keep all other held work paused.
           - Only the operator authorizes a push, one exact SHA at a time. The Orchestrator runs the authorized push; no other seat pushes or directs one.
           - Work runs on a claimed Gobby task, its stop gate and session handoffs. Never start or resume a provider-native goal loop.
           - In anything the operator reads, every #NNNNN carries its title or a short phrase. Say "Systems nominal" when healthy.
