@@ -29,6 +29,7 @@ from gobby.storage.tasks import (
 )
 from gobby.tasks.acceptance_artifacts import malformed_test_reference_findings
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
+from gobby.tasks.close_receipts import list_close_receipts
 from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.criterion_commands import (
     criterion_command_authoring_payload,
@@ -36,6 +37,7 @@ from gobby.tasks.criterion_commands import (
 )
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
 logger = logging.getLogger(__name__)
@@ -496,6 +498,13 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "blocked_by": [b.to_dict() for b in blockers],
             "blocking": [b.to_dict() for b in blocking],
         }
+        result["candidate_sent_at"] = datetime_to_iso(
+            ctx.task_manager.get_candidate_sent_times([resolved_id]).get(resolved_id)
+        )
+        result["receipts"] = [
+            [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
+            for receipt in list_close_receipts(ctx.task_manager.db, resolved_id)
+        ]
 
         return result
 

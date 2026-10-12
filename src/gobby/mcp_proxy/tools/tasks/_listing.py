@@ -21,6 +21,34 @@ class TaskStateFilters(TypedDict, total=False):
     labels: list[str]
 
 
+def _bound_compact_row(
+    row: list[Any],
+    columns: list[str],
+    ref_errors: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    """Omit large values with full-fetch pointers before eliding a whole row."""
+    page: dict[str, Any] = {"columns": columns, "rows": [row], "count": 1, "next_offset": None}
+    if ref_errors:
+        page["ref_errors"] = ref_errors
+    if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+        return row
+
+    ref = row[0]
+    pointer = f"Value elided; get_task(task_id='{ref}', brief=false)"
+    for column in sorted(
+        (1, 7, 8, 11), key=lambda index: len(json.dumps(row[index], default=str)), reverse=True
+    ):
+        if column == 11:
+            row[column] = [receipt[:3] + [{"_elided": pointer}] for receipt in row[column]]
+        elif column == 8:
+            row[column] = [[blocker[0], pointer] for blocker in row[column]]
+        elif row[column] is not None:
+            row[column] = pointer
+        if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+            return row
+    return [ref, f"Row elided; {pointer}", *([None] * (len(columns) - 2))]
+
+
 def compact_tasks(
     tasks: list[Task],
     ctx: RegistryContext,
@@ -75,14 +103,7 @@ def compact_tasks(
             ],
             task.commits[-1] if task.commits else None,
         ]
-        single_row_page = {**result, "rows": [row], "count": 1, "next_offset": None}
-        if len(json.dumps(single_row_page, default=str, indent=2).encode()) >= 14_000:
-            ref = row[0]
-            row = [
-                ref,
-                f"Row elided: exceeds compact page budget; get_task(task_id='{ref}', brief=false)",
-                *([None] * (len(columns) - 2)),
-            ]
+        row = _bound_compact_row(row, columns, ref_errors if not rows else None)
         rows.append(row)
         result["count"] = len(rows)
         if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:

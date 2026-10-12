@@ -14,6 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
 from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
@@ -243,6 +244,96 @@ async def test_compact_page_elides_oversized_row_without_losing_neighbors(
         ("missing-task", 0)
     ]
     assert len(json.dumps(result, default=str, indent=2).encode()) < 14_000
+
+
+@pytest.mark.asyncio
+async def test_compact_receipt_facts_preserve_summaries_and_full_fetch(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    seat = session_manager.register(
+        external_id="receipt-author",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Queue {number}",
+            validation_criteria="Receipt summaries remain readable and full facts are retrievable.",
+        )
+        for number in range(3)
+    ]
+    oversized = tasks[1]
+    facts = {f"fact{number}": "x" * 300 for number in range(16)}
+    receipts = [
+        record_close_receipt(
+            temp_db,
+            task=oversized,
+            author_session_id=seat.id,
+            kind=INDEPENDENT_REVIEW_APPROVAL,
+            commit_sha=f"{number:040x}",
+            facts=facts,
+        )[0]
+        for number in range(4)
+    ]
+    sent = InterSessionMessageManager(temp_db).create_message(
+        seat.id, seat.id, f"EVENT=CANDIDATE TASK=#{oversized.seq_num} TASK_TITLE=Queue"
+    )
+    refs = [f"#{task.seq_num}" for task in tasks]
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": sample_project["id"]}
+        page = await registry.call("list_tasks", {"refs": refs, "view": "compact"})
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
+            return_value={"id": sample_project["id"]},
+        ):
+            full = await registry.call("get_task", {"task_id": refs[1], "brief": False})
+
+    rows = [dict(zip(page["columns"], row, strict=True)) for row in page["rows"]]
+    assert [row["ref"] for row in rows] == refs
+    assert [row["title"] for row in rows] == [task.title for task in tasks]
+    assert rows[1]["candidate_sent_at"] == sent.sent_at.isoformat()
+    assert [receipt[:3] for receipt in rows[1]["receipts"]] == [
+        [receipt.kind, receipt.commit_sha, receipt.recorded_at] for receipt in receipts
+    ]
+    assert all("get_task" in receipt[3]["_elided"] for receipt in rows[1]["receipts"])
+    assert full["candidate_sent_at"] == sent.sent_at.isoformat()
+    assert full["receipts"] == [
+        [receipt.kind, receipt.commit_sha, receipt.recorded_at, facts] for receipt in receipts
+    ]
+    assert len(json.dumps(page, default=str, indent=2).encode()) < 14_000
+
+
+@pytest.mark.asyncio
+async def test_compact_first_row_degrades_to_fit_beside_ref_errors(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    task = manager.create_task(
+        sample_project["id"],
+        "Mid-size " + "x" * 7_000,
+        validation_criteria="Ref errors do not prevent reading the first task row.",
+    )
+    ref = f"#{task.seq_num}"
+    refs = [*(f"missing-{number}" for number in range(65)), ref]
+    with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
+        context.return_value = {"id": sample_project["id"]}
+        alone = await registry.call("list_tasks", {"refs": [ref], "view": "compact"})
+        page = await registry.call("list_tasks", {"refs": refs, "view": "compact", "limit": 100})
+    assert alone["rows"][0][1] == task.title
+    assert "error" not in page
+    assert page["rows"][0][0] == ref
+    assert page["rows"][0][3] == task.task_type
+    assert "get_task" in page["rows"][0][1]
+    assert len(page["ref_errors"]) == 65
+    assert len(json.dumps(page, default=str, indent=2).encode()) < 14_000
 
 
 @pytest.mark.asyncio
