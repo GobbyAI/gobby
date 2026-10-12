@@ -591,13 +591,15 @@ def _subjects(
     except ValueError:
         return [command]
     # Language source has its own syntax; a variable named cat is not a data sink.
-    if heredoc_source == "language" or (heredoc_source == "shell" and not scan.heredocs):
+    if heredoc_source == "language":
         return [command]
     try:
         if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
             command, _ = function_program
             scan = scan_shell_command(command)
     except ValueError:
+        return [command]
+    if heredoc_source == "shell" and not scan.heredocs:
         return [command]
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False

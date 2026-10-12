@@ -8,7 +8,7 @@ from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan
 
 _FUNCTION_HEADER = re.compile(
     r"(?:(?:function\s+)?([^\s;&|()<>\"'\\$`]+)\s*\(\s*\)"
-    r"|function\s+([^\s;&|()<>\"'\\$`]+))\s*"
+    r"|function\s+([^\s;&|()<>\"'\\$`]+))(?:\s|\\\n)*"
 )
 _FUNCTION_BODY = re.compile(r"(?:[({]|(?:if|while|until|case|for|select)\b)")
 

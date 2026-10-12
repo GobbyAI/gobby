@@ -103,6 +103,11 @@ def test_function_compound_context_reports_write(tmp_path: Path, command: str) -
     assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
 
 
+def test_function_header_continuation_reports_write(tmp_path: Path) -> None:
+    command = "f() \\\n(touch a.py); f"
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
 @pytest.mark.parametrize(
     "command",
     [
