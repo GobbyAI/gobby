@@ -132,13 +132,14 @@ class TestSyncBundledAgents:
         assert body.name == "test-agent"
 
     @pytest.mark.unit
-    def test_taskless_adversary_syncs_grok_xhigh(
-        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    @pytest.mark.parametrize("name", ["plan-adversary", "plan-adversary-taskless-old"])
+    def test_adversary_templates_sync_grok_xhigh(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase, name: str
     ) -> None:
         """Template sync installs the grok-4.7 xhigh adversary definition."""
         source = (
             Path(__file__).resolve().parents[2]
-            / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
+            / f"src/gobby/install/shared/workflows/agents/{name}.yaml"
         )
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
@@ -149,11 +150,7 @@ class TestSyncBundledAgents:
 
         assert result["success"] is True
         assert result["errors"] == []
-        row = next(
-            item
-            for item in _mgr(definition_db).list_all()
-            if item.name == "plan-adversary-taskless-old"
-        )
+        row = next(item for item in _mgr(definition_db).list_all() if item.name == name)
         body = _parse_body(row)
         assert body.provider == "grok"
         assert body.model == "grok-4.7"
