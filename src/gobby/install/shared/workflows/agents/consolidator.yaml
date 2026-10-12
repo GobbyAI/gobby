@@ -78,7 +78,11 @@ step_workflow:
         - to: consolidate
           when: "all(skill_loaded(skill) for skill in vars.required_skills)"
     - name: consolidate
-      description: Inspect the backlog and send proposals; never mutate tasks.
+      description: |
+        Inspect the backlog and send proposals; never mutate tasks.
+        When explicitly directed to retire, call gobby-agents:end_agent_run with
+        current_state summarizing the consolidation result and next_steps naming
+        the Orchestrator's next action.
       allowed_tools:
         - mcp__gobby__call_tool
         - mcp__gobby__list_mcp_servers
