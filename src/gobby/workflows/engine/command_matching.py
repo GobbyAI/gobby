@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
-from gobby.hooks._normalization_compound import case_arm_tokens
+from gobby.hooks._normalization_compound import case_arm_tokens, shell_function_bodies
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -584,12 +584,20 @@ def _subjects(
 ) -> list[str]:
     try:
         scan = scan_shell_command(command)
+        function_bodies = (
+            shell_function_bodies(command, scan.tokens, scan.spans)
+            if depth < _WRAPPER_DEPTH
+            else []
+        )
     except ValueError:
         return [command]
     # Language source has its own syntax; a variable named cat is not a data sink.
     if heredoc_source == "language" or (heredoc_source == "shell" and not scan.heredocs):
         return [command]
     correlations = [] if correlated_subjects is None else correlated_subjects
+    function_subjects: list[str] = []
+    for _, body in function_bodies:
+        function_subjects.extend(_subjects(body, depth + 1, correlated_subjects=correlations))
     split_substitution = False
     for start, end in scan.spans:
         for match in re.finditer(r"\$\(|`|[<>]\(", command[start:end]):
@@ -677,7 +685,7 @@ def _subjects(
             parts.append(command[cursor:end])
             arm_text = "".join(parts)
         arms.append(arm_text)
-    subjects: list[str] = []
+    subjects: list[str] = function_subjects
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
             try:

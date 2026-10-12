@@ -20,6 +20,7 @@ from gobby.hooks._normalization_compound import (
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
+    shell_function_bodies,
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_env import (
@@ -170,6 +171,7 @@ def _classify_shell_command(
 ) -> dict[str, Any]:
     try:
         scan = scan_shell_command(command)
+        function_bodies = shell_function_bodies(command, scan.tokens, scan.spans)
         masked_command, command_substitutions = command_substitution_bodies(
             command, scan.spans, depth=depth
         )
@@ -291,6 +293,23 @@ def _classify_shell_command(
         segment_base = None if directory.changed or starts_elsewhere(parts) else base_cwd
         if env_directories:
             segment_base = Path(segment_cwd) if segment_cwd else None
+        for position, body in function_bodies:
+            if segment_start <= position < segment_end:
+                # A later call may run after directory movement. Its scope is
+                # opaque unless the remaining program has no directory commands.
+                uncertain = any(
+                    token.value in {"cd", "pushd", "popd", "eval"}
+                    for token, (start, _) in zip(scan.tokens, scan.spans, strict=True)
+                    if start > position
+                )
+                metadata.append(
+                    _classify_shell_segment_without_redirection(
+                        ["sh", "-c", body],
+                        None if uncertain else directory.cwd,
+                        depth=depth,
+                        base_cwd=None if uncertain or directory.changed else base_cwd,
+                    )
+                )
         for body in process_bodies:
             metadata.append(
                 _classify_shell_segment_without_redirection(

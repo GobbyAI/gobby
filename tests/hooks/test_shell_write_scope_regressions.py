@@ -28,6 +28,84 @@ def _metadata(command: str, root: Path, cwd: Path | None = None) -> dict[str, An
     return data
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "f() (touch a.py); f",
+        "f() (case x in x) touch a.py;; esac); f",
+        "f () { touch a.py; }; f",
+        "function f() (touch a.py); f",
+        "if true; then f() (touch a.py); f; fi",
+        "f() { g() (touch a.py); g; }; f",
+        "f(){ touch a.py; }; f",
+        "f()(touch a.py); f",
+        "if f() (touch a.py); f; then :; fi",
+        "while f() (touch a.py); f; do break; done",
+        "case x in x) f() (touch a.py); f;; esac",
+        "! f() (touch a.py); f",
+        "f() while touch a.py; do break; done; f",
+        "f() if touch a.py; then :; fi; f",
+        "f() until touch a.py; do break; done; f",
+        "f() (touch a.py); f; cd ..",
+        "a.b() (touch a.py); a.b",
+        "my-func() (touch a.py); my-func",
+    ],
+)
+def test_invoked_function_body_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_tool_kind"] == "write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '%s' 'f() { touch a.py; }; f'",
+        "f() { printf '%s' 'touch a.py'; }; f",
+        "cat <<'EOF'\nf() { touch a.py; }; f\nEOF",
+    ],
+)
+def test_function_body_literal_does_not_report_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert not metadata.get("canonical_repo_mutation")
+
+
+def test_function_called_after_directory_change_has_conservative_scope(tmp_path: Path) -> None:
+    command = f"cd ..; f() (touch a.py); cd '{tmp_path}'; f"
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+
+
+def test_function_definition_retains_known_external_scope(tmp_path: Path) -> None:
+    metadata = _metadata("cd ..; f() (touch a.py); f", tmp_path)
+    assert metadata["canonical_tool_kind"] == "write"
+    assert metadata["canonical_repo_mutation"] is False
+
+
+@pytest.mark.timeout(5)
+@pytest.mark.parametrize("definition_count", [40, 300])
+def test_many_function_definitions_report_write(tmp_path: Path, definition_count: int) -> None:
+    definitions = [f"f{i}() {{ echo {i}; }}" for i in range(definition_count - 1)]
+    last = f"f{definition_count - 1}"
+    command = "; ".join([*definitions, f"{last}() {{ touch a.py; }}", last])
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
+def test_nine_nested_function_definitions_report_write(tmp_path: Path) -> None:
+    command = "touch a.py"
+    for index in range(9):
+        command = f"f{index}() {{ {command}; }}; f{index}"
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize("directory_command", ['"cd"', r"\cd"])
+def test_function_called_after_quoted_directory_change_has_conservative_scope(
+    tmp_path: Path, directory_command: str
+) -> None:
+    command = f"cd /tmp; f() (touch a.py); {directory_command} '{tmp_path}'; f"
+    assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+
+
 @pytest.mark.parametrize("nested", [False, True])
 def test_redirected_index_update_has_literal_repository_scope(tmp_path: Path, nested: bool) -> None:
     command = "git add -A > out.txt"
