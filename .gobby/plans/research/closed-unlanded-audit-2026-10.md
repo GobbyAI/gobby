@@ -3957,7 +3957,7 @@ That changes neither the evidence pin nor the audit inventory.
 | #19007 — Fix CodeRabbit packet 09: Servers, sessions, WebSocket, and runtime boundaries | `e95f9be14b` | delivered | Named replacement #19173 **Server/session/runtime reconciliation**, c3c13e0ed4af73e6dc103322c559f16ffa5e5bd5, is a pin ancestor. Surviving tmux command construction, context/offload, deployment credentials, ASGI cleanup, Codex dedup/registration rollback, telemetry ownership and test/fixture changes remain or are adapted. D1 retains probe-before-atomic-config-write semantics; D3–D4 retain corrupt-log handling and bounded counts. D2 uses the explicitly redesigned #23117 **Bounded transcript search** journal/source-window contract; it does not claim the old full-prefix digest remains in use. |
 | #19006 — Fix CodeRabbit packet 08: MCP proxy and Hub services | `6d121d19bf` | delivered | Named replacement #19172 **MCP/Hub reconciliation**, 9c34494c6ce5d1c6f8688fea7c042804907b3136, carries or adapts the independent proxy/Hub hardening. D5 proves the current full-snapshot tool returns structured errors for corrupt stored snapshots and retains PostgreSQL/I/O handling for bind operations. Old automatic-recall paths and their tests were explicitly removed by #21009 **Retire automatic memory recall injection**, 8358d7bba6973b5ba58ea9340b0437bbb492be46; agents use on-demand search. Other surviving deltas were checked individually against the reconciliation ledger. |
 | #19005 — Fix CodeRabbit packet 07: Workflows, skills, and orchestration | `f8dbf6d929` | delivered | Named replacement #19171 **Workflow/skills reconciliation**, 1242097f2fb0abd571b70c4339b462b9e4131390, carries the surviving workflow, variable, skill, runner and regression changes. D6 uses an evidence handle plus get_plan_review_snapshot instead of inline bytes, so inline nonce protection is obsolete. D7 retains offloaded memory suppliers. The unresolved-error reservation inside the old digest-based summary action was removed by #21140 **Structured session handoffs**, 5694253eb6232fc0cae9dc6a27521b176dea98d5; D8 caps the replacement transcript input. Retired transport/digest tests need no replay. |
-| #19004 — Fix CodeRabbit packet 06: Tasks, plans, and review learning | `7daf01cf55` | missing | Partial loss: six independent improvements remain absent in live coverage, finding and lesson-selection interfaces (D12–D17). Named replacement #19170 **Task/plan/review reconciliation**, da44e2fa9e42fc149a7414c1b1492dda48af6269, carried them, but #19368 **Restore pre-experiment plan-adversary flow** removed them. That task explicitly preserves unrelated improvements. Atomic manifest application, approval locking, direct run IDs and shared digests survive (D9–D11); retired receipt/convergence mechanisms stay retired. Recover only the six named losses below and adapt their regressions. |
+| #19004 — Fix CodeRabbit packet 06: Tasks, plans, and review learning | `7daf01cf55` | missing | Partial loss: six independent improvements remain absent in live coverage, finding and lesson-selection interfaces (D12–D17). Named replacement #19170 **Task/plan/review reconciliation**, da44e2fa9e42fc149a7414c1b1492dda48af6269, carried them, but #19368 **Restore pre-experiment plan-adversary flow** removed them. That task explicitly preserves unrelated improvements. Atomic manifest application, approval locking and direct run IDs survive (D9–D11). Both attestation substitutions to canonical_json_sha256 were reverted by the baseline restoration; the helper and _source_digest use survive, and inline attestation encoding produces identical digest bytes. This additional maintainability cleanup belongs to the existing #24128 **Packet 06 review-learning hardening** recovery task alongside the six named losses below. Retired receipt/convergence mechanisms stay retired. |
 | #18970 — Harden idle, prompt, stall, and pane-monitor behavior | `79486d6f34` | delivered | Prompt, stall and lifecycle deltas survive. The old pane monitor is replaced by attention_tracker and interactive_attention_monitor: D18–D20 retain classification payloads, offloaded storage, provider-specific detection and capture-timeout handling; D21 retains complete machine-run and live-session pagination. The retired pane-monitor tests are mapped to the replacement attention surface rather than treated as missing solely by path name. |
 | #18984 — Integrate hardened managed sandbox startup into 0.5.0 | `58e05a93f7` | delivered | All nine touched paths survive. D22 records startup failure against the run manager, returns a failed SpawnResult and offloads enforcement storage. D23 retains portable Node preflight, provider TMPDIR restoration, signal cleanup and unsubscribe. The runner/helper decomposition preserves the tagged launch-or-failure contract; current sandbox regression modules remain. |
 | #18971 — Harden sandbox, spawn, and SRT runtime contracts | `1e17d29420` | delivered | The same startup/cleanup contracts are retained in D22–D23 and all nine paths survive. The task’s bounded package-root follow-up 5396812e8902bc278cd21405d08f5bc88e3fe83d is a pin ancestor. Provider-optional sandbox policy, spawn run-manager wiring and contextual failure logging remain; no runtime sandbox execution is claimed. |
@@ -4064,9 +4064,12 @@ Path-retirement mappings:
   remain (D8). Variable transactions, structured summary logging and surviving
   skill/runner regressions retain their purposes.
 - Packet 06’s receipt admission/validation helpers and corresponding deleted
-  tests belong to the explicitly retired checklist-close design. Shared digest,
-  manifest, transition, criteria normalization and tagged-commit parser changes
-  survive. Its live coverage/finding/selection guards remain missing separately.
+  tests belong to the explicitly retired checklist-close design. Manifest,
+  transition, criteria normalization and tagged-commit parser changes survive.
+  The shared digest helper and _source_digest use survive, but both attestation
+  call sites reverted to equivalent inline hashing. Recover that maintainability
+  cleanup with the live coverage/finding/selection losses under #24128
+  **Packet 06 review-learning hardening**; no digest-byte regression is claimed.
 - The three absent idle-hardening paths are the pane monitor and its old tests;
   attention components retain provider-specific classification, offloading,
   capture handling and complete pagination (D18–D21).
@@ -4248,5 +4251,349 @@ PY
 Validation records the focused audit above and `git diff --check`; no heavy
 command or full suite is needed. The batch 3 validator is also rerun after
 the ref/scoping repair.
+
+## Semantic recovery review: batch 5 (75 of 89 cumulative)
+
+This addendum reviews positions 61–75 in the unchanged newest-first snapshot:
+15 tasks, 16 revisions. Evidence remains bound to commit
+`4ccb3e966ed18fe13cd9f268d55143128d034048`, tree
+`428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`, gcode checkout project
+`19b73420-3946-5c6a-8a06-4c7522f77543`. The report branch starts at reviewed
+batch 4 commit `b91cba7023f4b6bc126ddc1d4e6d5c43298c1747`; cutover changes
+neither the evidence pin nor the original audit inventory.
+
+### Batch 5 classifications
+
+| Task and title | Unproven revision | Classification | Pinned evidence and disposition |
+| --- | --- | --- | --- |
+| #17461 — Fix tmux window title names rejected by tmux | `9a6edcc43d` | intentionally superseded | The colon-to-hyphen sanitizer conflicts with the explicit #22163 **Session labels** contract, which keeps project#ref:Provider/Task punctuation. E1–E3 preserve persisted/manual titles with tmux-format escaping; E2 asserts Manual:title survives. The old summary-actions title path belongs to #21140 **Structured session handoffs** retirement. |
+| #17364 — Add wiki branch setup to init and install hooks | `a6a0a91b6e` | intentionally superseded | Equivalent wiki setup landed in d1ae71eb55c48aea6df87e4e6aeb6ccd6d76c954, then #21796 **Wiki retirement** withdrew provisioning. E6 checks the retired CLI surface. Independent general Git initialization, including existing-project setup, and pre-push ref capture survive (E4–E5). Wiki publication/bypass behavior is withdrawn. |
+| #17036 — Build the Integrations activity tab | `f2d485d813` | delivered | Equivalent 9fc3e0fb06a6814a1fbf0b6f172038f057daa954 is a pin ancestor. E7 registers the tab. E8–E12 retain drafts, CRUD/toggle actions, dirty-navigation confirmation, messages, configuration/secret separation and finite-number validation. ChannelsList, ChannelDetailPanel and IntegrationsFilterPanel replace the three old names. E13–E14 retain registration, filtering, actions, save/secret and unavailable-manager regressions. |
+| #15873 — Wire set_websocket_broadcast and fail gobby_chat sends when broadcast is unset | `fc89631eb4` | delivered | E15 rejects an unset callback, awaits broadcast and propagates failures before returning the platform ID. E16 wires the server callback; E17 reapplies pre-start wiring on activation. E18 retains failed-send and pre-start-wiring cases in the renamed manager test module. |
+| #15711 — Bump version to 0.4.18 on branch 0.4.18 | `8fbaa32400` | intentionally superseded | Task scope explicitly names release branch 0.4.18. Its three changes only set release metadata. E19–E21 prove the distinct integration package/module/lock version 0.5.0. The release branch retains the object; no independent behavior or regression needs recovery. |
+| #15562 — Bump version to 0.4.15 on release branch | `dc4f915849` | intentionally superseded | Task scope explicitly names release branch 0.4.15. The two changes only set package/module metadata; local and origin release refs retain them. E19–E20 prove the separate 0.5.0 contract. |
+| #15329 — Bump version files for 0.4.12 branch | `89bf2aabcd` | intentionally superseded | Criteria require the three 0.4.12 versions on its release branch, retained by local/origin refs. E19–E21 prove the integration version. There are no independent runtime or test changes. |
+| #15293 — Prepare and publish 0.4.11 release | `d4cf939a6d` | intentionally superseded | Criteria scope versions and the complete changelog entry to release branch 0.4.11, with integration restored to 0.5.0. The 81-line entry is absent at the pin and retained on release refs; that branch-scoped absence is intentional. Independent edits in all four guides were checked separately: E22–E26 retain native projection ownership, sync-worker settings, positional filters, graph/vector commands and HTTP shims. #22237 **Verified code-index guidance** replaces obsolete setup/sync-projections/require-cpp-semantics commands. #22197 **Generated manifest retirement** withdraws the tracked manifest while E27 preserves package-time generation. The SDK lock downgrade is obsolete. No release CI/publication receipt is asserted. |
+| #15296 — Add dispatcher dependency base guard | `9d396e5531` | intentionally superseded | The guard and its regression never landed. Old caller paths still existed at the pin, so absence alone is insufficient. The Orchestrator explicitly ruled this withdrawn under the approved **Remove Gobby Build** plan. E28 names build/workspaces.py and dispatch/spawn.py for deletion; the plan removes both packages. Neither requested guard path survives to recover. No replay or recovery task follows. |
+| #15132 — Make plan artifacts reachable in isolated review worktrees | `dc641be8f3` | delivered | E29–E32 trace the replacement read path: resolve/read the author plan, publish an evidence ID, retrieve immutable UTF-8 bytes independent of reviewer cwd. The TOCTOU regression keeps original bytes after source changes. #23846 **Dispatch-only spawn hook retirement** removes planner/plan-enhancer roles and their source-parent write grants; the adversary gate remains. No surviving writer is claimed to use retired symlink/copy staging. Independent agent-sync bool cleanup now uses typed json_equal (E33–E34); condition-helper changes were formatting only. |
+| #15133 — Preserve ambient MCP session context for reviewer agents | `f377dda09f` | delivered | E35–E37 forward child identity, managed daemon/grant context and sandbox cache variables into Codex's scrubbed MCP process. Parent identity is deliberately withheld so leases belong to the child. E38 reconstructs and checks child identity, daemon and capability path, without parent ID or raw token. Literal environment overrides replace the old forwarding implementation. |
+| #11235 — Remove session_id parameter from task/variable tool calls | `000334f1a5` | missing | Partial loss across both revisions, including b55a28e3a16effdf74f2dad8e0f5bf3784afcbdc: four optional-session tools lose ambient caller scope (E39–E47). Required-only injection does not recover them. #24130 **Caller-session scoping recovery** owns suggest_next_task, get_messages, list_identities and search_skills. Required-session and variable routes survive/adapt. #22308 **Show all skills** explicitly withdraws list_skills active allowlisting; keep it out of recovery. Other historical deltas are evaluated below. |
+| #11350 — Unified CLI Launcher — SDK Removal + Interchangeable Web Chat Sessions (v3) | `c741003136` | delivered | The linked six-file revision contains two production EOF whitespace removals, three test-formatting changes and nine Codex mock-name replacements, with no independent launcher behavior. Formatting is carried or superseded by later formatting. The CodexAppServerAdapter mock belongs to the chat module explicitly retired by #11434 **Unified CLI chat sessions**; no live target remains to repair. This classification covers the linked revision, not the epic's eight-phase scope. |
+| #11357 — Phase 7: Remove Claude Agent SDK and associated code | `3d4269f973` | intentionally superseded | #20654 **MCP 2 migration** explicitly retains/resolves the SDK; E48–E49 prove its dependency/imports remain. Independent helper moves were relocations: E51–E52 and retained sdk_utils/tests preserve plan permission, pending approval, fallback and compaction helpers. #20475 **Default-agent persona** replaces the old prompt loader (E50). #12812 **Conductor retirement** and #11434 **Unified CLI chat sessions** withdraw the other absent provider/chat paths. Old SDK removal would contradict supported chat behavior. |
+| #11246 — Add session_id param to set_variable and get_variable in stdio MCP proxy | `4c3a205eaa` | delivered | E53–E54 retain explicit session targeting in stdio schemas/delegation. Required session_id replaces the optional/default surface. E55 checks the target and step scope. The original stdio.py implementation is decomposed. |
+
+Batch totals: **6 delivered, 8 intentionally superseded, 1 missing**.
+Cumulative totals: **34 delivered, 19 intentionally superseded, 22 missing**;
+**14 tasks remain**. These classify source and explicit decisions; no fresh
+runtime tests, registry activation or release publication are asserted.
+
+### Batch 5 recovery referral
+
+#11235 **Ambient session cleanup** has two unproven revisions:
+`000334f1a563c54aa03ddcebb9247125eb40ca13` and
+`b55a28e3a16effdf74f2dad8e0f5bf3784afcbdc`. Neither has a local branch or
+remote-tracking holder. Both have exact `refs/audit/24076/<full-SHA>` archives,
+with descendant audit archives also retaining history. Archives prove
+recoverability, not delivery.
+
+Inbox Manager receipt `e051b26e-4553-486e-966a-aa4a910f44ac` and Lane Manager
+copy `6f060583-7314-447c-ae4f-662c29d9dda1` reported initial losses.
+Follow-ups `0fca1877-81bd-4528-b67d-6f77c7e65ac0` and
+`12c4bfa0-a058-4063-96b7-1eee7b677115` add identity listing and confirm skill
+search. The Orchestrator filed/extended #24130 **Caller-session scoping
+recovery**; the Inbox Manager confirmed all four cases are included.
+
+- E39–E41: suggest_next_task(session_id=None) passes None to the ready resolver,
+  bypassing automatic session_task selection.
+- E42–E43: get_messages resolves omission to None and passes no caller filter.
+- E42 and E44: list_identities resolves omission to None and skips filtering.
+- E45: search_skills reads active_names only when session_id is supplied.
+- E46–E47: proxy injection covers required schema fields; these four optional
+  fields receive no caller value from that mechanism.
+
+Recovery preserves explicit cross-session targets. #22308 **Show all skills**
+replaces list_skills allowlisting with explicit exclusions; do not restore it.
+Other deltas were inspected independently: memory_write recovers ambient
+provenance; required session/transcript/worktree tools recover identity through
+proxy injection; spawning retains parent context at the proxy boundary; variable
+delegation survives in E53–E55. The old session-start heuristic is replaced by
+#21140 **Structured session handoffs** and its marker protocol. Deprecated
+pipeline/skill/provider docs and fixtures describe retired interfaces; surviving
+tool/runtime regression edits are carried/adapted. The SDK 0.1.39/root 0.3.2
+lock downgrade is obsolete under the current SDK and root 0.5.0 contract.
+
+### Batch 4 LOW-1 correction included in this batch
+
+Both overbroad digest-survival claims are corrected. E56–E57 prove the two
+attestation sites use inline hashing after baseline restoration
+`a2b779f60ff0020d8e5704bb37ecc345f1f6e754`. E58 preserves the helper and E59
+its _source_digest use. Both encodings use key-sorted compact JSON and SHA-256,
+producing identical bytes. Missing call-site substitutions are maintainability
+cleanup for #24128 **Packet 06 review-learning hardening**, alongside six prior
+losses. #19004 **Task/plan/review packet** stays missing; totals and retired
+receipt/convergence dispositions are unchanged.
+
+### Batch 5 touched-path and replacement audit
+
+Every revision's full Git path inventory was checked at the pin. Historical
+production, documentation, installation and test deltas were followed separately
+to replacements. Presence counts are inventory checks, not delivery proof.
+
+| Task and title | Revision | Paths present at pin | Paths absent at pin |
+| --- | --- | --- | --- |
+| #17461 — Tmux titles | `9a6edcc43d` | 2 | 3 |
+| #17364 — Wiki setup | `a6a0a91b6e` | 6 | 1 |
+| #17036 — Integrations tab | `f2d485d813` | 10 | 3 |
+| #15873 — Chat broadcast | `fc89631eb4` | 4 | 1 |
+| #15711 — Release 0.4.18 | `8fbaa32400` | 3 | 0 |
+| #15562 — Release 0.4.15 | `dc4f915849` | 2 | 0 |
+| #15329 — Release 0.4.12 | `89bf2aabcd` | 3 | 0 |
+| #15293 — Release 0.4.11 | `d4cf939a6d` | 8 | 1 |
+| #15296 — Dependency base guard | `9d396e5531` | 4 | 2 |
+| #15132 — Plan reachability | `dc641be8f3` | 3 | 2 |
+| #15133 — Reviewer MCP context | `f377dda09f` | 3 | 0 |
+| #11235 — Ambient session cleanup | `000334f1a5` | 17 | 10 |
+| #11235 — Ambient session cleanup (second revision) | `b55a28e3a1` | 17 | 2 |
+| #11350 — Launcher linked cleanup | `c741003136` | 5 | 1 |
+| #11357 — SDK removal | `3d4269f973` | 18 | 9 |
+| #11246 — Stdio variable targeting | `4c3a205eaa` | 1 | 0 |
+
+Holding refs and absent-path dispositions:
+
+- #17461 **Tmux titles** remains on refs/heads/0.4.43. titles.py is replaced
+  by E1–E3; summary_actions.py and tests belong to structured-handoff retirement.
+- #15711 **Release 0.4.18** remains on local 0.4.18; #15562 **Release 0.4.15**,
+  #15329 **Release 0.4.12** and #15293 **Release 0.4.11** remain on their local
+  and origin release refs. #15296 **Dependency guard** remains on local 0.4.11.
+- Other revisions have no branch/remote holder and exact audit archives.
+- #17364 **Wiki setup** loses only wiki_branch_setup.py, explicitly retired.
+- #17036 **Integrations tab** loses IntegrationsTabDetailPanel.tsx,
+  IntegrationsTabList.tsx and IntegrationsTabToolbar.tsx; replacements are
+  ChannelDetailPanel.tsx, ChannelsList.tsx and IntegrationsFilterPanel.tsx.
+- #15873 **Chat broadcast** loses test_manager.py; E18 retains its cases.
+  Runner wiring moved into runner_init/servers.py and communications/lifecycle.py.
+- #15293 **Release 0.4.11** loses bundled_content_manifest.json; E27 generates it.
+- #15296 **Dependency guard** loses base_guard.py and its regression, withdrawn
+  by the approved whole-surface retirement rather than mere path absence.
+- #15132 **Plan reachability** loses _plan_artifacts.py and its regression.
+  Snapshots replace read staging; writer roles/source grants are retired.
+- #11235 **Ambient cleanup** first revision loses GEMINI.md, _session_start.py,
+  build-rule/bug skills, deprecated coordinator/dev-loop pipelines,
+  nightly-fixes/orchestrator pipelines and old pipeline/task coverage modules.
+  The second loses session-lifecycle.yaml and old task coverage. Their retired
+  interfaces do not erase the four live optional-session losses.
+- #11350 **Launcher cleanup** loses only the explicitly retired Codex chat test.
+- #11357 **SDK removal** loses the old Codex/Gemini adapters, conductor manager,
+  text_utils, CLI/Codex chat modules and permission/base/text tests. Named
+  provider/chat retirements and retained helpers account for these relocations.
+- #11246 **Stdio targeting** loses no changed path; implementation is decomposed.
+
+### Batch 5 replacement and retirement ancestors
+
+All full OIDs below are ancestors of the fixed pin, distinct from unproven
+revision archives.
+
+| Decision or replacement | Ancestor |
+| --- | --- |
+| #22163 — Session labels | `a833a68b2529abe309f0f7fa5e0358b48ad87051` |
+| #17364 — Wiki setup equivalent | `d1ae71eb55c48aea6df87e4e6aeb6ccd6d76c954` |
+| #21796 — Wiki retirement | `708128e7420538dbafab0c7b9612d29176363c3d` |
+| #17036 — Integrations equivalent | `9fc3e0fb06a6814a1fbf0b6f172038f057daa954` |
+| #21140 — Structured handoffs | `5694253eb6232fc0cae9dc6a27521b176dea98d5` |
+| #22237 — Verified code-index guidance | `1cd0d4ba9cb56ed84306d70347080d625be52168` |
+| #22197 — Generated manifest retirement | `f54563fc4bcc74d220ff3abcf67e48aa5cc69e1d` |
+| #23846 — Dispatch-only spawn hook retirement | `acad860266087cfd21aa5fa90be353e65744ca03` |
+| #22308 — Show all skills | `5f4ac0a3ebab8380f3e41fdd53ef8aac2a814961` |
+| #11434 — Unified CLI chat sessions | `fbaab4ca2bc8f3a16fe3785e9f2cfff656e35bde` |
+| #20654 — MCP 2 migration retaining SDK | `eff0bf72e6d95cbb44811c970fea7a0ec091b8ee` |
+| #20475 — Default-agent persona | `e3f9fb6f5cb8567e396460236a8da35e2610a0aa` |
+| #12812 — Conductor retirement | `70d2d47345edadbabeea9c8652af04c706a42275` |
+| #19368 — Baseline review restoration | `a2b779f60ff0020d8e5704bb37ecc345f1f6e754` |
+
+### Batch 5 deterministic evidence ledger
+
+Native range reads checked complete responses, exact binding and raw UTF-8
+excerpt hashes. The validator recomputes them from the fixed Git blobs. Test
+citations show retained source, not fresh runtime passes.
+
+| Evidence | Path | Lines | Excerpt SHA-256 |
+| --- | --- | --- | --- |
+| E1 | `src/gobby/sessions/tmux_window_naming.py` | 81–86 | `b1d1222c08aec5ef5171e35eab333c9969bf6d355bc0c0b2240fc39882a88594` |
+| E2 | `tests/sessions/test_tmux_window_naming.py` | 425–434 | `0c500e9b11cdfa7502fb356d24396c68f2cef3085f259e7b653e89134f16af1c` |
+| E3 | `src/gobby/agents/tmux/session_manager.py` | 72–77 | `29363f386b42cf216c8ea2cd334f5ef06c2a4c612b5b6c02f2167a3cdc824071` |
+| E4 | `src/gobby/cli/init.py` | 113–160 | `4f25facc331dbc8d8071c27e81e0d6a9a95b24ac18347086ece3a43fb21e101f` |
+| E5 | `src/gobby/cli/installers/git_hooks.py` | 249–282 | `0b45b85c59f41931fad7b3d4a81d344f2efcbc712fcc1f0f90f25a6d47a75101` |
+| E6 | `tests/test_wiki_retirement_contract.py` | 22–30 | `4b22def371af0e93b03f83c9056f5b562c905b2e3613e6167cb6b458186bdc6f` |
+| E7 | `web/src/components/activity/ActivityPanel.tsx` | 479–496 | `c2fa06cc0e7091ce01907c86d1ab45dc85559a678622209e195b92a35fe72c51` |
+| E8 | `web/src/components/activity/IntegrationsTab.tsx` | 100–180 | `9867482c805b608f1977b72b8e0808144e7e204e8cc5af1ca958f741c07ff77c` |
+| E9 | `web/src/components/activity/IntegrationsTab.tsx` | 300–366 | `c276b2edb5b26a589a0c8839ddaccd3fe684a5d3f5bbd75f5cbf6cfc39e78346` |
+| E10 | `web/src/components/activity/integrations/ChannelDetailPanel.tsx` | 120–200 | `eb1a9889162083ca87b6f74ede8969677e3a0f7878f3e9129e01a73f99fbf0c3` |
+| E11 | `web/src/components/activity/integrations/IntegrationsTabModel.ts` | 105–158 | `3fbc131bed6668770d3eb2feb42e8ab6bca9becf8c8fe54fde5dd0a0f0a5ce7a` |
+| E12 | `web/src/components/activity/integrations/IntegrationsTabActions.ts` | 1–50 | `472247bdf059804a5f6b83e5b43db85f03d936d61d7d35de798b7b2b283109ac` |
+| E13 | `web/src/components/activity/integrations/__tests__/IntegrationsTab.test.tsx` | 226–402 | `22f6ffec76655be5dc6426e3c4dd41d4b9a751fd8c380da6d98a8f7730620f2f` |
+| E14 | `web/src/components/activity/integrations/__tests__/IntegrationsTab.test.tsx` | 490–563 | `8de06e86843c0d92d6aa2365aa6a710f79e96535381a7c0c9a1f707e203e4bc1` |
+| E15 | `src/gobby/communications/adapters/gobby_chat.py` | 102–122 | `44e51c87d0603146d56f70507ab392feb937e7199c711d8fb4cb559466addd37` |
+| E16 | `src/gobby/runner_init/servers.py` | 336–345 | `f084f63d578fb3883dec3b85168e7e782aee1edf6b333568d04493127c8ee54d` |
+| E17 | `src/gobby/communications/lifecycle.py` | 157–176 | `a4489f203acdc593187fdd2bdfcae8d6c25bd02266c414f4b43526c3ce8f6a76` |
+| E18 | `tests/communications/test_communications_manager.py` | 2087–2127 | `4953414344092fa797aab5d0a2527d60d7ca9d780513421f4b9ddd1f62fb4780` |
+| E19 | `pyproject.toml` | 1–12 | `bea8e34888931746e22c77583b2469ebf5436e6de01a0bcda8b5aa7f18e9cb9d` |
+| E20 | `src/gobby/__init__.py` | 1–9 | `c4e582075429f7998e19974175d7d6f3d6f4da0663b28babe52c3c655fa4fc5f` |
+| E21 | `uv.lock` | 975–983 | `6a61b8184a6c74820450e2b94969d049a5ffb17ca403f782cb6f30291495a630` |
+| E22 | `docs/guides/code-index.md` | 74–102 | `5ff8231e1eae7e57fb281e0fde2a19e6854eb72054d4a8d8ad6ad423d8a8e891` |
+| E23 | `docs/guides/code-index.md` | 151–192 | `1f97f6bb89f97cd5bc3e3ea594aeac312cc80805836652c48e86b6409bd20934` |
+| E24 | `docs/guides/configuration.md` | 575–595 | `29436996e910da5b7dc3be3881e0d3a20b40310c816462f68af43e4cd3594a98` |
+| E25 | `docs/guides/http-endpoints.md` | 765–772 | `34c629a163bdb33bde51dc40541082e022404e55eec73ceea400f8fc45f82d9c` |
+| E26 | `docs/guides/search.md` | 61–68 | `5058bd395c9efa36e35ee5ecefd5a05478bc3272a4d69b03309f514b9386413a` |
+| E27 | `src/gobby/install/manifest.py` | 67–92 | `98c346898dc9019ebebe5ea51805482a2294375a636fe8f8433304aa4382cca8` |
+| E28 | `.gobby/plans/remove-gobby-build.md` | 568–603 | `e4154529258502679153e63b80e55208c635134222977621b8df29a99f1a47b8` |
+| E29 | `src/gobby/dispatch/spawn.py` | 87–136 | `71ae42d165b9b60a731de1dc60a240a4da2ff9e985e071cfeef693d7950a7c2b` |
+| E30 | `src/gobby/plans/review_evidence.py` | 89–114 | `7dc3da4d1d623cd98d514812987bdd68ce39f0ed924daf866b4c4bde2c47eb72` |
+| E31 | `src/gobby/mcp_proxy/tools/plans/review_evidence.py` | 125–160 | `be09ddfdccbcb6cf406720e1d1c75d4d33e5d88ac86ff008d39f4257f1d28118` |
+| E32 | `tests/plans/test_review_evidence.py` | 369–385 | `8c3e667d77f61652edcc7408d74ed323d2cacbf6c999b7a4048360fe07c46530` |
+| E33 | `src/gobby/agents/sync.py` | 71–75 | `8a99b97e3f27b4d120e3c0b36af3a976aae54f3f457272cb536bdd2f0027d45b` |
+| E34 | `src/gobby/utils/json_helpers.py` | 131–135 | `0c8964b738ad262cd2bcac0c0b35a6d07ddc7021158d9df9335c21c055d2075f` |
+| E35 | `src/gobby/agents/spawn_executor_support.py` | 68–75 | `333e536b0b9e34770531ca462356e4a6bdd10e9037783c2caea60e0c59d4dbe4` |
+| E36 | `src/gobby/agents/spawn_executor_support.py` | 613–640 | `593a0a6a503196cc44aaa4564da6b3118490f5af6e4a0f1aa83dbb2b025aece9` |
+| E37 | `src/gobby/agents/spawn_executor_providers.py` | 426–440 | `cab3b6cd35c73d9ec294135331604b1a7aae9e9dff460aa8d276c066beca1090` |
+| E38 | `tests/agents/test_spawn_executor.py` | 2395–2460 | `37e5df9a0e072880c8d5374762205644f91b94662a331bde60d9c1aa7aa1ae1e` |
+| E39 | `src/gobby/mcp_proxy/tools/task_readiness.py` | 555–562 | `235dc356f0df9fa920d1d04a3651fd45cb8666cc85eec9cafa4706eb83864f2f` |
+| E40 | `src/gobby/mcp_proxy/tools/task_readiness.py` | 602–610 | `bcedc43cb96e0e1c53aec4ad1815020bea9bb545f245649e25d893b52201f10b` |
+| E41 | `src/gobby/mcp_proxy/tools/task_readiness.py` | 226–242 | `cd3fccd98293829117101fba9f8db9f0582e24b37671c09f0be9f4b01b92ce78` |
+| E42 | `src/gobby/mcp_proxy/tools/communications.py` | 44–52 | `dfea39c46ebb67d4c7b06a059bb7c46093b26a73441dc307bc6c53c2dc6c193c` |
+| E43 | `src/gobby/mcp_proxy/tools/communications.py` | 319–349 | `a98d9970c2202acefe85c613ab2d530554aee4070a0bd49a679af06f99adfc0c` |
+| E44 | `src/gobby/mcp_proxy/tools/communications.py` | 511–529 | `e2ceef0625f2ab28fd64a8c508f1a91f64996c1346c59ca42ee0cd1a079a4687` |
+| E45 | `src/gobby/mcp_proxy/tools/skills/search_skills.py` | 108–126 | `c4beb3bd953f8e5332ce486437c7bf008cefc9d6686356aeb15426b98ace89b5` |
+| E46 | `src/gobby/mcp_proxy/services/tool_execution.py` | 133–180 | `e76cf7d720b477aff32ef8a0c0bae2a5844816d54d5dcacb6c884dd8fc0d7685` |
+| E47 | `src/gobby/mcp_proxy/services/session_context.py` | 28–41 | `105f5103c3bf008432cad53df88885c24fd73b9c7ff85d8cd299d1096ba062d0` |
+| E48 | `pyproject.toml` | 33–42 | `951f84ca1d965e1ff99158a75bf9c19227a8b9cba1778fd84401fc9a01bb391f` |
+| E49 | `src/gobby/servers/chat_session.py` | 20–26 | `e610c41ef75d6421e164a872ca88d27661b52f24718788ffa797301bfd039ccb` |
+| E50 | `src/gobby/servers/chat_session.py` | 314–329 | `23a6b651261cbb2c82edf6738d4fa9462a2edc3f1187670173f28bd639c22d66` |
+| E51 | `src/gobby/servers/chat_session_helpers.py` | 71–99 | `bbcb7468041324d49e866e12fc603990432d146c195c6a30c4f48ba4e4225e6c` |
+| E52 | `src/gobby/servers/chat_session_helpers.py` | 272–294 | `9c8eed08cabb866fd2d492fcf5f6a1b8590357330384b42371b63d91bbcf35ae` |
+| E53 | `src/gobby/mcp_proxy/stdio_proxy.py` | 581–608 | `7161e9317c763e3140f4bf2b9e0a4fa3d2f704d5391a14cea60bad994267867a` |
+| E54 | `src/gobby/mcp_proxy/stdio_tools.py` | 332–367 | `17f2438a630352285cbf4f05ac2de25bc8cd3b50b592cc75a8951331356d8b5b` |
+| E55 | `tests/mcp_proxy/test_top_level_variables.py` | 25–99 | `d694c8f0ecab59c44f877ff82a8e03ef9ea957f25da5eb57903be69b9552c7e1` |
+| E56 | `src/gobby/plans/review_coverage.py` | 309–318 | `8d6a4e2460d391cb3b675eb759510e5b557d184282d6c8750135017f79c761ee` |
+| E57 | `src/gobby/plans/review_coverage.py` | 471–481 | `785f1d2df4e0f5509b82021f99b041f3c3cf36b76a3281497a392554e63ab685` |
+| E58 | `src/gobby/plans/digests.py` | 9–12 | `d16a8c189f6ffa38ca200355d4a7946c449b0c01b6a256303052d12e5997dc7f` |
+| E59 | `src/gobby/plans/review_coverage.py` | 813–821 | `fb81172756fa03c44a6ee1b7f9876a8a6712deff176d52e742ade6ee270593ec` |
+
+### Batch 5 reproducible report validation
+
+The focused validator below reconstructs the original 89-task snapshot,
+checks both partial-loss revisions, derives 16 path inventories from Git,
+verifies pinned excerpts and explicit retirement ancestors. It uses no ignored
+cache or runtime suite. Batch 3 and batch 4 checks remain reproducible above.
+
+```bash
+uv run python - <<'PY'
+# batch-5-audit
+import hashlib
+import re
+import subprocess
+from collections import Counter
+from pathlib import Path
+
+PIN = "4ccb3e966ed18fe13cd9f268d55143128d034048"
+REPORT = Path(".gobby/plans/research/closed-unlanded-audit-2026-10.md").read_text()
+EXCLUDE = {23201, 23252, 23304, 23345, 23519, 23626, 23269}
+Q = chr(96)
+
+def git(*args):
+    return subprocess.check_output(["/usr/bin/git", *args])
+
+original = REPORT.split("## Every closed task with an unlanded commit\n", 1)[1].split("\n## Per-commit", 1)[0]
+proof = REPORT.split("## Per-commit supersession and recovery evidence", 1)[1].split("## Every closed task", 1)[0]
+needs_inspection = {
+    sha for sha, body in re.findall(r"### \x60([0-9a-f]{40})\x60\n(.*?)(?=\n### \x60|\Z)", proof, re.S)
+    if "\nMissing linked revision, semantic supersession not proven." in body
+}
+inventory = []
+for line in original.splitlines():
+    if not line.startswith("| #") or not line.endswith("Missing linked revision, semantic supersession not proven |"):
+        continue
+    columns = line.strip("| ").split(" | ")
+    number = int(re.match(r"#(\d+)", columns[0])[1])
+    oids = [oid for oid in re.findall(r"\x60([0-9a-f]{40})\x60", columns[2]) if oid in needs_inspection]
+    if oids and number not in EXCLUDE:
+        inventory.append((columns[1], number, oids))
+inventory.sort(key=lambda row: (row[0] or "", row[1]), reverse=True)
+assert len(inventory) == 89
+batch = REPORT.split("## Semantic recovery review: batch 5", 1)[1]
+batch = re.split(r"\n## Semantic recovery review:", batch, maxsplit=1)[0]
+classification = batch.split("### Batch 5 classifications", 1)[1].split("Batch totals:", 1)[0]
+rows = re.findall(r"\| #(\d+) — .*? \| \x60([0-9a-f]+)\x60 \| (missing|delivered|intentionally superseded) \|", classification)
+assert [(int(n), sha) for n, sha, _ in rows] == [(n, oids[0][:10]) for _, n, oids in inventory[60:75]]
+assert Counter(v for _, _, v in rows) == {"delivered": 6, "intentionally superseded": 8, "missing": 1}
+assert "14 tasks remain" in batch
+counts = Counter()
+for number in range(1, 6):
+    section = REPORT.split(f"## Semantic recovery review: batch {number}", 1)[1]
+    section = re.split(r"\n## Semantic recovery review:", section, maxsplit=1)[0].split("Batch totals:", 1)[0]
+    counts.update(re.findall(r"\| (missing|delivered|intentionally superseded) \|", section))
+assert counts == {"delivered": 34, "intentionally superseded": 19, "missing": 22}
+hashes = re.findall(r"\| E\d+ \| \x60([^\x60]+)\x60 \| (\d+)–(\d+) \| \x60([0-9a-f]{64})\x60", batch)
+assert len(hashes) == 59
+for path, start, end, expected in hashes:
+    excerpt = b"".join(git("show", f"{PIN}:{path}").splitlines(keepends=True)[int(start)-1:int(end)])
+    assert hashlib.sha256(excerpt).hexdigest() == expected, path
+path_rows = re.findall(r"\| #(\d+) — .*? \| \x60([0-9a-f]+)\x60 \| (\d+) \| (\d+) \|", batch)
+expected_rows = [(n, oid) for _, n, oids in inventory[60:75] for oid in oids]
+assert len(path_rows) == len(expected_rows) == 16
+release_refs = {
+    17461: ["refs/heads/0.4.43"],
+    15711: ["refs/heads/0.4.18"],
+    15562: ["refs/heads/0.4.15", "refs/remotes/origin/0.4.15"],
+    15329: ["refs/heads/0.4.12", "refs/remotes/origin/0.4.12"],
+    15293: ["refs/heads/0.4.11", "refs/remotes/origin/0.4.11"],
+    15296: ["refs/heads/0.4.11"],
+}
+for (number, prefix, present, absent), (n, oid) in zip(path_rows, expected_rows, strict=True):
+    assert int(number) == n and prefix == oid[:10]
+    paths = git("diff-tree", "--root", "--no-commit-id", "--name-only", "-r", oid).decode().splitlines()
+    found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{path}"], capture_output=True).returncode == 0 for path in paths)
+    assert (found, len(paths)-found) == (int(present), int(absent))
+    holding = git("for-each-ref", f"--contains={oid}", "--format=%(refname)", "refs/heads", "refs/remotes").decode().splitlines()
+    assert holding == release_refs.get(n, [])
+    if not holding:
+        assert git("rev-parse", f"refs/audit/24076/{oid}").decode().strip() == oid
+for oid in inventory[71][2]:
+    assert oid in batch
+assert inventory[71][1] == 11235
+for receipt in ("e051b26e-4553-486e-966a-aa4a910f44ac", "0fca1877-81bd-4528-b67d-6f77c7e65ac0", "12c4bfa0-a058-4063-96b7-1eee7b677115"):
+    assert receipt in batch
+assert "#24130" in batch
+ancestor_section = batch.split("### Batch 5 replacement and retirement ancestors", 1)[1].split("### Batch 5 deterministic evidence ledger", 1)[0]
+ancestors = re.findall(r"\x60([0-9a-f]{40})\x60", ancestor_section)
+assert len(ancestors) == 14
+for ancestor in ancestors:
+    subprocess.run(["/usr/bin/git", "merge-base", "--is-ancestor", ancestor, PIN], check=True)
+plan = git("show", f"{PIN}:.gobby/plans/remove-gobby-build.md").decode()
+assert "src/gobby/build/workspaces.py::*" + Q + " — operation: delete" in plan
+assert "src/gobby/dispatch/spawn.py::*" + Q + " — operation: delete" in plan
+for path in ("src/gobby/dispatch/base_guard.py", "tests/dispatch/test_dependency_base_guard.py"):
+    assert subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{path}"], capture_output=True).returncode != 0
+coverage = git("show", f"{PIN}:src/gobby/plans/review_coverage.py").decode()
+assert 'return canonical_json_sha256({"plan_hash": plan_hash, "sources": source_hashes})' in coverage
+assert coverage.count('json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode()') == 2
+assert "[0.4.11]" in git("show", "d4cf939a6dd9ef9b0e466b501c505dbfe17979c3:CHANGELOG.md").decode()
+assert "[0.4.11]" not in git("show", f"{PIN}:CHANGELOG.md").decode()
+assert sum(line.startswith(Q * 3) for line in REPORT.splitlines()) % 2 == 0
+assert REPORT.endswith("_Last verified: 2026-10-12_\n")
+print("PASS: 89 inventory; batch 5 order/counts; 75 cumulative classifications; 59 hashes; 16 path/holding checks; both partial-loss revisions/referrals; 14 ancestors; approved retirement; LOW-1 source correction; release scope; Markdown/footer")
+PY
+```
+
+Validation covers this focused audit, repaired batch 3 and batch 4 checks,
+and `git diff --check`. No full suite or heavy command is required.
+
+Validation passed: batch 5's 89-task inventory, order/counts, 75 cumulative
+classifications, 59 hashes, 16 path/holding checks, both partial-loss revisions
+and referral receipts, 14 ancestors, approved retirement, LOW-1 source correction,
+release scope and Markdown/footer. The prior-batch rerun passed batch 3's 16
+hashes/15 inventories/four ancestors and batch 4's 40 hashes/15 inventories/
+18 ancestors, including prompt-loss and reconciliation-ledger checks.
+Whitespace check passed. Only this report changed.
+
 
 _Last verified: 2026-10-12_
