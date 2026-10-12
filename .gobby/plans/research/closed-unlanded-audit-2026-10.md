@@ -3440,10 +3440,10 @@ identified as artifacts rather than product defects.
 | Task | Unproven revision(s), unique prefixes from the original full-SHA inventory | Classification | Current evidence and disposition |
 | --- | --- | --- | --- |
 | #23225 — Decompose the near-ceiling gclient files | `3a2f06df00` | delivered | Same task's replacement `5eebb797287e1a66747154ccb534e477970f45be` is an ancestor of the pin. Gcode outlines locate the complete adoption group in `live_loop/local_adoption.rs:14–320`, lifecycle group in `live_loop/lifecycle.rs:26–283`, and disconnect methods in `app/disconnect.rs:8–65`. The module declarations are in E1–E2. Git blob line counts for the four moved-from files are 795, 189, 653 and 826, all below the task's 850 ceiling. The old pure-move draft needs no recovery. |
-| #22856 — Remove dead tmux spawn and launch code | `6b15e2c086` | intentionally superseded | This revision only deletes the placed-test fixture's obsolete registration-timeout patch. #23364 **Retire the dead registration timeout knob**, landed `f9a32c47a7d835fb868ec199cf72191abdaab4b3`, instead replaces that key with the still-supported `tmux.init_timeout_seconds` so the deliberately unregistered stub remains held. E3 shows the replacement; `src/gobby/config/tmux.py:64` describes the initialization timeout as provider-failure handling. Replaying the deletion would remove the fixture's valid initialization guard. |
+| #22856 — Remove dead tmux spawn and launch code | `6b15e2c086` | intentionally superseded | This revision only deletes the placed-test fixture's obsolete registration-timeout patch. #23364 **Retire the dead registration timeout knob**, landed `f9a32c47a7d835fb868ec199cf72191abdaab4b3`, instead replaces that key with the still-supported `tmux.init_timeout_seconds` so the deliberately unregistered stub remains held. E3 shows the replacement; `src/gobby/config/tmux.py:67` describes the initialization timeout as provider-failure handling. Replaying the deletion would remove the fixture's valid initialization guard. |
 | #23076 — gclient reconnects straight to the host | `ecf27cff5a` | intentionally superseded | The sole unproven revision changes only Cargo.lock, Cargo.toml and the installer floor from 0.1.16 to 0.1.17. E4–E5 show current crate 0.1.35 and floor 0.1.34; neither should be reverted to 0.1.17. Later #24077 **Model alias sidebar fix**, `db6fdf3a5d`, owns the current crate bump. This verdict concerns the version-only revision, not a new assertion about every reconnect criterion. |
 | #22895 — Plan runbooks as existing pipelines with placed agent launch | `0902d3c0b2`, `523f487870` | intentionally superseded | These are rounds 1–2 of the old deploy_runbook service, ledger and document design. E12 explicitly withdraws that design and uses existing pipeline execution/step records; E20 records “A runbook is a pipeline.” Landed same-task rewrite `3aa814ece6` and later same-task manifest/completion commits replace the drafts. No old deployment table/service should be recovered. |
-| #23303 — Rebase BEFORE_AGENT cancellation and strip daemon logging | `e2f9674a13` | delivered | Landed same-task candidate `bb308056a0364bbb17d6b73f2a5575557ea78f09` is an ancestor. E8–E11 retain child/evaluation cancellation separation, effect-safe failure gates, compact hydration release, and shielded shared embedding futures. E13 retains database-backed BEFORE_AGENT confirmation and bounded resubmission. `compact_continuation.py:608` calls it; `hooks.py:304–305` enriches the existing cancellation warning with session/source. The exact receipt-safety test blob from this revision is also present at the pin. |
+| #23303 — Rebase BEFORE_AGENT cancellation and strip daemon logging | `e2f9674a13` | delivered | Landed same-task candidate `bb308056a0364bbb17d6b73f2a5575557ea78f09` is an ancestor. E8–E11 retain child/evaluation cancellation separation, effect-safe failure gates, compact hydration release, and shielded shared embedding futures. E13 retains database-backed BEFORE_AGENT confirmation and bounded resubmission. `compact_continuation.py:608` calls it; `src/gobby/workflows/hooks.py:304–305` enriches the existing cancellation warning with session/source. The exact receipt-safety test blob from this revision is also present at the pin. |
 | #23192 — Reconcile front-door plan with contract-corpus slice plan | `3f8d7baf3b` | delivered | This merge carries the #22951 **Front-door plan repairs** into the slice-based plan. E14 records those repairs; E15 retains P2/P3 pointers and dependency reconciliation, and E16 records renewed slice consensus. Landed same-task `9bd9576342` and later index/manifest repairs carry the approved plan. The merge draft itself is unnecessary. |
 | #23246 — Pool exhaustion diagnosis | `2c88be74b6` | missing | The sanitized psycopg warning routing is delivered (E7), but the revision's rate-limited, nonblocking `pg_stat_activity` census is absent. E6 shows the final backoff failure logging only pool stats and re-raising; indexed searches find no `ACTIVITY_CENSUS` or census helper in the hub source, and no ancestor introduces that constant. See the concrete recovery record below. |
 | #22706 — BEFORE_AGENT evaluation cancellation and continuation confirmation | `0a17973545`, `0ebabda962`, `240d4d698f`, `312efa5f8f`, `39774017b2`, `437f829bfb`, `4609f492b4`, `66c9fc4672`, `9093dfb2d6`, `ba2d1c3e54`, `bdcf9cf761` | delivered | #23303 **Cancellation recovery under the logging ban** is the explicit recovery vehicle in its MCP task contract and landed candidate `bb308056a0`. E8–E13 show the corrected mechanism, preserved effect outputs/failure blocking, hydration gate, and confirmed retry. Diagnostic-only draft logger calls are intentionally excluded by that task's explicit logging ruling; per-retry logging was superseded, not lost. The original 26 incidents remain UNKNOWN, as the contract requires. |
@@ -3524,5 +3524,93 @@ the source evidence without claiming fresh runtime validation.
 | E22 | `web/src/hooks/__tests__/useChat.setup.ts:70–91` | `c1c4dca42b59d062369c55891023484531c7ef1325b7ef8b6ef7d38497b25f7a` |
 | E23 | `docs/guides/gclient-user-guide.md:65–90` | `63e745e91f02cd9ec1ea8beaf26dbb54aab6963df8913f52f0084cd4e263e72c` |
 | E24 | `docs/guides/gclient-user-guide.md:955–981` | `48df16e177e4c7ea9ce57e4b6beb746a737b296a34fa6974208eab1a259df837` |
+
+## Semantic recovery review: batch 2 (30 of 89 cumulative)
+
+This addendum reviews positions 16–30 in the same newest-first snapshot order.
+Current evidence remains bound to integration commit
+`4ccb3e966ed18fe13cd9f268d55143128d034048`, tree
+`428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`, and gcode checkout project
+`19b73420-3946-5c6a-8a06-4c7522f77543`. The Lane Manager directed a clean
+fast-forward of the existing report branch to landed batch 1 tip
+`9eb45d3d93b35568e2279050afc1200d8cd0876d`; the evidence pin stays fixed.
+
+Batch 1 dispositions: #23246 **Pool exhaustion diagnosis** is routed to
+#24103 **Recover pool census**; #22764 **Frontend restore races** is routed to
+#24104 **Recover frontend restore races**, both in Lane 7. The Orchestrator
+chose no recovery for #22434 **Droid probe artifact** or #22426 **Recipe reference**.
+Their historical missing classifications remain accurate. The two citation
+nits from batch 1 are corrected in place.
+
+### Batch 2 classifications
+
+| Task | Unproven revision(s), unique prefixes | Classification | Pinned evidence and disposition |
+| --- | --- | --- | --- |
+| #22389 — Found-work owner message counting | `486fb22d37` | delivered | The sole unproven revision actually removes retired GitHub/Linear INSERT columns and rejects non-null legacy integration arguments. It does not change message counting. B1 retains the column removal and goes further by removing the legacy arguments altogether. This verdict addresses the actual revision. |
+| #22326 — B-group test drift repair | `624e3623dd` | delivered | B2 retains the richer deferral shape, including title, depends_on and acceptance prose. B3 retains the 260k deadline guidance tier. B4–B5 seed indexed projects for both review fixtures. All four test corrections survive; no fresh test pass is claimed. |
+| #22319 — Isolated daemon health wait | `ae65650a5e` | delivered | B6–B7 retain monotonic polling, ten minimum attempts, bounded probes, categorized failures and log-tail diagnostics. The budget is now 75 seconds, beyond the draft's 60 seconds. Git comparison of `tests/e2e/test_daemon_health_wait.py` from this revision to the pin adds 97 lines and removes none, preserving its focused regressions. |
+| #22071 — Feedback synthesis report 15052df6 | `c06f8df8e4` | missing | The 53-line historical report is absent at the pin. Exact path, SHA and blob appear below. Report loss does not establish that underlying database synthesis actions were undone. |
+| #22069 — Dream synthesis report c19e1126 | `8370c53dea` | missing | The 76-line historical report is absent at the pin. Exact path, SHA and blob appear below. No runtime or database loss is inferred. |
+| #22040 — Feedback synthesis report e3b255c6 | `e9cdbca0c3` | missing | The 67-line historical report is absent at the pin. Exact path, SHA and blob appear below. No runtime or database loss is inferred. |
+| #22051 — Feedback synthesis report ef48b0b1 | `26aa30ddb8`, `dbe7162df6` | missing | Both historical report postimages, 237 and 236 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
+| #22039 — Dream synthesis report 49640230 | `dea81c11c8`, `f7cac386b2` | missing | Both historical report postimages, 46 and 48 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
+| #21820 — Fair archive-backed summary retries | `eb53e743b4` | delivered | Same-task landed replacement `c3e0e7d33695b9c19a01d5dd4bd996dfbb722f18` is an ancestor of the pin. B8–B10 retain exclusive (created_at,id) pagination, wraparound, cursor advance in finally even on failure, and archive-aware TranscriptReader construction. The failure ceiling also limits deterministic poison-session retries. |
+| #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | intentionally superseded | These revisions document and test generated structured recovery, full source coverage, combination and replay qualification. Landed #21693 **Structured handoff delivery history**, `22556858ef2752f6a668ce7224f415e91aa6beac`, supplies the authored-content path in B12. Landed #21887 **Incidental handoff history policy**, `8921c88c1fc2dad64f6e1375479f1fdebf14d0d2`, explicitly excludes regenerated/merged handoffs and whole-session replay in B11. Restoring the absent old rollout guide and replay test would contradict that replacement contract. |
+| #21875 — Optional review candidates in recovery | `0acc7cef77` | intentionally superseded | The old fix constrains generated recovery/combination interpretation of optional recommendations and queue flags. B11 replaces that path with authored content and bounded author review; automatic semantic checking is outside its contract. B12 appends repository evidence to an authored payload. This does not claim the old prompt guard survives in archival summaries. |
+| #21881 — Operation qualifiers in recovered facts | `5fa4992e9e` | intentionally superseded | The old revision preserves operation, actor and condition qualifiers through generated recovery and combination. B11 explicitly retires that generation/combination contract; B12 preserves authored Markdown. The old automatic recovery constraints are outside the replacement contract. |
+| #21850 — Reference fidelity and inherited attribution | `9b925f9c27`, `d10d2f7f6f` | intentionally superseded | The revisions add source-verbatim long-hash validation, inherited/current attribution, combination reconciliation and contract fingerprinting. B11 expressly excludes regeneration, merging and automatic semantic verification; B12 builds from delivered authored content. The absent recovery modules have no history on the pin's ancestor chain. Supersession rests on the explicit replacement contract. |
+| #21860 — Generated recovery output headroom | `410c950601` | intentionally superseded | The revision targets 6,000 characters beneath a 12,000-character generated-recovery limit. B11 replaces that path with authored handoffs. B13 documents the active 10,000 JSON-escaped hard cap and approximately 5,000-character authoring target. These are different operations and budgets; the old reducer's numeric instructions are not claimed as delivered. |
+| #21867 — Session and example exclusion from task evidence | `103a07c698` | intentionally superseded | The revision filters session identities and displayed examples from generated transcript Source Records evidence. B11 explicitly places that ledger and source-position semantics outside the replacement contract. B12 loads bounded DB-owned task evidence for authored content. The absent transcript-selection/evidence modules should not be replayed into that design. |
+
+Batch totals: **4 delivered, 6 intentionally superseded, 5 missing**.
+Cumulative totals: **11 delivered, 10 intentionally superseded, 9 missing**;
+**59 tasks remain**. B11 is decisive for the six handoff revisions. B14 shows
+archival summaries still use a separate Markdown generator; no claim is made
+about installed prompt registry rows or live semantic behavior. No audited task,
+source path, holding ref or foreign worktree was mutated.
+
+### Batch 2 recovery referrals
+
+These five closely aligned losses are historical report artifacts. All seven
+revisions are readable Git objects but have **no holding branch or other ref**
+at inspection. Neither rerunning nightly jobs nor replaying their database
+mutations is implied. The Orchestrator owns the recovery disposition.
+
+| Task and title | Unlanded full SHA | Missing path | Historical blob and line count | Holding branch |
+| --- | --- | --- | --- | --- |
+| #22071 — Feedback synthesis report 15052df6 | `c06f8df8e42f2a1362a8f8717fd8a9de1e134ecb` | `docs/reports/feedback/15052df6-3b06-450d-9f4e-aa75b4e03917.md` | `0a48b3dad4a27fdb616bfd2f063fd928195be486`, 53 lines | none |
+| #22069 — Dream synthesis report c19e1126 | `8370c53dea76479567e359677c0126e909587764` | `docs/reports/dream/c19e1126-cbf4-436e-b956-ada5631bd49c.md` | `675f395b5367bb28b7c206646e75f51267dab896`, 76 lines | none |
+| #22040 — Feedback synthesis report e3b255c6 | `e9cdbca0c37dc5bc406732963a4e1c56e35b114a` | `docs/reports/feedback/e3b255c6-044e-48fc-a49b-297d821d016a.md` | `336cefddb8eee790c8e74b06606329ce2ed22e73`, 67 lines | none |
+| #22051 — Feedback synthesis report ef48b0b1 | `26aa30ddb88fca28e26f15c6d2adb57e601dcc34` | `docs/reports/feedback/ef48b0b1-dd58-403a-ac84-52a28675d289.md` | `15f815b4c336488fbb64aae2f074517c5c923e4d`, 237 lines | none |
+| #22051 — Feedback synthesis report ef48b0b1 | `dbe7162df67a9f00b5df939005d849cc5b19ac70` | `docs/reports/feedback/ef48b0b1-dd58-403a-ac84-52a28675d289.md` | `17812e14ad9850a2643a3823188f8d838e215ee8`, 236 lines | none |
+| #22039 — Dream synthesis report 49640230 | `dea81c11c8c746999952a480bbed6321e0580c58` | `docs/reports/dream/49640230-c32a-4547-957c-f23d36e39109.md` | `d797b014b8e63fb8002672aaee8554044422984e`, 46 lines | none |
+| #22039 — Dream synthesis report 49640230 | `f7cac386b2dc5b11fe0af346ab01259555f51735` | `docs/reports/dream/49640230-c32a-4547-957c-f23d36e39109.md` | `e1588c18cb905e2cd5d3ea9e35ae93a904149e76`, 48 lines | none |
+
+### Batch 2 bound gcode excerpts
+
+Each SHA-256 hashes the raw UTF-8 excerpt, including its final newline.
+
+| Evidence | Path | Lines | Excerpt SHA-256 |
+| --- | --- | --- | --- |
+| B1 | `src/gobby/storage/tasks/_creation.py` | 136–225 | `03152df82839876aebfbced6e8bfa198fc80d1ecf228c755f4738d2aa4651c78` |
+| B2 | `tests/tasks/test_expansion_service_compile_minimal.py` | 232–280 | `e91878e4d1796ffc148c63f7f6783c7c693f2af98e96d74a7bb8baea33ff756b` |
+| B3 | `tests/workflows/test_database_deadline_retry.py` | 220–250 | `373ec7b4efb97b11b945d8f5f2e0ec3b7125940a4f7cde85fdf96b8738406348` |
+| B4 | `tests/storage/stage_review_helpers.py` | 40–65 | `b3a3e124483830edd3a59b6b423a0032f783dd8c2d7d2f30b2dc17699fe13c73` |
+| B5 | `tests/review_learning/test_round_diff.py` | 410–445 | `9dc29fdb5b8f0ff8432ac62c1ab24498d89175713649ed52d3bef17b0a2e77af` |
+| B6 | `tests/e2e/conftest.py` | 64–121 | `90e5d8241d9a78d4419eb6fdc6c8badaa1bbe4b284b434863e69c2eed8457993` |
+| B7 | `tests/e2e/conftest.py` | 646–735 | `4127ee4bc78bc48440475b0a6fa0876e7aa5900ccadf3c9ac792e5374631b4d8` |
+| B8 | `src/gobby/sessions/transcript_processing.py` | 120–157 | `fcb5260b2408442765131d0e227e9affb09d9b9044eb34f4686f917c8ac70a45` |
+| B9 | `src/gobby/storage/sessions/_transcript.py` | 25–60 | `1462babf68c716c58b242cddfc696ef8684cca0f1fecf2e504537bf917312c00` |
+| B10 | `src/gobby/sessions/transcript_processing.py` | 158–235 | `9e991e2ae332c64ce004490037fae40d89f0cc6001feb54fe13de63cede858ed` |
+| B11 | `docs/contracts/session-boundary.md` | 70–140 | `fc531958f64a087a69f0b4bac1f395a29c8e3b551b6f7f524b4636159eca0b31` |
+| B12 | `src/gobby/sessions/handoff_summary.py` | 46–105 | `c320c4136c65bd38cbe214399abf15a1f2f7ac09bc4dbb2a4d0bf66e8af4e4ff` |
+| B13 | `docs/contracts/session-boundary.md` | 1–75 | `8016b7b0aee098b5eb2bfe0c0491f24b97d960db8f032f7b79319749e42cd8b5` |
+| B14 | `src/gobby/sessions/summary_generation.py` | 104–170 | `4e2bba4db751c3c83d3c0dccc397067ad6c926ba47775996351d7e4db6f3471b` |
+
+Validation covers the exact 89-task derivation and batch order, revision prefixes,
+14 bound excerpt hashes, three replacement ancestors, seven historical report
+postimages and absent paths/refs, classification counts, Markdown fences, and
+freshness footer with a focused `uv run python` audit. `git diff --check` checks
+the report edit. No full suite or heavy command ran.
 
 _Last verified: 2026-10-12_
