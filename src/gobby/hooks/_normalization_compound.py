@@ -174,10 +174,9 @@ def process_substitution_bodies(
                 "("
             ):
                 close = _substitution_end(command, start + 1, False, 0)
-                if skip_line_continuations(command, close + 1) == end:
-                    bodies.append(command[start + 1 : close])
-                    index += 2
-                    continue
+                bodies.append(command[start + 1 : min(close, end)])
+                index += 2
+                continue
         owner.append(token)
         index += 1
     return owner, bodies

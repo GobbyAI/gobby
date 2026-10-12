@@ -50,6 +50,22 @@ def test_unclosed_split_substitution_opener_fails_closed(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "command",
     [
+        "case x in <\\\n(touch a.py)) ;; esac",
+        "case x in y|<(touch a.py)) ;; esac",
+        "case x in <(touch a.py)\\\n) ;; esac",
+        "cat <(touch a.py)x",
+        'cat <(touch a.py)"x"',
+    ],
+)
+def test_process_substitution_with_suffix_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_tool_kind"] == "write"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "echo '$\\\n(touch a.py)'",
         'echo "\\$\\\n(touch a.py)"',
         'echo "<\\\n(touch a.py)"',
