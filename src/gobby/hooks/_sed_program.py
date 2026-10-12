@@ -69,18 +69,20 @@ def _line_end(program: str, start: int) -> int:
     return len(program) if end < 0 else end
 
 
-def sed_write_paths(program: str) -> tuple[list[str], bool]:
+def sed_write_paths(program: str, *, bsd: bool = False) -> tuple[list[str], bool]:
     """Union GNU and BSD regex readings; either unproven reading fails closed."""
-    plain_paths, plain_unknown = _program_write_paths(program, regex_brackets=False)
-    bracket_paths, bracket_unknown = _program_write_paths(program, regex_brackets=True)
+    plain_paths, plain_unknown = _program_write_paths(program, regex_brackets=False, bsd=bsd)
+    bracket_paths, bracket_unknown = _program_write_paths(program, regex_brackets=True, bsd=bsd)
     return list(dict.fromkeys([*plain_paths, *bracket_paths])), plain_unknown or bracket_unknown
 
 
-def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[str], bool]:
+def _program_write_paths(
+    program: str, *, regex_brackets: bool, bsd: bool = False
+) -> tuple[list[str], bool]:
     """Return destinations and whether any program behavior remains unproven.
 
     File arguments consume the rest of their line, including semicolons.
-    Unrecognized grammar and executable `e` commands fail closed.
+    Ambiguous grammar and executable `e` commands fail closed.
     """
     paths: list[str] = []
     index = 0
@@ -90,7 +92,7 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
             continue
         end = _address_end(program, index, regex_brackets)
         if end is None:
-            return paths, True
+            return paths, not bsd
         index = end
         while index < len(program) and program[index] in " \t":
             index += 1
@@ -100,12 +102,12 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
                 index += 1
             end = _address_end(program, index, regex_brackets)
             if end is None or end == index:
-                return paths, True
+                return paths, not bsd
             index = end
         while index < len(program) and program[index] in " \t!":
             index += 1
         if index >= len(program):
-            return paths, True
+            return paths, not bsd
         command = program[index]
         index += 1
         if command in "{}dDgGhHnNpPxz=F":
@@ -115,7 +117,7 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
             continue
         if command in "sy":
             if index >= len(program) or program[index] in "\\\n":
-                return paths, True
+                return paths, not bsd
             delimiter = program[index]
             index += 1
             for section in range(2):
@@ -126,7 +128,7 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
                     regex_brackets=regex_brackets and command == "s" and section == 0,
                 )
                 if end is None:
-                    return paths, True
+                    return paths, not bsd
                 index = end
             if command == "y":
                 continue
@@ -135,7 +137,7 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
                 if flag == "w":
                     break
                 if flag == "e" or (not flag.isdigit() and flag not in "gpIiMm \t"):
-                    return paths, True
+                    return paths, not bsd
                 index += 1
             if index >= len(program) or program[index] != "w":
                 continue
@@ -144,7 +146,9 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
         if command in "wW":
             end = _line_end(program, index)
             path = program[index:end].lstrip(" \t")
-            if not path or "\\" in path or "\x00" in path:
+            if not path:
+                return paths, not bsd
+            if "\\" in path or "\x00" in path:
                 return paths, True
             paths.append(path)
             index = end
@@ -174,6 +178,11 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
         elif command in "qQlLv":
             while index < len(program) and (program[index].isdigit() or program[index] in " .\t"):
                 index += 1
+        elif command == "e":
+            return paths, not bsd
         else:
-            return paths, True
+            # Unsupported command letters fail during compilation. Keep any earlier
+            # w targets (BSD may open them while compiling), but execution cannot
+            # reach later commands. A literal file word such as f.py is not a script.
+            return paths, False
     return list(dict.fromkeys(paths)), False

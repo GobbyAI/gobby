@@ -13,6 +13,7 @@ from gobby.hooks._normalization_bindings import (
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _contains_unexpanded_shell_reference
+from gobby.hooks._sed_program import sed_write_paths
 
 
 def _build_canonical_tool_metadata(
@@ -116,6 +117,22 @@ def _path_is_unresolved(path: str, root: str | None) -> bool:
     return _contains_unexpanded_shell_reference(path)
 
 
+def _loop_bound_sed_program_is_inert(
+    item: _ShellSegmentMetadata, loop_bindings: dict[str, tuple[str, ...]]
+) -> bool:
+    program = item.extra.get("_canonical_sed_bsd_program") if item.extra else None
+    if not isinstance(program, str):
+        return False
+    reference = _plain_loop_binding_reference(program, item.shell_words, item.shell_raw_words)
+    if reference is None or reference[0] not in loop_bindings:
+        return False
+    variable, suffix = reference
+    return all(
+        sed_write_paths(bound + suffix, bsd=True) == ([], False)
+        for bound in loop_bindings[variable]
+    )
+
+
 def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict[str, Any]:
     active = [
         item for item in metadata if not item.neutral_setup and not item.read_only_pipeline_filter
@@ -199,6 +216,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 item.extra
                 and item.extra.get("_canonical_repo_mutation_scope_unknown")
                 and not item.extra.get("_canonical_repo_mutation_scope_resolved_by_loop_binding")
+                and not _loop_bound_sed_program_is_inert(item, loop_bindings)
             )
         ):
             # A sibling's literal paths cannot resolve this segment's opaque write.
