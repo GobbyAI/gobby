@@ -209,6 +209,43 @@ async fn write_admission_is_generation_and_payload_bound() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn write_fingerprint_distinguishes_kind_payload_boundaries() -> anyhow::Result<()> {
+    let (registry, _events) = Registry::new(32);
+    let holder = registry
+        .attach(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Viewer::Gclient,
+            Backend::Native,
+        )
+        .await?;
+    let control = registry.take_control(holder, false).await?;
+    assert_eq!(
+        registry
+            .admit_write(holder, control.generation, 0, "input", b"x:ls")
+            .await?,
+        WriteAdmit::New
+    );
+    registry.complete_write(holder, 0, "written", None).await?;
+    assert!(matches!(
+        registry
+            .admit_write(holder, control.generation, 0, "input:x", b"ls")
+            .await,
+        Err(Error::WriteConflict)
+    ));
+    assert_eq!(
+        registry
+            .admit_write(holder, control.generation, 0, "input", b"x:ls")
+            .await?,
+        WriteAdmit::Replay {
+            outcome: "written".into(),
+            reason: None,
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn lifecycle_order_is_epoch_scoped() -> anyhow::Result<()> {
     let (registry, mut events) = Registry::new(32);
     let terminal = Uuid::new_v4();
