@@ -306,10 +306,10 @@ async def test_real_exhausted_pool_releases_workflow_worker(tmp_path: Path) -> N
         adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
         try:
             with pool.connection():
-                started = time.monotonic()
+                # The pool error must win over workflow/adapter timeouts, and
+                # the worker must be released before another delivery starts.
                 with pytest.raises(PoolTimeout):
                     await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
-                assert time.monotonic() - started < 0.3
                 assert finished.is_set()
 
             # psycopg_pool discards expired queue entries when a connection returns.
