@@ -3406,4 +3406,123 @@ These 512 tasks contain 491 distinct SHA strings absent from the main checkout o
 
 The audited task records, branches, worktrees and source files were not modified. The live fleet advanced integration independently; all membership and patch comparisons use the immutable sweep pin above. The only new Git branch created by this audit is this seat's report branch, and the only commit proposed is this report file, under the Orchestrator's explicit report-only exception relayed by Lane Manager gobby#16007. Research inputs/cache remain local and uncommitted. No audited branch or worktree was retired, and no audited task was reopened, relinked or edited. The Orchestrator independently filed the three recovery tasks documented above.
 
-_Last verified: 2026-10-11_
+## Semantic recovery review: batch 1 (15 of 89)
+
+Task #24099, **Semantic recovery review of the 89 unproven unlanded tasks**,
+continues the original audit. This batch checks the 15 most recently closed
+tasks in the remaining set, ordered by the MCP snapshot's `closed_at` descending
+and then task number descending. The original sweep tables remain historical
+inventory; the classifications below replace their unproven semantic verdicts
+for these tasks.
+
+All current-source claims in this follow-up use one immutable integration pin:
+
+- Branch at observation: `0.5.0`.
+- Commit: `4ccb3e966ed18fe13cd9f268d55143128d034048`.
+- Tree: `428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`.
+- Gcode checkout project: `19b73420-3946-5c6a-8a06-4c7522f77543`.
+- Checkout: `/Users/josh/.gobby/worktrees/gobby/lane-4-close-out-1`.
+- Source reads: bound `gcode evidence` ranges, with all three binding fields.
+  Historical changes and holding refs: read-only Git.
+- Task inventory: the same MCP-exported snapshot and original ignored analysis
+  cache used by the sweep. Filtering `needs_inspection` tasks, excluding the six
+  already checked and #23269 **Node bootstrap refusal**, reproduces exactly 89.
+  The cache is unchanged and is not a deliverable.
+
+“Delivered” describes the revision's behavior or document correction in the
+pinned source, not live activation or a fresh test pass. “Intentionally
+superseded” requires a named replacement or explicit withdrawal. “Missing”
+means the concrete revision content remains absent; small probe artifacts are
+identified as artifacts rather than product defects.
+
+### Batch 1 classifications
+
+| Task | Unproven revision(s), unique prefixes from the original full-SHA inventory | Classification | Current evidence and disposition |
+| --- | --- | --- | --- |
+| #23225 — Decompose the near-ceiling gclient files | `3a2f06df00` | delivered | Same task's replacement `5eebb797287e1a66747154ccb534e477970f45be` is an ancestor of the pin. Gcode outlines locate the complete adoption group in `live_loop/local_adoption.rs:14–320`, lifecycle group in `live_loop/lifecycle.rs:26–283`, and disconnect methods in `app/disconnect.rs:8–65`. The module declarations are in E1–E2. Git blob line counts for the four moved-from files are 795, 189, 653 and 826, all below the task's 850 ceiling. The old pure-move draft needs no recovery. |
+| #22856 — Remove dead tmux spawn and launch code | `6b15e2c086` | intentionally superseded | This revision only deletes the placed-test fixture's obsolete registration-timeout patch. #23364 **Retire the dead registration timeout knob**, landed `f9a32c47a7d835fb868ec199cf72191abdaab4b3`, instead replaces that key with the still-supported `tmux.init_timeout_seconds` so the deliberately unregistered stub remains held. E3 shows the replacement; `src/gobby/config/tmux.py:64` describes the initialization timeout as provider-failure handling. Replaying the deletion would remove the fixture's valid initialization guard. |
+| #23076 — gclient reconnects straight to the host | `ecf27cff5a` | intentionally superseded | The sole unproven revision changes only Cargo.lock, Cargo.toml and the installer floor from 0.1.16 to 0.1.17. E4–E5 show current crate 0.1.35 and floor 0.1.34; neither should be reverted to 0.1.17. Later #24077 **Model alias sidebar fix**, `db6fdf3a5d`, owns the current crate bump. This verdict concerns the version-only revision, not a new assertion about every reconnect criterion. |
+| #22895 — Plan runbooks as existing pipelines with placed agent launch | `0902d3c0b2`, `523f487870` | intentionally superseded | These are rounds 1–2 of the old deploy_runbook service, ledger and document design. E12 explicitly withdraws that design and uses existing pipeline execution/step records; E20 records “A runbook is a pipeline.” Landed same-task rewrite `3aa814ece6` and later same-task manifest/completion commits replace the drafts. No old deployment table/service should be recovered. |
+| #23303 — Rebase BEFORE_AGENT cancellation and strip daemon logging | `e2f9674a13` | delivered | Landed same-task candidate `bb308056a0364bbb17d6b73f2a5575557ea78f09` is an ancestor. E8–E11 retain child/evaluation cancellation separation, effect-safe failure gates, compact hydration release, and shielded shared embedding futures. E13 retains database-backed BEFORE_AGENT confirmation and bounded resubmission. `compact_continuation.py:608` calls it; `hooks.py:304–305` enriches the existing cancellation warning with session/source. The exact receipt-safety test blob from this revision is also present at the pin. |
+| #23192 — Reconcile front-door plan with contract-corpus slice plan | `3f8d7baf3b` | delivered | This merge carries the #22951 **Front-door plan repairs** into the slice-based plan. E14 records those repairs; E15 retains P2/P3 pointers and dependency reconciliation, and E16 records renewed slice consensus. Landed same-task `9bd9576342` and later index/manifest repairs carry the approved plan. The merge draft itself is unnecessary. |
+| #23246 — Pool exhaustion diagnosis | `2c88be74b6` | missing | The sanitized psycopg warning routing is delivered (E7), but the revision's rate-limited, nonblocking `pg_stat_activity` census is absent. E6 shows the final backoff failure logging only pool stats and re-raising; indexed searches find no `ACTIVITY_CENSUS` or census helper in the hub source, and no ancestor introduces that constant. See the concrete recovery record below. |
+| #22706 — BEFORE_AGENT evaluation cancellation and continuation confirmation | `0a17973545`, `0ebabda962`, `240d4d698f`, `312efa5f8f`, `39774017b2`, `437f829bfb`, `4609f492b4`, `66c9fc4672`, `9093dfb2d6`, `ba2d1c3e54`, `bdcf9cf761` | delivered | #23303 **Cancellation recovery under the logging ban** is the explicit recovery vehicle in its MCP task contract and landed candidate `bb308056a0`. E8–E13 show the corrected mechanism, preserved effect outputs/failure blocking, hydration gate, and confirmed retry. Diagnostic-only draft logger calls are intentionally excluded by that task's explicit logging ruling; per-retry logging was superseded, not lost. The original 26 incidents remain UNKNOWN, as the contract requires. |
+| #23058 — Refresh front-door plan for Ask retirement and migration renumber | `3792fa484a`, `efe2a739fd` | delivered | E16 records the Ask-only Targets and acceptance items as moot after #23055 **Ask retirement**. The signed-golden correction is now owned by the executable API-keys slice: E17 points to it, E18 requires the five signed goldens and new schema identity, and E19 preserves the malformed-field rejection test rather than treating that negative vector as parseable. Old migration numbers and M1 bytes are superseded by the active slice. |
+| #22951 — Refresh reviewed front-door plan for current-code expansion | `04c3b8cc6d`, `4573796764`, `753fb33102`, `9774514ae2`, `c7274d2be2` | delivered | E14 retains the complete repair/consensus record: runner ownership until supervisor cutover, per-case backend state, credential-reader sweep, per-hello key refresh/drain, shutdown ordering and SIGKILL topology bounds. E15–E17 show later slice execution authority. The same-task landed repairs and #23192 **Front-door slice reconciliation** carry these decisions; the stale draft manifests should not be restored. |
+| #22764 — Frontend load races and timed-out test cascades | `b5e5fe5837` | missing | The reconnect effect still issues another `viewSession` while an initial REST restore can be in flight (E21); it lacks the revision's settled-request barrier. E22 also returns an imported hook after `vi.resetModules()` without checking which test context owns the globals. Both fixes and their new regressions are absent; this is a source comparison, not a fresh loaded-suite reproduction. See recovery record below. |
+| #22940 — Reconcile runbooks migration references with occupied schema head | `769e42d910` | intentionally superseded | #22942 **Archive retired runbooks plan**, `c0c23f6e99c686d79f70aa55b5ef9b6ac0b31b42`, explicitly archives the earlier plan at `completed/runbooks.md`. E12 and E20 name the active pipeline-based runbook contract. The historical archive lacks this revision's migration-455 and task-edit-policy annotations; they are lost historical edits to a retired plan, not an executable migration obligation. Restoring or re-expanding the retired plan is unnecessary. |
+| #22761 — gclient User guide | `4cc1aad245` | delivered | E23 describes the current menu bar, pinned/overlay sidebar and concrete menus; E24 describes four startup stages and daemon retry. These are the guide's substantive Chrome additions, updated by later #22944 **Chrome polish** and #23626 **Client chrome refresh** changes. The old “menus during splash” wording is intentionally replaced by the fullscreen splash followed by chrome on failed health. |
+| #22434 — Droid probe: blocker round trip | `31f53f3166` | missing | The revision adds exactly the one-line `docs/droid-probe-blocker.md` artifact containing `marzipan` (blob `4255d2b5132aba6c68ce3487a68962ce16fb8522`). The path is absent from the pinned Git tree. This is lost probe documentation, with no asserted product impact. |
+| #22426 — Chocolate chip cookie recipe reference | `d95a76a505` | missing | The revision adds the 32-line `docs/chocolate-chip-cookies.md` reference (blob `f67181c60a27fe0ba8f44fb3d9d0f081264015f6`). The path is absent from the pinned Git tree, and the commit has no holding ref. This is a missing requested document, with no asserted runtime impact. |
+
+Batch totals: **7 delivered, 4 intentionally superseded, 4 missing**.
+**74 tasks remain** for subsequent batches. No audited task, source file, holding
+branch or worktree was changed. The seat's authorized report branch is the only
+new branch, and this addendum is its only edited path.
+
+### Batch 1 recovery referrals
+
+These records preserve the exact absent change and holding location for the
+Orchestrator; they do not authorize replay of the whole historical branch.
+
+1. **#23246 — Pool exhaustion diagnosis**:
+   `2c88be74b6f6ad12f531bf93480000f61ca06725`,
+   branch `task-23246-pool-census`. Missing the at-most-one-per-minute census
+   thread after final acquisition failure, bounded direct connection/query
+   parameters, typed failure reporting and original-PoolTimeout preservation.
+   Sanitized pool warning routing is already present and needs no duplicate fix.
+   Recovery must reconcile the current operation-deadline path and current
+   logging policy; the old code is a reference rather than a replay instruction.
+2. **#22764 — Frontend load races**:
+   `b5e5fe5837ce8438b8df5ae41b64d6bbdcb1549e`,
+   branches `task-22764-usechat-sessions-races` and
+   `review-r3-c22764-778bd67`. Missing the settled initial-restore barrier
+   before reconnect retry and ownership check preventing a timed-out test from
+   importing/rendering against another test's globals, plus the revision's
+   focused regression cases.
+3. **#22434 — Droid blocker-round-trip probe**:
+   `31f53f3166cc4e00bee8d5469b58d1a7cd84013e`.
+   No holding branch; retained at `refs/gobby-evidence/task-22434`.
+   Missing `docs/droid-probe-blocker.md` and its parent-supplied probe word.
+   Artifact-only recovery may be disposed by the Orchestrator.
+4. **#22426 — Cookie recipe reference**:
+   `d95a76a5054c36ed53edc7e30da467be99d47733`.
+   No holding branch or other ref; the commit object remains available.
+   Missing `docs/chocolate-chip-cookies.md`.
+   Artifact-only recovery may be disposed by the Orchestrator.
+
+### Batch 1 pinned evidence
+
+Each SHA-256 hashes the raw excerpt bytes returned by the bound gcode read.
+Line ranges refer only to the immutable follow-up pin above. Outlines locate the
+moved functions; Git ancestry, blob-presence and holding-ref checks supplement
+the source evidence without claiming fresh runtime validation.
+
+| ID | Pinned source range | Excerpt SHA-256 |
+| --- | --- | --- |
+| E1 | `crates/gclient/src/app/live_loop.rs:40–55` | `ebabf045f5b467a8725a70fa5a03c8162f5ddcc365e3d6b64182c3b7510fa4a5` |
+| E2 | `crates/gclient/src/app/mod.rs:1–12` | `7c83de8c1d310838088c81cfeb9e650db4930c9486dd6edf772c5e9cd7b616c7` |
+| E3 | `tests/workflows/test_placed_pipeline_fixture.py:178–212` | `2ffa1214006ed29c852e0f6929a059e6bb1093d5d589d93c4ead46a1bc90ace2` |
+| E4 | `crates/gclient/Cargo.toml:1–8` | `22c8c84fed03bd2afc6631868c3c1a81e4727893fc91fec1bf78be4e7fe55bed` |
+| E5 | `src/gobby/install/version_pins.py:4–18` | `191e9929aea96bc0bdf87b8701fc6926c2dd69de0d170d8b3708c90a93921c49` |
+| E6 | `src/gobby/storage/hub/postgres_pool.py:190–222` | `c31513f4f75f2b7c8a7b17f03bbb73f5ba1965d30e4eb12b313d14c1ff6fea97` |
+| E7 | `src/gobby/telemetry/logging.py:550–566` | `4ed2e51f01e24711ffb35b0e8de8b04ef46c585c03bfbe65c5ac79b426c8c97b` |
+| E8 | `src/gobby/workflows/evaluation_runtime.py:126–147` | `f3292a25c99cc156b540b632c91957c47ead9138b824e6f3cca3f3e88931292e` |
+| E9 | `src/gobby/workflows/engine/evaluation.py:740–767` | `c68e48175db9525fa87eeb5b1b8bc92cdd5003f1f31e31c00f7d8576e2376fb8` |
+| E10 | `src/gobby/install/shared/workflows/rules/context-handoff/block-tools-after-handoff-compact.yaml:147–168` | `362a61b5ebe3ece6f7f79eb8e9e5d3fc4ecbe8db01704778f31560d1307ff8c1` |
+| E11 | `src/gobby/ai/embedding_cache.py:148–169` | `f4615f08f9f614d5f90e7bbcad3b58de66b989e0850331f4ad84c1f74654dd5a` |
+| E12 | `.gobby/plans/deploy-runbook.md:7–36` | `3b529f82fd3117611d3e5bce6d0868502f2efa7857196965b86d486193be4298` |
+| E13 | `src/gobby/sessions/continuation_retry.py:201–240` | `9486cc5966b5bf9612b3e37a85bea91d0e1a5889f6ce98a0fdaf08b9f46c4145` |
+| E14 | `.gobby/plans/gdaemon-front-door.md:1896–1964` | `b98bede99da0136cb70a100f0302ede10d7c48091c28b3f618b3dace50ff29a6` |
+| E15 | `.gobby/plans/gdaemon-front-door.md:436–461` | `32b0f95394c16d6226a2a610b373a146032a3bdfca88abea73f967c9799641c2` |
+| E16 | `.gobby/plans/gdaemon-front-door.md:1976–2003` | `6af3fd2288923e922fb2e25649e411f73c9dbb82a8a7a07e689e904144b4e3de` |
+| E17 | `.gobby/plans/gdaemon-front-door.md:665–668` | `640d0bcaa3270cd654c64373c5b6999edddec31a7b5cd0a4d28edf4f5b35e825` |
+| E18 | `.gobby/plans/gdaemon-api-keys-nodes.md:726–737` | `7d783a6835b7ef69d95fbed7ce9e92c7e8186c0d7379ec3c058e5094746af68b` |
+| E19 | `tests/runtime_grants/test_golden_vectors.py:178–197` | `91237eaf5a2594284e43f63788acc6195287b525b020a3d85788738f4d50a40e` |
+| E20 | `.gobby/plans/deploy-runbook.md:37–54` | `090e3261fa15d3f594cca07f8dcc6d39391816ae3a81935008c2b50063ecab18` |
+| E21 | `web/src/hooks/useChat/sessionViewing.ts:380–414` | `db9dedd40e263812ae330d3d3e9cf7c183cac6546e5f90e7e279a46d3eb44aab` |
+| E22 | `web/src/hooks/__tests__/useChat.setup.ts:70–91` | `c1c4dca42b59d062369c55891023484531c7ef1325b7ef8b6ef7d38497b25f7a` |
+| E23 | `docs/guides/gclient-user-guide.md:65–90` | `63e745e91f02cd9ec1ea8beaf26dbb54aab6963df8913f52f0084cd4e263e72c` |
+| E24 | `docs/guides/gclient-user-guide.md:955–981` | `48df16e177e4c7ea9ce57e4b6beb746a737b296a34fa6974208eab1a259df837` |
+
+_Last verified: 2026-10-12_
