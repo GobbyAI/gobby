@@ -80,7 +80,7 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
     """Return destinations and whether any program behavior remains unproven.
 
     File arguments consume the rest of their line, including semicolons.
-    Unrecognized grammar and executable `e` commands fail closed.
+    Ambiguous grammar and executable `e` commands fail closed.
     """
     paths: list[str] = []
     index = 0
@@ -174,6 +174,11 @@ def _program_write_paths(program: str, *, regex_brackets: bool) -> tuple[list[st
         elif command in "qQlLv":
             while index < len(program) and (program[index].isdigit() or program[index] in " .\t"):
                 index += 1
-        else:
+        elif command == "e":
             return paths, True
+        else:
+            # Unsupported command letters fail during compilation. Keep any earlier
+            # w targets (BSD may open them while compiling), but execution cannot
+            # reach later commands. A literal file word such as f.py is not a script.
+            return paths, False
     return list(dict.fromkeys(paths)), False

@@ -168,9 +168,7 @@ def test_script_regex_bracket_delimiter_cannot_hide_write(tmp_path: Path) -> Non
 def test_regex_dialect_union_preserves_plain_scan_destination(tmp_path: Path) -> None:
     data = _metadata("sed 's/[/]/w d/g' in.py", tmp_path)
     assert data["canonical_tool_kind"] == "write"
-    assert "d/g" in data.get("canonical_write_file_paths", []) or data.get(
-        "canonical_repo_mutation_scope_unknown"
-    )
+    assert "d/g" in data["canonical_write_file_paths"]
 
 
 @pytest.mark.parametrize("options", ["-l", "-n -l"])
@@ -197,6 +195,67 @@ def test_gnu_line_length_option_consumes_numeric_value(tmp_path: Path) -> None:
 def test_bsd_uppercase_inplace_consumes_non_dot_suffix(tmp_path: Path) -> None:
     data = _metadata("sed -I bak 'w out.txt' in.py", tmp_path)
     assert data["canonical_write_file_paths"] == ["in.py", "out.txt"]
+
+
+@pytest.mark.parametrize("flag", ["-i", "-ni", "-Ei"])
+@pytest.mark.parametrize("suffix", ["bak", "-n", "-f"])
+@pytest.mark.parametrize("destination", ["out.txt", "/outside/x"])
+def test_bsd_bare_inplace_suffix_preserves_program_write(
+    tmp_path: Path, flag: str, suffix: str, destination: str
+) -> None:
+    data = _metadata(f"sed {flag} {suffix} 'w {destination}' in.py", tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert destination in data["canonical_write_file_paths"]
+
+
+def test_bsd_bare_inplace_cannot_hide_repository_write_after_scratch_cd(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+    destination = root / "x.py"
+    data = _metadata(f"cd {scratch}; sed -i bak 'w {destination}' in.py", root)
+    assert str(destination) in data["canonical_write_file_paths"]
+    assert data["canonical_repo_mutation"] is True
+
+
+def test_bare_inplace_union_keeps_gnu_and_bsd_write_destinations(tmp_path: Path) -> None:
+    data = _metadata("sed -i 'w /tmp/gnu-output' 'w out.txt' in.py", tmp_path)
+    assert {"/tmp/gnu-output", "out.txt"} <= set(data["canonical_write_file_paths"])
+
+
+def test_bare_inplace_loop_input_does_not_prove_bsd_program_scope(tmp_path: Path) -> None:
+    data = _metadata('for f in a.py b.py; do sed -i "s/x/y/" "$f"; done', tmp_path)
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("options", ["-i", "-i -e"])
+def test_common_gnu_inplace_form_preserves_known_scope(tmp_path: Path, options: str) -> None:
+    data = _metadata(f"sed {options} 's/a/b/' f.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["f.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_invalid_sed_command_keeps_earlier_compile_time_write(tmp_path: Path) -> None:
+    data = _metadata("sed 'w out.txt\nf.py' in.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["out.txt"]
+
+
+def test_invalid_sed_command_cannot_reach_later_write(tmp_path: Path) -> None:
+    data = _metadata("sed 'f.py\nw out.txt' in.py", tmp_path)
+    assert data["canonical_tool_kind"] == "read"
+    assert "canonical_write_file_paths" not in data
+
+
+@pytest.mark.parametrize("suffix", ["$SUFFIX", "'e touch /tmp/other'"])
+def test_bare_inplace_unproven_reading_keeps_known_write_and_unknown_scope(
+    tmp_path: Path, suffix: str
+) -> None:
+    data = _metadata(f"sed -i {suffix} 'w /tmp/out.txt' /tmp/in.py", tmp_path)
+    assert "/tmp/out.txt" in data["canonical_write_file_paths"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data["canonical_repo_mutation"] is True
 
 
 def test_bracket_dirname_idiom_is_conservative_across_dialects(tmp_path: Path) -> None:

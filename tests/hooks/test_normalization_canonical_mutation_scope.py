@@ -1909,7 +1909,7 @@ def test_loop_binding_clears_only_the_public_unknown_scope(tmp_path: Path) -> No
     data: dict[str, Any] = {
         "tool_name": "Bash",
         "tool_input": {
-            "command": 'for f in a.py b.py; do sed -i "s/x/y/" "$f"; done',
+            "command": 'for f in a.py b.py; do sed -i.bak "s/x/y/" "$f"; done',
             "cwd": str(tmp_path),
         },
         "project_path": str(tmp_path),
@@ -2005,7 +2005,7 @@ def test_double_quoted_loop_parameter_references_preserve_binding(
     data: dict[str, Any] = {
         "tool_name": "Bash",
         "tool_input": {
-            "command": f'for f in a.py b.py; do sed -i "s/x/y/" {reference}; done',
+            "command": f'for f in a.py b.py; do sed -i.bak "s/x/y/" {reference}; done',
             "cwd": str(tmp_path),
         },
         "project_path": str(tmp_path),
@@ -2216,7 +2216,7 @@ def test_proven_safe_intervening_segment_preserves_loop_binding(
     data: dict[str, Any] = {
         "tool_name": "Bash",
         "tool_input": {
-            "command": (f'for f in a.py b.py; do {safe_segment}; sed -i "s/x/y/" "$f"; done'),
+            "command": (f'for f in a.py b.py; do {safe_segment}; sed -i.bak "s/x/y/" "$f"; done'),
             "cwd": str(tmp_path),
         },
         "project_path": str(tmp_path),

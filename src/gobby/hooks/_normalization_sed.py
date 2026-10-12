@@ -48,8 +48,36 @@ class _SedOperands:
 def classify_sed_segment(
     parts: list[str], cwd: str | None, raw_parts: tuple[str, ...] | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata:
-    positional = _shell_positional_args(parts)
     operands = _sed_file_operands(parts, raw_parts)
+    primary = _classify_sed_operands(parts, cwd, operands, base_cwd)
+    bsd_operands = _sed_file_operands(parts, raw_parts, bsd_inplace_suffix=True)
+    if operands == bsd_operands:
+        return primary
+    alternate = _classify_sed_operands(parts, cwd, bsd_operands, base_cwd)
+    # A bare -i may consume any following word as its extension on BSD.
+    # Keep both readings: a known scratch target must not hide the other's writes.
+    writes = tuple(dict.fromkeys((*primary.write_paths, *alternate.write_paths)))
+    unknown = (
+        operands.unresolved
+        or bsd_operands.unresolved
+        or any(
+            item.extra and item.extra.get("_canonical_repo_mutation_scope_unknown")
+            for item in (primary, alternate)
+        )
+    )
+    return _ShellSegmentMetadata(
+        "write",
+        paths=writes,
+        write_paths=writes,
+        repo_mutation=True,
+        extra={"_canonical_repo_mutation_scope_unknown": True} if unknown else None,
+    )
+
+
+def _classify_sed_operands(
+    parts: list[str], cwd: str | None, operands: _SedOperands, base_cwd: Path | None
+) -> _ShellSegmentMetadata:
+    positional = _shell_positional_args(parts)
     if operands.unresolved:
         # Expanded sed programs can contain file-writing commands.
         return _ShellSegmentMetadata("write", repo_mutation=True)
@@ -101,7 +129,9 @@ def classify_sed_segment(
     )
 
 
-def _sed_file_operands(parts: list[str], raw_parts: tuple[str, ...] | None) -> _SedOperands:
+def _sed_file_operands(
+    parts: list[str], raw_parts: tuple[str, ...] | None, *, bsd_inplace_suffix: bool = False
+) -> _SedOperands:
     """Separate sed's program and script files from its input file operands."""
     positional: list[str] = []
     positional_indices: list[int] = []
@@ -169,11 +199,16 @@ def _sed_file_operands(parts: list[str], raw_parts: tuple[str, ...] | None) -> _
                     break
                 if option in "iI":
                     inplace = True
-                    # BSD -I requires a suffix; -i also accepts empty/dot-prefixed suffixes.
+                    # GNU -i has an attached optional suffix; BSD consumes the next word.
                     if (
                         offset == len(word) - 1
                         and index < len(parts)
-                        and (option == "I" or parts[index] == "" or parts[index].startswith("."))
+                        and (
+                            bsd_inplace_suffix
+                            or option == "I"
+                            or parts[index] == ""
+                            or parts[index].startswith(".")
+                        )
                     ):
                         index += 1
                     break
