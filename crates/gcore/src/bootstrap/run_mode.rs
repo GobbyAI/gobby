@@ -98,7 +98,21 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         .map_or(authority, |(_, host)| host);
     let (host, port) = if let Some(ipv6) = netloc.strip_prefix('[') {
         let (host, suffix) = ipv6.split_once(']').ok_or_else(invalid)?;
-        if host.is_empty() {
+        // Match urllib's bracketed-host validation, including scoped IPv6 and IPvFuture.
+        let valid_host = if let Some(future) = host.strip_prefix('v') {
+            future.split_once('.').is_some_and(|(version, address)| {
+                !version.is_empty()
+                    && version.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && !address.is_empty()
+            })
+        } else {
+            let (address, scope) = host
+                .split_once('%')
+                .map_or((host, None), |(address, scope)| (address, Some(scope)));
+            address.parse::<std::net::Ipv6Addr>().is_ok()
+                && scope.is_none_or(|scope| !scope.is_empty() && !scope.contains('%'))
+        };
+        if !valid_host {
             return Err(invalid());
         }
         let port = if suffix.is_empty() {
