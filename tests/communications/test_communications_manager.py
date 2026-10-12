@@ -4684,6 +4684,69 @@ async def test_telegram_button_edit_resolves_origin_instead_of_stale_metadata() 
     assert call.kwargs["callback_generation"] == 1
 
 
+@pytest.mark.parametrize("source", ["comms", "web-chat", "web_chat", "system"])
+@pytest.mark.parametrize(
+    "title", ["Comms: operator-user", "Comms group: -100123", "Comms topic: -100123/77"]
+)
+def test_telegram_non_seat_sessions_never_label_operator_identity(source: str, title: str) -> None:
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(source=source, title=title, ref="gobby#42")
+    manager = CommunicationsManager(make_config(), make_store(), make_secret_store(), sessions)
+    channel = make_channel(channel_type="telegram")
+    expected = "System (gobby#42)" if source == "system" else "Responder (gobby#42)"
+    label = manager.telegram_sender_label(channel, "identity-session")
+    assert label == expected
+    assert title not in label
+
+
+async def test_unattached_chat_responder_labels_bot_instead_of_operator() -> None:
+    from gobby.communications.chat_transport import CommunicationsChatStreamTransport
+    from gobby.communications.responder import ResponderContext
+
+    channel = make_channel(channel_type="telegram")
+    sessions = MagicMock()
+    sessions.get.return_value = MagicMock(
+        source="comms", title="Comms: operator-user", ref="gobby#42", transcript_path=None
+    )
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), sessions
+    )
+    manager._channel_by_name[channel.name] = channel
+    adapter = TelegramAdapter()
+    client = MagicMock()
+    client.post = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            request=httpx.Request("POST", "https://api.telegram.org/bottest/sendMessage"),
+            json={"ok": True, "result": {"message_id": 1}},
+        )
+    )
+    adapter._client = client
+    adapter._api_base = "https://api.telegram.org/bottest"
+    manager._adapters[channel.name] = adapter
+    context = ResponderContext(
+        channel=channel,
+        message=CommsMessage(
+            id="inbound",
+            channel_id=channel.id,
+            direction="inbound",
+            content="Hello",
+            session_id="identity-session",
+            created_at=_FIXED_TS,
+        ),
+        conversation_id="99",
+        sender_id="operator-user",
+        is_group=False,
+        responder_config={},
+    )
+    transport = CommunicationsChatStreamTransport(manager, context)
+    delivered = await transport._send("Hello back")
+    assert delivered.session_id == "identity-session"
+    payload = client.post.await_args.kwargs["json"]
+    assert payload["text"] == "<b>Responder (gobby#42):</b>\nHello back"
+    assert "operator-user" not in payload["text"]
+
+
 async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(
     temp_db: HubDatabase,
 ) -> None:
