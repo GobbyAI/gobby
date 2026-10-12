@@ -976,12 +976,15 @@ terminal whose run the sweep settles after a hub restart.
 - Run sweep: for each connected machine the pass also reads every active run,
   paging `list_active_for_machine(machine_id, limit=100, offset=...)` until a
   page comes back short, because the method returns only its first 100 rows by
-  default. A run that is not recovery-protected,
+  default. It collects every page before it settles anything, so a settlement
+  cannot shift a later page's offset. A run that is not recovery-protected,
   has at least one terminal row (`list_for_session` on its child session), and
   has none pending, live, or orphaned is recorded on its first pass. On the
-  second consecutive pass it gets `cleanup_agent` with `"remote terminal
-  exited before its run settled"`. The wait lets a flow that is already
-  settling the run finish first.
+  second consecutive pass the reconciler re-reads the run and its terminal
+  rows. If the run is still active and still has no pending, live, or
+  orphaned terminal, it gets `cleanup_agent` with `"remote terminal exited
+  before its run settled"`. Otherwise its record clears. The wait lets a flow
+  that is already settling the run finish first.
 - Removal retry: for each connected machine the pass reads
   `list_remote_removals(db, machine_id=...)` and calls
   `remove_remote_workspace` for each row, whether or not the machine has
@@ -1007,7 +1010,7 @@ Verification planned:
 - 2.6.4 - A machine without a live channel gets no command and its rows stay as they are, and local rows are never inventoried. test: `tests/hub/test_remote_reconcile.py::test_disconnected_and_local_rows_untouched`.
 - 2.6.5 - In this case the spawn's effect lands and its reply is lost, and the agent's session start and session end both reach the hub before the first pass. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent` and no `workspace.remove`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a disconnected machine stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
 - 2.6.6 - In worktree and clone mode, a failed spawn's marked row survives a first `workspace.remove` that answers `node_timeout`, an error, or `{removed: false}`. A new reconciler, standing in for a hub restart, retries it on its next pass after the terminal has exited and the run has ended. When the removal's effect landed and only its reply was lost, the retry answers `{removed: true}` and the row is deleted. A disconnected machine's marked row and an ended run's unmarked row are never sent `workspace.remove`. test: `tests/hub/test_remote_reconcile.py::test_marked_workspace_removal_is_retried`.
-- 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first pass and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
+- 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first pass and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run that completes, or gains a pending or live terminal, between the two passes is not swept, and a run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
 
 ## P3: Machine-aware roster and attention
 `kind: framing`
