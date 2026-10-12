@@ -588,6 +588,87 @@ def test_worktree_ambiguity_names_candidates(lane_env: LaneEnv, count: int) -> N
         assert "lane-3-extra" in str(failure.value)
 
 
+@pytest.mark.parametrize(
+    "busy,reason",
+    [("owner", "live seat"), ("path", "live seat"), ("run", "active run"), ("idle", "idle")],
+)
+def test_worktree_refusal_lists_only_lane_candidates_and_availability(
+    lane_env: LaneEnv, busy: str, reason: str
+) -> None:
+    trees = LocalWorktreeManager(lane_env.db)
+    tree = trees.get(lane_env.worktree)
+    assert tree is not None
+    for name in ("lane-1-other", "lane-31-other", "wiki"):
+        path = lane_env.root.parent / name
+        path.mkdir()
+        assert run_git_command(["git", "init", "--quiet"], path) == ""
+        trees.create(lane_env.project, name, str(path))
+    if busy in ("owner", "path"):
+        worker = SessionManager(lane_env.db).register(
+            external_id="busy-worker",
+            machine_id=AGENT_TEST_MACHINE_ID,
+            source="codex",
+            project_id=lane_env.project,
+            workspace_path=tree.worktree_path if busy == "path" else None,
+        )
+        if busy == "owner":
+            trees.claim(tree.id, worker.id)
+    elif busy == "run":
+        LocalAgentRunManager(lane_env.db).create(
+            lane_env.caller, "codex", "pending worker", worktree_id=tree.id
+        )
+    else:
+        path = lane_env.root.parent / "lane-3-extra"
+        path.mkdir()
+        assert run_git_command(["git", "init", "--quiet"], path) == ""
+        trees.create(lane_env.project, "lane-3-extra", str(path))
+    with pytest.raises(RunbookSeatRefusal, match="worktree.*candidates") as error:
+        resolve(lane_env)
+    diagnostic = str(error.value)
+    assert tree.id in diagnostic
+    assert f"[{reason}]" in diagnostic
+    assert all(name not in diagnostic for name in ("lane-1-other", "lane-31-other", "wiki"))
+
+
+def test_unrelated_worktrees_do_not_make_lane_inference_ambiguous(lane_env: LaneEnv) -> None:
+    path = lane_env.root.parent / "lane-1-idle"
+    path.mkdir()
+    assert run_git_command(["git", "init", "--quiet"], path) == ""
+    LocalWorktreeManager(lane_env.db).create(lane_env.project, "lane-1-idle", str(path))
+    assert resolve(lane_env)["worktree"] == lane_env.worktree
+
+
+@pytest.mark.parametrize("case", ["unique", "unknown", "ambiguous"])
+def test_worktree_branch_override_resolves_or_names_matching_candidates(
+    lane_env: LaneEnv, case: str
+) -> None:
+    trees = LocalWorktreeManager(lane_env.db)
+    path = lane_env.root.parent / "explicit-checkout"
+    path.mkdir()
+    assert run_git_command(["git", "init", "--quiet"], path) == ""
+    assert run_git_command(["git", "symbolic-ref", "HEAD", "refs/heads/task-branch"], path) == ""
+    tree = trees.create(lane_env.project, "original-branch", str(path))
+    if case == "unique":
+        assert resolve(lane_env, worktree="task-branch")["worktree"] == tree.id
+        return
+    if case == "ambiguous":
+        second_path = lane_env.root.parent / "second-checkout"
+        second_path.mkdir()
+        assert run_git_command(["git", "init", "--quiet"], second_path) == ""
+        assert (
+            run_git_command(["git", "symbolic-ref", "HEAD", "refs/heads/task-branch"], second_path)
+            == ""
+        )
+        second = trees.create(lane_env.project, "second-original-branch", str(second_path))
+    with pytest.raises(RunbookSeatRefusal, match="worktree.*candidates") as error:
+        resolve(lane_env, worktree="task-branch" if case == "ambiguous" else "missing-branch")
+    diagnostic = str(error.value)
+    assert tree.id in diagnostic
+    if case == "ambiguous":
+        assert second.id in diagnostic
+        assert lane_env.worktree not in diagnostic
+
+
 @pytest.mark.parametrize("kind", ["manager", "workspace", "pane"])
 @pytest.mark.parametrize("count", [0, 2])
 def test_ambiguous_lane_topology_refuses(
