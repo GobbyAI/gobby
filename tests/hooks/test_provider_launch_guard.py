@@ -99,11 +99,68 @@ def test_output_process_substitution_blocks_provider_launch(command: str) -> Non
     [
         "echo 'claude -p hi' > >(cat)",
         "echo 'echo harmless' > >(bash)",
-        "echo 'claude -p hi' 2> >(bash)",
         "echo 'import os; os.system(\"claude\")' > >(python3 -c 'print(1)')",
     ],
 )
 def test_output_process_substitution_data_stays_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize("redirect", [">>", "1>>", "&>", ">&", "&>>", ">|", "1>|"])
+@pytest.mark.parametrize(
+    ("payload", "consumer"),
+    [
+        ("claude -p hi", "bash"),
+        ('import os; os.system("claude -p hi")', "python3"),
+    ],
+)
+def test_output_process_substitution_redirect_equivalents(
+    redirect: str, payload: str, consumer: str
+) -> None:
+    command = f"echo '{payload}' {redirect} >({consumer})"
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize("redirect", ["2>", "2>>", "3>", "10>"])
+def test_output_process_substitution_other_descriptors_are_inspected(redirect: str) -> None:
+    command = f"echo 'claude -p hi' {redirect} >(bash)"
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'claude -p hi' 3> >(bash) 1>&3",
+        "echo 'claude -p hi' 2> >(bash) >&2",
+        "echo 'claude -p hi' > >(true; bash)",
+        "echo 'claude -p hi' > >(tee >(bash))",
+        "echo 'claude -p hi' | tee >(bash)",
+        "echo 'claude -p hi' | tee >(bash) >/dev/null",
+        "exec > >(bash); echo 'claude -p hi'",
+        "cat <<'EOF' >> >(bash)\nclaude -p hi\nEOF",
+        "{ echo 'claude -p hi'; } > >(bash)",
+        "(echo 'claude -p hi') > >(bash)",
+        "{ echo 'claude -p hi'; } | bash",
+        "echo 'claude -p hi' | (true; bash)",
+    ],
+)
+def test_output_process_substitution_forwarding(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "> >(cat)",
+        "echo 'echo harmless' > >(bash)",
+        "echo hi > >(tee log.txt)",
+        "make 2>&1 > >(tee build.log)",
+        "exec > >(tee -a log.txt)",
+        "python3 run.py > >(tee out.log) 2> >(tee err.log >&2)",
+        ">> >(cat)",
+    ],
+)
+def test_output_process_substitution_forwarding_data_stays_allowed(command: str) -> None:
     assert blocks_direct_provider_launch("Bash", {"command": command}) is False
 
 
