@@ -108,6 +108,7 @@ from gobby.hooks._python_pipeline_classifier import (
     _inline_interpreter_parts,
     _PythonExecutionClassification,
 )
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
     count_option_byte_count,
     count_option_line_count,
@@ -122,7 +123,6 @@ from gobby.hooks.code_navigation_recovery import (
     annotate_navigation,
     gcode_targets,
 )
-from gobby.hooks.provider_launch_guard import _unwrap
 from gobby.hooks.shell_execution import (
     SCRIPT_READ_BUDGET,
     SHELL_WRAPPER_DEPTH,

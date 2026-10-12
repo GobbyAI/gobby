@@ -52,16 +52,15 @@ from gobby.hooks._normalization_shell import (
     is_shell_output_redirection_token,
     scan_shell_command,
 )
+from gobby.hooks._provider_shell_syntax import _prepare
+from gobby.hooks._shell_execution_words import _unwrap, option_word_count
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
     _SHELLS,
     _piped_to_shell,
-    _prepare,
     _python_name,
     _python_program,
     _shell_stdin,
-    _unwrap,
-    option_word_count,
 )
 from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH, shell_execution
 

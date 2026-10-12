@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.hooks._path_scope import resolve_tool_path
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import shell_command_name
-from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
+from gobby.hooks.provider_launch_guard import _SHELLS
 
 SHELL_WRAPPER_DEPTH = 8
 shell_startup_unproven: ContextVar[bool] = ContextVar("shell_startup_unproven", default=False)

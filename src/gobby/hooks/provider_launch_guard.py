@@ -9,33 +9,33 @@ from __future__ import annotations
 import ast
 import re
 import shlex
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from contextvars import ContextVar
 from typing import Any, Literal
 
-from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
-from gobby.hooks._case_syntax import CaseSyntax
+from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
-    _skip_heredocs,
-    _substitution_end,
     is_fd_duplication_token,
     is_shell_input_redirection_token,
     is_shell_output_redirection_token,
     is_shell_tool,
     scan_shell_command,
 )
+from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks._python_pipeline_classifier import (
     _PYTHON_PROCESS_CALLS,
     _call_name,
     _imported_bindings,
     _inline_interpreter_parts,
 )
+from gobby.hooks._sed_arguments import _sed_file_operands
+from gobby.hooks._sed_program import sed_execution_commands
+from gobby.hooks._shell_execution_words import _unwrap
 
 _PROVIDERS = frozenset({"codex", "claude", "droid", "grok", "agy"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 _MAX_DEPTH = 24
 _MAX_LENGTH = 131_072
 _blocked_memo: ContextVar[dict[tuple[str, int, ShellDialect, str | None], bool] | None] = (
@@ -121,124 +121,6 @@ def blocks_direct_provider_launch(tool_name: Any, tool_input: Any) -> bool:
     return any(_blocked(command, 0, dialect) for dialect in SHELL_DIALECTS)
 
 
-def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
-    """Mask expansions/comments and separate grouping for the shared shell scanner.
-
-    Heredocs stay untouched for scan_shell_command to associate with their
-    consumer. Unquoted data heredocs expand substitutions even inside quotes.
-    """
-    output: list[str] = []
-    expansions: list[str] = []
-    quote = ""
-    cases = CaseSyntax()
-    brace_ends: dict[int, int] | None = None
-    index = 0
-    line_start = 0
-    while index < len(command):
-        char = command[index]
-        pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
-        if char == "\\" and quote != "'":
-            output.append(command[index : index + 2])
-            index += 2
-            continue
-        if quote not in {"'", "$"} and (
-            command.startswith("$(", index)
-            or char == "`"
-            or (not data and not quote and command[index : index + 2] in {"<(", ">("})
-        ):
-            tick = char == "`"
-            start = index + (1 if tick else 2)
-            try:
-                end = _substitution_end(command, start, tick, depth)
-            except ValueError as error:
-                if not data or str(error) != "Unclosed shell substitution":
-                    raise
-                # Inspect incomplete bodies too: data can still contain a launch.
-                expansions.append(command[start:])
-                output.append("__gobby_expansion__")
-                break
-            marker = (
-                f"__gobby_process_input_{len(expansions)}__"
-                if command.startswith("<(", index)
-                else f"__gobby_process_output_{len(expansions)}__"
-                if command.startswith(">(", index)
-                else "__gobby_expansion__"
-            )
-            expansions.append(command[start:end])
-            output.append(marker)
-            index = end + 1
-            continue
-        if (
-            not data
-            and not quote
-            and (
-                (char == "(" and not pattern_paren)
-                or (
-                    char == "{"
-                    and command[index + 1 : index + 2].isspace()
-                    and (index == 0 or command[index - 1] in " \t\n;|&(")
-                )
-            )
-        ):
-            if char == "(":
-                end = _substitution_end(command, index + 1, False, depth)
-            else:
-                if brace_ends is None:
-                    brace_ends = {}
-                    openers = [index]
-                    group_scan = scan_shell_command(command[index + 1 :])
-                    for token, span in zip(group_scan.tokens, group_scan.spans, strict=True):
-                        position = index + 1 + span[0]
-                        if not token.quoted and token.value == "{":
-                            openers.append(position)
-                        elif not token.quoted and token.value == "}" and openers:
-                            brace_ends[openers.pop()] = position
-                if index not in brace_ends:
-                    raise ValueError("Unclosed shell group")
-                end = brace_ends[index]
-            output.append(f"__gobby_group_{len(expansions)}__")
-            expansions.append(command[index + 1 : end])
-            index = end + 1
-            continue
-        if not data and not quote and opens_ansi_c_quote(command, index):
-            # ANSI-C `$'...'` ("$" state): a backslash escapes the next character.
-            quote = "$"
-            output.append("$'")
-            index += 2
-            continue
-        if not data and char in "\"'":
-            if not quote:
-                quote = char
-            elif quote == char or (quote == "$" and char == "'"):
-                quote = ""
-        elif not data and not quote:
-            if command.startswith(">|", index):
-                # Noclobber override has the same stream target as ordinary >.
-                output.append(">")
-                index += 2
-                continue
-            if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&("):
-                end = command.find("\n", index)
-                index = len(command) if end < 0 else end
-                continue
-            if char in "()":
-                char = ";"
-            if char == "\n":
-                # Heredoc bodies begin at the newline even after a trailing
-                # pipe or logical operator; the continuation follows the body.
-                line = scan_shell_command("".join(output[line_start:]))
-                tokens = line.tokens
-                output.append(char)
-                body_start = index + 1
-                index = _skip_heredocs(command, tokens, body_start)
-                output.append(command[body_start:index])
-                line_start = len(output)
-                continue
-        output.append(char)
-        index += 1
-    return "".join(output), expansions
-
-
 def _executable_words(tokens: list[ShellToken]) -> list[str]:
     words: list[str] = []
     skip = False
@@ -256,270 +138,6 @@ def _executable_words(tokens: list[ShellToken]) -> list[str]:
 
 def _separator(token: ShellToken) -> bool:
     return not token.quoted and token.value in {";", "|", "&", "&&", "||", "\n"}
-
-
-def option_word_count(
-    option: str,
-    value_options: Collection[str],
-    *,
-    infer_long_options: bool = False,
-    flag_options: Collection[str] = (),
-) -> int:
-    """Words a leading option occupies, read as getopt reads it.
-
-    A value option takes the next word unless its value is attached
-    (``--chdir=/x``, ``-D/x``). In a short cluster (``-nD``) the first value
-    option takes the rest of the cluster, or the next word when it ends it.
-    Long-option inference is opt-in: getopt permits prefixes, clap does not.
-    An exact flag wins over a prefix of a longer value option.
-    """
-    if option in value_options:
-        return 2
-    if option.startswith("--"):
-        if infer_long_options and "=" not in option and option not in flag_options:
-            return 2 if any(value.startswith(option) for value in value_options) else 1
-        return 1
-    for index in range(1, len(option)):
-        if "-" + option[index] in value_options:
-            return 2 if index == len(option) - 1 else 1
-    return 1
-
-
-def _env_split_string(
-    option: str, rest: list[str], value_options: Collection[str]
-) -> list[str] | None:
-    """The words env's -S option reads as a command string, or None without -S.
-
-    ``-S`` may end a short cluster (``-iS cmd``) or carry its string attached
-    (``-Scmd``, ``--split-string=cmd``); an earlier value option in the cluster
-    takes the rest of it instead (``-uS`` unsets ``S``).
-    """
-    if option.startswith("--"):
-        flag, separator, attached = option.partition("=")
-        if len(flag) > 2 and "--split-string".startswith(flag):
-            return [attached, *rest] if separator else rest
-        return None
-    for index in range(1, len(option)):
-        letter = "-" + option[index]
-        if letter == "-S":
-            attached = option[index + 1 :]
-            return [attached, *rest] if attached else rest
-        if letter in value_options:
-            return None
-    return None
-
-
-def _split_env_argv(string: str) -> list[str]:
-    """Read literal env -S words, preserving operators and escaped whitespace as data.
-
-    env has its own quoting/escape grammar, including ``\\_`` separators.
-    Dynamic expansions and malformed strings retain the conservative shell reading.
-    """
-    words: list[str] = []
-    word: list[str] = []
-    quote = ""
-    started = False
-    index = 0
-    escapes = {"f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-    while index < len(string):
-        char = string[index]
-        index += 1
-        if char in " \t\n\v\f\r" and not quote:
-            if started:
-                words.append("".join(word))
-                word = []
-                started = False
-            continue
-        if char == "#" and not started:
-            break
-        if char in "\"'" and (not quote or char == quote):
-            quote = "" if quote else char
-            started = True
-            continue
-        if char == "\\" and (quote != "'" or string[index : index + 1] in {"\\", "'"}):
-            if index == len(string):
-                raise ValueError("Trailing env -S escape")
-            char = string[index]
-            index += 1
-            if char == "_" and not quote:
-                if started:
-                    words.append("".join(word))
-                    word = []
-                    started = False
-                continue
-            if char == "c" and not quote:
-                break
-            if char == "_" and quote == '"':
-                char = " "
-            elif char in escapes:
-                char = escapes[char]
-            elif char not in "\"'#$\\":
-                raise ValueError("Invalid env -S escape")
-        elif char == "$" and quote != "'":
-            raise ValueError("Dynamic env -S expansion")
-        word.append(char)
-        started = True
-    if quote:
-        raise ValueError("Unterminated env -S quote")
-    if started:
-        words.append("".join(word))
-    return words
-
-
-_SUDO_FLAG_OPTIONS = frozenset(
-    {
-        "--background",
-        "--preserve-env",  # Optional operands must be attached with '='.
-        "--edit",
-        "--set-home",
-        "--login",
-        "--remove-timestamp",
-        "--list",
-        "--preserve-groups",
-        "--shell",
-        "--validate",
-        "--askpass",
-        "--bell",
-        "--help",
-        "--reset-timestamp",
-        "--no-update",
-        "--non-interactive",
-        "--stdin",
-        "--version",
-    }
-)
-
-
-def _unwrap(words: list[str]) -> list[str]:
-    """Common literal execution wrappers; never treat query operands as launches."""
-    while words:
-        name = words[0].rsplit("/", 1)[-1]
-        if _ASSIGNMENT.match(words[0]) or name in {
-            "!",
-            "{",
-            "then",
-            "do",
-            "else",
-            "elif",
-            "if",
-            "while",
-            "until",
-        }:
-            words = words[1:]
-        elif name in {
-            "command",
-            "builtin",
-            "exec",
-            "nohup",
-            "time",
-            "env",
-            "nice",
-            "timeout",
-            "sudo",
-            "setsid",
-            "stdbuf",
-            "xargs",
-        }:
-            words = words[1:]
-            takes_value = {
-                # BSD env adds -P; GNU env adds -a/--argv0. -S is handled below.
-                "env": {
-                    "-u",
-                    "--unset",
-                    "-C",
-                    "--chdir",
-                    "-P",
-                    "-a",
-                    "--argv0",
-                    "--env0-from",
-                    "--quoting-style",
-                },
-                "exec": {"-a"},
-                "nice": {"-n", "--adjustment"},
-                "timeout": {"-s", "--signal", "-k", "--kill-after"},
-                "sudo": {
-                    "-u",
-                    "-g",
-                    "-h",
-                    "-p",
-                    "-C",
-                    "-D",
-                    "-R",
-                    "-T",
-                    "-U",
-                    "-a",
-                    "-c",
-                    "-r",
-                    "-t",
-                    "--user",
-                    "--group",
-                    "--host",
-                    "--prompt",
-                    "--chdir",
-                    "--chroot",
-                    "--close-from",
-                    "--command-timeout",
-                    "--other-user",
-                    "--auth-type",
-                    "--login-class",
-                    "--role",
-                    "--type",
-                },
-                "time": {"-f", "-o", "--format", "--output"},
-                "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-                "xargs": {
-                    "-a",
-                    "-I",
-                    "-J",
-                    "-n",
-                    "-P",
-                    "-L",
-                    "-s",
-                    "-E",
-                    "-d",
-                    "-R",
-                    "-S",
-                    "--arg-file",
-                    "--max-args",
-                    "--max-chars",
-                    "--max-procs",
-                    "--process-slot-var",
-                    "--delimiter",
-                },
-            }.get(name, set())
-            while words and words[0].startswith("-"):
-                option = words[0]
-                if option == "--":
-                    words = words[1:]
-                    break
-                if name == "command" and any(flag in option for flag in "vV"):
-                    return []
-                script = (
-                    _env_split_string(option, words[1:], takes_value) if name == "env" else None
-                )
-                if script is not None:
-                    if not script:
-                        return []
-                    try:
-                        words = [*_split_env_argv(script[0]), *script[1:]]
-                    except ValueError:
-                        return ["sh", "-c", " ".join(script)]
-                    # Split words may themselves contain env options (shebang form).
-                    continue
-                count = option_word_count(
-                    option,
-                    takes_value,
-                    infer_long_options=True,
-                    flag_options=_SUDO_FLAG_OPTIONS if name == "sudo" else (),
-                )
-                words = words[count:]
-            if name == "timeout" and words:
-                words = words[1:]
-        elif name == "eval":
-            return ["sh", "-c", " ".join(words[1:])]
-        else:
-            break
-    return words
 
 
 def _administration(args: list[str], provider: str) -> bool:
@@ -561,7 +179,12 @@ def _help_request(args: list[str], provider: str) -> bool:
 
 
 def _shell_stdin(words: list[str]) -> bool:
-    if not words or words[0].rsplit("/", 1)[-1] not in _SHELLS:
+    if not words:
+        return False
+    name = words[0].rsplit("/", 1)[-1]
+    if name in {"source", "."}:
+        return words[1:2] == ["/dev/stdin"]
+    if name not in _SHELLS:
         return False
     args = iter(words[1:])
     for word in args:
@@ -574,7 +197,7 @@ def _shell_stdin(words: list[str]) -> bool:
             if word.startswith("-") and not word.startswith("--") and "s" in word:
                 return True
         else:
-            return False
+            return word == "/dev/stdin"
     return True
 
 
@@ -773,6 +396,10 @@ def _segment_consumes(
     words = _unwrap(_executable_words(segment))
     if _python_program(words)[1] if python else _shell_stdin(words):
         return True
+    script = _shell_script(words)
+    if not python and script is not None and depth < _MAX_DEPTH:
+        if _stream_consumes(script, depth + 1, dialect, python=False):
+            return True
     for word in words:
         match = re.fullmatch(r"__gobby_group_([0-9]+)__", word)
         if match is not None and int(match[1]) < len(expansions):
@@ -800,6 +427,9 @@ def _process_input_consumer(
     words: list[str],
     marker: str,
     output_consumer: Literal["shell", "python"] | None,
+    expansions: list[str],
+    depth: int,
+    dialect: ShellDialect,
 ) -> Literal["shell", "python"] | None:
     """Identify an input substitution used as stdin or the first script operand."""
     if marker in words:
@@ -808,19 +438,53 @@ def _process_input_consumer(
         index = words.index(marker)
         prefix = words[:index]
         through_operand = words[: index + 1]
+        if prefix and prefix[0].rsplit("/", 1)[-1] in {"source", "."} and len(prefix) == 1:
+            return "shell"
         if _shell_stdin(prefix) and not _shell_stdin(through_operand):
             return "shell"
         if _python_program(prefix)[1] and not _python_program(through_operand)[1]:
             return "python"
     for index, token in enumerate(segment[1:], 1):
         redirect = segment[index - 1]
-        if token.value == marker and not redirect.quoted and redirect.value in {"<", "0<"}:
+        if (
+            token.value == marker
+            and not redirect.quoted
+            and _stdin_redirect(redirect.value, segment)
+        ):
             if _cat_stdin(words) and output_consumer is not None:
                 return output_consumer
-            if _shell_stdin(words):
+            if _segment_consumes(segment, expansions, depth, dialect, python=False):
                 return "shell"
             if _python_program(words)[1]:
                 return "python"
+    return None
+
+
+def _stdin_redirect(value: str, segment: list[ShellToken]) -> bool:
+    """Resolve literal input descriptor aliases to the supplied input stream."""
+    match = re.fullmatch(r"([0-9]*)(<|<<<|<<-?)", value)
+    if match is None:
+        return False
+    descriptor = match[1] or "0"
+    reachable = {"0"}
+    for token in segment:
+        alias = None if token.quoted else re.fullmatch(r"([0-9]*)<&([0-9]+)", token.value)
+        if alias is not None and (alias[1] or "0") in reachable:
+            reachable.add(alias[2])
+    return descriptor in reachable
+
+
+def _shell_script(words: list[str]) -> str | None:
+    if not words or words[0].rsplit("/", 1)[-1] not in _SHELLS:
+        return None
+    for index, arg in enumerate(words[1:], 1):
+        if arg == "--":
+            break
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
+            script = words[index + 1 :]
+            if script[:1] == ["--"]:
+                script = script[1:]
+            return script[0] if script else None
     return None
 
 
@@ -863,6 +527,7 @@ def _evaluate_blocked(
         inspected_length = 0
         persistent_shell = False
         persistent_python = False
+        functions: dict[str, str] = {}
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
@@ -899,6 +564,22 @@ def _evaluate_blocked(
             producer_consumer = output_consumer
             if producer_consumer is None:
                 producer_consumer = "shell" if piped else "python" if python_piped else None
+            if name.endswith("()"):
+                for word in words[1:]:
+                    group = re.fullmatch(r"__gobby_group_([0-9]+)__", word)
+                    if group is not None and int(group[1]) < len(expansions):
+                        functions[name[:-2]] = expansions[int(group[1])]
+                continue
+            if name in functions and _blocked(
+                functions[name], depth + 1, dialect, output_consumer=producer_consumer
+            ):
+                return True
+            has_input_payload = bool(bodies) or any(
+                not token.quoted and token.value.lstrip("0123456789") == "<<<" for token in segment
+            )
+            shell_input = has_input_payload and _segment_consumes(
+                segment, expansions, depth, dialect, python=False
+            )
             group_consumers: list[Literal["shell", "python"]] = []
             if piped:
                 group_consumers.append("shell")
@@ -922,13 +603,23 @@ def _evaluate_blocked(
                 if index >= len(expansions):
                     continue
                 marker = token.value
-                consumer = _process_input_consumer(segment, words, marker, producer_consumer)
+                consumer = _process_input_consumer(
+                    segment, words, marker, producer_consumer, expansions, depth, dialect
+                )
                 if consumer is not None and _blocked(
                     expansions[index], depth + 1, dialect, output_consumer=consumer
                 ):
                     return True
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
+            if name == "sed":
+                programs = _sed_file_operands(words, None).programs
+                if any(
+                    _blocked(script, depth + 1, dialect)
+                    for program in programs
+                    for script in sed_execution_commands(program)
+                ):
+                    return True
             # Budget executable words; code operands and heredoc payloads belong
             # to their consumers, whose process operands are checked recursively.
             python_script, python_stdin, _ = _python_program(words)
@@ -958,7 +649,16 @@ def _evaluate_blocked(
                 if any(_python_launch(body.text, depth + 1, dialect) for body in bodies):
                     return True
             if piped and name in {"echo", "printf"}:
-                if any(_blocked(value, depth + 1, dialect) for value in words[1:]):
+                values = words[1:]
+                if name == "echo":
+                    values = [*values, " ".join(values)]
+                # A delimiter printed by one command is only a fragment of the
+                # downstream script; it does not itself launch an executable.
+                if any(
+                    value.strip() not in {"{", "}"}
+                    and _blocked(value, depth + 1, dialect, output_consumer=output_consumer)
+                    for value in values
+                ):
                     return True
             if name in _SHELLS:
                 for index, arg in enumerate(words[1:], 1):
@@ -968,21 +668,27 @@ def _evaluate_blocked(
                         if script[:1] == ["--"]:
                             script = script[1:]
                         if script and _blocked(
-                            script[0], depth + 1, inner, output_consumer=output_consumer
+                            script[0], depth + 1, inner, output_consumer=producer_consumer
                         ):
                             return True
                         break
-                # Literal here-strings are executable input as well.
+            # Literal here-strings can feed shells inside a group or a -c script.
+            if shell_input:
                 for index, token in enumerate(segment[:-1]):
                     if (
-                        _shell_stdin(words)
-                        and not token.quoted
+                        not token.quoted
                         and token.value.lstrip("0123456789") == "<<<"
+                        and _stdin_redirect(token.value, segment)
                     ):
-                        if _blocked(segment[index + 1].value, depth + 1, inner):
+                        if _blocked(
+                            segment[index + 1].value,
+                            depth + 1,
+                            inner,
+                            output_consumer=producer_consumer,
+                        ):
                             return True
-            if _shell_stdin(words) or piped:
-                body_dialect = inner if _shell_stdin(words) else dialect
+            if shell_input or piped:
+                body_dialect = inner if shell_input else dialect
                 if any(
                     _blocked(body.text, depth + 1, body_dialect, output_consumer=output_consumer)
                     for body in bodies

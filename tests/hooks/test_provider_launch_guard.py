@@ -9,6 +9,7 @@ import yaml
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.hooks import provider_launch_guard
+from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -20,6 +21,87 @@ from gobby.workflows.sync_rules import sync_rule_file
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source <(echo 'claude -p hi')",
+        ". <(echo 'claude -p hi')",
+        "echo 'claude -p hi' | source /dev/stdin",
+        "source /dev/stdin <<< 'claude -p hi'",
+        ". /dev/stdin <<< 'claude -p hi'",
+        "source /dev/stdin <<'EOF'\nclaude -p hi\nEOF",
+        "{ bash; } < <(echo 'claude -p hi')",
+        "{ bash; } <<< 'claude -p hi'",
+        "{ bash; } <<'EOF'\nclaude -p hi\nEOF",
+        "echo 'claude -p hi' | bash /dev/stdin",
+        "bash /dev/stdin < <(echo 'claude -p hi')",
+        "bash /dev/stdin <<< 'claude -p hi'",
+        "bash -c bash < <(echo 'claude -p hi')",
+        "echo 'claude -p hi' | bash -c bash",
+        "bash =(echo 'claude -p hi')",
+        "zsh -c \"bash =(echo 'claude -p hi')\"",
+        "bash -c 'echo claude -p hi' | bash",
+        "sh -c 'echo claude -p hi' | sh",
+        "echo -n 'claude -p hi' | bash",
+        "bash < <(bash <(echo 'echo claude -p hi'))",
+        "sed '1e claude -p hi' src/x.py",
+        "sed -e '1e claude -p hi' src/x.py",
+        "if true; then echo 'claude -p hi'; fi | bash",
+        "while true; do echo 'claude -p hi'; break; done | bash",
+        "case x in x) echo 'claude -p hi';; esac | bash",
+        "for i in 1; do echo 'claude -p hi'; done > >(bash)",
+        "for i in 1; do echo 'claude -p hi'; done | tee >(bash)",
+        "if true; then echo 'claude -p hi'; fi > >(bash)",
+        "while true; do echo 'claude -p hi'; break; done > >(bash)",
+        "case x in x) echo 'claude -p hi';; esac > >(bash)",
+        "f() { echo 'claude -p hi'; }; f | bash",
+        "f() { echo 'claude -p hi'; }; f > >(bash)",
+        "{ : }; echo 'claude -p hi'; } | bash",
+        "{ : }; echo 'claude -p hi'; } > >(bash)",
+        "bash <&3 3< <(echo 'claude -p hi')",
+        "bash 0<&3 3< <(echo 'claude -p hi')",
+        "bash <&3 3<<< 'claude -p hi'",
+        "bash 0<&3 3<<< 'claude -p hi'",
+        "bash <&3 3<<'EOF'\nclaude -p hi\nEOF",
+        "bash 0<&3 3<<'EOF'\nclaude -p hi\nEOF",
+    ],
+)
+def test_provider_consumer_gaps_block_launches(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "diff <(ls a) <(ls b)",
+        "bash < <(echo hi)",
+        "source ./env.sh",
+        "{ echo hi; } < file",
+        "sed '1s/a/b/' f",
+        "{ echo hi; } > >(cat)",
+        "{ : }; echo hi; } > >(bash)",
+        "{ echo {; echo hi; } | bash",
+        "cat <&3 3< <(echo hi)",
+        "source <(echo 'export A=1')",
+        "source /dev/stdin <<< 'export A=1'",
+        "{ bash; } <<< 'echo hi'",
+        "bash /dev/stdin < <(echo 'echo hi')",
+        "echo 'echo hi' | bash -c bash",
+        "bash =(echo 'echo hi')",
+        "bash -c 'echo echo hi' | bash",
+        "sed '1e echo hi' f",
+        "if true; then echo hi; fi | bash",
+        "while true; do echo hi; break; done | bash",
+        "case x in x) echo hi;; esac > >(bash)",
+        "for i in 1; do echo hi; done | tee >(bash)",
+        "f() { echo hi; }; f | bash",
+        "bash <&3 3<<< 'echo hi'",
+    ],
+)
+def test_provider_consumer_gap_data_controls_stay_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
 def test_brace_heavy_command_preserves_group_results() -> None:
     command = "{ echo hi; }; " * 2000
     assert not blocks_direct_provider_launch("Bash", {"command": command})
@@ -28,7 +110,7 @@ def test_brace_heavy_command_preserves_group_results() -> None:
         ("{ { claude -p hi; }; }", True),
         ("{ echo 'claude -p hi'; } | bash", True),
         ("{ echo '}'; echo hi; }", False),
-        ("{ echo {; echo hi; } | bash", True),
+        ("{ echo {; echo hi; } | bash", False),
     ):
         assert blocks_direct_provider_launch("Bash", {"command": brace_command}) is blocked
 
@@ -39,7 +121,7 @@ def test_brace_heavy_command_preserves_group_results() -> None:
 def test_nested_chain_evaluation_count_is_linear(
     monkeypatch: pytest.MonkeyPatch, shape: str
 ) -> None:
-    prepare = provider_launch_guard._prepare
+    prepare = _prepare
     calls = 0
 
     def counted_prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:

@@ -76,8 +76,20 @@ def sed_write_paths(program: str, *, bsd: bool = False) -> tuple[list[str], bool
     return list(dict.fromkeys([*plain_paths, *bracket_paths])), plain_unknown or bracket_unknown
 
 
+def sed_execution_commands(program: str) -> list[str]:
+    """Return literal GNU e operands using the same address/command grammar."""
+    commands: list[str] = []
+    for brackets in (False, True):
+        _program_write_paths(program, regex_brackets=brackets, execution_commands=commands)
+    return list(dict.fromkeys(commands))
+
+
 def _program_write_paths(
-    program: str, *, regex_brackets: bool, bsd: bool = False
+    program: str,
+    *,
+    regex_brackets: bool,
+    bsd: bool = False,
+    execution_commands: list[str] | None = None,
 ) -> tuple[list[str], bool]:
     """Return destinations and whether any program behavior remains unproven.
 
@@ -179,7 +191,11 @@ def _program_write_paths(
             while index < len(program) and (program[index].isdigit() or program[index] in " .\t"):
                 index += 1
         elif command == "e":
-            return paths, not bsd
+            if execution_commands is None:
+                return paths, not bsd
+            end = _line_end(program, index)
+            execution_commands.append(program[index:end].strip())
+            index = end
         else:
             # Unsupported command letters fail during compilation. Keep any earlier
             # w targets (BSD may open them while compiling), but execution cannot
