@@ -1186,3 +1186,324 @@ uv run gobby plans validate .gobby/plans/hub-mode.md -p .
 - These gates cover the active sections, which drive a fake route or a fake
   node. D2's route checks and D4's live proof run in their own tasks.
 - Run these from the worktree root. Do not run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: 'Node command envelope: contract, golden corpus, and typed models'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The contract specifies both frames, all v1 commands
+    with payload and result fields, the error codes with their producers and stage
+    rule, the node duties, the internal route, and the versioning rule. file: `docs/contracts/node-commands.md`.
+
+    1.1.2: The Rust types round-trip every corpus message byte-equivalently and reject
+    an unknown field. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
+
+    1.1.3: The Python models round-trip every corpus message and reject an unknown
+    field. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
+
+    1.1.4: An `agent.spawn` payload whose `env` has a key outside the allowlist fails
+    validation in both languages. test: `tests/hub/test_node_command_corpus.py::test_spawn_env_allowlist`.
+
+    1.1.5: `ROADMAP.md` shows S4.2 depending on #24090. file: `ROADMAP.md`.'
+  labels:
+  - covers:hub-mode:1.1:1.1.1
+  - covers:hub-mode:1.1:1.1.2
+  - covers:hub-mode:1.1:1.1.3
+  - covers:hub-mode:1.1:1.1.4
+  - covers:hub-mode:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Python node-command client and machine eligibility
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.3.1: Against a fake route, `send` posts the secret header
+    and maps an ok reply to its result and an error reply to `NodeCommandError` with
+    code and stage. test: `tests/hub/test_node_client.py::test_send_maps_replies`.
+
+    1.3.2: Without `GOBBY_FRONT_DOOR_SECRET`, calls raise `node_routing_unavailable`
+    and make no request; a 404 or a refused connection raises it too, with `stage="none"`.
+    test: `tests/hub/test_node_client.py::test_unavailable_routing_is_typed`.
+
+    1.3.3: The origin machine is the default target, and a node ref resolves to its
+    machine. test: `tests/hub/test_machine_routing.py::test_default_and_explicit_targets`.
+
+    1.3.4: A remote target without a checkout, with no live channel, or with another
+    owner is refused with its typed code and never replaced by another machine. test:
+    `tests/hub/test_machine_routing.py::test_ineligible_targets_never_fall_back`.
+
+    1.3.5: After the fake route accepts a command, a 5xx, a truncated or malformed
+    200, a read timeout, or a connection reset raises `node_reply_lost` with `stage=None`.
+    test: `tests/hub/test_node_client.py::test_post_send_failures_are_uncertain`.'
+  labels:
+  - covers:hub-mode:1.3:1.3.1
+  - covers:hub-mode:1.3:1.3.2
+  - covers:hub-mode:1.3:1.3.3
+  - covers:hub-mode:1.3:1.3.4
+  - covers:hub-mode:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Hub machine-local loops skip other machines' rows
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '2.1.1: The stale-pending reaper leaves another machine''s
+    pending terminal untouched and still reaps a local one. test: `tests/agents/test_hub_local_loops.py::test_reaper_skips_remote_pending`.
+
+    2.1.2: Terminal tmux cleanup lists only this machine''s runs. test: `tests/agents/test_hub_local_loops.py::test_tmux_cleanup_is_machine_scoped`.
+
+    2.1.3: Post-terminal cleanup of a remote run runs the delivery, attention, and
+    ownership phases and skips tmux, SRT, and sandbox reaping. test: `tests/agents/test_hub_local_loops.py::test_post_cleanup_skips_local_phases_for_remote_run`.
+
+    2.1.4: The interactive attention monitor ignores another machine''s interactive
+    session. test: `tests/agents/test_hub_local_loops.py::test_interactive_monitor_is_machine_scoped`.'
+  labels:
+  - covers:hub-mode:2.1:2.1.1
+  - covers:hub-mode:2.1:2.1.2
+  - covers:hub-mode:2.1:2.1.3
+  - covers:hub-mode:2.1:2.1.4
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Hook ingress binds the envelope machine to the caller's key
+  category: code
+  task_type: bug
+  depends_on: []
+  validation_criteria: '2.2.1: A key-authenticated hook whose envelope names another
+    machine is refused with `hook_machine_mismatch`, and one naming the key''s machine
+    is processed. test: `tests/servers/test_hook_machine_binding.py::test_envelope_machine_must_match_key`.
+
+    2.2.2: A hook without a front-door identity keeps today''s behavior. test: `tests/servers/test_hook_machine_binding.py::test_local_hook_unchanged`.'
+  labels:
+  - covers:hub-mode:2.2:2.2.1
+  - covers:hub-mode:2.2:2.2.2
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Remote terminal writes go through the node
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.3.1: Through a fake node client, a write to another machine''s
+    terminal sends one `terminal.write` with the request''s kind, data, and submit,
+    and returns `Delivered`. test: `tests/hub/test_remote_terminal_write.py::test_remote_write_uses_node_command`.
+
+    2.3.2: An offline node raises `NodeTerminalWriteError` with `node_offline` and
+    `stage="none"`, and the latch is cleared. test: `tests/hub/test_remote_terminal_write.py::test_offline_node_clears_latch`.
+
+    2.3.3: A partial node failure surfaces `stage="partial"` and keeps the latch.
+    test: `tests/hub/test_remote_terminal_write.py::test_partial_stage_propagates`.
+
+    2.3.4: A local terminal write never contacts the client. test: `tests/hub/test_remote_terminal_write.py::test_local_write_unchanged`.
+
+    2.3.5: When a fake node takes the write and its reply is lost (`node_timeout`)
+    or unreadable (`node_reply_lost`), the write returns `IndeterminateWrite`, the
+    latch stays, and a retry with the same action key sends no second `terminal.write`.
+    test: `tests/hub/test_remote_terminal_write.py::test_lost_reply_is_indeterminate`.'
+  labels:
+  - covers:hub-mode:2.3:2.3.1
+  - covers:hub-mode:2.3:2.3.2
+  - covers:hub-mode:2.3:2.3.3
+  - covers:hub-mode:2.3:2.3.4
+  - covers:hub-mode:2.3:2.3.5
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Remote cancel goes through the node
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.4.1: Killing another machine''s run sends `agent.cancel`
+    with the signal and `close_terminal`, and never signals a local PID. test: `tests/hub/test_remote_cancel.py::test_remote_run_cancels_through_node`.
+
+    2.4.2: An offline node returns `error_code: node_offline`. test: `tests/hub/test_remote_cancel.py::test_offline_node_is_typed`.
+
+    2.4.3: With `close_terminal`, a stopped reply settles the terminal row as a local
+    close would. test: `tests/hub/test_remote_cancel.py::test_close_terminal_settles_row`.
+
+    2.4.4: A `not_found` reply returns success like a stopped one. test: `tests/hub/test_remote_cancel.py::test_not_found_counts_as_stopped`.
+
+    2.4.5: A `{stopped: false}` reply returns `error_code: not_stopped` and leaves
+    the terminal row unchanged. test: `tests/hub/test_remote_cancel.py::test_not_stopped_is_failure`.'
+  labels:
+  - covers:hub-mode:2.4:2.4.1
+  - covers:hub-mode:2.4:2.4.2
+  - covers:hub-mode:2.4:2.4.3
+  - covers:hub-mode:2.4:2.4.4
+  - covers:hub-mode:2.4:2.4.5
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Remote spawn goes through the node
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '2.1'
+  - '2.2'
+  - '2.4'
+  validation_criteria: '2.5.1: Through a fake node client, a spawn from a session
+    on another machine sends `workspace.prepare` and then `agent.spawn` to that machine,
+    and its session, run, and terminal rows carry that `machine_id` before `agent.spawn`
+    is sent. test: `tests/hub/test_remote_spawn.py::test_spawn_routes_to_requesting_machine`.
+
+    2.5.2: The `agent.spawn` payload carries no managed credential and no env key
+    outside the allowlist, and the hub writes no prompt file. test: `tests/hub/test_remote_spawn.py::test_payload_carries_no_credential`.
+
+    2.5.3: An explicit `machine` is validated, and an ineligible one fails with its
+    typed code without spawning anywhere. test: `tests/hub/test_remote_spawn.py::test_explicit_machine_is_validated`.
+
+    2.5.4: A `stage: "none"` failure of `agent.spawn` fails the pending terminal,
+    cancels the run, ends the lease, and sends `workspace.remove`, with no local process
+    or pane call. test: `tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database`.
+
+    2.5.5: A `node_timeout` or a `node_reply_lost` on `agent.spawn` returns `spawn_in_doubt`
+    and leaves the run and terminal pending, the lease attached, and the workspace
+    in place, with no rollback. test: `tests/hub/test_remote_spawn.py::test_in_doubt_spawn_keeps_state`.
+
+    2.5.6: A node caller whose parent is on the hub spawns on the node, and a hub
+    caller whose parent is on a node spawns locally in the hub''s checkout. test:
+    `tests/hub/test_remote_spawn.py::test_origin_is_the_calling_session`.
+
+    2.5.7: Remote resume and placement are refused with typed codes. test: `tests/hub/test_remote_spawn.py::test_unsupported_routes_refused`.
+
+    2.5.8: A spawn whose target is this machine takes the local path unchanged. test:
+    `tests/hub/test_remote_spawn.py::test_local_target_unchanged`.
+
+    2.5.9: With a checkout on the target and none on the hub, both the MCP tool and
+    `POST /api/agents/spawn` spawn on the target. test: `tests/hub/test_remote_spawn.py::test_remote_target_needs_no_hub_checkout`.
+
+    2.5.10: When the agent''s session end arrives before the spawn reply, the reply
+    leaves the run ended, exits the terminal, and records no `pid`. test: `tests/hub/test_remote_spawn.py::test_session_end_before_reply_stays_settled`.'
+  labels:
+  - covers:hub-mode:2.5:2.5.1
+  - covers:hub-mode:2.5:2.5.2
+  - covers:hub-mode:2.5:2.5.3
+  - covers:hub-mode:2.5:2.5.4
+  - covers:hub-mode:2.5:2.5.5
+  - covers:hub-mode:2.5:2.5.6
+  - covers:hub-mode:2.5:2.5.7
+  - covers:hub-mode:2.5:2.5.8
+  - covers:hub-mode:2.5:2.5.9
+  - covers:hub-mode:2.5:2.5.10
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: The hub settles remote runs from the node's inventory
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '2.1'
+  - '2.5'
+  validation_criteria: '2.6.1: A listed run with a pending terminal is promoted live
+    with the inventory''s identity, and its `pid` is recorded. test: `tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted`.
+
+    2.6.2: An unlisted run with a live terminal, or a live row from an older `host_epoch`,
+    is left on its first absent pass and settled on the second through `mark_exited`
+    and `cleanup_agent`; a run that settles in between is not failed, and its terminal
+    still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_one_pass`.
+
+    2.6.3: An unlisted pending run past the deadline is sent `agent.cancel` first.
+    `{stopped: true}` or `not_found` then fails its terminal and run and sends `workspace.remove`,
+    and `node_timeout` or `{stopped: false}` changes nothing. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
+
+    2.6.4: A machine without a live channel gets no command and its rows stay as they
+    are, and local rows are never inventoried. test: `tests/hub/test_remote_reconcile.py::test_disconnected_and_local_rows_untouched`.
+
+    2.6.5: In this case the spawn''s effect lands and its reply is lost, and the agent''s
+    session start and session end both reach the hub before the first pass. Past the
+    deadline the pending terminal is fenced with `agent.cancel`. After `not_found`
+    it exits, the run stays ended, and there is no `cleanup_agent` and no `workspace.remove`.
+    A later `agent.spawn` for that run is refused `cancelled` by the fake node. After
+    `{stopped: false}` or `node_timeout` the terminal stays pending. The same row
+    on a disconnected machine stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.'
+  labels:
+  - covers:hub-mode:2.6:2.6.1
+  - covers:hub-mode:2.6:2.6.2
+  - covers:hub-mode:2.6:2.6.3
+  - covers:hub-mode:2.6:2.6.4
+  - covers:hub-mode:2.6:2.6.5
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Hub-wide roster with each entry's machine and project
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '3.1.1: The roster lists live runs and sessions from every
+    machine. test: `tests/servers/test_attention_roster_machines.py::test_roster_is_hub_wide`.
+
+    3.1.2: Every entry carries the machine and project of its run or session. test:
+    `tests/servers/test_attention_roster_machines.py::test_entries_carry_machine_and_project`.
+
+    3.1.3: Responding to a local entry still resolves its provider''s detector through
+    the hub-wide rows. test: `tests/servers/test_attention_roster_machines.py::test_local_respond_resolves_detector`.'
+  labels:
+  - covers:hub-mode:3.1:3.1.1
+  - covers:hub-mode:3.1:3.1.2
+  - covers:hub-mode:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: gclient attributes agents by the roster's machine and project
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: An agent whose session row is outside the fetched window
+    is listed under its roster machine, and the agents view still defaults to the
+    local machine. test: `crates/gclient/tests/roster_machines.rs::agents_use_roster_machine`.
+
+    3.2.2: A remote machine''s row shows attention when one of its agents needs attention.
+    test: `crates/gclient/tests/roster_machines.rs::remote_machine_row_shows_attention`.
+
+    3.2.3: A remote agent in project B, absent from both fetched windows while project
+    A is focused, stays in project B and is not admitted to project A''s view. test:
+    `crates/gclient/tests/roster_machines.rs::agents_use_roster_project`.'
+  labels:
+  - covers:hub-mode:3.2:3.2.1
+  - covers:hub-mode:3.2:3.2.2
+  - covers:hub-mode:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: frontend
+- title: Attention respond on another machine's entry
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  - '3.1'
+  validation_criteria: '3.3.1: Through a fake node client, responding to another machine''s
+    entry sends one `terminal.write` with the answer to that machine''s terminal,
+    clears the entry, and never captures a local pane or runs a detector. test: `tests/servers/test_attention_remote_respond.py::test_remote_respond_writes_through_node`.
+
+    3.3.2: An offline owner node yields 503 `{"code": "node_offline", "stage": "none"}`,
+    and the entry stays open. test: `tests/servers/test_attention_remote_respond.py::test_offline_owner_is_typed`.
+
+    3.3.3: A request naming a stale episode gets 409 and sends nothing. test: `tests/servers/test_attention_remote_respond.py::test_stale_episode_sends_nothing`.
+
+    3.3.4: A lost reply answers 502 `injection_indeterminate` and retires the entry,
+    and a retry sends no second `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry`.
+
+    3.3.5: Two concurrent responses to one entry send one `terminal.write`. test:
+    `tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once`.'
+  labels:
+  - covers:hub-mode:3.3:3.3.1
+  - covers:hub-mode:3.3:3.3.2
+  - covers:hub-mode:3.3:3.3.3
+  - covers:hub-mode:3.3:3.3.4
+  - covers:hub-mode:3.3:3.3.5
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+```
