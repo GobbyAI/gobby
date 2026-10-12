@@ -335,6 +335,13 @@ def _classify_shell_command(
 
         if parts[0].rsplit("/", 1)[-1] in {"cd", "pushd", "popd"}:
             if (
+                segment.separator_before == "|"
+                and not directory.group_entry
+                and next_separator not in {"|", "&"}
+                and not env_directories
+            ):
+                directory.invalidate()
+            if (
                 not env_directories
                 and not in_pipeline
                 and segment.separator_before in {None, "&&", ";", "\n", "|", "||", "&"}

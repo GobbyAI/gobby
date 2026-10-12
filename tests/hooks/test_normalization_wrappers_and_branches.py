@@ -38,6 +38,88 @@ def _metadata(command: str, root: Path) -> dict[str, Any]:
     return data
 
 
+@pytest.mark.parametrize("command", ["cd sub || touch x.py", "cd sub && make & touch y.py"])
+def test_chain_operator_before_newline_keeps_operator(tmp_path: Path, command: str) -> None:
+    multiline = command.replace(" touch", "\n touch")
+    inline_data = _metadata(command, tmp_path)
+    multiline_data = _metadata(multiline, tmp_path)
+    assert multiline_data.get("canonical_write_file_paths") == inline_data.get(
+        "canonical_write_file_paths"
+    )
+    assert multiline_data["canonical_repo_mutation_scope_unknown"] is True
+    assert inline_data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("argument", ["{", "'{'"])
+@pytest.mark.parametrize("prefix", ["", "! ", "time ", "time -p "])
+def test_brace_argument_does_not_open_group(tmp_path: Path, argument: str, prefix: str) -> None:
+    data = _metadata(f"{prefix}{{ cd sub; echo {argument}; }} | cat; touch y.py", tmp_path)
+    assert data["canonical_write_file_paths"] == ["y.py"]
+
+
+@pytest.mark.parametrize("wrapper", ["", "bash -c", "zsh -c"])
+def test_zsh_last_pipeline_stage_cd(tmp_path: Path, wrapper: str) -> None:
+    body = "echo x | { cd sub; }; touch z.py"
+    command = f"{wrapper} '{body}'" if wrapper else body
+    data = _metadata(command, tmp_path)
+    assert data.get("canonical_write_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("echo x | { cd sub; }; touch z.py", None),
+        ("echo x | cd sub; touch z.py", None),
+        ("echo x | { cd sub; } | cat; touch z.py", "z.py"),
+        ("{ cd sub; } | cat; touch z.py", "z.py"),
+        ("echo x | { cd sub; echo {; }; touch z.py", None),
+        ("echo x | { { cd sub; }; }; touch z.py", None),
+        ("echo x | { { cd sub; }; } | cat; touch z.py", "z.py"),
+        ("echo x | { cd sub; } & touch z.py", "z.py"),
+    ],
+)
+def test_explicit_zsh_pipeline_directory(tmp_path: Path, body: str, expected: str | None) -> None:
+    data = _metadata(f"zsh -c '{body}'", tmp_path)
+    if expected is None:
+        assert data.get("canonical_write_file_paths", []) == []
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+    else:
+        assert data["canonical_write_file_paths"] == [expected]
+
+
+@pytest.mark.parametrize("invocation", ["zsh probe.sh", "./probe.sh"])
+def test_zsh_script_pipeline_directory(tmp_path: Path, invocation: str) -> None:
+    script = tmp_path / "probe.sh"
+    script.write_text("#!/bin/zsh\necho x | { cd sub; }; touch z.py\n")
+    data = _metadata(invocation, tmp_path)
+    assert data.get("canonical_write_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_headerless_script_cannot_prove_zsh_pipeline_directory(tmp_path: Path) -> None:
+    script = tmp_path / "probe.sh"
+    script.write_text("echo x | { cd sub; }; touch z.py\n")
+    data = _metadata("zsh -c './probe.sh'", tmp_path)
+    assert data.get("canonical_write_file_paths", []) == []
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat x | { cd sub; touch y.py; }; touch z.py",
+        "cat x | { { cd sub; }; touch y.py; }; touch z.py",
+    ],
+)
+def test_last_pipeline_stage_keeps_body_write_and_loses_followup_scope(
+    tmp_path: Path, command: str
+) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_write_file_paths"] == ["sub/y.py"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 @pytest.mark.parametrize(
     "command",
     [

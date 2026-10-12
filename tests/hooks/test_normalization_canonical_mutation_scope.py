@@ -353,7 +353,6 @@ def test_case_pattern_terminator_unterminated_arm_does_not_raise(tmp_path: Path)
     "command, expected",
     [
         ("{ cd sub; } > log.txt; touch y.py", ["log.txt", "sub/y.py"]),
-        ("cat x | { { cd sub; }; touch y.py; }; touch z.py", ["sub/y.py", "z.py"]),
         ("{ cd sub; echo }; } | cat; touch y.py", ["y.py"]),
         ("cd sub || exit 1; touch y.py", ["sub/y.py"]),
         ("cd sub || exit 1; git add x.py", ["sub/x.py"]),
@@ -819,7 +818,6 @@ def test_unreadable_direct_execution_path_requires_a_claim(tmp_path: Path) -> No
         ("{ cd sub; touch x.py; }; touch y.py", ["sub/x.py", "sub/y.py"]),
         ("( cd sub; touch x.py ); touch y.py", ["sub/x.py", "y.py"]),
         ("{ cd sub; } | cat; touch y.py", ["y.py"]),
-        ("cat x | { cd sub; touch y.py; }; touch z.py", ["sub/y.py", "z.py"]),
         ("f()\n{ cd sub; }\ntouch y.py", ["y.py"]),
         ("f ()\n{ cd sub; }\ntouch y.py", ["y.py"]),
         ("function f\n{ cd sub; }\ntouch y.py", ["y.py"]),
