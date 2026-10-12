@@ -6,7 +6,6 @@ import os
 import time
 import uuid
 from collections.abc import Iterator
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import psycopg
@@ -113,16 +112,6 @@ def test_enforce_safe_test_schema_allows_test_schema_under_test_protect(
         _enforce_safe_test_schema("public")
 
 
-def _stub_bootstrap_hub(monkeypatch: pytest.MonkeyPatch, database_url: str | None) -> None:
-    from gobby.config import bootstrap
-
-    monkeypatch.setattr(
-        bootstrap,
-        "load_bootstrap",
-        lambda **_kwargs: SimpleNamespace(database_url=database_url),
-    )
-
-
 def _configure_rejection(config: pytest.Config) -> str | None:
     """Return the guard's rejection message, or None when the run is allowed."""
     try:
@@ -136,7 +125,6 @@ def test_pytest_configure_rejects_database_url_pointing_at_the_live_hub(
     monkeypatch: pytest.MonkeyPatch,
     pytestconfig: pytest.Config,
 ) -> None:
-    _stub_bootstrap_hub(monkeypatch, "postgresql://gobby:pass@localhost:60891/gobby")
     # A different user and the loopback alias still reach the same database.
     monkeypatch.setenv("DATABASE_URL", "postgresql://other@127.0.0.1:60891/gobby")
 
@@ -150,7 +138,6 @@ def test_pytest_configure_allows_an_isolated_test_database(
     monkeypatch: pytest.MonkeyPatch,
     pytestconfig: pytest.Config,
 ) -> None:
-    _stub_bootstrap_hub(monkeypatch, "postgresql://gobby:pass@localhost:60891/gobby")
     monkeypatch.setenv(
         "DATABASE_URL", "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
     )
@@ -158,14 +145,18 @@ def test_pytest_configure_allows_an_isolated_test_database(
     assert _configure_rejection(pytestconfig) is None
 
 
-def test_pytest_configure_allows_runs_with_no_configured_hub(
+def test_pytest_configure_refuses_default_hub_without_supplied_identity(
     monkeypatch: pytest.MonkeyPatch,
     pytestconfig: pytest.Config,
 ) -> None:
-    _stub_bootstrap_hub(monkeypatch, None)
+    from tests.fixtures import postgres
+
+    monkeypatch.setattr(postgres, "_OPERATOR_HUB_DATABASE_URL", "")
     monkeypatch.setenv("DATABASE_URL", "postgresql://gobby:pass@localhost:60891/gobby")
 
-    assert _configure_rejection(pytestconfig) is None
+    rejection = _configure_rejection(pytestconfig)
+    assert rejection is not None
+    assert "live Gobby hub database" in rejection
 
 
 def test_require_test_database_url_fails_loudly_under_test_protect(

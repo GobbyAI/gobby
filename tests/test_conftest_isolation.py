@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("inherited_home", ["operator", "missing", "blank", "isolated"])
-def test_configuration_isolates_bootstrap_before_postgres_probe(
+def test_configuration_isolates_bootstrap_without_postgres_home_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inherited_home: str
 ) -> None:
     from tests import conftest as shared_conftest
@@ -40,13 +40,10 @@ def test_configuration_isolates_bootstrap_before_postgres_probe(
         )
     initial_home = os.environ.get("GOBBY_HOME")
 
-    observed: list[Path] = []
     original_stat = Path.stat
 
     def audited_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         assert path != sentinel, "operator bootstrap metadata was accessed"
-        if path.name == "bootstrap.yaml":
-            observed.append(path)
         return original_stat(path, follow_symlinks=follow_symlinks)
 
     monkeypatch.setattr(Path, "stat", audited_stat)
@@ -54,7 +51,7 @@ def test_configuration_isolates_bootstrap_before_postgres_probe(
     config = MagicMock(spec=pytest.Config)
     config.add_cleanup.side_effect = cleanups.append
     manager = pytest.PytestPluginManager()
-    # Register the probe last so it would run first without tryfirst isolation.
+    # Plugin ordering must preserve isolation while the guard avoids bootstrap reads.
     manager.register(SimpleNamespace(pytest_configure=shared_conftest.pytest_configure))
     manager.register(SimpleNamespace(pytest_configure=postgres.pytest_configure))
     try:
@@ -64,7 +61,7 @@ def test_configuration_isolates_bootstrap_before_postgres_probe(
         if inherited_home == "isolated":
             assert selected == tmp_path / "isolated"
             assert cleanups == []
-        assert selected / "bootstrap.yaml" in observed
+        assert (selected / "bootstrap.yaml").is_file()
         assert sentinel.read_text() == "operator sentinel\n"
     finally:
         for cleanup in reversed(cleanups):
@@ -146,7 +143,6 @@ def test_test_dsn_is_not_published_as_a_live_daemon_hub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dsn_env: str
 ) -> None:
     from gobby.config.bootstrap import load_bootstrap
-    from tests.fixtures.postgres import _live_hub_identity
 
     isolated = tmp_path / "isolated"
     monkeypatch.setenv("GOBBY_HOME", str(isolated))
@@ -157,4 +153,3 @@ def test_test_dsn_is_not_published_as_a_live_daemon_hub(
     bootstrap = load_bootstrap()
     assert bootstrap.files_home == str(isolated / "files")
     assert bootstrap.database_url is None
-    assert _live_hub_identity() is None

@@ -81,6 +81,9 @@ _TEST_DSN_REQUIRED = (
 # The managed hub's install defaults (DEFAULT_POSTGRES_PORT and DEFAULT_POSTGRES_DB in
 # gobby.cli.installers.postgres), refused even on a machine with no bootstrap.
 _LIVE_HUB_DEFAULT_IDENTITY = ("localhost", "60891", "gobby")
+# Plugin import precedes pytest_configure's HOME/GOBBY_HOME isolation. The harness
+# supplies identity-only conninfo here; never discover it from operator files.
+_OPERATOR_HUB_DATABASE_URL = os.environ.get("GOBBY_TEST_OPERATOR_DATABASE_URL", "")
 # psycopg connect() options that are not libpq connection parameters.
 _CONNECT_OPTIONS = frozenset(
     {"autocommit", "prepare_threshold", "context", "row_factory", "cursor_factory"}
@@ -155,15 +158,15 @@ def _dsn_identity(url: str) -> tuple[str, str, str] | None:
 
 
 def _live_hub_identity() -> tuple[str, str, str] | None:
-    """Return the identity of the operator's configured hub, when one is configured."""
-    try:
-        from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-
-        database_url = load_bootstrap(resolve_database_url=True).database_url
-    except BootstrapConfigError as exc:
-        logger.debug("No bootstrap PostgreSQL DSN to guard tests against: %s", exc)
+    """Return the operator identity supplied before home isolation, without file I/O."""
+    if not _OPERATOR_HUB_DATABASE_URL:
         return None
-    return _dsn_identity(database_url) if database_url else None
+    identity = _dsn_identity(_OPERATOR_HUB_DATABASE_URL)
+    if identity is None:
+        raise pytest.UsageError(
+            "GOBBY_TEST_OPERATOR_DATABASE_URL must be valid PostgreSQL conninfo"
+        )
+    return identity
 
 
 def _refuse_live_hub(conninfo: str, params: Mapping[str, Any]) -> None:
@@ -229,7 +232,7 @@ def pytest_configure(config: pytest.Config) -> None:
     url = os.environ.get("DATABASE_URL")
     if not url:
         return
-    if hub_identity is not None and _dsn_identity(url) == hub_identity:
+    if _dsn_identity(url) in _refused_hub_identities:
         raise pytest.UsageError(
             f"DATABASE_URL points at the live Gobby hub database. {_TEST_DSN_REQUIRED}"
         )
