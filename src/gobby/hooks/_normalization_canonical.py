@@ -258,7 +258,7 @@ def _classify_shell_command(
         if case_depth and index + 1 < len(segments):
             next_gap = command[segment_end : spans_by_token[id(segments[index + 1].tokens[0])][0]]
             # Next-gap ;& is case fallthrough; a leading & backgrounds this command instead.
-            if ";&" in next_gap and not next_gap.lstrip().startswith("&"):
+            if ";&" in next_gap and not next_gap.replace("\\\n", "").lstrip().startswith("&"):
                 next_separator = ";"
         raw_parts = shell_token_values(segment.tokens)
         in_pipeline = (
