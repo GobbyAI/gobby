@@ -24,6 +24,120 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "(case x in x) git apply x.patch;; esac)",
+        "echo $(case y in y) git apply x.patch;; esac)",
+    ],
+)
+def test_grouped_case_pathless_writes_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_grouped_case_touch_keeps_resolved_scope(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "(case x in x) touch a.py;; esac)", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["a.py"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+def test_grouped_case_copy_keeps_resolved_scope(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "(case x in x) cp a b;; esac)", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["b"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "shopt -s extglob\ncase x in @(x|y)) git apply x.patch;; esac",
+        'case x in(x)"git" apply x.patch;; esac',
+        "case x in(x)'git' apply x.patch;; esac",
+        "case x in(x)\\git apply x.patch;; esac",
+        'case x in(x)g"it" apply x.patch;; esac',
+        'case "x)" in("x)")git apply x.patch;; esac',
+        'case x in("x")git apply x.patch;; esac',
+    ],
+)
+def test_case_pattern_headers_classify_pathless_writes(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_file_paths") is None
+
+
+@pytest.mark.parametrize("command", ['case x in(x)"cp" a b;; esac', 'case x in("x")cp a b;; esac'])
+def test_case_pattern_headers_classify_copy_scope(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == ["b"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+def test_quote_led_case_header_is_not_an_arm(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        'case x "in(x)git" apply x.patch;; esac', tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_repo_mutation")
+
+
+def test_malformed_grouped_case_classification_does_not_raise(tmp_path: Path) -> None:
+    data = _invocation_metadata(
+        "(case x in x) gem push x)", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert isinstance(data.get("canonical_repo_mutation", False), bool)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo `case y in y) git apply x.patch;; esac`",
+        "`case y in y) git apply x.patch;; esac`",
+        "cat <(case y in (y) git apply x.patch;; esac)",
+        "echo >(case y in (y) git apply x.patch;; esac)",
+    ],
+)
+def test_existing_grouped_case_writes_remain_unresolved(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command,kind",
+    [
+        ("diff <(a) <(b)", "execute"),
+        ("diff <(cat a) <(cat b)", "read"),
+        ("(diff <(cat a) <(cat b))", "read"),
+        ("echo $(echo a)", "execute"),
+        ("$(( (1+2) ))", "execute"),
+        ("case x in (a|b) true;; esac", "execute"),
+    ],
+)
+def test_grouped_case_controls_keep_non_write_scope(
+    tmp_path: Path, command: str, kind: str
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == kind
+    assert not data.get("canonical_repo_mutation")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
     "command,unknown,paths",
     [
         ("case x in(x)git apply x.patch;; esac", True, None),
