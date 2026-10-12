@@ -67,9 +67,11 @@ prompts:
        disagreement the two of you cannot resolve.
     3. On consensus, once plan-writer has committed its dated consensus entry
        under `## V1 Plan Changelog` and sent you the SHA, verify that committed
-       entry. Send EVENT=CONSENSUS naming that SHA to both plan-writer and the
-       coordinator through gobby-agents:send_message. The successful message
-       handler enters stamp; never call set_variable to enter it. You then own
+       entry. Send a line starting `EVENT=CONSENSUS SHA=<commit>` to plan-writer
+       and the coordinator through gobby-agents:send_message. The successful message
+       handler enters stamp; never call set_variable to enter it. If the
+       consensus prerequisite becomes invalid, set `bounced` to true with
+       top-level set_variable(scope="step") to return to review. You then own
        `## M1 Task Manifest`: derive it with
        `gobby-plans:derive_plan_handoff_manifest` from complete routing
        decisions, and apply it with `gobby-plans:apply_plan_handoff_manifest`
@@ -110,6 +112,7 @@ step_workflow:
     proportionality_loaded: false
     seat_complete: false
     consensus: false
+    bounced: false
 
   exit_condition: "vars.seat_complete"
   steps:
@@ -166,7 +169,8 @@ step_workflow:
       status_message: |
         Review the plan plan-writer passes you, send findings over send_message
         until consensus. Verify the writer's committed consensus entry and SHA,
-        then send EVENT=CONSENSUS naming the SHA to the writer and coordinator.
+        then send a line starting EVENT=CONSENSUS SHA=<commit> to the writer and
+        coordinator. SHA must be a 7-40 character hexadecimal commit ID.
         The successful send_message handler enters stamp; do not call set_variable.
       allowed_tools: "all"
       blocked_tools:
@@ -190,24 +194,39 @@ step_workflow:
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
-          when: "'EVENT=CONSENSUS' in str(tool_input.get('content'))"
+          when: &consensus_event >-
+            any(line.startswith('EVENT=CONSENSUS ') and
+                any(field.startswith('SHA=') and 7 <= len(field.split('=', 1)[1]) <= 40 and
+                    all(char in '0123456789abcdefABCDEF' for char in field.split('=', 1)[1])
+                    for field in line.split())
+                for line in str(tool_input.get('content') or '').split('\n'))
           action: set_variable
           variable: consensus
           value: true
+        - server: gobby-agents
+          tool: send_message
+          when: *consensus_event
+          action: set_variable
+          variable: bounced
+          value: false
       transitions:
         - to: stamp
-          when: "vars.consensus"
+          when: "vars.consensus and not vars.bounced"
 
     - name: stamp
       mcp_error_policy: stay
       description: "Derive and apply M1 after verified consensus"
       status_message: |
-        Send EVENT=CONSENSUS naming the verified SHA to both the writer and
+        Send an EVENT=CONSENSUS SHA=<commit> event line to both the writer and
         coordinator before stamping. Derive and apply the M1 manifest with
         gobby-plans:derive_plan_handoff_manifest and
         gobby-plans:apply_plan_handoff_manifest. Use the exact returned hashes
         and digest; derive again after any plan edit. Validate in expansion mode,
         send the manifest digest to the writer and coordinator, then call end_agent_run.
+        If consensus was premature or its prerequisite becomes invalid, call
+        top-level set_variable(name="bounced", value=true, scope="step"). This
+        returns to review and blocks stamping until a new consensus event;
+        verify a committed V1 entry and send a new consensus event before stamping.
       allowed_tools: "all"
       allowed_mcp_tools: "all"
       blocked_tools:
@@ -231,3 +250,6 @@ step_workflow:
           action: set_variable
           variable: seat_complete
           value: true
+      transitions:
+        - to: review
+          when: "vars.bounced"

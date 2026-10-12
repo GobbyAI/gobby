@@ -293,10 +293,118 @@ async def _plan_adversary(run: SeatRun) -> None:
 
     await run.call(*SEND, {"content": "EVENT=FINDINGS ROUND=1"})
     assert run.step == "review"
-    await run.call(*SEND, {"content": "EVENT=CONSENSUS ROUND=1"})
+    await run.call(*SEND, {"content": f"EVENT=CONSENSUS SHA={'a' * 40}"})
     assert run.step == "stamp"
     assert await run.admits(*DERIVE)
     assert await run.admits(*APPLY)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "EVENT=CONSENSUS",
+        "EVENT=CONSENSUS ROUND=1",
+        f"Cannot send EVENT=CONSENSUS SHA={'a' * 40}; no committed V1 entry exists.",
+        f"EVENT=CONSENSUS_EXTRA SHA={'a' * 40}",
+        "EVENT=CONSENSUS SHA=not-a-commit",
+        "EVENT=CONSENSUS SHA=",
+        "EVENT=CONSENSUS SHA=abcdef",
+        f"EVENT=CONSENSUS SHA={'a' * 41}",
+        f"EVENT=CONSENSUS\nSHA={'a' * 40}",
+    ],
+)
+async def test_plan_adversary_consensus_requires_event_line_and_sha(
+    temp_db: HubDatabase, content: str
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+
+    await run.call(*SEND, {"content": content})
+
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "EVENT=CONSENSUS SHA=ABC1234",
+        f"EVENT=CONSENSUS ROUND=1 SHA={'a' * 40}",
+        f"Verified the committed V1 entry.\nEVENT=CONSENSUS SHA={'a' * 40}\n",
+    ],
+)
+async def test_plan_adversary_committed_consensus_enters_stamp(
+    temp_db: HubDatabase, content: str
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+
+    await run.call(*SEND, {"content": content})
+
+    assert run.step == "stamp"
+    assert await run.admits(*DERIVE)
+    assert await run.admits(*APPLY)
+
+
+async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+
+    await run.call(*SEND, {"content": f"EVENT=CONSENSUS SHA={'a' * 40}"}, {"success": False})
+
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+    assert not await run.admits(*DERIVE)
+
+
+async def test_plan_adversary_stamp_bounce_returns_to_review(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    consensus = {"content": f"EVENT=CONSENSUS SHA={'a' * 40}"}
+    await run.call(*SEND, consensus)
+    assert run.step == "stamp"
+
+    await run.set_flag("bounced", True)
+
+    assert run.step == "review"
+    assert run.vars["bounced"] is True
+    assert not await run.admits(*DERIVE)
+    await run.call(*SEND, {"content": "Review is still in progress."})
+    assert run.step == "review"
+    await run.call(*SEND, consensus)
+    assert run.step == "stamp"
+    assert run.vars["bounced"] is False
+
+
+async def test_plan_adversary_old_stamp_snapshot_uses_current_bounce(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    definitions = AgentDefinitionManager(temp_db)
+    definition = definitions.get_by_name("plan-adversary")
+    assert definition is not None
+    definitions.set_step_workflow_from_sync(
+        definition.id, instance.snapshot.model_dump(mode="json")
+    )
+    old_stamp = instance.snapshot.get_step("stamp")
+    assert old_stamp is not None
+    old_stamp.transitions = []
+    instance.snapshot.variables.pop("bounced")
+    instance.variables.pop("bounced")
+    instance.variables["consensus"] = True
+    instance.current_step = "stamp"
+    run.instances.replace_for_session(instance)
+
+    await run.set_flag("bounced", True)
+
+    assert run.step == "review"
+    assert not await run.admits(*DERIVE)
+    retained = run.instances.get_for_session(SESSION_ID)
+    assert retained is not None
+    retained_stamp = retained.snapshot.get_step("stamp")
+    assert retained_stamp is not None
+    assert retained_stamp.transitions == []
 
 
 DRIVERS: dict[str, Callable[[SeatRun], Awaitable[None]]] = {
