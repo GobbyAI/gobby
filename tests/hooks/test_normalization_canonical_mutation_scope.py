@@ -1327,6 +1327,27 @@ def test_git_directory_option_rebases_mutation_paths(tmp_path: Path, operation: 
     assert data["canonical_file_paths"] == [str(target / "x.py")]
 
 
+@pytest.mark.parametrize(
+    "operation", ["checkout feature", "checkout -f feature", "checkout --force feature"]
+)
+@pytest.mark.parametrize("directory_form", ["git_option", "cd"])
+def test_git_branch_checkout_resolves_worktree_scope(
+    tmp_path: Path, operation: str, directory_form: str
+) -> None:
+    target = tmp_path / "other"
+    prefix = f"git -C {target}" if directory_form == "git_option" else f"cd {target} && git"
+    data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
+    switch = _invocation_metadata(
+        f"{prefix} switch --discard-changes feature", tool_cwd=tmp_path, project_path=tmp_path
+    )
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == [str(target)]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+    assert switch.get("canonical_repo_mutation_scope_unknown") is None
+
+
 @pytest.mark.parametrize("prefix", ["true &&", "git status &&", "git --no-pager", "git -c k=v"])
 def test_sequencer_scope_inherits_base_directory(tmp_path: Path, prefix: str) -> None:
     command = (

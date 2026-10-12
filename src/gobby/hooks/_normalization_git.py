@@ -195,6 +195,9 @@ def classify_git_mutation(
             candidates = arguments[arguments.index("--") + 1 :]
         elif operation == "restore":
             candidates = _git_restore_positional_args_after(parts, index + 1)
+        elif git_cwd:
+            # Without a path separator, checkout may replace the whole working tree.
+            return _ShellSegmentMetadata("write", paths=(git_cwd,), repo_mutation=True)
         else:
             candidates = []
         paths = [
