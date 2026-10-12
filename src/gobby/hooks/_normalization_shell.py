@@ -299,9 +299,27 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
 
         operator = _scan_unquoted_shell_operator(command, index)
         if operator:
-            flush(index)
-            tokens.append(ShellToken(operator))
-            spans.append((index, index + len(operator)))
+            start = index
+            value = operator
+            # Only a whole unquoted digit word adjacent to < or > is an IO_NUMBER.
+            if (
+                operator[0] in "<>"
+                and current
+                and not quoted
+                and heredoc_operator is None
+                and all(char in "0123456789" for char in current)
+            ):
+                start = token_start if token_start is not None else index
+                # Keep an incomplete fd duplication split and fail-closed as a write.
+                if operator == ">&":
+                    operator = ">"
+                value = "".join(current) + operator
+                current.clear()
+                token_start = None
+            else:
+                flush(index)
+            tokens.append(ShellToken(value))
+            spans.append((start, index + len(operator)))
             if operator == "\n":
                 if pending_heredocs:
                     index = _skip_heredoc_bodies(command, index + 1, pending_heredocs, heredocs)
@@ -511,7 +529,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
 def _skip_heredocs(command: str, tokens: list[ShellToken], index: int) -> int:
     """Return the index past the bodies of the heredocs ``tokens`` open, starting at ``index``."""
     for offset, token in enumerate(tokens[:-1]):
-        if token.quoted or token.value not in {"<<", "<<-"}:
+        if token.quoted or token.value.lstrip("0123456789") not in {"<<", "<<-"}:
             continue
         delimiter = tokens[offset + 1].value
         while index < len(command):
@@ -519,7 +537,7 @@ def _skip_heredocs(command: str, tokens: list[ShellToken], index: int) -> int:
             end = len(command) if end < 0 else end + 1
             body_line = command[index:end].rstrip("\n")
             index = end
-            if token.value == "<<-":
+            if token.value.lstrip("0123456789") == "<<-":
                 body_line = body_line.lstrip("\t")
             if body_line == delimiter:
                 break
@@ -620,25 +638,13 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
     char = command[index]
     if char == "\n":
         return "\n"
-    # Every operator opens with one of these or a digit; the scanner probes
+    # Every operator opens with one of these; the scanner probes
     # each character, so skip the regex and prefix checks for the rest.
-    if char not in ";&|<>" and not char.isdigit():
+    if char not in ";&|<>":
         return None
-    # Like the ``N>`` branch below, this fires on digits adjacent to a word
-    # (``src2>&1`` scans as ``src`` + ``2>&1`` where bash reads ``src2`` + ``>&1``);
-    # fd duplication is classification-neutral either way.
     fd_dup = _FD_DUP_SCAN_RE.match(command, index)
     if fd_dup:
         return fd_dup.group(0)
-    if char.isdigit():
-        cursor = index
-        while cursor < len(command) and command[cursor].isdigit():
-            cursor += 1
-        if command.startswith(">>", cursor):
-            return f"{command[index:cursor]}>>"
-        if command.startswith(">", cursor):
-            return f"{command[index:cursor]}>"
-        return None
     for operator in (
         "<<<",
         "<<-",
@@ -687,13 +693,14 @@ def is_fd_duplication_token(token: ShellToken) -> bool:
 def is_unquoted_shell_control_token(token: ShellToken) -> bool:
     return not token.quoted and (
         token.value in _SHELL_CONTROL_TOKENS
+        or is_shell_input_redirection_token(token)
         or _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
         or is_fd_duplication_token(token)
     )
 
 
 def is_shell_input_redirection_token(token: ShellToken) -> bool:
-    return not token.quoted and token.value in _SHELL_INPUT_REDIRECTION_TOKENS
+    return not token.quoted and token.value.lstrip("0123456789") in _SHELL_INPUT_REDIRECTION_TOKENS
 
 
 def is_shell_output_redirection_token(token: ShellToken) -> bool:
@@ -938,7 +945,7 @@ def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
     """Return literal-looking paths read through stdin redirection."""
     paths: list[str] = []
     for index, token in enumerate(tokens[:-1]):
-        if not is_shell_input_redirection_token(token) or token.value != "<":
+        if not is_shell_input_redirection_token(token) or token.value.lstrip("0123456789") != "<":
             continue
         candidate = tokens[index + 1]
         if is_unquoted_shell_control_token(candidate):
