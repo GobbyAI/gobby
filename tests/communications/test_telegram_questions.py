@@ -108,7 +108,7 @@ async def harness(hub_db: HubDatabase) -> AsyncIterator[QuestionHarness]:
     messages: list[CommsMessage] = []
 
     async def send(
-        channel_name: str, content: str, session_id: str, metadata: dict[str, Any]
+        channel_name: str, content: str, session_id: str | None, metadata: dict[str, Any]
     ) -> CommsMessage:
         message = CommsMessage(
             id=str(len(messages)),
@@ -154,6 +154,7 @@ async def test_attached_question_sends_options_and_callback_answers(
     }
     assert await harness.controller.handle("telegram", harness.callback(1))
     assert harness.messages[-1].content == "This question is already resolved."
+    assert harness.messages[-1].session_id is None
     sent_count = len(harness.messages)
     with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
         await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)

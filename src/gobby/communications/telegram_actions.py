@@ -428,7 +428,7 @@ class TelegramActionController:
         await self._manager.send_message(
             channel.name,
             content,
-            session_id=message.session_id,
+            session_id=None,
             metadata=_reply_destination(message),
         )
 

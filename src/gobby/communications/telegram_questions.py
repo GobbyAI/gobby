@@ -293,7 +293,7 @@ class TelegramQuestionController:
             await self._manager.send_message(
                 channel_name,
                 text,
-                session_id=message.session_id,
+                session_id=None,
                 metadata={"platform_destination": message.metadata_json.get("chat_id")},
             )
         except Exception:

@@ -67,6 +67,17 @@ def create_communications_registry(
             return result
         return await asyncio.to_thread(_resolve_session_id, session_id)
 
+    async def _outbound_session_id(session_id: str | None) -> str | None:
+        """Authenticate the origin before it becomes a sender heading or callback target."""
+        caller_id = get_current_session_id()
+        if session_id is not None:
+            resolved = await _resolve_session_id_async(session_id)
+            if caller_id is None or resolved != caller_id:
+                raise ValueError(
+                    "Outbound session_id must identify the authenticated calling session"
+                )
+        return caller_id
+
     def operator_destination(channel: str, caller_id: str | None) -> str:
         if db is None or not caller_id:
             raise ValueError("Operator messaging requires a registered caller")
@@ -129,7 +140,8 @@ def create_communications_registry(
     @registry.tool(
         description=(
             "Send a message to a communication channel. session_id defaults to the calling "
-            "session when available. For Telegram clarification or approval "
+            "session when available; an explicit session_id must identify that same caller. "
+            "For Telegram clarification or approval "
             "prompts, pass inline_keyboard as rows of {text, value} buttons with a session_id; "
             "the selected value returns to that session. callback_ttl_seconds sets how long "
             "those buttons stay answerable and must be 1-3600. For Telegram text messages, "
@@ -169,11 +181,7 @@ def create_communications_registry(
                 if link_preview_options is not None:
                     metadata["link_preview_options"] = link_preview_options
 
-            target_session = (
-                await _resolve_session_id_async(session_id)
-                if session_id is not None
-                else get_current_session_id()
-            )
+            target_session = await _outbound_session_id(session_id)
 
             msg = await communications_manager.send_message(
                 channel_name=channel,
@@ -273,7 +281,8 @@ def create_communications_registry(
     @registry.tool(
         description=(
             "Send an existing local file to a communication channel. The file must be "
-            "inside the project checkout or one of its active or stale registered worktrees."
+            "inside the project checkout or one of its active or stale registered worktrees. "
+            "session_id defaults to the authenticated caller and cannot identify another session."
         )
     )
     async def send_attachment(
@@ -322,7 +331,7 @@ def create_communications_registry(
                 filename=filename,
                 content_type=resolved_content_type,
                 content=caption,
-                session_id=await _resolve_session_id_async(session_id),
+                session_id=await _outbound_session_id(session_id),
                 metadata=metadata,
             )
             return {

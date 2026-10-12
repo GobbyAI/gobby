@@ -165,7 +165,15 @@ async def test_send_operator_message_requires_installed_channel_grant(
         mock_manager.send_message.assert_not_awaited()
 
 
+@pytest.fixture
+def authenticated_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: "session-1"
+    )
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("authenticated_caller")
 async def test_send_message(registry: Any, mock_manager: MagicMock) -> None:
     mock_msg = MagicMock()
     mock_msg.id = "msg-123"
@@ -207,15 +215,52 @@ async def test_send_message_inherits_caller_only_when_omitted(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value="caller"
     ):
         await registry.get_tool("send_message")(channel="telegram", content="hello")
-        await registry.get_tool("send_message")(
+        refused = await registry.get_tool("send_message")(
             channel="telegram", content="explicit", session_id="other"
         )
     assert mock_manager.send_message.await_args_list[0].kwargs["session_id"] == "caller"
-    assert mock_manager.send_message.await_args_list[1].kwargs["session_id"] == "other"
+    assert refused["success"] is False
+    assert mock_manager.send_message.await_count == 1
 
     with patch("gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=None):
         await registry.get_tool("send_message")(channel="telegram", content="anonymous")
     assert mock_manager.send_message.await_args.kwargs["session_id"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["caller", None])
+async def test_send_message_cannot_impersonate_named_session(
+    registry: Any, mock_manager: MagicMock, caller: str | None
+) -> None:
+    mock_manager.send_message.return_value = MagicMock(status="sent", id="forged", error=None)
+    with patch("gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller):
+        result = await registry.get_tool("send_message")(
+            channel="telegram", content="forged heading", session_id="another-seat"
+        )
+    assert result["success"] is False
+    assert result["error"] == "Outbound session_id must identify the authenticated calling session"
+    mock_manager.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_cannot_impersonate_named_session(
+    registry: Any, mock_manager: MagicMock, tmp_path: Path
+) -> None:
+    attachment = tmp_path / "notice.txt"
+    attachment.write_text("notice")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", id="forged", error=None),
+        MagicMock(),
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value="caller"
+    ):
+        result = await registry.get_tool("send_attachment")(
+            channel="telegram", file_path=str(attachment), session_id="another-seat"
+        )
+    assert result["success"] is False
+    assert result["error"] == "Outbound session_id must identify the authenticated calling session"
+    mock_manager.send_attachment.assert_not_awaited()
 
 
 def test_attach_and_detach_use_caller_session(registry: Any, mock_manager: MagicMock) -> None:
@@ -235,6 +280,7 @@ def test_attach_and_detach_use_caller_session(registry: Any, mock_manager: Magic
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("authenticated_caller")
 async def test_send_attachment_validates_path_and_returns_metadata(
     registry: Any,
     mock_manager: MagicMock,
@@ -492,6 +538,9 @@ def session_reference_tools(
     )
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.communications.get_current_project_id", lambda: project_id
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: session.id
     )
     attachment_path = root / "reply.txt"
     attachment_path.write_text("Whole reply", encoding="utf-8")
@@ -874,6 +923,7 @@ def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("authenticated_caller")
 async def test_send_message_returns_invalid_callback_ttl_to_caller_without_error_log(
     registry: Any,
     mock_manager: MagicMock,
@@ -901,6 +951,7 @@ async def test_send_message_returns_invalid_callback_ttl_to_caller_without_error
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("authenticated_caller")
 async def test_send_message_exposes_inline_keyboard_metadata(
     registry: Any,
     mock_manager: MagicMock,
@@ -933,12 +984,16 @@ async def test_send_message_exposes_inline_keyboard_metadata(
 async def test_send_message_stores_the_current_project_on_a_keyboard(
     mock_manager: MagicMock,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Josh addresses the button with #N. The tap can resolve it only with this project."""
     mock_msg = MagicMock(id="msg-123", status="sent", error=None)
     mock_manager.send_message.return_value = mock_msg
     project_id = "22222222-2222-4222-8222-222222222222"
     session_uuid = "33333333-3333-4333-8333-333333333333"
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: session_uuid
+    )
     db = MagicMock()
     db.fetchone.return_value = {"id": session_uuid}
     registry: Any = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
@@ -967,10 +1022,14 @@ async def test_send_message_stores_the_current_project_on_a_keyboard(
 async def test_send_message_resolves_hash_n_session_to_uuid(
     mock_manager: MagicMock,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A #N session_id is stored as that project's session UUID."""
     project_id = "22222222-2222-4222-8222-222222222222"
     session_uuid = "11111111-1111-4111-8111-111111111111"
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: session_uuid
+    )
     db = MagicMock()
     db.fetchone.return_value = {"id": session_uuid}
     registry: Any = create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
