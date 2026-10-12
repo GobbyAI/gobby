@@ -339,6 +339,16 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
     assert "minute 30-59" in prompt
     assert "Report mode: full" in prompt
     assert "Report mode: delta" in prompt
+    assert 'view="compact", limit=500' in prompt
+    assert "accumulated rows equal total" in prompt
+    assert "first recorded claim time" in prompt
+    assert "gobby.agents.reporter_sources --section queues" in prompt
+    assert "never use head" in prompt.lower()
+    assert "candidate=true, closed=false" in prompt
+    assert "latest_linked_commit" in prompt
+    assert "full-report scaffold" in prompt
+    assert "Delivery success and report completeness are separate results" in prompt
+    assert "closed / escalated" in prompt
     assert "never contacts the operator" not in prompt
     assert "the Assistant does that" not in prompt
     for section in (

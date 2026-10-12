@@ -1,10 +1,19 @@
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.tasks import Task
+from gobby.utils.datetime import datetime_to_iso
 
 logger = logging.getLogger(__name__)
+
+
+class CurrentSessionClaim(TypedDict):
+    ref: str
+    title: str
+    claimed_at: str | None
+    path: str | None
+    worktree: str | None
 
 
 def record_claim(conn: Transaction, session_id: str, task_id: str) -> None:
@@ -146,6 +155,36 @@ class SessionTaskManager:
                 }
             )
         return results
+
+    def get_current_claims(self, session_ids: list[str]) -> dict[str, list[CurrentSessionClaim]]:
+        """Join current ownership to its first recorded claim, including missing history."""
+        if not session_ids:
+            return {}
+        rows = self.db.fetchall(
+            """
+            SELECT t.claimed_by_session_id, t.seq_num, t.id, t.title, t.path_cache,
+                   st.created_at AS claimed_at, artifacts.worktree_path
+            FROM tasks t
+            LEFT JOIN session_tasks st ON st.task_id = t.id
+                AND st.session_id = t.claimed_by_session_id AND st.action = 'claimed'
+            LEFT JOIN task_artifacts artifacts ON artifacts.task_id = t.id
+            WHERE t.claimed_by_session_id = ANY(%s::uuid[]) AND t.closed_at IS NULL
+            ORDER BY t.seq_num, t.id
+            """,
+            (session_ids,),
+        )
+        result: dict[str, list[CurrentSessionClaim]] = {}
+        for row in rows:
+            result.setdefault(str(row["claimed_by_session_id"]), []).append(
+                {
+                    "ref": f"#{row['seq_num']}" if row["seq_num"] else str(row["id"]),
+                    "title": row["title"],
+                    "claimed_at": datetime_to_iso(row["claimed_at"]),
+                    "path": row["path_cache"],
+                    "worktree": row["worktree_path"],
+                }
+            )
+        return result
 
     def get_worked_on_task(self, session_id: str, task_id: str | None = None) -> Task | None:
         """Return the session's latest ``worked_on`` task, or ``task_id``'s if linked so.

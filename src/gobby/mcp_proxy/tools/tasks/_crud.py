@@ -12,7 +12,6 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._formatters import (
     brief_task_card,
-    task_discovery_payload,
 )
 from gobby.mcp_proxy.tools.tasks._live_session_label import live_session_label_change_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -765,146 +764,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=update_task,
     )
 
-    def list_tasks(
-        current_stage_state: str | list[str] | None = None,
-        priority: int | None = None,
-        task_type: str | None = None,
-        label: str | None = None,
-        labels: list[str] | None = None,
-        closed: bool | None = None,
-        parent_task_id: str | None = None,
-        title_like: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        sort_by: str | None = None,
-        all_projects: bool = False,
-        project: str | None = None,
-    ) -> dict[str, Any]:
-        """List tasks with optional filters."""
-        try:
-            project_id = ctx.resolve_project_filter(project, all_projects)
-        except ValueError as e:
-            return {"error": str(e), "tasks": [], "count": 0}
+    from gobby.mcp_proxy.tools.tasks._listing import register_task_listing
 
-        # Resolve parent_task_id if it's a reference format
-        if parent_task_id:
-            try:
-                parent_task_id = resolve_task_id_for_mcp(
-                    ctx.task_manager, parent_task_id, project_id
-                )
-            except (TaskNotFoundError, ValueError) as e:
-                return {"error": f"Invalid parent_task_id: {e}", "tasks": [], "count": 0}
-
-        # Handle comma-separated current-stage state strings.
-        current_stage_filter: str | list[str] | None = current_stage_state
-        if isinstance(current_stage_state, str) and "," in current_stage_state:
-            current_stage_filter = [s.strip() for s in current_stage_state.split(",")]
-
-        closed_filter: dict[str, Any] = {"closed": closed} if closed is not None else {}
-        tasks = ctx.task_manager.list_tasks(
-            current_stage_state=current_stage_filter,
-            priority=priority,
-            task_type=task_type,
-            label=label,
-            labels=labels,
-            parent_task_id=parent_task_id,
-            title_like=title_like,
-            limit=limit,
-            offset=offset,
-            sort_by=sort_by,
-            project_id=project_id,
-            **closed_filter,
-        )
-        result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
-        if parent_task_id:
-            result["open_count"] = ctx.task_manager.count_tasks(
-                current_stage_state=current_stage_filter,
-                priority=priority,
-                task_type=task_type,
-                label=label,
-                labels=labels,
-                parent_task_id=parent_task_id,
-                title_like=title_like,
-                project_id=project_id,
-                closed=False,
-            )
-        return result
-
-    registry.register(
-        name="list_tasks",
-        description="List tasks with optional filters.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "current_stage_state": {
-                    "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}],
-                    "description": "Filter by current stage state. Can be a single state, array of states, or comma-separated string.",
-                    "default": None,
-                },
-                "priority": {
-                    "type": "integer",
-                    "description": "Filter by priority",
-                    "default": None,
-                },
-                "task_type": {
-                    "type": "string",
-                    "description": "Filter by task type",
-                    "default": None,
-                },
-                "label": {
-                    "type": "string",
-                    "description": "Filter by label presence",
-                    "default": None,
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Match any exact label; empty matches none. Combined with label using AND.",
-                },
-                "closed": {
-                    "type": "boolean",
-                    "description": "true = closed only, false = open only, omitted = both",
-                },
-                "parent_task_id": {
-                    "type": "string",
-                    "description": "Filter by parent task: #N, N (seq_num), path (1.2.3), or UUID",
-                    "default": None,
-                },
-                "title_like": {
-                    "type": "string",
-                    "description": "Filter by title (fuzzy match)",
-                    "default": None,
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max number of tasks to return",
-                    "default": 50,
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Number of tasks to skip for pagination",
-                    "default": 0,
-                },
-                "sort_by": {
-                    "type": "string",
-                    "description": "Task sort field; omitted uses hierarchy order",
-                    "default": None,
-                },
-                "all_projects": {
-                    "type": "boolean",
-                    "description": "If true, list tasks from all projects instead of just the current project",
-                    "default": False,
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Filter by project name or UUID (e.g., '_personal')",
-                    "default": None,
-                },
-            },
-        },
-        func=list_tasks,
-        read_only=True,
-    )
+    register_task_listing(registry, ctx)
 
     return registry
 

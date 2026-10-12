@@ -628,6 +628,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         offset: int = 0,
         sort_by: str | None = None,
         sort_order: str = "asc",
+        updated_since: datetime | None = None,
+        candidate: bool | None = None,
     ) -> list[Task]:
         """List tasks with filtering.
 
@@ -660,7 +662,14 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             offset=offset,
             sort_by=sort_by,
             sort_order=sort_order,
+            updated_since=updated_since,
+            candidate=candidate,
         )
+
+    def get_candidate_sent_times(self, task_ids: list[str]) -> dict[str, datetime]:
+        from gobby.storage.tasks._queries import candidate_sent_times
+
+        return candidate_sent_times(self.db, task_ids)
 
     def list_ready_tasks(
         self,
