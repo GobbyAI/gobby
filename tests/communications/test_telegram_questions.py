@@ -172,6 +172,24 @@ async def test_attached_question_sends_options_and_callback_answers(
 
 
 @pytest.mark.asyncio
+async def test_topic_feedback_preserves_thread_without_impersonating_target(
+    harness: QuestionHarness,
+) -> None:
+    harness.comms.attached_destination.return_value = "topic:42:117"
+    task = await harness.start()
+    assert harness.messages[0].metadata_json["thread_id"] == "117"
+    callback = harness.callback(0)
+    callback.metadata_json["message_thread_id"] = 117
+    assert await harness.controller.handle("telegram", callback)
+    await task
+    assert await harness.controller.handle("telegram", callback)
+    feedback = harness.messages[-1]
+    assert feedback.content == "This question is already resolved."
+    assert feedback.session_id is None
+    assert feedback.metadata_json == {"platform_destination": "42", "thread_id": 117}
+
+
+@pytest.mark.asyncio
 async def test_terminal_answer_wins_and_second_tap_is_resolved(harness: QuestionHarness) -> None:
     task = await harness.start()
     with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:

@@ -290,11 +290,17 @@ class TelegramQuestionController:
 
     async def _feedback(self, channel_name: str, message: CommsMessage, text: str) -> None:
         try:
+            metadata: dict[str, Any] = {
+                "platform_destination": message.metadata_json.get("chat_id")
+            }
+            thread_id = message.metadata_json.get("message_thread_id")
+            if thread_id is not None:
+                metadata["thread_id"] = thread_id
             await self._manager.send_message(
                 channel_name,
                 text,
                 session_id=None,
-                metadata={"platform_destination": message.metadata_json.get("chat_id")},
+                metadata=metadata,
             )
         except Exception:
             # A feedback outage must not fan this already-consumed answer out to

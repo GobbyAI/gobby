@@ -243,8 +243,9 @@ async def test_send_message_cannot_impersonate_named_session(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["caller", None])
 async def test_send_attachment_cannot_impersonate_named_session(
-    registry: Any, mock_manager: MagicMock, tmp_path: Path
+    registry: Any, mock_manager: MagicMock, tmp_path: Path, caller: str | None
 ) -> None:
     attachment = tmp_path / "notice.txt"
     attachment.write_text("notice")
@@ -252,15 +253,32 @@ async def test_send_attachment_cannot_impersonate_named_session(
         MagicMock(status="sent", id="forged", error=None),
         MagicMock(),
     )
-    with patch(
-        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value="caller"
-    ):
+    with patch("gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller):
         result = await registry.get_tool("send_attachment")(
             channel="telegram", file_path=str(attachment), session_id="another-seat"
         )
     assert result["success"] is False
     assert result["error"] == "Outbound session_id must identify the authenticated calling session"
     mock_manager.send_attachment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_anonymous_attachment_has_no_session_origin(
+    registry: Any, mock_manager: MagicMock, tmp_path: Path
+) -> None:
+    attachment = tmp_path / "system-notice.txt"
+    attachment.write_text("system notice")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", id="system-notice", error=None),
+        MagicMock(),
+    )
+    with patch("gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=None):
+        result = await registry.get_tool("send_attachment")(
+            channel="telegram", file_path=str(attachment)
+        )
+    assert result["success"] is True
+    mock_manager.send_attachment.assert_awaited_once()
+    assert mock_manager.send_attachment.await_args.kwargs["session_id"] is None
 
 
 def test_attach_and_detach_use_caller_session(registry: Any, mock_manager: MagicMock) -> None:
