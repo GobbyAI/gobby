@@ -123,6 +123,41 @@ def test_bash_lastpipe_shebang_keeps_followup_scope_unknown(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
+    "prefix",
+    [
+        "BASHOPTS=lastpipe ",
+        "env BASHOPTS=lastpipe ",
+        "export BASHOPTS=lastpipe; ",
+        "BASH_ENV=lp.sh ",
+        "export BASH_ENV=lp.sh; ",
+    ],
+)
+def test_bash_startup_options_keep_pipeline_scope_unknown(tmp_path: Path, prefix: str) -> None:
+    (tmp_path / "lp.sh").write_text("shopt -s lastpipe\n")
+    data = _metadata(f"{prefix}bash -c 'echo x | {{ cd sub; }}; touch z.py'", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "setup",
+    ['eval "shopt -s lastpipe"', ". ./lp.sh", "source ./lp.sh", 'shopt -s "$1"'],
+)
+def test_bash_opaque_options_keep_pipeline_scope_unknown(tmp_path: Path, setup: str) -> None:
+    (tmp_path / "lp.sh").write_text("shopt -s lastpipe\n")
+    data = _metadata(f"bash -c '{setup}; echo x | {{ cd sub; }}; touch z.py' _ lastpipe", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("prefix", ["BASHOPTS=lastpipe ", "env BASHOPTS=lastpipe "])
+def test_bash_script_startup_options_keep_pipeline_scope_unknown(
+    tmp_path: Path, prefix: str
+) -> None:
+    (tmp_path / "s.sh").write_text("#!/bin/bash\necho x | { cd sub; }; touch z.py\n")
+    data = _metadata(f"{prefix}./s.sh", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
     "body, expected",
     [
         ("echo x | { cd sub; }; touch z.py", None),

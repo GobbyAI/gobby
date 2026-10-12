@@ -1,6 +1,7 @@
 """Resolve shell programs, executable signatures and bounded shell-script bodies."""
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS, _unwrap
 
 SHELL_WRAPPER_DEPTH = 8
+shell_startup_unproven: ContextVar[bool] = ContextVar("shell_startup_unproven", default=False)
 # Larger script bodies stay opaque.
 SCRIPT_BODY_LIMIT = 64 * 1024
 # Script bodies one command may read in all, since each body can run more scripts.
@@ -105,7 +107,9 @@ def path_execution(words: list[str], base: Path | None) -> ShellExecution | None
     return ShellExecution(
         script_file=True,
         script_word=str(path),
-        pipeline_subshell=interpreter in {"bash", "sh"} and b"lastpipe" not in first_line,
+        pipeline_subshell=interpreter in {"bash", "sh"}
+        and b"lastpipe" not in first_line
+        and not shell_startup_unproven.get(),
     )
 
 
@@ -153,7 +157,9 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         return ShellExecution(script_file=len(words) > 1)
     if not words or shell_command_name(words[0]) not in _SHELLS:
         return None
-    pipeline_subshell = shell_command_name(words[0]) in {"bash", "sh"}
+    pipeline_subshell = (
+        shell_command_name(words[0]) in {"bash", "sh"} and not shell_startup_unproven.get()
+    )
     index = 1
     stdin_program = False
     while index < len(words):

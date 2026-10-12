@@ -428,7 +428,7 @@ class ShellDirectoryState:
 
     def apply_opaque_change(self, parts: list[str]) -> None:
         """Calls and eval may change cwd without a provable literal exit directory."""
-        if parts[:1] == ["shopt"] and "lastpipe" in parts:
+        if parts[:1] in (["eval"], ["source"], ["."]) or (parts[:1] == ["shopt"] and "-s" in parts):
             self.pipeline_subshell = False
         if self._clears_stack(parts):
             self.stack = None

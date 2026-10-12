@@ -130,6 +130,7 @@ from gobby.hooks.shell_execution import (
     preserves_directory,
     read_script_body,
     shell_execution,
+    shell_startup_unproven,
     starts_elsewhere,
 )
 
@@ -153,6 +154,7 @@ def _normalize_shell_tool_metadata(
     script-read budget its nested calls share.
     """
     selectors = exported_git_selector.set(exported_git_selector.get() if depth else False)
+    startup = shell_startup_unproven.set(shell_startup_unproven.get() if depth else False)
     budget = _script_reads_left.set(SCRIPT_READ_BUDGET) if not depth else None
     entry = (exported_git_selector.get(), _script_reads_left.get())
     unstable: frozenset[int] = frozenset()
@@ -164,6 +166,8 @@ def _normalize_shell_tool_metadata(
         except ValueError:
             pass
         else:
+            if any(token.value.startswith(("BASHOPTS=", "BASH_ENV=")) for token in scan.tokens):
+                shell_startup_unproven.set(True)
             if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
                 command, bodies = function_program
                 first = min(bodies)
@@ -182,7 +186,7 @@ def _normalize_shell_tool_metadata(
                 function_bodies=bodies,
                 function_scope_unknown=unknown,
                 opaque=opaque,
-                pipeline_subshell=pipeline_subshell,
+                pipeline_subshell=pipeline_subshell and not shell_startup_unproven.get(),
             )
             result = _classify_shell_command(
                 command, directory=directory, depth=depth, base_cwd=base_cwd
@@ -196,6 +200,7 @@ def _normalize_shell_tool_metadata(
         if budget is not None:
             _script_reads_left.reset(budget)
         exported_git_selector.reset(selectors)
+        shell_startup_unproven.reset(startup)
 
 
 def _classify_shell_command(
