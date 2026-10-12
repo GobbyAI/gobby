@@ -96,6 +96,123 @@ def test_process_substitution_data_stays_allowed(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "echo 'claude -p hi' > >(bash)",
+        "printf '%s' 'codex exec hi' > >(sh)",
+        "echo 'claude -p hi' 1> >(env bash)",
+        "echo 'import os; os.system(\"claude -p hi\")' > >(python3)",
+        "cat <<'EOF' > >(bash)\nclaude -p hi\nEOF\n",
+    ],
+)
+def test_output_process_substitution_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'claude -p hi' > >(cat)",
+        "echo 'echo harmless' > >(bash)",
+        "echo 'import os; os.system(\"claude\")' > >(python3 -c 'print(1)')",
+    ],
+)
+def test_output_process_substitution_data_stays_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize("redirect", [">>", "1>>", "&>", ">&", "&>>", ">|", "1>|"])
+@pytest.mark.parametrize(
+    ("payload", "consumer"),
+    [
+        ("claude -p hi", "bash"),
+        ('import os; os.system("claude -p hi")', "python3"),
+    ],
+)
+def test_output_process_substitution_redirect_equivalents(
+    redirect: str, payload: str, consumer: str
+) -> None:
+    command = f"echo '{payload}' {redirect} >({consumer})"
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize("redirect", ["2>", "2>>", "3>", "10>"])
+def test_output_process_substitution_other_descriptors_are_inspected(redirect: str) -> None:
+    command = f"echo 'claude -p hi' {redirect} >(bash)"
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'claude -p hi' 3> >(bash) 1>&3",
+        "echo 'claude -p hi' 2> >(bash) >&2",
+        "echo 'claude -p hi' > >(true; bash)",
+        "echo 'claude -p hi' > >(tee >(bash))",
+        "echo 'claude -p hi' | tee >(bash)",
+        "echo 'claude -p hi' | tee >(bash) >/dev/null",
+        "exec > >(bash); echo 'claude -p hi'",
+        "cat <<'EOF' >> >(bash)\nclaude -p hi\nEOF",
+        "{ echo 'claude -p hi'; } > >(bash)",
+        "(echo 'claude -p hi') > >(bash)",
+        "{ echo 'claude -p hi'; } | bash",
+        "echo 'claude -p hi' | (true; bash)",
+    ],
+)
+def test_output_process_substitution_forwarding(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "> >(cat)",
+        "echo 'echo harmless' > >(bash)",
+        "echo hi > >(tee log.txt)",
+        "make 2>&1 > >(tee build.log)",
+        "exec > >(tee -a log.txt)",
+        "python3 run.py > >(tee out.log) 2> >(tee err.log >&2)",
+        ">> >(cat)",
+    ],
+)
+def test_output_process_substitution_forwarding_data_stays_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "case x in (x) claude -p hi;; esac",
+        "case x in (a|x) claude -p hi;; esac",
+        "case x in a) echo;; (x) claude -p hi;; esac",
+        'echo "$(case x in (x) claude -p hi;; esac)"',
+        "case x in\n(x) claude -p hi\n;;\nesac",
+        "case x in (x) echo 'claude -p hi' | bash;; esac",
+    ],
+)
+def test_case_pattern_parentheses_preserve_provider_commands(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+def test_case_pattern_parentheses_with_harmless_commands_stay_allowed() -> None:
+    assert (
+        blocks_direct_provider_launch("Bash", {"command": "case $x in (a) echo a;; esac"}) is False
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ echo 'import os; os.system(\"claude -p hi\")'; } > >(tee >(bash) >(python3))",
+        "(echo 'import os; os.system(\"claude -p hi\")') > >(tee >(bash) >(python3))",
+        "{ echo 'import os; os.system(\"claude -p hi\")'; } | tee >(bash) | python3",
+    ],
+)
+def test_grouped_producers_inspect_each_executable_consumer(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash 0<<<'claude -p hi'",
         "sh 0<<<'codex exec hi'",
         "python3 0<<<'import os; os.system(\"claude -p hi\")'",

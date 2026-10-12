@@ -13,6 +13,7 @@ from collections.abc import Collection, Mapping
 from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
+from gobby.hooks._case_syntax import CaseSyntax
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
@@ -125,10 +126,12 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     output: list[str] = []
     expansions: list[str] = []
     quote = ""
+    cases = CaseSyntax()
     index = 0
     line_start = 0
     while index < len(command):
         char = command[index]
+        pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
         if char == "\\" and quote != "'":
             output.append(command[index : index + 2])
             index += 2
@@ -152,10 +155,41 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             marker = (
                 f"__gobby_process_input_{len(expansions)}__"
                 if command.startswith("<(", index)
+                else f"__gobby_process_output_{len(expansions)}__"
+                if command.startswith(">(", index)
                 else "__gobby_expansion__"
             )
             expansions.append(command[start:end])
             output.append(marker)
+            index = end + 1
+            continue
+        if (
+            not data
+            and not quote
+            and (
+                (char == "(" and not pattern_paren)
+                or (
+                    char == "{"
+                    and command[index + 1 : index + 2].isspace()
+                    and (index == 0 or command[index - 1] in " \t\n;|&(")
+                )
+            )
+        ):
+            if char == "(":
+                end = _substitution_end(command, index + 1, False, depth)
+            else:
+                nesting = 1
+                group_scan = scan_shell_command(command[index + 1 :])
+                for token, span in zip(group_scan.tokens, group_scan.spans, strict=True):
+                    if not token.quoted and token.value in {"{", "}"}:
+                        nesting += 1 if token.value == "{" else -1
+                        if nesting == 0:
+                            end = index + 1 + span[0]
+                            break
+                else:
+                    raise ValueError("Unclosed shell group")
+            output.append(f"__gobby_group_{len(expansions)}__")
+            expansions.append(command[index + 1 : end])
             index = end + 1
             continue
         if not data and not quote and opens_ansi_c_quote(command, index):
@@ -170,6 +204,11 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
         elif not data and not quote:
+            if command.startswith(">|", index):
+                # Noclobber override has the same stream target as ordinary >.
+                output.append(">")
+                index += 2
+                continue
             if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&("):
                 end = command.find("\n", index)
                 index = len(command) if end < 0 else end
@@ -531,7 +570,15 @@ def _shell_stdin(words: list[str]) -> bool:
     return True
 
 
-def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False) -> bool:
+def _piped_to_shell(
+    tokens: list[ShellToken],
+    end: int,
+    expansions: list[str] | None = None,
+    depth: int = 0,
+    dialect: ShellDialect = "bash",
+    *,
+    python: bool = False,
+) -> bool:
     while end < len(tokens) and tokens[end].value == "|":
         start = end + 1
         while start < len(tokens) and not tokens[start].quoted and tokens[start].value == "\n":
@@ -539,8 +586,7 @@ def _piped_to_shell(tokens: list[ShellToken], end: int, *, python: bool = False)
         end = start
         while end < len(tokens) and not _separator(tokens[end]):
             end += 1
-        words = _unwrap(_executable_words(tokens[start:end]))
-        if _python_program(words)[1] if python else _shell_stdin(words):
+        if _segment_consumes(tokens[start:end], expansions or [], depth, dialect, python=python):
             return True
     return False
 
@@ -684,6 +730,63 @@ def _cat_stdin(words: list[str]) -> bool:
     )
 
 
+def _process_output_to_shell(
+    segment: list[ShellToken],
+    expansions: list[str],
+    depth: int,
+    dialect: ShellDialect,
+    *,
+    python: bool = False,
+) -> bool:
+    """Inspect every redirected descriptor conservatively, including fd forwarding."""
+    words = _unwrap(_executable_words(segment))
+    tee = bool(words) and words[0].rsplit("/", 1)[-1] == "tee"
+    for index, token in enumerate(segment[1:], 1):
+        redirect = segment[index - 1]
+        match = re.fullmatch(r"__gobby_process_output_([0-9]+)__", token.value)
+        if match is None or not (tee or is_shell_output_redirection_token(redirect)):
+            continue
+        expansion_index = int(match[1])
+        if expansion_index >= len(expansions):
+            continue
+        if _stream_consumes(expansions[expansion_index], depth + 1, dialect, python=python):
+            return True
+    return False
+
+
+def _segment_consumes(
+    segment: list[ShellToken],
+    expansions: list[str],
+    depth: int,
+    dialect: ShellDialect,
+    *,
+    python: bool,
+) -> bool:
+    words = _unwrap(_executable_words(segment))
+    if _python_program(words)[1] if python else _shell_stdin(words):
+        return True
+    for word in words:
+        match = re.fullmatch(r"__gobby_group_([0-9]+)__", word)
+        if match is not None and int(match[1]) < len(expansions):
+            if _stream_consumes(expansions[int(match[1])], depth + 1, dialect, python=python):
+                return True
+    return _process_output_to_shell(segment, expansions, depth, dialect, python=python)
+
+
+def _stream_consumes(command: str, depth: int, dialect: ShellDialect, *, python: bool) -> bool:
+    if depth > _MAX_DEPTH:
+        return True
+    prepared, expansions = _prepare(command, depth)
+    tokens = scan_shell_command(prepared, dialect=dialect).tokens
+    start = 0
+    for end in range(len(tokens) + 1):
+        if end == len(tokens) or _separator(tokens[end]):
+            if _segment_consumes(tokens[start:end], expansions, depth, dialect, python=python):
+                return True
+            start = end + 1
+    return False
+
+
 def _process_input_consumer(
     segment: list[ShellToken],
     words: list[str],
@@ -728,27 +831,60 @@ def _blocked(
             return True
         scan = scan_shell_command(prepared, dialect=dialect)
         inspected_length = 0
+        persistent_shell = False
+        persistent_python = False
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
                 continue
             segment = scan.tokens[start:end]
-            words = _unwrap(_executable_words(segment))
+            raw_words = _executable_words(segment)
+            words = _unwrap(raw_words)
             bodies = [body for body in scan.heredocs if start <= body.opener < end]
             start = end + 1
             if not words:
+                if "exec" in raw_words[:2]:
+                    persistent_shell |= _process_output_to_shell(
+                        segment, expansions, depth, dialect
+                    )
+                    persistent_python |= _process_output_to_shell(
+                        segment, expansions, depth, dialect, python=True
+                    )
                 continue
             name = words[0].rsplit("/", 1)[-1]
             # A named shell decodes the script it runs in its own dialect.
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
-            piped = output_consumer == "shell" or _piped_to_shell(scan.tokens, end)
-            python_piped = output_consumer == "python" or _piped_to_shell(
-                scan.tokens, end, python=True
+            piped = (
+                output_consumer == "shell"
+                or persistent_shell
+                or _piped_to_shell(scan.tokens, end, expansions, depth, dialect)
+                or _process_output_to_shell(segment, expansions, depth, dialect)
+            )
+            python_piped = (
+                output_consumer == "python"
+                or persistent_python
+                or _piped_to_shell(scan.tokens, end, expansions, depth, dialect, python=True)
+                or _process_output_to_shell(segment, expansions, depth, dialect, python=True)
             )
             producer_consumer = output_consumer
             if producer_consumer is None:
                 producer_consumer = "shell" if piped else "python" if python_piped else None
+            group_consumers: list[Literal["shell", "python"]] = []
+            if piped:
+                group_consumers.append("shell")
+            if python_piped:
+                group_consumers.append("python")
             for token in segment:
+                group = re.fullmatch(r"__gobby_group_([0-9]+)__", token.value)
+                if group is not None and int(group[1]) < len(expansions):
+                    for group_consumer in group_consumers:
+                        if _blocked(
+                            expansions[int(group[1])],
+                            depth + 1,
+                            dialect,
+                            output_consumer=group_consumer,
+                        ):
+                            return True
                 match = re.fullmatch(r"__gobby_process_input_([0-9]+)__", token.value)
                 if match is None:
                     continue
