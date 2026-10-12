@@ -75,7 +75,7 @@ def _patch_lease_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: _MACHINE_ID,
     )
     monkeypatch.setattr(
-        "gobby.daemon_lease.current_lease",
+        "gobby.runtime_grants.lease_view.current_lease",
         lambda: SimpleNamespace(
             deployment_token=_DEPLOYMENT_TOKEN,
             fencing_epoch=9,
@@ -202,7 +202,7 @@ async def test_lease_revokes_and_skips_grant_when_lease_context_is_missing(
         "gobby.ai._managed_tool_chat_lease.read_managed_signing_key",
         lambda: derive_managed_signing_key(_OPERATOR_TOKEN),
     )
-    monkeypatch.setattr("gobby.daemon_lease.current_lease", lambda: None)
+    monkeypatch.setattr("gobby.runtime_grants.lease_view.current_lease", lambda: None)
     factory = build_managed_tool_chat_lease_factory(manager)
     request = ToolChatRequest(
         prompt="Inspect auth.",

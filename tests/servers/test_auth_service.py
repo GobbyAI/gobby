@@ -45,9 +45,7 @@ async def test_front_door_identity_requires_secret(
     secret = "front-door-test-secret"
     service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=LOCAL_MACHINE_ID,
-        effect_fence=None,
         clock=None,
         front_door_secret=secret,
     )
@@ -135,7 +133,6 @@ def test_managed_token_survives_restart_and_new_lease(
             lambda: temp_db,
             bootstrap_file=bootstrap,
             grant_service=grants,
-            lease_live=lambda: True,
             local_machine_id=LOCAL_MACHINE_ID,
         )
         assert service.authenticate(request).allowed
@@ -381,8 +378,7 @@ def test_projects_listing_operator_only(
             path="/api/code-index/prune",
         )
     )
-    assert prune.allowed is False
-    assert prune.code == "lease_not_held"
+    assert prune.allowed is True
     assert not service.is_request_authenticated(
         _request(capability_headers, method="POST", path="/api/code-index/prune")
     )
@@ -987,11 +983,8 @@ def _signed_presentation_grant(
 def _grant_auth_service(
     temp_db: HubDatabase,
     tmp_path: Path,
-    *,
-    lease_live: bool = True,
 ) -> tuple[AuthService, dict[str, str]]:
     from gobby.runtime_grants import encode_grant_header
-    from gobby.servers.lease_fence import EffectFence
 
     bootstrap_file = tmp_path / "bootstrap.yaml"
     _write_bootstrap(bootstrap_file, "operator-token")
@@ -1000,9 +993,7 @@ def _grant_auth_service(
         temp_db,
         bootstrap_file=bootstrap_file,
         grant_service=_grant_service(),
-        lease_live=lambda: lease_live,
         local_machine_id="machine-1",
-        effect_fence=EffectFence(),
         clock=lambda: _GRANT_NOW + 10,
     )
     headers = {
@@ -1056,138 +1047,6 @@ def test_modality_grant_presentation_matrix(temp_db: HubDatabase, tmp_path: Path
         assert forged.allowed is False, path
         assert forged.code == "forged_identity"
         assert forged.status_code == 401
-
-
-def test_effectful_requires_live_lease(temp_db: HubDatabase, tmp_path: Path) -> None:
-    live, headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
-    dead_dir = tmp_path / "dead"
-    dead_dir.mkdir()
-    dead, _ = _grant_auth_service(temp_db, dead_dir, lease_live=False)
-    effectful = (
-        ("POST", "/api/embeddings"),
-        ("POST", "/api/llm/generate"),
-        ("POST", "/api/code-index/graph/rebuild"),
-        ("POST", "/api/admin/savings/record"),
-    )
-    readonly = ("GET", "/api/embeddings/doctor")
-
-    for method, path in effectful:
-        assert live.authenticate(_request(headers, method=method, path=path)).allowed is True
-        lost = dead.authenticate(_request(headers, method=method, path=path))
-        assert lost.allowed is False
-        assert lost.code == "lease_not_held"
-
-    doctor = dead.authenticate(_request(headers, method=readonly[0], path=readonly[1]))
-    assert doctor.allowed is True
-
-
-def test_authenticate_does_not_hold_admission(temp_db: HubDatabase, tmp_path: Path) -> None:
-    service, headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
-    fence = service.effect_fence
-    assert fence is not None
-    decision = service.authenticate(_request(headers, method="POST", path="/api/embeddings"))
-    assert decision.allowed is True
-    assert fence.in_flight == 0
-
-
-def test_operator_prune_requires_live_lease(temp_db: HubDatabase, tmp_path: Path) -> None:
-    live, _headers = _grant_auth_service(temp_db, tmp_path, lease_live=True)
-    dead_dir = tmp_path / "prune-dead"
-    dead_dir.mkdir()
-    dead, _ = _grant_auth_service(temp_db, dead_dir, lease_live=False)
-    operator = _OPERATOR_IDENTITY
-    assert (
-        live.authenticate(_request(operator, method="POST", path="/api/code-index/prune")).allowed
-        is True
-    )
-    lost = dead.authenticate(_request(operator, method="POST", path="/api/code-index/prune"))
-    assert lost.allowed is False
-    assert lost.code == "lease_not_held"
-    assert lost.status_code == 409
-
-
-def test_unbound_auth_service_denies_effectful(temp_db: HubDatabase, tmp_path: Path) -> None:
-    bootstrap_file = tmp_path / "bootstrap.yaml"
-    _write_bootstrap(bootstrap_file, "operator-token")
-    service = _operator_service(temp_db, bootstrap_file=bootstrap_file)
-    operator = _OPERATOR_IDENTITY
-    lost = service.authenticate(_request(operator, method="POST", path="/api/code-index/prune"))
-    assert lost.allowed is False
-    assert lost.code == "lease_not_held"
-    assert lost.status_code == 409
-
-
-def test_in_transaction_epoch_fencing(temp_db: HubDatabase) -> None:
-    from gobby.servers.lease_fence import (
-        EffectFence,
-        LeaseNotHeld,
-        StaleEpochFence,
-        fenced_hub_write,
-    )
-
-    token = "cafebabedeadbeef"
-    temp_db.execute(
-        """
-        INSERT INTO deployment_runtime (deployment_token, fencing_epoch, grant_signing_secret)
-        VALUES (%s, 1, 'secret')
-        ON CONFLICT (deployment_token) DO UPDATE
-           SET fencing_epoch = 1, grant_signing_secret = EXCLUDED.grant_signing_secret
-        """,
-        (token,),
-    )
-    temp_db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS lease_fence_probe (
-            id TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-        """
-    )
-
-    def write_probe(value: str) -> Callable[[Any], None]:
-        def _write(txn: Any) -> None:
-            txn.execute(
-                """
-                INSERT INTO lease_fence_probe (id, value) VALUES (%s, %s)
-                ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value
-                """,
-                ("probe", value),
-            )
-
-        return _write
-
-    fenced_hub_write(
-        temp_db,
-        deployment_token=token,
-        owned_epoch=1,
-        writer=write_probe("owned"),
-    )
-    row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
-    assert row is not None
-    assert row["value"] == "owned"
-
-    temp_db.execute(
-        "UPDATE deployment_runtime SET fencing_epoch = 2 WHERE deployment_token = %s",
-        (token,),
-    )
-    with pytest.raises(StaleEpochFence):
-        fenced_hub_write(
-            temp_db,
-            deployment_token=token,
-            owned_epoch=1,
-            writer=write_probe("stale"),
-        )
-    row = temp_db.fetchone("SELECT value FROM lease_fence_probe WHERE id = %s", ("probe",))
-    assert row is not None
-    assert row["value"] == "owned"
-
-    fence = EffectFence()
-    with fence.admit():
-        assert fence.in_flight == 1
-    fence.drain(timeout=0.2)
-    with pytest.raises(LeaseNotHeld):
-        with fence.admit():
-            pass
 
 
 def test_agent_bearer_cannot_present_foreign_grant(
@@ -1282,7 +1141,6 @@ def test_revoked_grant_cannot_be_reused_across_requests(
 ) -> None:
     from gobby.runtime_grants import GrantRevocationStore, RevokedGrant, encode_grant_header
     from gobby.servers.grant_auth import LiveLeaseGrantService
-    from gobby.servers.lease_fence import EffectFence
     from tests.runtime_grants.support import DEPLOYMENT_TOKEN, FENCING_EPOCH, GOLDEN_SECRET
 
     store = GrantRevocationStore()
@@ -1302,9 +1160,7 @@ def test_revoked_grant_cannot_be_reused_across_requests(
         temp_db,
         bootstrap_file=bootstrap_file,
         grant_service=_grant_service(store),
-        lease_live=lambda: True,
         local_machine_id="machine-1",
-        effect_fence=EffectFence(),
         clock=lambda: _GRANT_NOW + 10,
     )
     allowed = first.authenticate(_request(headers, method="POST", path="/api/embeddings"))
@@ -1315,9 +1171,7 @@ def test_revoked_grant_cannot_be_reused_across_requests(
         temp_db,
         bootstrap_file=bootstrap_file,
         grant_service=_grant_service(store),
-        lease_live=lambda: True,
         local_machine_id="machine-1",
-        effect_fence=EffectFence(),
         clock=lambda: _GRANT_NOW + 10,
     )
     denied = second.authenticate(_request(headers, method="POST", path="/api/embeddings"))
@@ -1410,9 +1264,7 @@ def _operator_service(
     )
     service.bind_runtime(
         grant_service=runtime.get("grant_service"),
-        lease_live=runtime.get("lease_live"),
         local_machine_id=runtime.get("local_machine_id"),
-        effect_fence=runtime.get("effect_fence"),
         clock=runtime.get("clock"),
         front_door_secret=_FRONT_DOOR_SECRET,
     )

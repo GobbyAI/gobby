@@ -522,7 +522,6 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
-    from gobby.servers.lease_fence import EffectFence, bind_fenced_writer
 
     lease = getattr(runner, "daemon_lease", None)
     runtime = getattr(runner, "config_runtime", None)
@@ -532,23 +531,13 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     presenter = LiveLeaseGrantService(
         runtime, lease, clock=lambda: int(time.time()), revocations=revocations
     )
-    fence = EffectFence()
-    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-        from gobby.servers.admit_barrier import await_test_admit_barrier
-
-        fence.admit_hook = await_test_admit_barrier
-    server.effect_fence = fence
     database = getattr(runner, "database", None)
-    if database is not None:
-        bind_fenced_writer(database, lease)
     server.grant_service = presenter
     server.auth_service.bind_runtime(
         grant_service=presenter,
-        lease_live=lease.owns_live_lease,
         local_machine_id=lease.machine_id,
-        effect_fence=fence,
         clock=lambda: int(time.time()),
-        front_door_secret=(os.environ.get("GOBBY_FRONT_DOOR_SECRET") if os.name != "nt" else None),
+        front_door_secret=os.environ.get("GOBBY_FRONT_DOOR_SECRET"),
     )
 
     credentials = getattr(runner, "managed_credential_manager", None)

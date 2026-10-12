@@ -519,9 +519,7 @@ async def test_replay_shared_key_passes_through_front_door_auth(
     )
     auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id="machine-1",
-        effect_fence=None,
         clock=None,
         front_door_secret="test-front-door-secret",
     )
@@ -1116,7 +1114,7 @@ async def test_below_floor_quarantine_releases_lease_and_settles_barrier(
 
     with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:
         post.return_value.status_code = 200
-        barrier = await drain_hook_inbox_barrier(app, inbox_dir, timeout_seconds=0.2)
+        barrier = await drain_hook_inbox_barrier(app, inbox_dir)
 
     post.assert_not_awaited()
     assert barrier.timed_out is False
@@ -1265,7 +1263,6 @@ async def test_barrier_horizon_skips_live_hook_and_consumes_receipt(tmp_path: Pa
         result = await drain_hook_inbox_barrier(
             FastAPI(),
             inbox_dir,
-            timeout_seconds=0.2,
             restart_horizon_ms=1_500,
         )
 

@@ -431,66 +431,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby lease status",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "status"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease promote",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "promote"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease handoff",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "handoff"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease recover",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "recover"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby datastores expose",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
       "implementation": {

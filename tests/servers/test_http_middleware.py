@@ -239,9 +239,7 @@ def test_verified_identity_and_cookie_accepted(temp_db: HubDatabase, tmp_path: P
     )
     server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=None,
-        effect_fence=None,
         clock=None,
         front_door_secret="middleware-front-door",
     )

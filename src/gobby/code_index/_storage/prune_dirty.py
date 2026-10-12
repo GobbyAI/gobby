@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.code_index.models import CodeIndexPruneDirtyProject
-from gobby.servers.lease_fence import run_hub_mutation
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
 
@@ -32,7 +31,8 @@ class CodeIndexPruneStorageMixin:
                 (machine_id, project_id, root_path, reason),
             )
 
-        run_hub_mutation(self.db, _write)
+        with self.db.transaction() as conn:
+            _write(conn)
 
     def record_prune_failure(self, project_id: str, error: str) -> None:
         """Persist a failed prune attempt for later cron retry."""
@@ -49,7 +49,8 @@ class CodeIndexPruneStorageMixin:
                 (error, machine_id, project_id),
             )
 
-        run_hub_mutation(self.db, _write)
+        with self.db.transaction() as conn:
+            _write(conn)
 
     def clear_prune_dirty(self, project_id: str) -> bool:
         """Clear a dirty prune marker after prune succeeds."""
@@ -66,7 +67,8 @@ class CodeIndexPruneStorageMixin:
             rowcount = cursor.rowcount
             cleared = isinstance(rowcount, int) and rowcount > 0
 
-        run_hub_mutation(self.db, _write)
+        with self.db.transaction() as conn:
+            _write(conn)
         return cleared
 
     def list_prune_dirty_projects(

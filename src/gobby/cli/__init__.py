@@ -22,7 +22,6 @@ _COMMAND_SOURCES: dict[str, tuple[str, str]] = {
     "restart": ("daemon_lifecycle", "restart"),
     "status": ("daemon_lifecycle", "status"),
     "health": ("daemon_health", "health"),
-    "lease": ("daemon_lease", "lease"),
     "datastores": ("datastores", "datastores"),
     "embeddings": ("embeddings", "embeddings"),
     "mcp-server": ("mcp", "mcp_server"),

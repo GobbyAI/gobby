@@ -537,9 +537,7 @@ def test_handshake_endpoint_binds_forwarded_machine(tmp_path: Path) -> None:
     auth = AuthService(no_database, bootstrap_file=tmp_path / "bootstrap.yaml")
     auth.bind_runtime(
         grant_service=None,
-        lease_live=lambda: True,
         local_machine_id=LOCAL_MACHINE_ID,
-        effect_fence=None,
         clock=None,
         front_door_secret="test-front-door-secret",
     )
@@ -789,8 +787,6 @@ def test_operator_and_agent_grants_are_v2() -> None:
 
 
 def _config_server(grants: GrantService, token_file: Path) -> Any:
-    from gobby.servers.lease_fence import EffectFence
-
     server = create_http_server(config=DaemonConfig(), authenticated_requests=False)
     server.auth_service = AuthService(
         lambda: server.services.database,
@@ -798,9 +794,7 @@ def _config_server(grants: GrantService, token_file: Path) -> Any:
     )
     server.auth_service.bind_runtime(
         grant_service=grants,
-        lease_live=lambda: True,
         local_machine_id=LOCAL_MACHINE_ID,
-        effect_fence=EffectFence(),
         clock=lambda: 1_700_000_000,
     )
     server.grant_service = grants

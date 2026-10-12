@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from gobby.config.runtime import ConfigRuntime
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.config.terminals import TerminalConfig
-    from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.coordination_waits import CoordinationWaitService
     from gobby.events.wake import WakeDispatcher
@@ -172,7 +171,7 @@ class GobbyRunner:
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
     code_index_bm25_verification: dict[str, Any] | None
-    daemon_lease: RuntimeLeaseView | ActiveDaemonLease | None
+    daemon_lease: RuntimeLeaseView | None
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
@@ -387,7 +386,6 @@ async def run_gobby(
 
     from gobby.cli.utils import get_gobby_home
     from gobby.config.bootstrap import load_bootstrap, resolve_bootstrap_path
-    from gobby.daemon_lease import ActiveDaemonLease
     from gobby.deployment import deployment_token
     from gobby.runner_backend import watch_supervisor
     from gobby.runner_init import StartRefusal
@@ -395,10 +393,25 @@ async def run_gobby(
     from gobby.runtime_grants.lease_view import RuntimeLeaseView
     from gobby.storage.schema_contract import SchemaVerifyRefusal, verify_schema
     from gobby.utils.break_glass import ensure_break_glass_credential
+    from gobby.utils.dependency_requirements import unsupported_platform_error
     from gobby.utils.local_token import bind_daemon_bootstrap, daemon_bootstrap_path
     from gobby.utils.machine_id import require_machine_id
 
-    bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
+    try:
+        bootstrap = load_bootstrap(
+            str(config_path) if config_path else None, resolve_database_url=True
+        )
+        if bootstrap.run_mode() != "node" and (platform_error := unsupported_platform_error()):
+            raise StartRefusal(platform_error)
+        bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
+    except Exception:
+        if ownership_resolution is not None:
+            if not isinstance(ownership_resolution, SupervisedPidOwnership):
+                from gobby.runner_maintenance import cleanup_pid_file
+
+                cleanup_pid_file()
+            ownership_resolution.release()
+        raise
     if ownership_resolution is None:
         if "GOBBY_SUPERVISOR_FD" in os.environ:
             ownership_resolution = SupervisedPidOwnership()
@@ -416,7 +429,7 @@ async def run_gobby(
                 holder = probe_daemon_lock(get_gobby_home() / "gobby.pid")
                 logger.info("Contained runner blocked by %s; exiting cleanly", holder)
                 return
-    lease: RuntimeLeaseView | ActiveDaemonLease | None = None
+    lease: RuntimeLeaseView | None = None
     runner: GobbyRunner | None = None
     watcher: asyncio.Task[None] | None = None
     startup_task = asyncio.current_task()
@@ -429,9 +442,6 @@ async def run_gobby(
 
     try:
         watcher = asyncio.create_task(watch_supervisor(supervisor_gone), name="supervisor-liveness")
-        bootstrap = load_bootstrap(
-            str(config_path) if config_path else None, resolve_database_url=True
-        )
         database_url = bootstrap.database_url
         if database_url is None and bootstrap.run_mode() != "node":
             raise RuntimeError("bootstrap database_url is required for runtime authority")
@@ -446,23 +456,12 @@ async def run_gobby(
             logger.warning("Could not create break-glass credential", exc_info=True)
         if bootstrap.run_mode() != "node":
             assert database_url is not None
-            if os.name == "nt":
-                from gobby.runner_windows import acquire_windows_lease
-
-                lease = ActiveDaemonLease(
-                    database_url,
-                    machine_id=require_machine_id(),
-                    deployment_token=deployment_token(),
-                )
-                if not await acquire_windows_lease(lease, bootstrap):
-                    return
-            else:
-                lease = RuntimeLeaseView(
-                    database_url,
-                    machine_id=require_machine_id(),
-                    deployment_token=deployment_token(),
-                )
-                await asyncio.to_thread(lease.bind)
+            lease = RuntimeLeaseView(
+                database_url,
+                machine_id=require_machine_id(),
+                deployment_token=deployment_token(),
+            )
+            await asyncio.to_thread(lease.bind)
         from gobby.providers.version_gate import probe_and_publish_agy_support
 
         await probe_and_publish_agy_support()
@@ -471,21 +470,12 @@ async def run_gobby(
         from gobby.runner_init.servers import _bind_runtime_grants
 
         _bind_runtime_grants(runner.http_server, runner)
-        if isinstance(lease, ActiveDaemonLease):
-            from gobby.runner_windows import run_windows_backend
-
-            await run_windows_backend(runner, lease, ownership_resolution)
-        else:
-            await runner.run(ownership_resolution=ownership_resolution)
+        await runner.run(ownership_resolution=ownership_resolution)
     finally:
         if watcher is not None:
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
-        if runner is not None:
-            from gobby.servers.lease_fence import drain_effect_fence
-
-            drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
         if lease is not None:
             lease.release()
         if not isinstance(ownership_resolution, SupervisedPidOwnership):

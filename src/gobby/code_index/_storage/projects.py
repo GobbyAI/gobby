@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import cast
 
 from gobby.code_index.models import IndexedProject, IndexWriteMode
-from gobby.servers.lease_fence import run_hub_mutation
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.machine_id import require_machine_id
 
@@ -115,7 +114,8 @@ class CodeIndexProjectStorageMixin:
             )
             counts["projects"] = cursor.rowcount
 
-        run_hub_mutation(self.db, _write)
+        with self.db.transaction() as conn:
+            _write(conn)
         return counts
 
     def list_orphaned_index_projects(self) -> list[str]:
@@ -161,7 +161,8 @@ class CodeIndexProjectStorageMixin:
             )
             counts["projects"] = cursor.rowcount
 
-        run_hub_mutation(self.db, _write)
+        with self.db.transaction() as conn:
+            _write(conn)
         return counts
 
     def count_symbols(self, project_id: str) -> int:

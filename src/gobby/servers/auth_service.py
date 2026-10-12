@@ -17,13 +17,11 @@ from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
     GrantPresenter,
-    admission_required,
     bearer_matches_grant,
     identity_headers_match,
     match_grant_route,
     present_or_reject,
 )
-from gobby.servers.lease_fence import EffectFence
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -214,9 +212,7 @@ class AuthService:
         database_getter: Callable[[], HubDatabase],
         *,
         grant_service: GrantPresenter | None = None,
-        lease_live: Callable[[], bool] | None = None,
         local_machine_id: str | None = None,
-        effect_fence: EffectFence | None = None,
         clock: Callable[[], int] | None = None,
         break_glass_file: Path | None = None,
         bootstrap_file: Path | None = None,
@@ -226,9 +222,7 @@ class AuthService:
         self._lock = threading.Lock()
         self._front_door_secret: str | None = None
         self._grant_service = grant_service
-        self._lease_live = lease_live
         self._local_machine_id = local_machine_id
-        self._effect_fence = effect_fence
         self._clock = clock
         self._break_glass_file = break_glass_file
         self._bootstrap_file = bootstrap_file
@@ -255,16 +249,12 @@ class AuthService:
         self,
         *,
         grant_service: GrantPresenter | None,
-        lease_live: Callable[[], bool] | None,
         local_machine_id: str | None,
-        effect_fence: EffectFence | None,
         clock: Callable[[], int] | None,
         front_door_secret: str | None = None,
     ) -> None:
         self._grant_service = grant_service
-        self._lease_live = lease_live
         self._local_machine_id = local_machine_id
-        self._effect_fence = effect_fence
         self._clock = clock
         self._front_door_secret = front_door_secret
 
@@ -289,15 +279,6 @@ class AuthService:
             rejection = self._legacy_rejection(request)
             if rejection is not None:
                 return AuthDecision(allowed=False, code=rejection, status_code=401)
-            if admission_required(
-                str(request.scope.get("method", "GET")), request_path(request)
-            ) and not (
-                self._lease_live is not None
-                and self._lease_live()
-                and self._effect_fence is not None
-                and self._effect_fence.serving
-            ):
-                return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
             identity = self.verified_front_door_identity(request)
             return AuthDecision(
                 allowed=True,
@@ -343,13 +324,6 @@ class AuthService:
             )
             if isinstance(presented, AuthDecision):
                 return presented
-        if grant_route.effectful and not (
-            self._lease_live is not None
-            and self._lease_live()
-            and self._effect_fence is not None
-            and self._effect_fence.serving
-        ):
-            return AuthDecision(allowed=False, code="lease_not_held", status_code=409)
         return AuthDecision(
             allowed=True,
             principal=presented.principal,
@@ -417,10 +391,6 @@ class AuthService:
             self._break_glass_file if self._break_glass_file is not None else break_glass_path(),
             value,
         )
-
-    @property
-    def effect_fence(self) -> EffectFence | None:
-        return self._effect_fence
 
     def verified_agent_claims(self, request: HTTPConnection) -> AgentApiTokenClaims | None:
         """Return identity claims only for a valid run-scoped agent request."""

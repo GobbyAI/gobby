@@ -21,7 +21,6 @@ from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.runtime_grants import encode_grant_header
 from gobby.servers.auth_service import AuthService
-from gobby.servers.lease_fence import EffectFence
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.llm import create_llm_router
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
@@ -188,9 +187,7 @@ def seat(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     service.bind_runtime(
         grant_service=_grant_service(),
-        lease_live=lambda: True,
         local_machine_id=pane.machine_id,
-        effect_fence=EffectFence(),
         clock=lambda: _GRANT_NOW + 10,
     )
     return _Seat(
