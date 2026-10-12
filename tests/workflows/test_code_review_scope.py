@@ -550,6 +550,113 @@ async def test_plan_writer_rename_from_source_stays_blocked(
     assert "require-task-before-commit" in str(response.reason)
 
 
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ('"$(git add src/app.py; echo plan)"', "block"),
+        ('"$(git add src/app.py)plan"', "block"),
+        ('"`git add src/app.py`plan"', "block"),
+        ('"$(cat <<EOF\n$(git add src/app.py)plan\nEOF\n)"', "block"),
+        ("\"$(cat <<'EOF'\nplan\nEOF\n)\"", "block"),
+        ("<(git add src/app.py)", "block"),
+        (">(git add src/app.py)", "block"),
+        ("'$(git add src/app.py; echo plan)'", "allow"),
+        ("'`git add src/app.py`plan'", "allow"),
+        ("'<(git add src/app.py)'", "allow"),
+        ("'>(git add src/app.py)'", "allow"),
+        ("plan <<EOF\n'$(git add src/app.py)\nEOF", "block"),
+        ("plan <<'EOF'\n'$(git add src/app.py)\nEOF", "allow"),
+        ('"$(git add src/app.py)"'.replace("$(", "$\\\n("), "block"),
+    ],
+)
+async def test_plan_writer_commit_substitution_scope(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+    message: str,
+    expected: str,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    _edit(repo, "src/app.py", "value = 2\n")
+
+    response = await handler._evaluate_rules(
+        _gate_event(f"git commit -m {message}", session, project, repo)
+    )
+
+    assert response.decision == expected
+    if expected == "block":
+        assert "require-task-before-commit" in str(response.reason)
+
+
+@pytest.mark.parametrize("use_git_chdir", [False, True])
+async def test_plan_writer_diff_relative_cannot_hide_recorded_paths(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+    use_git_chdir: bool,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / "src/.gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _edit(repo, "docs/guide.md", "changed guide\n")
+    _git(repo, "add", "src/.gobby/plans/revision.md", "docs/guide.md")
+    _git(repo, "config", "diff.relative", "true")
+    command = "git -C src commit -m plan" if use_git_chdir else "git commit -m plan"
+    cwd = repo if use_git_chdir else repo / "src"
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, cwd))
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
+async def test_plan_writer_diff_config_cannot_hide_gitlink(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    oid = _git(repo, "rev-parse", "HEAD").strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{oid},lib")
+    _git(repo, "config", "diff.ignoreSubmodules", "all")
+
+    response = await handler._evaluate_rules(
+        _gate_event("git commit -m plan", session, project, repo)
+    )
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
+@pytest.mark.parametrize("pathspec", ['"$SOURCE_PATH"', "{src,docs}/app.py", "~/$SOURCE_PATH"])
+async def test_plan_writer_include_dynamic_pathspec_stays_blocked(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+    pathspec: str,
+) -> None:
+    handler, session, project = plan_commit_handler
+    plan = repo / ".gobby/plans/revision.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("revision\n", encoding="utf-8")
+    _git(repo, "add", ".gobby/plans/revision.md")
+    _edit(repo, "src/app.py", "value = 2\n")
+
+    # SOURCE_PATH can name src/app.py in the provider shell's environment;
+    # the inspector cannot safely substitute its own process environment.
+    response = await handler._evaluate_rules(
+        _gate_event(f"git commit -i -m plan -- {pathspec}", session, project, repo)
+    )
+
+    assert response.decision == "block"
+    assert "require-task-before-commit" in str(response.reason)
+
+
 def _gate_event(command: str, session: Session, project: Project, repo: Path) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
@@ -737,7 +844,6 @@ async def test_commit_review_scope_intersects_recorded_paths_with_session_ledger
     ("command", "pathspecs", "all_tracked", "include_staged"),
     [
         ("git commit -m docs", (), False, False),
-        ('git commit -m "$(cat <<EOF\ndocs\nEOF\n)"', (), False, False),
         ("git commit -q --no-verify -S -uno -m docs", (), False, False),
         ("git commit -am docs", (), True, False),
         ("git commit --message=docs docs/guide.md", ("docs/guide.md",), False, False),
