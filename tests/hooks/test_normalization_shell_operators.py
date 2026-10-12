@@ -11,14 +11,15 @@ pytestmark = pytest.mark.unit
 _FD_DUP_SCAN_RE = re.compile(r"[<>]&(?:\d+|-)(?=$|[\s;&|<>])")
 
 
-def _reference_operator(command: str, index: int) -> str | None:
+def _reference_operator(command: str, index: int) -> tuple[str, int] | None:
     """Punctuation-only probe; the word-aware lexer attaches fd numbers."""
     char = command[index]
     if char == "\n":
-        return "\n"
+        return "\n", 1
     fd_dup = _FD_DUP_SCAN_RE.match(command, index)
     if fd_dup:
-        return fd_dup.group(0)
+        operator = fd_dup.group(0)
+        return operator, len(operator)
     for operator in (
         "<<<",
         "<<-",
@@ -36,7 +37,7 @@ def _reference_operator(command: str, index: int) -> str | None:
         ">",
     ):
         if command.startswith(operator, index):
-            return operator
+            return operator, len(operator)
     return None
 
 
@@ -67,7 +68,10 @@ def test_operator_probe_matches_reference_at_every_index(command: str) -> None:
 def test_operator_probe_corpus_reaches_every_operator_shape() -> None:
     """The corpus exercises each operator family, so agreement is not vacuous."""
     found = {
-        _reference_operator(command, index) for command in CORPUS for index in range(len(command))
+        match[0]
+        for command in CORPUS
+        for index in range(len(command))
+        if (match := _reference_operator(command, index)) is not None
     }
 
     assert {
