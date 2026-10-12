@@ -52,6 +52,10 @@ class QuestionHarness:
         task = asyncio.create_task(
             self.controller.ask(self.pending, SESSION_ID, "", tool_input or TOOL_INPUT)
         )
+        await self.wait_for_send(task)
+        return task
+
+    async def wait_for_send(self, task: asyncio.Task[Any]) -> None:
         # Readiness is event-driven; host load must not impose a first-send deadline.
         sent = asyncio.create_task(self.sent.wait())
         try:
@@ -62,7 +66,6 @@ class QuestionHarness:
         finally:
             sent.cancel()
             await asyncio.gather(sent, return_exceptions=True)
-        return task
 
     def callback(self, option: object, *, question: int = 0) -> CommsMessage:
         return CommsMessage(
@@ -143,7 +146,7 @@ async def test_attached_question_sends_options_and_callback_answers(
         "Other",
     ]
     assert await harness.controller.handle("telegram", harness.callback(0))
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     decision = answer["hookSpecificOutput"]["decision"]
     assert decision == {
         "behavior": "allow",
@@ -170,8 +173,14 @@ async def test_attached_question_sends_options_and_callback_answers(
 @pytest.mark.asyncio
 async def test_terminal_answer_wins_and_second_tap_is_resolved(harness: QuestionHarness) -> None:
     task = await harness.start()
-    await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
-    assert await asyncio.wait_for(task, timeout=2) is None
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
+        resolve.assert_awaited_once_with(
+            harness.messages[0].metadata_json["pending_question_id"],
+            "answer",
+            {"source": "terminal"},
+        )
+    assert await task is None
     assert await harness.controller.handle("telegram", harness.callback(0))
     assert harness.messages[-1].content == "This question is already resolved."
 
@@ -205,7 +214,13 @@ async def test_reply_requires_other_tap(harness: QuestionHarness, question_count
     assert await harness.controller.handle("telegram", typed)
     assert harness.messages[-1].content == "Choose Other on the question to answer."
     assert not task.done()
-    await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", tool_input)
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", tool_input)
+        resolve.assert_awaited_once_with(
+            harness.messages[0].metadata_json["pending_question_id"],
+            "answer",
+            {"source": "terminal"},
+        )
     assert await task is None
 
 
@@ -223,7 +238,7 @@ async def test_other_typed_answer_is_consumed(harness: QuestionHarness) -> None:
         metadata_json={"chat_id": "42"},
     )
     assert await harness.controller.handle("telegram", typed)
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
         "Which framework?": "Svelte"
     }
@@ -236,7 +251,13 @@ async def test_wrong_session_cannot_answer(harness: QuestionHarness) -> None:
     callback.session_id = "another-session"
     assert await harness.controller.handle("telegram", callback)
     assert not task.done()
-    await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
+        resolve.assert_awaited_once_with(
+            harness.messages[0].metadata_json["pending_question_id"],
+            "answer",
+            {"source": "terminal"},
+        )
     assert await task is None
 
 
@@ -248,7 +269,7 @@ async def test_multi_select_requires_done(harness: QuestionHarness) -> None:
     assert await harness.controller.handle("telegram", harness.callback(1))
     assert not task.done()
     assert await harness.controller.handle("telegram", harness.callback("done"))
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
         "Which framework?": "React, Vue"
     }
@@ -273,7 +294,7 @@ async def test_native_permission_hook_and_terminal_completion(
     task = asyncio.create_task(
         _maybe_hold_open(request, SESSION_ID, "PermissionRequest", payload, "claude")
     )
-    await asyncio.wait_for(harness.sent.wait(), timeout=2)
+    await harness.wait_for_send(task)
     assert len(harness.messages) == 1
     completed = {
         "input_data": {
@@ -283,8 +304,16 @@ async def test_native_permission_hook_and_terminal_completion(
             "tool_response": {"answers": {"Which framework?": "Vue"}},
         }
     }
-    assert await _maybe_hold_open(request, SESSION_ID, "PostToolUse", completed, "claude") is None
-    assert await asyncio.wait_for(task, timeout=2) is None
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        assert (
+            await _maybe_hold_open(request, SESSION_ID, "PostToolUse", completed, "claude") is None
+        )
+        resolve.assert_awaited_once_with(
+            harness.messages[0].metadata_json["pending_question_id"],
+            "answer",
+            {"source": "terminal"},
+        )
+    assert await task is None
     assert await harness.controller.handle("telegram", harness.callback(0))
     assert harness.messages[-1].content == "This question is already resolved."
 
@@ -335,7 +364,7 @@ async def test_partial_selection_refreshes_buttons_and_resolution_retires_them(
         assert await harness.controller.handle("telegram", harness.callback(0))
         assert edit.await_args.args[-1][0][0]["text"] == "React"
         await harness.controller.terminal_answer(SESSION_ID, "native-id", {"questions": [question]})
-        assert await asyncio.wait_for(task, timeout=2) is None
+        assert await task is None
         assert edit.await_args.args[-1] is None
         assert "resolved" in edit.await_args.args[3]
 
@@ -347,7 +376,7 @@ async def test_all_questions_must_be_answered(harness: QuestionHarness) -> None:
     assert await harness.controller.handle("telegram", harness.callback(0))
     assert not task.done()
     assert await harness.controller.handle("telegram", harness.callback(1, question=1))
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
         "Which framework?": "React",
         "Which second framework?": "Vue",
@@ -366,7 +395,7 @@ async def test_answer_clears_lifecycle_wait(
         assert await harness.controller.handle("telegram", harness.callback(0))
     else:
         await harness.controller.terminal_answer(SESSION_ID, "native-tool-id", TOOL_INPUT)
-    await asyncio.wait_for(task, timeout=2)
+    await task
     assert lifecycle.get(SESSION_ID).waits == ()
 
 
@@ -389,7 +418,7 @@ async def test_button_after_other_leaves_unrelated_text_for_session(
     )
     assert not await harness.controller.handle("telegram", text)
     assert await harness.controller.handle("telegram", harness.callback(1, question=1))
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
         "Which framework?": "React",
         "Which second framework?": "Vue",
@@ -418,7 +447,7 @@ async def test_feedback_failure_does_not_fan_answer_out(harness: QuestionHarness
     task = await harness.start()
     harness.comms.send_message.side_effect = RuntimeError("Acknowledgement unavailable")
     assert await harness.controller.handle("telegram", harness.callback(0))
-    answer = await asyncio.wait_for(task, timeout=2)
+    answer = await task
     assert answer["hookSpecificOutput"]["decision"]["updatedInput"]["answers"] == {
         "Which framework?": "React"
     }
@@ -440,5 +469,11 @@ async def test_reaction_is_not_an_other_answer(harness: QuestionHarness) -> None
     )
     assert not await harness.controller.handle("telegram", reaction)
     assert not task.done()
-    await harness.controller.terminal_answer(SESSION_ID, "native-id", TOOL_INPUT)
-    assert await asyncio.wait_for(task, timeout=2) is None
+    with patch.object(harness.pending, "resolve", wraps=harness.pending.resolve) as resolve:
+        await harness.controller.terminal_answer(SESSION_ID, "native-id", TOOL_INPUT)
+        resolve.assert_awaited_once_with(
+            harness.messages[0].metadata_json["pending_question_id"],
+            "answer",
+            {"source": "terminal"},
+        )
+    assert await task is None
