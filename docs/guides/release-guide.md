@@ -96,9 +96,12 @@ uv run gobby cutover --path .
 ~/.gobby/bin/ghook --version
 ```
 
-Cutover signs staged binaries when required, promotes through new inodes,
+Cutover builds and proves the candidate, then stops the running daemon before
+promotion. It signs staged binaries when required, promotes through new inodes,
 writes version/install sidecars and the common schema identity pin, verifies
-the resolved daemon binary, then restarts the daemon. Coordinate the restart
+the resolved daemon binary, then starts the daemon. A promotion or verification
+failure leaves the daemon stopped; resolve the reported failure, then run
+`gobby start`. Coordinate the restart
 with active sessions. Do not overwrite installed signed binaries in place or
 write identity pins by hand. See the
 [cutover reference](cli-commands.md#gobby-cutover).

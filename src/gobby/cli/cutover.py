@@ -256,9 +256,11 @@ def run_cutover(
                 target=_platform_target(),
             ),
         )
-    except BinarySetCoherenceError as exc:
-        raise CutoverError(str(exc)) from exc
-    _verify_restart_target(bin_dir)
+        _verify_restart_target(bin_dir)
+    except (BinarySetCoherenceError, CutoverError, OSError) as exc:
+        raise CutoverError(
+            f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
+        ) from exc
     start_daemon()
 
 
