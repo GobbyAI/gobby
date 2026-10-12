@@ -150,7 +150,12 @@ Writer decisions:
     widen every consumer's contract and force a split of the 852-line
     `src/gobby/storage/worktrees.py`. A remote spawn removes its workspace with
     `workspace.remove` only once the spawn has provably failed (2.5, 2.6).
-    Listing, merging, and removing finished remote workspaces is D1.
+    Before that failure settles the run or the terminal, the row is marked for
+    removal with the tables' existing statuses, `abandoned` for a worktree and
+    `cleanup` for a clone. 2.6 retries every marked row of a connected machine
+    until the node answers `{removed: true}`, so the row keeps an owner after
+    its run and terminal settle and across a hub restart. Listing, merging, and
+    removing finished remote workspaces is D1.
 16. **Hook machine binding.** Q3 trusts `sessions.machine_id`, which comes from
     the hook envelope (`ClaudeCodeAdapter` reads `input_data["machine_id"]`).
     When a hook request carries a verified front-door identity, the hub rejects
@@ -258,7 +263,7 @@ Targets:
   - **Strictness.** Payloads and results reject unknown fields.
   - **v1 commands:**
     - `workspace.prepare`: `{run_id, project_id, mode: "worktree"|"clone", source_root, path, branch_name, base_branch}` returns `{path, branch_name, base_commit_sha}`.
-    - `workspace.remove`: `{run_id, project_id, mode, source_root, path, branch_name, delete_branch}` returns `{removed}`.
+    - `workspace.remove`: `{project_id, mode, source_root, path, branch_name, delete_branch}` returns `{removed}`.
     - `agent.spawn`: `{run_id, session_id, project_id, terminal_id, provider, model, cwd, prompt, env, provider_args, reasoning_effort, sandbox: {enabled, network: "none"|"trusted", extra_write_paths}, timeout_seconds, title}` returns `{pid, locator, locator_key, host_epoch}`.
     - `agent.cancel`: `{run_id, terminal_id, signal: "TERM"|"KILL", close_terminal}` returns `{stopped}`.
     - `terminal.write`: `{terminal_id, kind: "text"|"key"|"input"|"paste", data, submit}` returns `{}`.
@@ -272,6 +277,11 @@ Targets:
       agent process exits. It answers `stage: "none"` only when it launched
       nothing.
     - Commands that name the same `run_id` run one at a time in arrival order.
+    - `workspace.remove` is idempotent. A path or branch that is already
+      absent counts as removed, so a retry after a lost reply answers
+      `{removed: true}`. `{removed: false}` means part of the workspace is
+      still present. It names no run, because 2.6 retries it from the
+      workspace row alone.
     - `agent.cancel` records the `run_id` as cancelled in node-local durable
       state before it replies, so the record survives a node daemon restart. A
       later `workspace.prepare` or `agent.spawn` for it answers `cancelled`
@@ -729,6 +739,13 @@ it is already its own section, 2.6.
     `src/gobby/build/observability.py`).
   - `require_root(db, project_id, machine_id)` returns a machine's checkout
     root.
+  - `worktrees.status` includes `abandoned` and `clones.status` includes
+    `cleanup`. Only `LocalWorktreeManager` and `LocalCloneManager` set them,
+    and their readers, such as `list_cleanup_pending`, bind this machine.
+    `reactivate_cited_worktrees` reactivates only `merged` rows.
+  - `agent_session_id` references `sessions(id, machine_id)` with
+    `ON DELETE SET NULL`, so a retained row cannot be relied on to reach its
+    run.
 - The tests drive a fake node client; live delivery waits on D2 and #24148.
 
 **Implementation:**
@@ -784,11 +801,15 @@ it is already its own section, 2.6.
      could not exit the still-pending terminal. So the helper calls
      `mark_exited` and records nothing on the run. `promote_to_live` is a
      pending-to-live CAS, so an exited row is never promoted again.
-  6. A step 3 or 4 error with `stage: "none"` is a definite failure. It fails
-     the pending terminal (`fail_pending`) and settles the run with
-     `_roll_back_run`, which also ends the lease. A failed `workspace.prepare`
-     created nothing, so it deletes the row. After a prepared workspace it
-     calls `remove_remote_workspace`.
+  6. A step 3 or 4 error with `stage: "none"` is a definite failure. Before it
+     settles anything, a failed `workspace.prepare`, which created nothing,
+     deletes the row, and after a prepared workspace it calls
+     `mark_remote_workspace_removal`. It then fails the pending terminal
+     (`fail_pending`) and settles the run with `_roll_back_run`, which also
+     ends the lease. Last, it calls `remove_remote_workspace` on the marked
+     row. A hub restart between these steps leaves a pending terminal for
+     2.6's fence, an active run for 2.6's run sweep, or a marked row for 2.6's
+     removal retry.
   7. Any other outcome leaves the spawn in doubt. That covers a `null` or
      `"partial"` stage and a caller that goes away after a send. The run and
      terminal stay pending, the lease stays attached, the workspace and its row
@@ -799,13 +820,15 @@ it is already its own section, 2.6.
     branch_name, base_branch, task_id, session_id)` inserts an active
     `worktrees` row (mode `worktree`) or `clones` row (mode `clone`) with that
     machine and the child session as `agent_session_id`.
-  - `remote_workspace_for_session(db, *, machine_id, session_id)` returns that
-    machine's row for the session from either table, through
-    `Worktree.from_row` or `Clone.from_row`.
-  - `remove_remote_workspace(db, client, *, run_id, machine_id, session_id)`
-    finds the row and sends `workspace.remove` with `delete_branch: true` and
-    `source_root` from `require_root(db, project_id, machine_id)`. It deletes
-    the row on `{removed: true}`. Any other reply or error keeps the row.
+  - `mark_remote_workspace_removal(db, *, machine_id, session_id)` sets that
+    machine's row for the session to `abandoned` in `worktrees` or `cleanup`
+    in `clones` and returns it through `Worktree.from_row` or
+    `Clone.from_row`, or `None` when there is no row.
+  - `remove_remote_workspace(db, client, workspace)` sends `workspace.remove`
+    to the row's machine with `delete_branch: true` and `source_root` from
+    `require_root(db, project_id, machine_id)`. On `{removed: true}` it
+    deletes the row by its id and machine while the row is still marked. Any
+    other reply or error leaves the row marked for 2.6.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/agents_spawn_tools.py` — no-edit-reason: it registers `create_spawn_agent_registry(...)`, whose signature is unchanged.
@@ -847,7 +870,7 @@ Verification planned:
 - 2.5.1 - Through a fake node client, a spawn from a session on another machine sends `workspace.prepare` and then `agent.spawn` to that machine, and its session, run, and terminal rows carry that `machine_id` before `agent.spawn` is sent. test: `tests/hub/test_remote_spawn.py::test_spawn_routes_to_requesting_machine`.
 - 2.5.2 - The `agent.spawn` payload carries no managed credential and no env key outside the allowlist, and the hub writes no prompt file. test: `tests/hub/test_remote_spawn.py::test_payload_carries_no_credential`.
 - 2.5.3 - An explicit `machine` is validated, and an ineligible one fails with its typed code without spawning anywhere. test: `tests/hub/test_remote_spawn.py::test_explicit_machine_is_validated`.
-- 2.5.4 - A `stage: "none"` failure of `agent.spawn` fails the pending terminal, cancels the run, ends the lease, sends `workspace.remove`, and deletes the workspace row after `{removed: true}`, with no local process or pane call. test: `tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database`.
+- 2.5.4 - A `stage: "none"` failure of `agent.spawn` marks the workspace row for removal before it fails the pending terminal, cancels the run, and ends the lease, then sends `workspace.remove` and deletes the row after `{removed: true}`, with no local process or pane call. A `stage: "none"` failure of `workspace.prepare` deletes the row before it settles anything and sends no `workspace.remove`. test: `tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database`.
 - 2.5.5 - A `node_timeout` or a `node_reply_lost` on `agent.spawn` returns `spawn_in_doubt` and leaves the run and terminal pending, the lease attached, and the workspace and its row in place, with no rollback. test: `tests/hub/test_remote_spawn.py::test_in_doubt_spawn_keeps_state`.
 - 2.5.6 - A node caller whose parent is on the hub spawns on the node, and a hub caller whose parent is on a node spawns locally in the hub's checkout. test: `tests/hub/test_remote_spawn.py::test_origin_is_the_calling_session`.
 - 2.5.7 - Remote resume and placement are refused with typed codes. test: `tests/hub/test_remote_spawn.py::test_unsupported_routes_refused`.
@@ -861,9 +884,18 @@ Verification planned:
 
 Targets:
 - `src/gobby/hub/remote_reconcile.py`
+- `src/gobby/hub/remote_workspaces.py`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.__init__`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.check_unhealthy_agents`
 - `tests/hub/test_remote_reconcile.py`
+
+**Granularity:** seven acceptance items and three production files, one
+outcome: after a remote spawn leaves 2.5, every run, terminal, and failed-spawn
+workspace on a connected machine reaches a settled state with one owner,
+`RemoteRunReconciler` under `AgentHealthMonitor`. Terminal settlement covers
+2.6.1 to 2.6.5, the removal retry 2.6.6, and the run sweep 2.6.7. None is safe
+alone: the fence marks the row that the retry removes, and it exits the
+terminal whose run the sweep settles after a hub restart.
 
 **Research context:**
 - Every local run monitor lists runs with `require_machine_id()`:
@@ -890,6 +922,12 @@ Targets:
   uses it locally. `TerminalManager` also has `promote_to_live` (pending to
   live), `fail_pending` (pending to exited), and `mark_exited`.
   `spawn_in_doubt_seconds` (default 150) is the local spawn deadline.
+  `list_for_session(session_id)` returns a session's terminal rows.
+- `cleanup_agent` (`src/gobby/agents/agent_cleanup.py`) recovers a failed
+  run's task after checking its terminal's liveness, so every path below exits
+  the terminal before it calls `cleanup_agent`. A hub restart between the two
+  leaves an active run whose terminal has exited, which no terminal-row pass
+  selects.
 - The tests drive a fake node client; live inventory waits on D2 and #24148.
 
 **Implementation:**
@@ -902,8 +940,8 @@ Targets:
 - `reconcile()` reads `connected_machine_ids()` and drops this machine. A
   `node_routing_unavailable` refusal ends the pass. Machines without a live
   channel are never visited, so their rows stay untouched.
-- The pass selects terminal rows, not runs, so a terminal outlives its run's
-  settlement. For each connected machine it reads
+- The terminal pass selects terminal rows, not runs, so a terminal outlives
+  its run's settlement. For each connected machine it reads
   `list_reconcilable_by_machine(machine_id)`: pending, live, and orphaned rows,
   in full. It keeps the rows with an `agent_run_id` whose run is not
   recovery-protected. If any remain, it sends `node.inventory`; an error skips
@@ -925,15 +963,32 @@ Targets:
     uncertain either way. An ended status does not prove that a queued
     `agent.spawn` cannot still arrive. The reconciler sends `agent.cancel` with
     `signal: "KILL"` and `close_terminal: true` as a fence. On
-    `{stopped: true}` or `not_found` it calls `fail_pending`, the
-    pending-to-exited CAS. For an active run it then calls `cleanup_agent` with
-    `"remote spawn did not start on <machine>"` and `remove_remote_workspace`
-    (2.5) for the run's child session. An ended run gets nothing more: its
-    run, task, and lease keep their settlement, and its workspace and row stay
-    (D1).
+    `{stopped: true}` or `not_found`, for an active run it first calls
+    `mark_remote_workspace_removal` (2.5) for the run's child session. It then
+    calls `fail_pending`, the pending-to-exited CAS. For an active run it then
+    calls `cleanup_agent` with `"remote spawn did not start on <machine>"` and
+    `remove_remote_workspace` on the marked row. An ended run gets nothing
+    more: its run, task, and lease keep their settlement, and its workspace
+    and row stay unmarked (D1).
     `{stopped: false}` and every other reply leave the row for the next pass.
     The node's cancel record is durable (1.1), so a delayed `agent.spawn`
     cannot start the run after this settlement.
+- Run sweep: for each connected machine the pass also reads
+  `list_active_for_machine(machine_id)`. A run that is not recovery-protected,
+  has at least one terminal row (`list_for_session` on its child session), and
+  has none pending, live, or orphaned is recorded on its first pass. On the
+  second consecutive pass it gets `cleanup_agent` with `"remote terminal
+  exited before its run settled"`. The wait lets a flow that is already
+  settling the run finish first.
+- Removal retry: for each connected machine the pass reads
+  `list_remote_removals(db, machine_id=...)` and calls
+  `remove_remote_workspace` for each row, whether or not the machine has
+  terminal rows. An error or `{removed: false}` leaves the row marked for the
+  next pass.
+- `src/gobby/hub/remote_workspaces.py` gains
+  `list_remote_removals(db, *, machine_id)`, which returns that machine's
+  `abandoned` worktrees and `cleanup` clones through `Worktree.from_row` and
+  `Clone.from_row`.
 
 Consumers unchanged:
 - `src/gobby/agents/lifecycle_monitor.py` — no-edit-reason: it constructs `AgentHealthMonitor` with unchanged arguments and calls `check_unhealthy_agents()`, whose signature and return type are unchanged.
@@ -946,9 +1001,11 @@ Verification planned:
 
 - 2.6.1 - A listed run with a pending terminal is promoted live with the inventory's identity, and its `pid` is recorded. test: `tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted`.
 - 2.6.2 - An unlisted run with a live terminal, or a live row from an older `host_epoch`, is left on its first absent pass and settled on the second through `mark_exited` and `cleanup_agent`; a run that settles in between is not failed, and its terminal still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_one_pass`.
-- 2.6.3 - An unlisted pending run past the deadline is sent `agent.cancel` first. `{stopped: true}` or `not_found` then fails its terminal and run and sends `workspace.remove`, and `node_timeout` or `{stopped: false}` changes nothing. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
+- 2.6.3 - An unlisted pending run past the deadline is sent `agent.cancel` first. `{stopped: true}` or `not_found` then marks its workspace row for removal, fails its terminal and run, and sends `workspace.remove`, and `node_timeout` or `{stopped: false}` changes nothing. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
 - 2.6.4 - A machine without a live channel gets no command and its rows stay as they are, and local rows are never inventoried. test: `tests/hub/test_remote_reconcile.py::test_disconnected_and_local_rows_untouched`.
 - 2.6.5 - In this case the spawn's effect lands and its reply is lost, and the agent's session start and session end both reach the hub before the first pass. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent` and no `workspace.remove`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a disconnected machine stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
+- 2.6.6 - In worktree and clone mode, a failed spawn's marked row survives a first `workspace.remove` that answers `node_timeout`, an error, or `{removed: false}`. A new reconciler, standing in for a hub restart, retries it on its next pass after the terminal has exited and the run has ended. When the removal's effect landed and only its reply was lost, the retry answers `{removed: true}` and the row is deleted. A disconnected machine's marked row and an ended run's unmarked row are never sent `workspace.remove`. test: `tests/hub/test_remote_reconcile.py::test_marked_workspace_removal_is_retried`.
+- 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first pass and settled through `cleanup_agent` on the second. A run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
 
 ## P3: Machine-aware roster and attention
 `kind: framing`
@@ -1271,6 +1328,12 @@ deferral:
   are the machine list, and D3 keeps only the machine-scoped project view as
   needs-planning. 1.1 adds the Rust allowlist test (1.1.6) and the hub-client
   error codes.
+- 2026-10-12: Revised for HM-F12 from Plan Adversary gobby#16491. A failed
+  spawn's workspace row is marked for removal (`abandoned` worktree, `cleanup`
+  clone) before its run and terminal settle, and 2.6 retries every marked row
+  until the node confirms (2.6.6). `workspace.remove` is idempotent and names
+  no run. The writer closed the matching run-side gap: 2.6's run sweep settles
+  an active remote run whose terminals have all exited (2.6.7).
 
 ## V2: Verification
 `kind: verification`
