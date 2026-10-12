@@ -94,9 +94,23 @@ pub fn daemon_mode_layers_at(
             request.daemon_url = Some(base_url.to_owned());
             request.deadline = Some(EFFECTIVE_CONFIG_TIMEOUT);
             let acquired = crate::grant::acquire_with(&request)?;
-            acquired
-                .settings
-                .ok_or(crate::grant::GrantError::DaemonRequired)
+            match acquired.settings {
+                Some(settings) => Ok(settings),
+                None if acquired.daemon_reachable => {
+                    let bearer = crate::local_token::read_api_key_for(gobby_home).ok();
+                    let remaining = EFFECTIVE_CONFIG_TIMEOUT.saturating_sub(started.elapsed());
+                    if remaining.is_zero() {
+                        return Err(crate::grant::GrantError::Timeout);
+                    }
+                    crate::grant::fetch_runtime_config(
+                        base_url,
+                        &acquired.bundle,
+                        bearer.as_deref(),
+                        remaining,
+                    )
+                }
+                None => Err(crate::grant::GrantError::DaemonRequired),
+            }
         })()
         .map_err(|error| {
             log::warn!("managed runtime config fetch failed: {}", error.cli_code());

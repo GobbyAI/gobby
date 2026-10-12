@@ -2022,6 +2022,44 @@ fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cach
 
 #[test]
 #[cfg(feature = "ai")]
+fn managed_effective_config_fetches_settings_for_fresh_grant_only() {
+    let harness = Harness::new();
+    let now = unix_now();
+    let mut grant = fixture_grant(PrincipalKind::AgentRun);
+    grant.issued_at = now - 100;
+    grant.expires_at = now + 3500;
+    grant = grant.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &grant).expect("private launch grant without settings");
+    let _env = PoisonedEnv::apply(&path);
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores all changed variables.
+    unsafe {
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "exec-1");
+        std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
+        std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
+        std::env::set_var("GOBBY_SESSION_ID", "cli");
+        std::env::set_var("GOBBY_PROJECT_ID", PROJECT);
+    }
+    let scripted = spawn_scripted(vec![Step::Config {
+        revision: grant.config_revision,
+    }]);
+    let mut layers =
+        crate::ai::effective_config::daemon_mode_layers_at(&scripted.url, &harness.home)
+            .expect("fresh grant fetches settings from reachable daemon");
+    let requests = join(scripted);
+    assert_eq!(layers.revision(), grant.config_revision);
+    assert_eq!(
+        crate::config::ConfigSource::config_value(&mut layers, "ai.embeddings.model"),
+        Some("nomic".into())
+    );
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].starts_with(&format!("GET {RUNTIME_CONFIG_PATH} HTTP/1.1")));
+    let header = encode_grant_header(&grant).expect("grant header");
+    assert!(header_value(&requests[0], GRANT_HEADER).as_deref() == Some(header.as_str()));
+}
+
+#[test]
+#[cfg(feature = "ai")]
 fn managed_effective_config_refreshes_stale_schema() {
     let harness = Harness::new();
     let now = unix_now();
