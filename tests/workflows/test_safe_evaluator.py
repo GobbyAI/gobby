@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.hooks.tool_error_tracker import extract_target_key
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
@@ -305,6 +307,31 @@ class TestMcpFailed:
 
 
 class TestToolCallSucceeded:
+    @pytest.mark.parametrize("success", [False, True])
+    @pytest.mark.parametrize("content_block", [False, True])
+    def test_claude_mcp_payload_outcome(self, success: bool, content_block: bool) -> None:
+        payload: dict[str, Any] = {"success": success}
+        response = (
+            {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": False}
+            if content_block
+            else payload
+        )
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "input_data": {
+                    "session_id": "test-session",
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {"server_name": "gobby-sessions", "tool_name": "feedback"},
+                    "tool_response": response,
+                },
+            }
+        )
+        evaluator = _build_evaluator({"variables": {}, "event": event})
+
+        assert evaluator.evaluate("tool_call_succeeded()") is success
+        assert evaluator.evaluate("tool_call_failed()") is (not success)
+
     def _eval(
         self,
         data: dict[str, Any],
