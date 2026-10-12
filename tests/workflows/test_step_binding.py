@@ -543,6 +543,51 @@ def test_claim_step_refuses_escalation(seats: _Seats, use_ref: bool) -> None:
     assert "escalate_task' is not allowed in the 'claim' step" in str(response.reason)
 
 
+async def test_claim_step_can_wait_after_handoff_close_requires_review(seats: _Seats) -> None:
+    _seat(seats, seats.former, "claim", bound=False)
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    instance.variables["_developer_handoff_tasks"] = [seats.task_id]
+    instances.save(instance)
+    engine = RuleEngine(seats.db)
+    reviewer_run_id = "31000000-0000-4000-8000-000000000001"
+    close_completion = _after_tool(
+        seats.former,
+        "close_task",
+        {"task_id": seats.ref},
+        {
+            "closed": False,
+            "error": "close_review_required",
+            "reviewer_run_id": reviewer_run_id,
+        },
+    )
+    assert (
+        engine._check_step_tool_enforcement(
+            replace(close_completion, event_type=HookEventType.BEFORE_TOOL), seats.former, {}
+        )
+        is None
+    )
+    await engine._process_step_after_tool(close_completion, seats.former, {})
+    assert _current_step(seats.db, seats.former) == "claim"
+    wait_event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=seats.former,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-agents",
+                "tool_name": "wait_for_agent",
+                "arguments": {"run_id": reviewer_run_id},
+            },
+        },
+        metadata={},
+    )
+    assert engine._check_step_tool_enforcement(wait_event, seats.former, {}) is None
+
+
 @pytest.mark.parametrize("active_step", ["implement", "submit"])
 @pytest.mark.parametrize("reviewer_closes", [False, True])
 @pytest.mark.parametrize(

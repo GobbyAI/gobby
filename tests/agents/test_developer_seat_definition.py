@@ -15,7 +15,8 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.skills.sync import get_bundled_skills_path
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
+from gobby.workflows.engine import RuleEngine
 from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
@@ -72,6 +73,33 @@ def _transitions(step: dict[str, Any]) -> dict[str, str]:
 
 def _steps() -> dict[str, dict[str, Any]]:
     return {step["name"]: step for step in _raw("developer")["step_workflow"]["steps"]}
+
+
+def _task_closing_steps() -> list[tuple[str, WorkflowStep]]:
+    closing_steps: list[tuple[str, WorkflowStep]] = []
+    for path in sorted(get_bundled_agents_path().glob("*.yaml")):
+        body = AgentDefinitionBody.model_validate(_raw(path.stem))
+        if body.step_workflow is None:
+            continue
+        for step in body.step_workflow.steps:
+            if step.allowed_mcp_tools == "all" or RuleEngine._mcp_tool_matches(
+                "gobby-tasks:close_task", step.allowed_mcp_tools
+            ):
+                if not RuleEngine._mcp_tool_matches(
+                    "gobby-tasks:close_task", step.blocked_mcp_tools
+                ):
+                    closing_steps.append((path.stem, step))
+    return closing_steps
+
+
+@pytest.mark.parametrize(("agent_name", "step"), _task_closing_steps())
+def test_task_closing_steps_allow_close_review_wait(agent_name: str, step: WorkflowStep) -> None:
+    assert step.allowed_mcp_tools == "all" or RuleEngine._mcp_tool_matches(
+        "gobby-agents:wait_for_agent", step.allowed_mcp_tools
+    ), (agent_name, step.name)
+    assert not RuleEngine._mcp_tool_matches(
+        "gobby-agents:wait_for_agent", step.blocked_mcp_tools
+    ), (agent_name, step.name)
 
 
 def test_developer_carries_the_seat_shape() -> None:
