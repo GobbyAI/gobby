@@ -20,6 +20,7 @@ from gobby.cli import cli, daemon_lifecycle
 from gobby.install import bin_set_coherence
 from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
+from gobby.utils.native_bin import IDENTITY_STAMP_NAME
 
 cutover_module = importlib.import_module("gobby.cli.cutover")
 
@@ -726,6 +727,64 @@ def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
     assert post.call_args.kwargs["params"]["restart_supervisor"] == "true"
     assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths} == before
     started.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [SystemExit(7), click.ClickException("startup refused")])
+def test_cli_post_stop_start_failure_reports_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    events: list[str] = []
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+
+    def stop(*_args: object, **_kwargs: object) -> bool:
+        events.append("stop")
+        return True
+
+    def start(**_kwargs: object) -> None:
+        events.append("start")
+        raise failure
+
+    monkeypatch.setattr(cutover_module, "_do_stop", stop)
+    monkeypatch.setattr(cutover_module, "start", start)
+    monkeypatch.setattr(cutover_module, "_stop_admission_refusal", lambda *_args, **_kwargs: None)
+    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
+
+    assert result.exit_code == 1
+    assert "The daemon is stopped" in result.output, result.exception
+    assert "After resolving this failure, run `gobby start`" in result.output
+    assert ("exit 7" if isinstance(failure, SystemExit) else "startup refused") in result.output
+    assert events == ["stop", "promote", "start"]
+    assert "Cutover complete" not in result.output
+
+
+def test_cli_post_stop_invalid_utf8_pin_reports_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    verify_target = cutover_module._verify_restart_target
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+    monkeypatch.setattr(cutover_module, "_verify_restart_target", verify_target)
+    bin_dir = tmp_path / "managed-bin"
+    bin_dir.mkdir()
+    (bin_dir / IDENTITY_STAMP_NAME).write_bytes(b"\xff")
+
+    def stop(*_args: object, **_kwargs: object) -> bool:
+        events.append("stop")
+        return True
+
+    started = Mock()
+    monkeypatch.setattr(cutover_module, "_do_stop", stop)
+    monkeypatch.setattr(cutover_module, "start", started)
+    monkeypatch.setattr(cutover_module, "_stop_admission_refusal", lambda *_args, **_kwargs: None)
+    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
+
+    assert result.exit_code == 1
+    assert "The daemon is stopped" in result.output, result.exception
+    assert "After resolving this failure, run `gobby start`" in result.output
+    assert "utf-8" in result.output
+    assert events == ["stop", "promote"]
+    started.assert_not_called()
+    assert "Cutover complete" not in result.output
 
 
 @pytest.mark.parametrize("stage", ["promotion", "directory", "verification"])

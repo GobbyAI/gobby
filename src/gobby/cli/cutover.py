@@ -257,11 +257,13 @@ def run_cutover(
             ),
         )
         _verify_restart_target(bin_dir)
-    except (BinarySetCoherenceError, CutoverError, OSError) as exc:
+        start_daemon()
+    except Exception as exc:
+        # After confirmed shutdown, every failed phase needs operator recovery
+        # guidance, including startup errors and identity decoding failures.
         raise CutoverError(
             f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
         ) from exc
-    start_daemon()
 
 
 @click.command()
