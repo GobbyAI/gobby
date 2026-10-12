@@ -132,8 +132,12 @@ mod tests {
         }
 
         fn client() -> reqwest::Result<Client> {
-            dial_localhost_as_loopback(Client::builder().dns_resolver(Arc::new(RefusingResolver)))
-                .build()
+            dial_localhost_as_loopback(
+                Client::builder()
+                    .no_proxy()
+                    .dns_resolver(Arc::new(RefusingResolver)),
+            )
+            .build()
         }
 
         #[test]
@@ -156,13 +160,15 @@ mod tests {
 
         fn either_loopback_client() -> reqwest::Result<Client> {
             dial_localhost_on_either_loopback(
-                Client::builder().dns_resolver(Arc::new(RefusingResolver)),
+                Client::builder()
+                    .no_proxy()
+                    .dns_resolver(Arc::new(RefusingResolver)),
             )
             .build()
         }
 
         /// Serve one request on `bind` and send it through `localhost`.
-        fn get_via_localhost(bind: &str, loopback: &str) -> anyhow::Result<()> {
+        fn get_via_localhost(bind: &str, loopback: &str) -> anyhow::Result<reqwest::StatusCode> {
             let (base, handle) =
                 crate::test_http::spawn_response_at(bind, 200, "OK", "text/plain", "ok".into())?;
             let url = base.replacen(loopback, "localhost", 1);
@@ -171,19 +177,20 @@ mod tests {
                 .get(format!("{url}/probe"))
                 .send()?;
 
-            assert_eq!(response.status(), 200);
             handle.join().expect("server thread")?;
-            Ok(())
+            Ok(response.status())
         }
 
         #[test]
         fn either_loopback_reaches_an_ipv6_only_listener() -> anyhow::Result<()> {
-            get_via_localhost("[::1]:0", "[::1]")
+            assert_eq!(get_via_localhost("[::1]:0", "[::1]")?, 200);
+            Ok(())
         }
 
         #[test]
         fn either_loopback_reaches_an_ipv4_only_listener() -> anyhow::Result<()> {
-            get_via_localhost("127.0.0.1:0", "127.0.0.1")
+            assert_eq!(get_via_localhost("127.0.0.1:0", "127.0.0.1")?, 200);
+            Ok(())
         }
 
         #[test]

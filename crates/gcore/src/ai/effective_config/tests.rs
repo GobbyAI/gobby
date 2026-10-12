@@ -193,8 +193,9 @@ fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
     let unreachable = format!("http://{}", listener.local_addr().expect("local address"));
     drop(listener);
-    let error =
-        daemon_mode_layers_at(&unreachable, home.path()).expect_err("transport must hard fail");
+    let error = daemon_mode_layers_at(&unreachable, home.path())
+        .err()
+        .unwrap_or_else(|| panic!("transport must hard fail"));
     assert_eq!(
         error,
         EffectiveConfigError::Transport {
@@ -206,7 +207,8 @@ fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     let invalid_url = "not a daemon URL";
     let error =
         fetch_daemon_served_config_at_with_timeout(invalid_url, None, Duration::from_millis(20))
-            .expect_err("invalid URL must hard fail");
+            .err()
+            .unwrap_or_else(|| panic!("invalid URL must hard fail"));
     assert_eq!(
         error,
         EffectiveConfigError::Transport {
@@ -218,8 +220,9 @@ fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     for status in [401, 500] {
         let (base_url, request) =
             spawn_json_response_with_status(status, "sensitive error body").expect("spawn daemon");
-        let error =
-            daemon_mode_layers_at(&base_url, home.path()).expect_err("status must hard fail");
+        let error = daemon_mode_layers_at(&base_url, home.path())
+            .err()
+            .unwrap_or_else(|| panic!("status must hard fail"));
         assert_eq!(error, EffectiveConfigError::HttpStatus { status });
         assert!(!error.to_string().contains("sensitive error body"));
         join_request(request);
@@ -240,7 +243,8 @@ fn loopback_timeout_is_bounded_and_categorized() {
         spawn_delayed_json_response(Duration::from_millis(100)).expect("spawn delayed daemon");
     let error =
         fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(10))
-            .expect_err("response after timeout must fail");
+            .err()
+            .unwrap_or_else(|| panic!("response after timeout must fail"));
     assert_eq!(
         error,
         EffectiveConfigError::Transport {
@@ -257,7 +261,8 @@ fn success_with_stalled_or_truncated_body_is_transport_failure() {
         spawn_stalled_json_body(Duration::from_millis(100)).expect("spawn stalled daemon");
     let error =
         fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(10))
-            .expect_err("stalled response body must fail");
+            .err()
+            .unwrap_or_else(|| panic!("stalled response body must fail"));
     assert_eq!(
         error,
         EffectiveConfigError::Transport {
@@ -269,7 +274,8 @@ fn success_with_stalled_or_truncated_body_is_transport_failure() {
     let (base_url, request) = spawn_truncated_json_body().expect("spawn truncated daemon");
     let error =
         fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(100))
-            .expect_err("truncated response body must fail");
+            .err()
+            .unwrap_or_else(|| panic!("truncated response body must fail"));
     assert!(matches!(error, EffectiveConfigError::Transport { .. }));
     join_request(request);
 }
@@ -285,8 +291,9 @@ fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
 
     for body in ["sensitive-response-body", "{}", r#"{"config":{}}"#] {
         let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
-        let error =
-            daemon_mode_layers_at(&base_url, home.path()).expect_err("protocol must be strict");
+        let error = daemon_mode_layers_at(&base_url, home.path())
+            .err()
+            .unwrap_or_else(|| panic!("protocol must be strict"));
         assert!(matches!(
             error,
             EffectiveConfigError::Protocol { status: 200, .. }
@@ -321,7 +328,9 @@ fn served_secret_or_environment_references_are_contract_failures() {
             "the value-level backstop must be tested behind a machine-exportable key"
         );
         let values = BTreeMap::from([(key.to_string(), value.to_string())]);
-        let error = validate_served_values(&values).expect_err("contract must be strict");
+        let error = validate_served_values(&values)
+            .err()
+            .unwrap_or_else(|| panic!("contract must be strict"));
         assert!(matches!(error, EffectiveConfigError::Contract { .. }));
         let display = error.to_string();
         assert!(display.contains(key));
@@ -425,7 +434,8 @@ fn daemon_mode_layers_surface_fetch_errors() {
             kind: EffectiveConfigTransportKind::Other,
         })
     })
-    .expect_err("fetch errors stay typed");
+    .err()
+    .unwrap_or_else(|| panic!("fetch errors stay typed"));
 
     assert!(matches!(
         error,

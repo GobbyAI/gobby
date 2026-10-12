@@ -50,6 +50,7 @@ struct DaemonEnvGuard {
     daemon_url: Option<OsString>,
     port: Option<OsString>,
     agent_api_token: Option<OsString>,
+    managed_bootstrap: Option<OsString>,
     agent_run_id: Option<OsString>,
     managed_execution_id: Option<OsString>,
     project_id: Option<OsString>,
@@ -67,6 +68,7 @@ impl DaemonEnvGuard {
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             port: std::env::var_os("GOBBY_PORT"),
             agent_api_token: std::env::var_os("GOBBY_AGENT_API_TOKEN"),
+            managed_bootstrap: std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
             agent_run_id: std::env::var_os("GOBBY_AGENT_RUN_ID"),
             managed_execution_id: std::env::var_os("GOBBY_MANAGED_EXECUTION_ID"),
             project_id: std::env::var_os("GOBBY_PROJECT_ID"),
@@ -81,6 +83,7 @@ impl DaemonEnvGuard {
             std::env::set_var("GOBBY_HOME", home);
             std::env::set_var("GOBBY_DAEMON_URL", daemon_url);
             std::env::set_var("GOBBY_AGENT_API_TOKEN", token);
+            std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
             std::env::remove_var("GOBBY_AGENT_RUN_ID");
             std::env::set_var("GOBBY_MANAGED_EXECUTION_ID", "tool-execution-7");
             std::env::set_var("GOBBY_PROJECT_ID", "project-7");
@@ -101,6 +104,7 @@ impl Drop for DaemonEnvGuard {
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
                 ("GOBBY_AGENT_API_TOKEN", &self.agent_api_token),
+                ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", &self.managed_bootstrap),
                 ("GOBBY_AGENT_RUN_ID", &self.agent_run_id),
                 ("GOBBY_MANAGED_EXECUTION_ID", &self.managed_execution_id),
                 ("GOBBY_PROJECT_ID", &self.project_id),
