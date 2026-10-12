@@ -57,7 +57,18 @@ _FD_DUP_SCAN_RE = re.compile(
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
-_BENIGN_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
+_BENIGN_REDIRECT_TARGETS = frozenset(
+    {
+        "/dev/null",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/tty",
+        "/dev/fd/1",
+        "/dev/fd/2",
+        "/proc/self/fd/1",
+        "/proc/self/fd/2",
+    }
+)
 
 # Characters that strongly imply an inline sed/awk script rather than a file path.
 _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
@@ -733,27 +744,27 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
 
 
 def redirects_stdout_to_file(tokens: list[ShellToken]) -> bool:
-    """Return True when an output redirection sends stdout to a file, not the model.
-
-    Stderr-only and higher-fd redirections leave stdout visible; benign sinks
-    are not file writes.
-    """
+    """Prove stdout's final destination is a literal, non-benign file."""
+    file_redirected = False
     for idx, token in enumerate(tokens):
-        if not is_shell_output_redirection_token(token):
+        if is_fd_duplication_token(token):
+            if token.value.startswith((">&", "1>&")):
+                file_redirected = False
             continue
-        if token.value in {"2>", "2>>"} or (
-            _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
-            and not token.value.startswith("1")
-        ):
+        if token.quoted or token.value not in {">", ">>", "1>", "1>>", "&>", "&>>", ">&", ">|"}:
             continue
         if idx + 1 >= len(tokens):
+            file_redirected = False
             continue
         target = tokens[idx + 1]
-        if is_unquoted_shell_control_token(target):
-            continue
-        if not is_benign_redirect_target(target.value):
-            return True
-    return False
+        file_redirected = (
+            not is_unquoted_shell_control_token(target)
+            and not is_benign_redirect_target(target.value)
+            and not _contains_unexpanded_shell_reference(target.value)
+            and not _COMMAND_SUBSTITUTION.search(target.value)
+            and (target.quoted or not any(char in target.value for char in "~*?[{"))
+        )
+    return file_redirected
 
 
 def strip_input_redirections(tokens: list[ShellToken]) -> list[ShellToken]:

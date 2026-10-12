@@ -8,12 +8,28 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks._normalization_shell import redirects_stdout_to_file, tokenize_shell_command
 from gobby.hooks.code_navigation_recovery import navigation_requires_index
 from gobby.hooks.normalization import normalize_tool_fields
 
 pytestmark = pytest.mark.unit
 
 OUTAGE = '{"error":"io","message":"grant lock: Operation not permitted"}\n'
+
+STDOUT_REDIRECT_CASES = [
+    ("> /tmp/x >&2", False),
+    ("> /tmp/x 1>&2", False),
+    (">> /tmp/x >&2", False),
+    ("> /dev/fd/2", False),
+    ("> /dev/fd/1", False),
+    ("> /proc/self/fd/1", False),
+    ("> /proc/self/fd/2", False),
+    (">&2 > /tmp/x", True),
+    ("> /tmp/x", True),
+    ("&> /tmp/x", True),
+    ("> /tmp/x 2>&1", True),
+    ("2>&1 > /tmp/x", True),
+]
 
 
 @pytest.fixture
@@ -509,6 +525,32 @@ def test_redirected_unknown_read_preserves_opaque_mutation_scope(repo: Path) -> 
     data = event(repo, """bash -c 'cat "$F"; touch "$TARGET"' > /tmp/x""")
     assert not navigation_requires_index(data, {}, "read", broad_only=True)
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(("redirect", "file_redirected"), STDOUT_REDIRECT_CASES)
+@pytest.mark.parametrize(
+    "command",
+    ['for f in src/long.py; do cat "$f" {redirect}; done', "cat src/long.py {redirect}"],
+)
+def test_source_read_uses_final_stdout_destination(
+    repo: Path, command: str, redirect: str, file_redirected: bool
+) -> None:
+    assert broad_read_blocked(repo, command.format(redirect=redirect)) is not file_redirected
+
+
+@pytest.mark.parametrize(
+    ("redirect", "file_redirected"),
+    [
+        *STDOUT_REDIRECT_CASES,
+        ('> "$OUT"', False),
+        ('> "`printf /dev/stdout`"', False),
+        ("> /dev/std*", False),
+        (">", False),
+    ],
+)
+def test_stdout_redirection_proof_tracks_order(redirect: str, file_redirected: bool) -> None:
+    tokens = tokenize_shell_command(f"cat src/long.py {redirect}")
+    assert redirects_stdout_to_file(tokens) is file_redirected
 
 
 @pytest.mark.parametrize(
