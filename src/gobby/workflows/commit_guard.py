@@ -114,9 +114,10 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
                 expansions.extend(_prepare(heredoc.text, depth, data=True)[1])
         cwd_unverified = False
     except ValueError:
-        shell_tokens = [ShellToken(part) for part in command.split()]
-        expansions = []
-        cwd_unverified = True
+        # Bash may execute complete lines before rejecting malformed later
+        # syntax. Splitting decoded words loses nested-shell quote provenance,
+        # so it cannot prove that an executable prefix contains no commit.
+        return (GitCommitInvocation(pathspecs=(), cwd_unverified=True),)
 
     invocations: list[GitCommitInvocation] = []
     if any(_parse_git_commit_invocations(text, depth + 1) for text in expansions):
@@ -193,6 +194,10 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
                     work_tree=work_tree,
                     root_options=root_options,
                     cwd_unverified=cwd_unverified
+                    or any(
+                        path.startswith(":") or any(char in path for char in "*?[]{}")
+                        for path in pathspecs
+                    )
                     or any(
                         _unproven_commit_path(path)
                         for path in (chdir, work_tree, *root_options, *pathspecs)
@@ -432,8 +437,9 @@ async def foreign_staged_commit_conflict(
         # Known unprovable input is a policy refusal, not an operational Git
         # failure. Do not inspect a literal shell variable or page the operator.
         return (
-            "Commit blocked: Gobby cannot prove this command's working directory. "
-            "Use a literal tool workdir and git -C path so checkout ownership can be verified."
+            "Commit blocked: Gobby cannot prove this command's working directory or affected paths. "
+            "Use valid shell syntax, a literal workdir and literal paths without patterns "
+            "so checkout ownership can be verified."
         )
 
     try:

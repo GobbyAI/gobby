@@ -1440,6 +1440,97 @@ def test_parse_separates_newline_chained_commits(
     assert [i.pathspecs for i in parse_git_commit_invocations(command)] == expected
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git commit -- "$(cat files)"',
+        'git commit -- "$F"',
+        'eval "cd /x"; git commit',
+        'eval "$(printf cd) /x"; git commit',
+        "cat <<EOF\n$(git commit)\nEOF",
+    ],
+)
+def test_parse_unproven_expansion_commit_targets(command: str) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert invocations
+    assert all(invocation.cwd_unverified for invocation in invocations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pathspec",
+    [
+        "'*.py'",
+        "'[ab].py'",
+        "':/'",
+        "':(glob)**/*.py'",
+        "*.py",
+        "[ab].py",
+        "{a,b}.py",
+        "sub/{a,b}.py",
+        "?.py",
+    ],
+)
+async def test_pattern_pathspec_refuses_foreign_dirty_python_file(
+    guard_harness: GuardHarness, pathspec: str
+) -> None:
+    for relative in ("a.py", "b.py", "sub/a.py", "sub/b.py"):
+        path = guard_harness.repo / relative
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("base\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "a.py", "b.py", "sub")
+    _git(guard_harness.repo, "commit", "-q", "-m", "python fixtures")
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_files": {guard_harness.foreign_task.id: ["b.py", "sub/b.py"]},
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {str(guard_harness.repo): ["b.py", "sub/b.py"]}
+            },
+        },
+    )
+    (guard_harness.repo / "b.py").write_text("foreign change\n", encoding="utf-8")
+    (guard_harness.repo / "sub/b.py").write_text("foreign change\n", encoding="utf-8")
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(f"git commit --only -m pattern -- {pathspec}")
+    )
+    assert response.decision == "block"
+    assert "Commit blocked:" in (response.reason or "")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git commit --only -m 'literal' -- 'owned.txt'",
+        "cat <<'EOF'\n$(git commit -- foreign.txt)\nEOF",
+    ],
+)
+def test_parse_pattern_guard_preserves_literal_quoted_data(command: str) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert all(not invocation.cwd_unverified for invocation in invocations)
+    if command.startswith("git"):
+        assert len(invocations) == 1
+        assert invocations[0].pathspecs == ("owned.txt",)
+    else:
+        assert invocations == ()
+
+
+@pytest.mark.parametrize("shell,expected_head", [("bash", "prefix change"), ("zsh", "base owned")])
+def test_malformed_later_line_cannot_hide_executed_nested_commit(
+    repo: Path, shell: str, expected_head: str
+) -> None:
+    (repo / "owned.txt").write_text("prefix change\n", encoding="utf-8")
+    command = "bash -c 'git commit --only -m prefix -- owned.txt'\nprintf '"
+    result = subprocess.run([shell, "-c", command], cwd=repo, capture_output=True, check=False)
+    assert result.returncode != 0
+    assert _git(repo, "show", "HEAD:owned.txt") == expected_head
+    invocations = parse_git_commit_invocations(command)
+    assert invocations
+    assert all(invocation.cwd_unverified for invocation in invocations)
+
+
 def test_parse_keeps_explicit_pathspecs_and_quoted_messages() -> None:
     assert [
         i.pathspecs for i in parse_git_commit_invocations("git commit -- src/a.py tests/b.py")
