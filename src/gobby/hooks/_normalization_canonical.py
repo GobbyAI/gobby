@@ -974,6 +974,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     ):
         metadata.update(search_navigation_metadata(canonical_file_paths))
 
+    metadata.pop("_canonical_pending_source_reads", None)
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
     annotate_navigation(data, metadata)
 

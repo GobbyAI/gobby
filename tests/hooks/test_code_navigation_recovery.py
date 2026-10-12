@@ -401,6 +401,53 @@ def test_non_source_loop_read_has_no_navigation_payload(repo: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        """for f in src/long.py; do bash -c 'cat "$f"'; touch /tmp/x; done""",
+        """for f in src/long.py; do sh -c 'cat "$f"'; touch /tmp/x; done""",
+        'for f in src/long.py; do ( cat "$f" ); touch /tmp/x; done',
+        """for f in src/long.py; do bash -c 'sed -n p "$f"; touch /tmp/x'; done""",
+        'for f in src/long.py; do ( sed -n "/value/w /tmp/x" "$f" ); done',
+        """for f in src/long.py; do bash -c 'cat "$f"'; done; touch /tmp/x""",
+        'for f in src/long.py; do ( cat "$f"; touch /tmp/x ); done',
+    ],
+)
+def test_nested_wrapper_reads_resolve_enclosing_loop_bindings(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        """for f in src/short.py; do bash -c 'f=src/long.py; cat "$f"'; touch /tmp/x; done""",
+        """for f in src/short.py; do bash -c 'read f; cat "$f"'; touch /tmp/x; done""",
+        'for f in src/short.py; do ( f=src/long.py; cat "$f" ); touch /tmp/x; done',
+        """for f in notes.txt; do bash -c 'f=src/long.py; cat "$f"'; touch /tmp/x; done""",
+    ],
+)
+def test_nested_rebinding_cannot_inherit_outer_read_exemptions(repo: Path, command: str) -> None:
+    (repo / "notes.txt").write_text("value\n")
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/short.py; do ( cat "$f" ); touch /tmp/x; done',
+        """for f in src/long.py; do bash -c 'head -n 10 "$f"'; touch /tmp/x; done""",
+        """for f in src/long.py; do bash -c 'cat "$f"' | head -n 10; touch /tmp/x; done""",
+        'for f in src/long.py; do ( cat "$f" ) | head -n 10; touch /tmp/x; done',
+        'for f in notes.txt; do ( cat "$f" ); touch /tmp/x; done',
+    ],
+)
+def test_nested_loop_read_exemptions_remain_bounded(repo: Path, command: str) -> None:
+    (repo / "notes.txt").write_text("value\n" * 60)
+    data = event(repo, command)
+    assert not navigation_requires_index(data, {}, "read", broad_only=True)
+    assert "_canonical_pending_source_reads" not in data
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         ("rg pattern web/dist/assets", False),
