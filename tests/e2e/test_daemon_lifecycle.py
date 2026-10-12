@@ -472,7 +472,14 @@ def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[
     env = _daemon_env(config_path)
     log_dir = gobby_home / "logs"
     command = native_daemon_command(
-        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        env,
+        [
+            sys.executable,
+            str(Path(__file__).with_name("readiness_bootstrap.py")),
+            "gobby.runner",
+            "--config",
+            str(config_path),
+        ],
     )
     with (
         open(log_dir / "daemon.log", "a") as log_f,

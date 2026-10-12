@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import psutil
 
 
 @dataclass(frozen=True)
@@ -55,23 +56,36 @@ def capture_readiness_timeout(
         owner_pid = int((log_dir / "readiness-diagnostics.pid").read_text())
     except (OSError, ValueError):
         owner_pid = None
-    if (
-        owner_pid is not None
-        and process is not None
-        and owner_pid == process.pid
-        and process.poll() is None
-    ):
+    diagnostic_process: subprocess.Popen[bytes] | psutil.Process | None = None
+    if owner_pid is not None and process is not None and process.poll() is None:
+        if owner_pid == process.pid:
+            diagnostic_process = process
+        else:
+            try:
+                diagnostic_process = next(
+                    (
+                        child
+                        for child in psutil.Process(process.pid).children(recursive=True)
+                        if child.pid == owner_pid
+                        and child.is_running()
+                        and child.status() != psutil.STATUS_ZOMBIE
+                    ),
+                    None,
+                )
+            except psutil.Error:
+                pass  # The owned tree exited or cannot be verified; never signal it.
+    if diagnostic_process is not None:
         try:
-            process.send_signal(signal.SIGUSR2)
-            process.send_signal(signal.SIGUSR1)
-        except OSError:
+            diagnostic_process.send_signal(signal.SIGUSR2)
+            diagnostic_process.send_signal(signal.SIGUSR1)
+        except (OSError, psutil.Error):
             pass  # Process exited between poll and signal; retain existing evidence.
         else:
             deadline = time.monotonic() + 2.0
             ready = log_dir / "readiness-tasks.ready"
             while time.monotonic() < deadline and (
                 _tail(threads) in ("<unavailable>", "<empty>")
-                or _tail(ready).strip() != str(process.pid)
+                or _tail(ready).strip() != str(owner_pid)
             ):
                 time.sleep(0.025)
     return ReadinessCapture(_tail(threads), _tail(tasks), _tail(timings))

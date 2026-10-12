@@ -166,8 +166,7 @@ impl AgentEntry {
     /// each whitespace run one `-`, with the effort appended. When the display
     /// name drops the family (`Fable 5.1`), a hyphenated raw id's first token
     /// leads; bare aliases add no prefix. An absent segment leaves no dangling
-    /// `-`: a run spawned with an effort
-    /// before its model is known reads `xhigh`.
+    /// `-`: a run spawned with an effort before its model is known reads `xhigh`.
     pub fn model_slug(&self) -> String {
         let model = self
             .model_display_name
