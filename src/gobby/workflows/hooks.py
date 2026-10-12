@@ -625,6 +625,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 # would review. Needs no session, because the gates block a
                 # session-less commit too.
                 eval_context["commit_has_reviewable_paths"] = True
+                eval_context["commit_records_only_plan_paths"] = False
                 if event.event_type == HookEventType.BEFORE_TOOL and project_path:
                     from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
@@ -632,6 +633,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         event, project_path, variables, db=self.rule_engine.db
                     )
                     eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
+                    eval_context["commit_records_only_plan_paths"] = (
+                        review_scope.records_only_plan_paths
+                    )
                     owned_paths = review_scope.session_owned_reviewable_paths
                     eval_context["session_owned_reviewable_paths"] = (
                         list(owned_paths) if owned_paths is not None else None

@@ -24,6 +24,11 @@ from typing import TYPE_CHECKING
 import psycopg
 
 from gobby.config.shell_lexing import parse_shell_command
+from gobby.hooks._ansi_c import opens_ansi_c_quote
+from gobby.hooks._normalization_shell import (
+    _contains_unexpanded_shell_reference,
+    scan_shell_command,
+)
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.workflows.commit_guard import GitCommitInvocation, resolve_commit_inspect_cwd
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
@@ -153,6 +158,7 @@ class CommitReviewScope:
 
     has_reviewable_paths: bool
     session_owned_reviewable_paths: tuple[str, ...] | None
+    records_only_plan_paths: bool = False
 
 
 def parse_commit_scope(command: str | None) -> CommitScope | None:
@@ -163,6 +169,11 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
     ``commit``, or an option this module does not model is in play.
     """
     if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        if _has_scope_changing_expansion(command):
+            return None
+    except ValueError:
         return None
 
     parsed = parse_shell_command(command)
@@ -215,6 +226,42 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
     return replace(scope, added_paths=added_paths)
 
 
+def _has_scope_changing_expansion(command: str) -> bool:
+    """Reject executable expansions before shell parsing strips heredoc bodies."""
+    text = command.replace("\\\n", "")
+    heredocs = (
+        {body.start: body for body in scan_shell_command(text).heredocs} if "<<" in text else {}
+    )
+    quote = ""
+    index = 0
+    while index < len(text):
+        body = heredocs.get(index)
+        if body is not None:
+            # Quotes inside an unquoted body do not suppress its expansion.
+            if not body.quoted or not body.terminated:
+                return True
+            index = body.end
+            continue
+        char = text[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if not quote and opens_ansi_c_quote(text, index):
+            quote = "$'"
+            index += 2
+            continue
+        if quote not in {"'", "$'"}:
+            if char == "`" or text.startswith(("$(", "<(", ">("), index):
+                return True
+        if char in "\"'":
+            if not quote:
+                quote = char
+            elif quote == char or (quote == "$'" and char == "'"):
+                quote = ""
+        index += 1
+    return False
+
+
 def _chained_add_paths(segments: Sequence[tuple[str, ...]]) -> tuple[str, ...] | None:
     """Return the literal paths of plain ``git add`` segments, or None for any other shape."""
     paths: list[str] = []
@@ -223,7 +270,9 @@ def _chained_add_paths(segments: Sequence[tuple[str, ...]]) -> tuple[str, ...] |
             return None
         operands = segment[3:] if segment[2:3] == ("--",) else segment[2:]
         if not operands or any(
-            operand.startswith(("-", ":")) or any(char in operand for char in "*?[$`\\")
+            operand.startswith(("-", ":"))
+            or any(char in operand for char in "*?[$`\\")
+            or _unresolved_shell_path(operand)
             for operand in operands
         ):
             return None
@@ -244,12 +293,23 @@ def _parse_git_global_options(
             return index, chdir
         if token == "-C" and chdir is None and index < len(tokens):
             chdir = tokens[index]
+            if _unresolved_shell_path(chdir):
+                return None
             index += 1
             continue
         if token in _GIT_GLOBAL_FLAGS:
             continue
         return None
     return None
+
+
+def _unresolved_shell_path(path: str) -> bool:
+    """A tokenized path must not depend on the provider shell's expansions."""
+    return (
+        _contains_unexpanded_shell_reference(path)
+        or path.startswith("~")
+        or any(char in path for char in "{}")
+    )
 
 
 def _parse_commit_arguments(tokens: Sequence[str], chdir: str | None) -> CommitScope | None:
@@ -288,6 +348,8 @@ def _parse_commit_arguments(tokens: Sequence[str], chdir: str | None) -> CommitS
 
     all_tracked = bool(flags & {"-a", "--all"})
     include_staged = bool(flags & {"-i", "--include"})
+    if any(_unresolved_shell_path(path) for path in pathspecs):
+        return None
     # `git commit -a <pathspec>` and `-a -i` are errors git refuses, so a
     # command carrying them records nothing this module can predict.
     if all_tracked and (pathspecs or include_staged):
@@ -381,16 +443,18 @@ async def inspect_commit_review_scope(
         for path in paths
         if PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS
     }
+    records_only_plan_paths = all(path.startswith(".gobby/plans/") for path in paths)
     if variables is None:
-        return CommitReviewScope(bool(reviewable), None)
+        return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
 
     checkout_root = await resolve_git_worktree_root_async(inspect_cwd, project_path)
     if checkout_root is None:
-        return CommitReviewScope(bool(reviewable), None)
+        return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
     owned = session_dirty_file_set_for_checkout(variables, checkout_root)
     return CommitReviewScope(
         bool(reviewable),
         tuple(sorted(reviewable & owned)),
+        records_only_plan_paths,
     )
 
 
@@ -513,7 +577,15 @@ async def _diff_paths(
 ) -> set[str] | None:
     # --no-renames keeps both sides of a rename, so renaming code to a doc
     # extension cannot hide the code path it deletes.
-    args = ["diff", "--name-only", "--no-renames", "-z", *diff_args]
+    args = [
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--no-relative",
+        "--ignore-submodules=none",
+        "-z",
+        *diff_args,
+    ]
     if pathspecs:
         args += ["--", *pathspecs]
     result = await daemon_git.run(args, cwd=cwd, timeout=10.0)
