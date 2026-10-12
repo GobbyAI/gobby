@@ -799,7 +799,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
         except AdapterHookCancelled as exc:
             if exc.executor_future is not None and envelope_id and owner_token:
-                lease_outlives_request = True
+                lease_outlives_request = not exc.executor_future.done()
                 await register_adapter_timeout_finalization(
                     exc.executor_future,
                     envelope_id=envelope_id,

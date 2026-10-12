@@ -157,7 +157,7 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
             await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
 
         error = raised.value
-        assert cancelled.wait(timeout=0.5)
+        assert await asyncio.to_thread(cancelled.wait)
         assert error.event_type == HookEventType.BEFORE_TOOL.value
         assert error.session_id == "platform-session"
         assert error.timeout_seconds == evaluation_timeout

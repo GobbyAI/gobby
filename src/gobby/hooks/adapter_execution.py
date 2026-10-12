@@ -100,7 +100,7 @@ def schedule_adapter_timeout_finalization(
     def _on_done(fut: Future[dict[str, Any]]) -> None:
         try:
             result = fut.result()
-        except Exception:
+        except BaseException:
             release_envelope_processing_claim(
                 envelope_id,
                 owner_token=owner_token,
