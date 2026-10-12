@@ -21,7 +21,7 @@ from gobby.storage.workspace_layout import (
 )
 from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceTarget
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.utils.git import run_git_command
+from gobby.utils.git import get_git_branch, run_git_command
 
 LANE_MANAGER_AGENT = "lane-manager"
 
@@ -312,9 +312,22 @@ def resolve_team_launch_inputs(
         raise RunbookSeatRefusal("worktree candidates exceed the read bound")
     trees = [tree for tree in trees if tree.machine_id == caller.machine_id]
     if worktree is not None:
-        matches = [tree for tree in trees if worktree in (tree.id, tree.branch_name)]
+        matches = [tree for tree in trees if worktree == tree.id]
+        if not matches:
+            matches = [
+                tree
+                for tree in trees
+                if worktree == tree.branch_name
+                or (
+                    Path(tree.worktree_path).is_dir()
+                    and worktree == get_git_branch(tree.worktree_path)
+                )
+            ]
         if len(matches) != 1:
-            raise _refuse("worktree", [f"{tree.branch_name} ({tree.id})" for tree in trees])
+            raise _refuse(
+                f"worktree {worktree!r}",
+                [f"{tree.branch_name} ({tree.id})" for tree in matches or trees],
+            )
     else:
         pattern = re.compile(rf"lane-{lane}(?:$|[-/])")
         associated = {tab.worktree_id for tab in tabs if tab.worktree_id}
@@ -338,30 +351,31 @@ def resolve_team_launch_inputs(
             Path(session.workspace_path).resolve() for session in live if session.workspace_path
         }
         runs = LocalAgentRunManager(db)
-        matches = [
-            tree
-            for tree in candidates
-            if tree.agent_session_id not in live_ids
-            and Path(tree.worktree_path).resolve() not in live_paths
-            and runs.get_active_run_for_worktree(tree.id) is None
-        ]
-        excluded: dict[str, str] = {}
-        clean = []
-        for tree in matches:
+        availability: dict[str, str] = {}
+        matches = []
+        for tree in candidates:
+            if (
+                tree.agent_session_id in live_ids
+                or Path(tree.worktree_path).resolve() in live_paths
+            ):
+                availability[tree.id] = "live seat"
+                continue
+            if runs.get_active_run_for_worktree(tree.id) is not None:
+                availability[tree.id] = "active run"
+                continue
             status = run_git_command(
                 ["git", "status", "--porcelain", "--untracked-files=all"], tree.worktree_path
             )
             if status == "":
-                clean.append(tree)
+                matches.append(tree)
+                availability[tree.id] = "idle"
             else:
-                excluded[tree.id] = "dirty" if status is not None else "Git status unavailable"
-        matches = clean
+                availability[tree.id] = "dirty" if status is not None else "Git status unavailable"
         if len(matches) != 1:
             raise _refuse(
                 "worktree",
                 [
-                    f"{tree.branch_name} ({tree.id})"
-                    + (f" [{excluded[tree.id]}]" if tree.id in excluded else "")
+                    f"{tree.branch_name} ({tree.id}) [{availability[tree.id]}]"
                     for tree in candidates
                 ],
             )
