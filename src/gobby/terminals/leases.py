@@ -658,7 +658,8 @@ class TerminalLeaseRegistry:
             expected_lease_generation is not None and expected_lease_generation != lease.generation
         ):
             return WriteAdmit(False, "held")
-        fingerprint = sha256(f"{kind}:".encode() + payload).hexdigest()
+        kind_bytes = kind.encode()
+        fingerprint = sha256(len(kind_bytes).to_bytes(8, "big") + kind_bytes + payload).hexdigest()
         existing = record.writes.get(parsed_seq)
         if existing is not None:
             if existing.fingerprint != fingerprint:

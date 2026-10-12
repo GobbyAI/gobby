@@ -555,8 +555,8 @@ impl Registry {
         }
         let r = t.record_mut(attachment)?;
         let mut hash = Sha256::new();
+        hash.update((kind.len() as u64).to_be_bytes());
         hash.update(kind.as_bytes());
-        hash.update(b":");
         hash.update(payload);
         let fingerprint: [u8; 32] = hash.finalize().into();
         if let Some(write) = r.writes.get(&seq) {
