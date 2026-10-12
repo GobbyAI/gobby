@@ -10,7 +10,7 @@ import ast
 import re
 import shlex
 from collections.abc import Collection, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect, opens_ansi_c_quote
 from gobby.hooks._normalization_shell import (
@@ -141,8 +141,13 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             tick = char == "`"
             start = index + (1 if tick else 2)
             end = _substitution_end(command, start, tick, depth)
+            marker = (
+                f"__gobby_process_input_{len(expansions)}__"
+                if command.startswith("<(", index)
+                else "__gobby_expansion__"
+            )
             expansions.append(command[start:end])
-            output.append("__gobby_expansion__")
+            output.append(marker)
             index = end + 1
             continue
         if not data and not quote and opens_ansi_c_quote(command, index):
@@ -663,7 +668,35 @@ def _analyze_python_launch(script: str, depth: int, dialect: ShellDialect) -> bo
     return False
 
 
-def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
+def _process_input_consumer(
+    segment: list[ShellToken], words: list[str], marker: str
+) -> Literal["shell", "python"] | None:
+    """Identify an input substitution used as stdin or the first script operand."""
+    if marker in words:
+        index = words.index(marker)
+        prefix = words[:index]
+        through_operand = words[: index + 1]
+        if _shell_stdin(prefix) and not _shell_stdin(through_operand):
+            return "shell"
+        if _python_program(prefix)[1] and not _python_program(through_operand)[1]:
+            return "python"
+    for index, token in enumerate(segment[1:], 1):
+        redirect = segment[index - 1]
+        if token.value == marker and not redirect.quoted and redirect.value in {"<", "0<"}:
+            if _shell_stdin(words):
+                return "shell"
+            if _python_program(words)[1]:
+                return "python"
+    return None
+
+
+def _blocked(
+    command: str,
+    depth: int,
+    dialect: ShellDialect = "bash",
+    *,
+    output_consumer: Literal["shell", "python"] | None = None,
+) -> bool:
     if depth > _MAX_DEPTH:
         return True
     try:
@@ -685,6 +718,19 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
             name = words[0].rsplit("/", 1)[-1]
             # A named shell decodes the script it runs in its own dialect.
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
+            for token in segment:
+                match = re.fullmatch(r"__gobby_process_input_([0-9]+)__", token.value)
+                if match is None:
+                    continue
+                index = int(match[1])
+                if index >= len(expansions):
+                    continue
+                marker = token.value
+                consumer = _process_input_consumer(segment, words, marker)
+                if consumer is not None and _blocked(
+                    expansions[index], depth + 1, inner, output_consumer=consumer
+                ):
+                    return True
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
             # Budget executable words; code operands and heredoc payloads belong
@@ -696,8 +742,10 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
             if python_stdin:
                 if any(_python_launch(body.text, depth + 1, dialect) for body in bodies):
                     return True
-            piped = _piped_to_shell(scan.tokens, end)
-            python_piped = _piped_to_shell(scan.tokens, end, python=True)
+            piped = output_consumer == "shell" or _piped_to_shell(scan.tokens, end)
+            python_piped = output_consumer == "python" or _piped_to_shell(
+                scan.tokens, end, python=True
+            )
             if python_stdin:
                 for index, token in enumerate(segment[:-1]):
                     if not token.quoted and token.value.lstrip("0123456789") == "<<<":
@@ -719,7 +767,9 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                         script = words[index + 1 : index + 3]
                         if script[:1] == ["--"]:
                             script = script[1:]
-                        if script and _blocked(script[0], depth + 1, inner):
+                        if script and _blocked(
+                            script[0], depth + 1, inner, output_consumer=output_consumer
+                        ):
                             return True
                         break
                 # Literal here-strings are executable input as well.
@@ -733,7 +783,10 @@ def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
                             return True
             if _shell_stdin(words) or piped:
                 body_dialect = inner if _shell_stdin(words) else dialect
-                if any(_blocked(body.text, depth + 1, body_dialect) for body in bodies):
+                if any(
+                    _blocked(body.text, depth + 1, body_dialect, output_consumer=output_consumer)
+                    for body in bodies
+                ):
                     return True
             for body in bodies:
                 if not body.quoted:
