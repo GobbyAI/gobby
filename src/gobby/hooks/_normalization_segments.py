@@ -106,19 +106,26 @@ def _bound_pipeline_reads(
             continue
         deferred = item.extra.get("_canonical_deferred_source_read")
         navigation = deferred if deferred else item.extra
-        if navigation.get("canonical_code_navigation_action") == "read" and navigation.get(
-            "canonical_code_navigation_broad"
+        pending = item.extra.get("_canonical_pending_source_reads")
+        if (
+            navigation.get("canonical_code_navigation_action") == "read"
+            and navigation.get("canonical_code_navigation_broad")
+            or pending
         ):
             narrowed = {
                 "canonical_code_navigation_broad": False,
                 "canonical_narrow_source_context": True,
                 "canonical_source_line_count": bound,
             }
-            extra = (
-                {**item.extra, "_canonical_deferred_source_read": {**deferred, **narrowed}}
-                if deferred
-                else {**item.extra, **narrowed}
-            )
+            extra = dict(item.extra)
+            if deferred:
+                extra["_canonical_deferred_source_read"] = {**deferred, **narrowed}
+            elif navigation.get("canonical_code_navigation_action") == "read":
+                extra.update(narrowed)
+            if pending:
+                extra["_canonical_pending_source_reads"] = [
+                    {**record, "scope": {**record["scope"], **narrowed}} for record in pending
+                ]
             if "canonical_code_navigation_segments" in extra:
                 extra["canonical_code_navigation_segments"] = [
                     {**segment, **narrowed}

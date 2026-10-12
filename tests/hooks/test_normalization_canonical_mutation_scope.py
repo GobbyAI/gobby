@@ -556,6 +556,25 @@ def test_nested_and_loop_bound_reads_preserve_mutation_scope(
 @pytest.mark.parametrize(
     "command",
     [
+        """for f in src/long.py; do bash -c 'cat "$f"'; touch /tmp/x; done""",
+        """for f in src/long.py; do sh -c 'cat "$f"'; touch /tmp/x; done""",
+        'for f in src/long.py; do ( cat "$f" ); touch /tmp/x; done',
+        """for f in src/long.py; do bash -c 'sed -n p "$f"; touch /tmp/x'; done""",
+        'for f in src/long.py; do ( sed -n "/value/w /tmp/x" "$f" ); done',
+        """for f in src/long.py; do bash -c 'cat "$f"'; done; touch /tmp/x""",
+        'for f in src/long.py; do ( cat "$f"; touch /tmp/x ); done',
+    ],
+)
+def test_nested_wrapper_loop_reads_keep_only_mutation_paths(tmp_path: Path, command: str) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == ["/tmp/x"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "echo $$'\\' ; git apply x.patch ; echo '\\'",
         "echo $(echo $$'\\') ; git apply x.patch ; echo ')'\\'",
         "echo $$'\\'' ; git apply x.patch ; echo \\'",

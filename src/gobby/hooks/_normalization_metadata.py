@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypedDict
 
 from gobby.hooks._normalization_bindings import (
     _loop_binding_variable_is_stable,
@@ -15,6 +15,99 @@ from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _contains_unexpanded_shell_reference
 from gobby.hooks._sed_program import sed_write_paths
 from gobby.hooks.code_navigation import source_read_navigation_metadata
+
+
+class _PendingSourceRead(TypedDict):
+    paths: tuple[str, ...]
+    words: tuple[str, ...]
+    raw_words: tuple[str, ...]
+    root: str | None
+    scope: dict[str, Any]
+    binding_preserved: bool
+
+
+def _segment_command_is_known(item: _ShellSegmentMetadata) -> bool:
+    return bool(
+        item.kind != "execute"
+        or item.repo_mutation
+        or item.neutral_setup
+        or item.read_only_pipeline_filter
+        or (item.extra and item.extra.get("canonical_code_navigation_action"))
+    )
+
+
+def _navigation_prefix_preserves_binding(
+    prefix: list[_ShellSegmentMetadata], variable: str
+) -> bool:
+    start = 0
+    for index, item in enumerate(prefix):
+        if (
+            item.loop_binding_variable == variable
+            and item.paths
+            and _loop_header_words_are_literal(item.shell_words, item.shell_raw_words)
+        ) or any(name == variable for name, _ in item.assignment_bindings):
+            start = index + 1
+    return all(
+        _shell_segment_preserves_loop_binding(
+            item.shell_words, variable, command_is_known=_segment_command_is_known(item)
+        )
+        for item in prefix[start:]
+    )
+
+
+def _resolve_pending_source_read(
+    record: _PendingSourceRead,
+    bindings: dict[str, tuple[str, ...]],
+    prefix: list[_ShellSegmentMetadata],
+    disqualified: set[str],
+) -> tuple[dict[str, Any] | None, _PendingSourceRead | None]:
+    """Keep a nested read private until an enclosing binding proves its operands."""
+    paths: list[str] = []
+    preserved = record["binding_preserved"]
+    unresolved = False
+    bound_operand = False
+    for path in record["paths"]:
+        reference = _plain_loop_binding_reference(path, record["words"], record["raw_words"])
+        if reference and reference[0] in bindings:
+            bound_operand = True
+            variable, suffix = reference
+            paths.extend(value + suffix for value in bindings[variable])
+            preserved &= variable not in disqualified and _navigation_prefix_preserves_binding(
+                prefix, variable
+            )
+        else:
+            paths.append(path)
+            unresolved |= _path_is_unresolved(path, record["root"])
+    scope = record["scope"]
+    if bound_operand and not preserved:
+        return {**scope, "canonical_file_paths": list(record["paths"])}, None
+    navigation = source_read_navigation_metadata(
+        paths,
+        line_count=scope.get("canonical_source_line_count"),
+        byte_count=scope.get("canonical_source_byte_count"),
+        read_scope=scope["canonical_source_read_scope"],
+    )
+    if navigation:
+        # A possible intervening rebind cannot inherit short-file/ignored-path exemptions.
+        return {
+            **navigation,
+            "canonical_file_paths": paths if preserved else list(record["paths"]),
+        }, None
+    if unresolved:
+        references = [
+            _plain_loop_binding_reference(path, record["words"], record["raw_words"])
+            for path in record["paths"]
+        ]
+        preserved &= all(
+            reference is None
+            or (
+                reference[0] not in disqualified
+                and _navigation_prefix_preserves_binding(prefix, reference[0])
+            )
+            for reference in references
+        )
+        return None, {**record, "binding_preserved": preserved}
+    return None, None
 
 
 def _unknown_write_metadata() -> dict[str, Any]:
@@ -161,18 +254,16 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     navigation_scope_unknown = False
     navigation_scope_paths: list[str] = []
     navigation_segments: list[dict[str, Any]] = []
+    pending_reads: list[_PendingSourceRead] = []
+    prefix: list[_ShellSegmentMetadata] = []
     loop_bindings: dict[str, tuple[str, ...]] = {}
     disqualified_loop_variables = set().union(
         *(_shell_loop_binding_disqualifications(item.shell_words) for item in metadata)
     )
     for item in metadata:
-        command_is_known = bool(
-            item.kind != "execute"
-            or item.repo_mutation
-            or item.neutral_setup
-            or item.read_only_pipeline_filter
-            or (item.extra and item.extra.get("canonical_code_navigation_action"))
-        )
+        prefix.append(item)
+        incoming_bindings = dict(loop_bindings)
+        command_is_known = _segment_command_is_known(item)
         for bound_variable in tuple(loop_bindings):
             if not _shell_segment_preserves_loop_binding(
                 item.shell_words,
@@ -197,16 +288,37 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         resolvable = [
             path for path in item.paths if not _path_is_unresolved(path, item.literal_path_root)
         ]
+        if item.extra and not item.neutral_setup and not item.read_only_pipeline_filter:
+            records = list(item.extra.get("_canonical_pending_source_reads", ()))
+            if deferred := item.extra.get("_canonical_deferred_source_read"):
+                records.append(
+                    _PendingSourceRead(
+                        paths=item.navigation_paths or item.paths,
+                        words=item.shell_words,
+                        raw_words=item.shell_raw_words,
+                        root=item.literal_path_root,
+                        scope=dict(deferred),
+                        binding_preserved=True,
+                    )
+                )
+            for record in records:
+                segment, pending = _resolve_pending_source_read(
+                    record,
+                    {**incoming_bindings, **loop_bindings},
+                    prefix,
+                    disqualified_loop_variables,
+                )
+                if segment:
+                    navigation_segments.append(segment)
+                if pending:
+                    pending_reads.append(pending)
         if item.neutral_setup or item.read_only_pipeline_filter:
             pass
         elif item.extra and item.extra.get("canonical_code_navigation_segments"):
             navigation_segments.extend(
                 dict(segment) for segment in item.extra["canonical_code_navigation_segments"]
             )
-        elif item.extra and (
-            item.extra.get("canonical_code_navigation_action")
-            or item.extra.get("_canonical_deferred_source_read")
-        ):
+        elif item.extra and (item.extra.get("canonical_code_navigation_action")):
             navigation_paths: list[str] = []
             for path in item.navigation_paths or item.paths:
                 reference = _plain_loop_binding_reference(
@@ -218,14 +330,6 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 else:
                     navigation_paths.append(path)
             navigation_extra = dict(item.extra)
-            deferred = navigation_extra.pop("_canonical_deferred_source_read", None)
-            if deferred:
-                navigation_extra = source_read_navigation_metadata(
-                    navigation_paths,
-                    line_count=deferred.get("canonical_source_line_count"),
-                    byte_count=deferred.get("canonical_source_byte_count"),
-                    read_scope=deferred["canonical_source_read_scope"],
-                )
             if navigation_extra.get("canonical_code_navigation_action"):
                 navigation_segments.append(
                     {**navigation_extra, "canonical_file_paths": navigation_paths}
@@ -324,6 +428,9 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         # Preserve actual edits in mixed commands and nested shell wrappers.
         extra["canonical_edit_file_paths"] = edit_paths
     extra.pop("_canonical_deferred_source_read", None)
+    extra.pop("_canonical_pending_source_reads", None)
+    if pending_reads:
+        extra["_canonical_pending_source_reads"] = pending_reads
     extra["canonical_code_navigation_segments"] = navigation_segments
     if not pure_gcode_navigation:
         extra = _without_code_index_navigation(extra)
