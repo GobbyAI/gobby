@@ -179,7 +179,7 @@ def case_pattern_end(text: str, start: int, end: int) -> int | None:
             continue
         if char in "\"'":
             quote = char
-        elif char == "(":
+        elif char == "(" and closing != "}":
             contexts.append((closing, quote))
             closing, quote = ")", ""
         elif char == closing and contexts:

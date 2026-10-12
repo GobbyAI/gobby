@@ -103,7 +103,34 @@ def test_malformed_grouped_case_classification_does_not_raise(tmp_path: Path) ->
 
 def test_malformed_case_arm_tail_does_not_raise(tmp_path: Path) -> None:
     data = _invocation_metadata("case;<())(", tool_cwd=tmp_path, project_path=tmp_path)
-    assert isinstance(data.get("canonical_repo_mutation", False), bool)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command,paths",
+    [
+        ("case x in a)(touch a.py);; esac", ["a.py"]),
+        ("case x in a) (touch a.py);; esac", ["a.py"]),
+        ("case x in a)(rm -rf src);; esac", ["src"]),
+        ("case x in a) (rm -rf src);; esac", ["src"]),
+        ("case x in (a)(touch a.py);; esac", ["a.py"]),
+        ("case x in (a) (touch a.py);; esac", ["a.py"]),
+        ("case x in a)(touch a.py)&&(touch b.py);; esac", ["a.py", "b.py"]),
+        ("case x in a) (touch a.py)&&(touch b.py);; esac", ["a.py", "b.py"]),
+        ("case x in ${x:-(})touch a.py;; esac", ["a.py"]),
+        ("case x in ${x:-)})touch a.py;; esac", ["a.py"]),
+    ],
+)
+def test_case_arm_boundary_preserves_write_scope(
+    tmp_path: Path, command: str, paths: list[str]
+) -> None:
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_file_paths"] == paths
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
 
 
 @pytest.mark.parametrize(

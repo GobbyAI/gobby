@@ -572,7 +572,11 @@ def executable_command_subjects(command: str) -> list[str]:
     A command the scanner cannot parse (unclosed quote) or that has no tokens
     is matched whole, the fail-closed reading.
     """
-    return _subjects(command, 0)
+    try:
+        return _subjects(command, 0)
+    except ValueError:
+        # An arm body can remain malformed after its pattern is removed.
+        return [command]
 
 
 def _subjects(

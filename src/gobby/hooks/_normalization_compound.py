@@ -199,9 +199,15 @@ def case_arm_tokens(
                 try:
                     tail = scan_shell_command(command[tail_start:word_end])
                 except ValueError:
-                    # Keep the unsliced arm when its apparent boundary leaves
-                    # an incomplete shell construct; callers match it conservatively.
-                    return parts, case_depth, False
+                    # A glued group can span later words; rescan its complete
+                    # body before deciding that the arm is malformed.
+                    tail = scan_shell_command(command[tail_start:end])
+                    for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
+                        spans[id(arm_token)] = (tail_start + left, tail_start + right)
+                        if raw is not None:
+                            raw[id(arm_token)] = command[tail_start + left : tail_start + right]
+                        kept.append(arm_token)
+                    return kept, case_depth, False
                 for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
                     spans[id(arm_token)] = (tail_start + left, tail_start + right)
                     if raw is not None:

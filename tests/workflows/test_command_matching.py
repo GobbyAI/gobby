@@ -93,6 +93,33 @@ def test_malformed_grouped_case_matching_does_not_raise(mask_quoted: bool) -> No
 @pytest.mark.parametrize("mask_quoted", [False, True])
 def test_malformed_case_arm_tail_does_not_raise(mask_quoted: bool) -> None:
     assert not command_patterns_match("case;<())(", pattern=r"\btouch\b", mask_quoted=mask_quoted)
+    assert command_patterns_match("case;<())(", pattern=r"case;", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command,pattern",
+    [
+        ("case x in a)(touch a.py);; esac", r"^touch\b"),
+        ("case x in a) (touch a.py);; esac", r"^touch\b"),
+        ("case x in a)(rm -rf src);; esac", r"^rm\b"),
+        ("case x in a) (rm -rf src);; esac", r"^rm\b"),
+        ("case x in (a)(touch a.py);; esac", r"^touch\b"),
+        ("case x in (a) (touch a.py);; esac", r"^touch\b"),
+        ("case x in a)(touch a.py)&&(touch b.py);; esac", r"^touch a\.py\b"),
+        ("case x in a) (touch a.py)&&(touch b.py);; esac", r"^touch a\.py\b"),
+        ('case x in a)("git" push);; esac', r"^git\s+push\b"),
+        ('case x in a) ("git" push);; esac', r"^git\s+push\b"),
+        ("case x in a)(g\\it push);; esac", r"^git\s+push\b"),
+        ("case x in a) (g\\it push);; esac", r"^git\s+push\b"),
+        ("case x in ${x:-(})touch a.py;; esac", r"^touch\b"),
+        ("case x in ${x:-)})touch a.py;; esac", r"^touch\b"),
+    ],
+)
+def test_case_arm_boundary_preserves_command_matching(
+    command: str, pattern: str, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=pattern, mask_quoted=mask_quoted) is True
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])

@@ -246,15 +246,23 @@ def _classify_shell_command(
         segment_end = max(spans_by_token[id(token)][1] for token in segment.tokens)
         _, process_bodies = process_substitution_bodies(segment.tokens, spans_by_token, command)
         directory.end_list(segment.separator_before)
-        arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
-            segment.tokens,
-            gap,
-            case_depth,
-            pending_case_pattern,
-            command,
-            spans_by_token,
-            raw_by_token,
-        )
+        try:
+            arm_tokens, case_depth, pending_case_pattern = directory.compound_tokens(
+                segment.tokens,
+                gap,
+                case_depth,
+                pending_case_pattern,
+                command,
+                spans_by_token,
+                raw_by_token,
+            )
+        except ValueError:
+            return _build_canonical_tool_metadata(
+                "write",
+                repo_mutation=True,
+                confidence="low",
+                extra={"canonical_repo_mutation_scope_unknown": True},
+            )
         pattern_bodies, unreadable = case_pattern_process_bodies(
             segment.tokens, arm_tokens, spans_by_token, command
         )
