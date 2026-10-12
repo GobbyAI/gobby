@@ -348,6 +348,8 @@ class CronExecutor:
 
         # Resolve agent_definition if specified
         agent_def_name = config.get("agent_definition")
+        agent_body = None
+        initial_variables: dict[str, Any] = {}
         if agent_def_name:
             from gobby.workflows.agent_resolver import resolve_agent
 
@@ -358,9 +360,11 @@ class CronExecutor:
                 project_id=job.project_id,
             )
             if agent_body:
-                preamble = agent_body.prompt_for("agent")
-                if preamble:
-                    prompt = f"{preamble}\n\n---\n\n{prompt}"
+                # Match the named-agent entrypoint's rule activation context.
+                initial_variables["_agent_type"] = agent_body.name
+                if agent_body.workflows.rules:
+                    initial_variables["_agent_rules"] = agent_body.workflows.rules
+                initial_variables.update(agent_body.workflows.variables)
                 # Use agent definition's provider if no explicit provider in config
                 if "provider" not in config and agent_body.provider != "inherit":
                     provider = agent_body.provider
@@ -400,6 +404,9 @@ class CronExecutor:
         result = await spawn_agent_impl(
             prompt=prompt,
             runner=self.agent_runner,
+            agent_body=agent_body,
+            agent_lookup_name=agent_def_name,
+            initial_variables=initial_variables,
             provider=provider,
             workflow=workflow,
             timeout=timeout,

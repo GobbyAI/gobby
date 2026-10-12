@@ -14,12 +14,14 @@ import pytest
 
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.mcp_proxy.tools.communications import create_communications_registry
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
@@ -89,6 +91,78 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
 
     db.fetchall.side_effect = prefix_rows
     return create_communications_registry(mock_manager, db=db, workspace_root=tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permitted", "delivery_status"), [(True, "sent"), (False, "sent"), (True, "failed")]
+)
+async def test_send_operator_message_requires_installed_channel_grant(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    mock_manager: MagicMock,
+    permitted: bool,
+    delivery_status: str,
+) -> None:
+    """An enrolled DM is targeted explicitly; unlisted agents cannot send to it."""
+    AgentDefinitionManager(temp_db).create(
+        name="reporter" if permitted else "unlisted-worker",
+        definition_json={
+            "name": "reporter" if permitted else "unlisted-worker",
+            "prompts": {"agent": "Report status."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "operator_message_channels": ["gobby-telegram"] if permitted else [],
+        },
+        source="custom",
+    )
+    caller = SessionManager(temp_db).register(
+        external_id="operator-message-caller",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=str(sample_project["id"]),
+        agent_depth=1,
+    )
+    SessionVariableManager(temp_db).set_variable(
+        caller.id, "_agent_type", "reporter" if permitted else "unlisted-worker"
+    )
+    mock_manager.resolve_operator_conversation.return_value = {
+        "conversation_id": "dm:42",
+        "session_id": None,
+    }
+    delivery_error = "Telegram unavailable" if delivery_status == "failed" else None
+    mock_manager.send_message.return_value = MagicMock(
+        status=delivery_status, id="delivered", error=delivery_error
+    )
+    tools = create_communications_registry(mock_manager, db=temp_db)
+    handler = tools.get_tool("send_operator_message")
+    assert handler is not None
+    with patch(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
+    ):
+        result = await handler(channel="gobby-telegram", content="**Systems nominal**")
+
+    if permitted:
+        assert result == {
+            "success": delivery_status == "sent",
+            "message_id": "delivered",
+            "error": delivery_error,
+        }
+        mock_manager.resolve_operator_conversation.assert_called_once_with("gobby-telegram")
+        mock_manager.send_message.assert_awaited_once_with(
+            channel_name="gobby-telegram",
+            content="**Systems nominal**",
+            session_id=caller.id,
+            metadata={
+                "platform_destination": "42",
+                "thread_id": None,
+                "content_type": "text/markdown",
+            },
+        )
+    else:
+        assert result["success"] is False
+        assert "not permitted" in result["error"]
+        mock_manager.resolve_operator_conversation.assert_not_called()
+        mock_manager.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

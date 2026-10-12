@@ -17,6 +17,9 @@ from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.condition_helpers_sessions import send_message_target_allowed
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -162,7 +165,9 @@ def test_assistant_routes_and_edits_tasks_only_when_the_operator_asks() -> None:
 
     assert "You turn what the operator says into work for the Orchestrator" in prompt
     assert "Relay the operator's instructions to the Orchestrator verbatim" in prompt
-    assert "The Reporter drafts the 30-minute status" in prompt
+    assert "The Reporter owns the 30-minute delta and hourly full status" in prompt
+    assert "Only on a failed direct delivery" in prompt
+    assert "send_operator_message" in prompt
     assert "Decisions needed:" in prompt
     assert "Restart the daemon or the terminal client only on the operator's go" in prompt
     assert "`gobby-tasks:update_task` only when the operator asks" in prompt
@@ -316,6 +321,47 @@ def test_terminal_control_is_opt_in_per_definition(name: str, temp_db: HubDataba
     assert ("no-send-keys" in selected) is (name not in KEEPS_TERMINAL_CONTROL), name
 
 
+def test_reporter_owns_bounded_scheduled_delivery() -> None:
+    body = _load("reporter")
+    prompt = _prompt("reporter")
+    assert body.timeout == 900
+    assert body.execution_mode == "one_shot"
+    assert body.send_message_targets == ["session"]
+    assert body.operator_message_channels == ["gobby-telegram"]
+    assert "gobby-communications:send_operator_message" not in body.blocked_mcp_tools
+    assert "send_operator_message" in prompt
+    assert "gobby-telegram" in prompt
+    assert "success=true" in prompt
+    assert 'agent_type="assistant"' in prompt
+    assert "Do not read log files" in prompt
+    assert "300 seconds" in prompt
+    assert "minute 00-29" in prompt
+    assert "minute 30-59" in prompt
+    assert "Report mode: full" in prompt
+    assert "Report mode: delta" in prompt
+    assert "never contacts the operator" not in prompt
+    assert "the Assistant does that" not in prompt
+    for section in (
+        "Lane 1-8",
+        "time claimed",
+        "next five",
+        "landing/activation/close",
+        "Close backlog",
+        "Heavy slots",
+        "Hold state",
+        "Blocked or escalated",
+        "Operator decisions",
+        "Stalled or idle",
+        "Worktrees",
+        "Consolidator",
+        "ROADMAP",
+        "Story B critical path",
+        "Last 30 minutes",
+        "Systems nominal",
+    ):
+        assert section in prompt, section
+
+
 def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDatabase) -> None:
     result = sync_bundled_agents(definition_db)
 
@@ -327,6 +373,32 @@ def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDat
         assert row is not None, name
         assert row.enabled is True, name
         assert AgentDefinitionBody.model_validate(row.definition_json) == _load(name), name
+    reporter = manager.get_by_name("reporter")
+    assert reporter is not None
+    assert AgentDefinitionBody.model_validate(reporter.definition_json) == _load("reporter")
+    for row in manager.list_all():
+        body = AgentDefinitionBody.model_validate(row.definition_json)
+        assert body.operator_message_channels == (
+            ["gobby-telegram"] if row.name in {"reporter", "assistant"} else []
+        ), row.name
+
+
+def test_installed_reporter_can_send_assistant_fallback(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    result = sync_bundled_agents(temp_db)
+    assert result["success"] is True
+    sessions = SessionManager(temp_db)
+    caller = sessions.register(
+        external_id="reporter-fallback",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=str(sample_project["id"]),
+        agent_depth=1,
+    )
+    assert send_message_target_allowed(sessions, caller.id, "reporter", "session") is True
+    assert send_message_target_allowed(sessions, caller.id, "reporter", "global") is False
 
 
 def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:

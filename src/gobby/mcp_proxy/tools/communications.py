@@ -8,13 +8,17 @@ from typing import Any, Literal
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
+from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,65 @@ def create_communications_registry(
             result: str | None = await app_context.run_db(_resolve_session_id, session_id)
             return result
         return await asyncio.to_thread(_resolve_session_id, session_id)
+
+    def operator_destination(channel: str, caller_id: str | None) -> str:
+        if db is None or not caller_id:
+            raise ValueError("Operator messaging requires a registered caller")
+        caller = SessionManager(db).get(caller_id)
+        if caller is None:
+            raise ValueError("Operator messaging requires a registered caller")
+        agent_type = (
+            SessionVariableManager(db)
+            .get_variable_subset(caller_id, ("_agent_type",))
+            .get("_agent_type")
+        )
+        row = (
+            AgentDefinitionManager(db).get_by_name(agent_type, caller.project_id)
+            if isinstance(agent_type, str) and agent_type
+            else None
+        )
+        if row is None or not row.enabled:
+            raise ValueError("Caller is not permitted to message the operator")
+        body = AgentDefinitionBody.model_validate({"name": row.name, **row.definition_json})
+        if channel not in body.operator_message_channels:
+            raise ValueError("Caller is not permitted to message the operator on this channel")
+        destination = communications_manager.resolve_operator_conversation(channel)
+        conversation = destination.get("conversation_id")
+        if not isinstance(conversation, str) or not conversation.startswith("dm:"):
+            raise ValueError("Operator has no recorded Telegram DM")
+        return conversation.removeprefix("dm:")
+
+    @registry.tool(
+        description=(
+            "Send markdown directly to the enrolled operator's Telegram DM. Requires an explicit "
+            "operator_message_channels grant in the caller's installed agent definition. "
+            "Takes no destination and does not change the conversation's attached session."
+        )
+    )
+    async def send_operator_message(channel: str, content: str) -> dict[str, Any]:
+        try:
+            caller_id = get_current_session_id()
+            destination = await asyncio.to_thread(operator_destination, channel, caller_id)
+            message = await communications_manager.send_message(
+                channel_name=channel,
+                content=content,
+                session_id=caller_id,
+                metadata={
+                    "platform_destination": destination,
+                    "thread_id": None,
+                    "content_type": "text/markdown",
+                },
+            )
+            return {
+                "success": message.status == "sent",
+                "message_id": message.id,
+                "error": message.error,
+            }
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        except Exception as exc:
+            logger.exception("Operator message delivery failed")
+            return {"success": False, "error": str(exc)}
 
     @registry.tool(
         description=(
