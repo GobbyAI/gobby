@@ -281,6 +281,10 @@ class TelemetryMetrics:
 
         # Shutdown metrics
         self._register_counter(
+            "shutdown_requests_total",
+            "Daemon shutdown requests",
+        )
+        self._register_counter(
             "shutdown_succeeded_total",
             "Successful daemon shutdowns",
         )
