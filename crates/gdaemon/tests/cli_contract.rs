@@ -12,7 +12,7 @@ fn serve_logs_unavailable_singleton() -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     std::fs::write(
         home.path().join("bootstrap.yaml"),
-        "datastore_mode: remote\n",
+        "datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\n",
     )?;
     let pid_file = home.path().join("gobby.pid");
     let _claim = claim_pid_file(&pid_file, Role::Maintenance)?
