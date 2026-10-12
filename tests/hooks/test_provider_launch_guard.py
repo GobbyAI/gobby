@@ -24,6 +24,13 @@ pytestmark = pytest.mark.unit
     [
         "bash <(echo 'claude -p hi')",
         "bash \"\"<(echo 'claude -p hi')",
+        "bash +x <(echo 'claude -p hi')",
+        "bash +e <(echo 'claude -p hi')",
+        "bash <(cat <<< 'claude -p hi')",
+        "bash < <(cat <<< 'claude -p hi')",
+        "python3 <(cat <<< 'import os; os.system(\"claude -p hi\")')",
+        "bash <(cat 0<<< 'claude -p hi')",
+        "cat <<< 'claude -p hi' | bash",
         "bash < <(echo 'claude -p hi')",
         "bash 0< <(echo 'claude -p hi')",
         "python3 < <(echo 'import os; os.system(\"claude -p hi\")')",
@@ -55,6 +62,9 @@ def test_process_substitution_blocks_provider_launch(command: str) -> None:
         "python3 -X <(echo 'import os; os.system(\"claude\")') script.py",
         "python3 -c 'print(1)' < <(echo 'import os; os.system(\"claude\")')",
         "echo '<(claude -p hi)'",
+        "bash +e <(cat <<< 'echo harmless')",
+        "bash <(cat input.txt <<< 'claude -p hi')",
+        "bash <(cat 2<<< 'claude -p hi')",
     ],
 )
 def test_process_substitution_data_stays_allowed(command: str) -> None:

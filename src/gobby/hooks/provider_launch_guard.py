@@ -513,10 +513,10 @@ def _shell_stdin(words: list[str]) -> bool:
         if word in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
             next(args, None)
             continue
-        if word.startswith("-"):
-            if not word.startswith("--") and "c" in word:
+        if word.startswith(("-", "+")):
+            if word.startswith("-") and not word.startswith("--") and "c" in word:
                 return False
-            if not word.startswith("--") and "s" in word:
+            if word.startswith("-") and not word.startswith("--") and "s" in word:
                 return True
         else:
             return False
@@ -746,6 +746,14 @@ def _blocked(
             python_piped = output_consumer == "python" or _piped_to_shell(
                 scan.tokens, end, python=True
             )
+            if name == "cat" and all(arg.startswith("-") for arg in words[1:]):
+                for index, token in enumerate(segment[:-1]):
+                    if not token.quoted and token.value in {"<<<", "0<<<"}:
+                        value = segment[index + 1].value
+                        if piped and _blocked(value, depth + 1, dialect):
+                            return True
+                        if python_piped and _python_launch(value, depth + 1, dialect):
+                            return True
             if python_stdin:
                 for index, token in enumerate(segment[:-1]):
                     if not token.quoted and token.value.lstrip("0123456789") == "<<<":
