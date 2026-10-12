@@ -27,6 +27,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import (
     derive_managed_signing_key,
     issue_agent_api_token,
+    read_managed_api_token,
     verify_agent_api_token,
 )
 from tests.runtime_grants.support import (
@@ -102,9 +103,7 @@ def _client(
     )
     server.auth_service.bind_runtime(
         grant_service=grants,
-        lease_live=None,
         local_machine_id=LOCAL_MACHINE_ID,
-        effect_fence=None,
         clock=lambda: now,
         front_door_secret=_FRONT_DOOR_SECRET,
     )
@@ -136,7 +135,8 @@ def test_orphan_maintenance_config_transport(
         signing_key=derive_managed_signing_key(OPERATOR_TOKEN),
         deadline_seconds=30,
     )
-    token = launch.env["GOBBY_AGENT_API_TOKEN"]
+    token = read_managed_api_token(launch.env)
+    assert token is not None
     claims = verify_agent_api_token(token, derive_managed_signing_key(OPERATOR_TOKEN))
     assert claims is not None
     headers = {

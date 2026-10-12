@@ -222,6 +222,7 @@ catalogue is pinned by
 | `log-monitor` | Monitors health and admits heavy work and close reviews |
 | `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to the Orchestrator and Log Monitor. `team-coordination` accepts the live Log Monitor ref through `metrics_monitor_log_monitor` |
 | `inbox-manager` | Consolidates lane reports for the Orchestrator |
+| `consolidator` | Proposes task bundles, stale-item retirement and lane moves to the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
 their YAML `seat` tag marks the file-based catalogue. The Assistant and

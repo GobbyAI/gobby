@@ -6,13 +6,72 @@ import os
 from collections.abc import Callable
 from inspect import unwrap
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
 from tests.conftest import _clear_invoking_agent_identity, _ensure_isolated_bootstrap
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("inherited_home", ["operator", "missing", "blank", "isolated"])
+def test_configuration_isolates_bootstrap_before_postgres_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inherited_home: str
+) -> None:
+    from tests import conftest as shared_conftest
+    from tests.fixtures import postgres
+
+    user_home = tmp_path / "user"
+    operator_home = user_home / ".gobby"
+    operator_home.mkdir(parents=True)
+    sentinel = operator_home / "bootstrap.yaml"
+    sentinel.write_text("operator sentinel\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: user_home))
+    if inherited_home == "missing":
+        monkeypatch.delenv("GOBBY_HOME", raising=False)
+    elif inherited_home == "isolated":
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "isolated"))
+    else:
+        monkeypatch.setenv(
+            "GOBBY_HOME", str(operator_home) if inherited_home == "operator" else " "
+        )
+    initial_home = os.environ.get("GOBBY_HOME")
+
+    observed: list[Path] = []
+    original_stat = Path.stat
+
+    def audited_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        assert path != sentinel, "operator bootstrap metadata was accessed"
+        if path.name == "bootstrap.yaml":
+            observed.append(path)
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", audited_stat)
+    cleanups: list[Callable[[], None]] = []
+    config = MagicMock(spec=pytest.Config)
+    config.add_cleanup.side_effect = cleanups.append
+    manager = pytest.PytestPluginManager()
+    # Register the probe last so it would run first without tryfirst isolation.
+    manager.register(SimpleNamespace(pytest_configure=shared_conftest.pytest_configure))
+    manager.register(SimpleNamespace(pytest_configure=postgres.pytest_configure))
+    try:
+        manager.hook.pytest_configure.call_historic(kwargs={"config": config})
+        selected = Path(os.environ["GOBBY_HOME"])
+        assert selected != operator_home
+        if inherited_home == "isolated":
+            assert selected == tmp_path / "isolated"
+            assert cleanups == []
+        assert selected / "bootstrap.yaml" in observed
+        assert sentinel.read_text() == "operator sentinel\n"
+    finally:
+        for cleanup in reversed(cleanups):
+            cleanup()
+    assert os.environ.get("GOBBY_HOME") == initial_home
+    if inherited_home != "isolated":
+        assert not selected.exists()
 
 
 def test_inherited_managed_grant_is_cleared_before_database_operations(

@@ -307,6 +307,25 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             event.metadata.get("_platform_session_id") or event.session_id or "unknown",
             getattr(event.source, "value", event.source) or "unknown",
         )
+        if event.event_type == HookEventType.BEFORE_TOOL:
+            if controlled_shutdown:
+                # Keep shutdown cancellation outside Exception handlers in both
+                # native hooks and web chat; neither may turn it into a decision.
+                raise asyncio.CancelledError("Workflow evaluation cancelled during shutdown")
+            response = HookResponse(
+                decision="block",
+                reason=(
+                    "Workflow evaluation failed; blocking tool call for safety: "
+                    "CancelledError: Workflow evaluation was cancelled."
+                ),
+            )
+            audit_source_block_sync(
+                self,
+                event,
+                rule_id="hook-before-tool-safety",
+                reason=response.reason or "",
+            )
+            return response
         if event.event_type == HookEventType.STOP:
             response = HookResponse(
                 decision="block",

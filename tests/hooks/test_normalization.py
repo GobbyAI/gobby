@@ -2718,6 +2718,10 @@ class TestExternalNavigationScope:
             ("--directories=recurse P", True),
             ("-d recurse P", True),
             ("--directories recurse P", True),
+            ("--dir recurse P", True),
+            ("--dir=recurse P", True),
+            ("--dir=skip P", False),
+            ("-e --dir=recurse", False),
             ("-ndrecurse P", True),
             ("--directories=skip P", False),
             ("-d skip P", False),
@@ -3455,6 +3459,58 @@ def test_stdin_only_search_scope_preserves_in_repo_siblings(tmp_path: Path, comm
         "grep -eP",
         "grep --regexp=P",
         "grep -nA 3 P",
+        "grep -r P",
+        "grep --dir recurse P",
+        "grep --dir=recurse P",
+        "rg -t py P",
+        "rg --type=py P",
+        "rg --type py P",
+        "rg -r X P",
+        "rg --replace X P",
+        "rg -T js P",
+        "rg --type-not js P",
+        "rg -j 4 P",
+        "rg --threads 4 P",
+        "rg -M 100 P",
+        "rg --max-columns 100 P",
+        "rg -E utf-8 P",
+        "rg --encoding utf-8 P",
+        "rg -ntpy P",
+        "rg -t -e P",
+        "rg --max-depth 1 P",
+        "rg --iglob '*.py' P",
+        "rg --ignore-file ignores P",
+        "rg --pre cat P",
+        "rg --pre-glob '*.py' P",
+        "rg --dfa-size-limit 1M P",
+        "rg --regex-size-limit 1M P",
+        "rg --engine default P",
+        "rg --max-filesize 1M P",
+        "rg --type-add 'x:*.x' P",
+        "rg --type-clear x P",
+        "rg --color never P",
+        "rg --colors match:none P",
+        "rg --context-separator X P",
+        "rg --field-context-separator X P",
+        "rg --field-match-separator X P",
+        "rg --hostname-bin hostname P",
+        "rg --hyperlink-format default P",
+        "rg --path-separator / P",
+        "rg --sort path P",
+        "rg --sortr path P",
+        "rg --generate man P",
+        "grep -r --include '*.py' P",
+        "grep -r --exclude '*.js' P",
+        "grep -r --exclude-dir d P",
+        "grep -r --exclude-from ignores P",
+        "grep -r --include-dir src P",
+        "grep --label x P",
+        "grep --binary-files text P",
+        "grep --group-separator x -A 1 P",
+        "grep -r --color P",
+        "/opt/homebrew/bin/rg -t py P",
+        "/opt/homebrew/bin/rg -t -e P",
+        "/usr/bin/grep --dir recurse P",
     ],
 )
 @pytest.mark.parametrize("change_directory", [False, True])
@@ -3478,7 +3534,10 @@ def test_search_pattern_options_preserve_explicit_repo_path(
     assert data["canonical_code_navigation_repo_scope"] is True
 
 
-@pytest.mark.parametrize("arguments", ["-ne P", "-nf pats", "-eP", "--file=pats"])
+@pytest.mark.parametrize(
+    "arguments",
+    ["-ne P", "-nf pats", "-eP", "--file=pats", "--max-depth 1 P", "--threads 4 P"],
+)
 @pytest.mark.parametrize("change_directory", [False, True])
 def test_git_grep_pattern_options_preserve_revision_scope(
     tmp_path: Path, arguments: str, change_directory: bool
@@ -3497,3 +3556,188 @@ def test_git_grep_pattern_options_preserve_revision_scope(
 
     assert data["canonical_search_revision_scoped"] is True
     assert data["canonical_file_paths"] == [str(outside if change_directory else repo)]
+
+
+@pytest.mark.parametrize("change_directory", [False, True])
+@pytest.mark.parametrize(
+    ("command", "searches_root", "kind"),
+    [
+        ("rg P < /dev/null", True, "search"),
+        ("/opt/homebrew/bin/rg P < /dev/null", True, "search"),
+        ("echo x | rg P < /dev/null", True, "search"),
+        ("echo P | rg P", False, "execute"),
+        ("rg P <<< P", False, "search"),
+    ],
+)
+def test_rg_null_stdin_preserves_search_root(
+    tmp_path: Path, command: str, searches_root: bool, kind: str, change_directory: bool
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    search_root = outside if change_directory else repo
+    prefix = f"cd {outside}; " if change_directory else ""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"{prefix}{command}"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == kind
+    assert data.get("canonical_file_paths", []) == (
+        [str(search_root), "/dev/null"] if searches_root else []
+    )
+    assert data.get("canonical_code_navigation_repo_scope") is (
+        not change_directory if kind == "search" else None
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_paths"),
+    [
+        ("rg P 0</dev/null", ["{cwd}", "/dev/null"]),
+        ("grep -r P 2>/dev/null R/", ["R"]),
+        ("rg P R/a.py 2>&1", ["R/a.py"]),
+        ("rg P R/ 1>/dev/null 2>>/dev/null", ["R"]),
+        ("rg P 12</dev/null", ["{cwd}", "/dev/null"]),
+        ("rg P 0 <<EOF\nP\nEOF", ["0"]),
+        ("rg P 0 </dev/null", ["{cwd}/0", "/dev/null"]),
+        ("rg P '0'</dev/null", ["{cwd}/0", "/dev/null"]),
+        (r"rg P \0</dev/null", ["{cwd}/0", "/dev/null"]),
+        ("rg P R2>/dev/null", ["R2"]),
+        ("rg P R2>&1", ["R2"]),
+        ("rg P '2'>/dev/null", ["2"]),
+        ("rg P ²>/dev/null", ["²"]),
+    ],
+)
+def test_search_fd_redirects_preserve_real_operands(
+    tmp_path: Path, command: str, expected_paths: list[str]
+) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(tmp_path),
+        "project_path": str(tmp_path),
+        "tool_input": {"command": command},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "search"
+    assert data["canonical_file_paths"] == [path.format(cwd=tmp_path) for path in expected_paths]
+    assert data["canonical_code_navigation_repo_scope"] is True
+
+
+@pytest.mark.parametrize(
+    ("numbered", "unnumbered"),
+    [
+        ("rg P 0</dev/null", "rg P </dev/null"),
+        ("grep -r P 2>/dev/null R/", "grep -r P >/dev/null R/"),
+        ("rg P R/a.py 2>&1", "rg P R/a.py >&1"),
+    ],
+)
+def test_search_fd_redirect_scope_matches_unnumbered(
+    tmp_path: Path, numbered: str, unnumbered: str
+) -> None:
+    results: list[dict[str, Any]] = []
+    for command in (numbered, unnumbered):
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "cwd": str(tmp_path),
+            "project_path": str(tmp_path),
+            "tool_input": {"command": command},
+        }
+        normalize_tool_fields(data)
+        results.append(data)
+
+    for field in (
+        "canonical_tool_kind",
+        "canonical_file_paths",
+        "canonical_code_navigation_repo_scope",
+    ):
+        assert results[0][field] == results[1][field]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("rg P 0</dev/null", ["rg", "P", "0<", "/dev/null"]),
+        ("rg P 2>>log", ["rg", "P", "2>>", "log"]),
+        ("rg P R2>&1", ["rg", "P", "R2", ">&1"]),
+        ("rg P '2'>log", ["rg", "P", "2", ">", "log"]),
+        (r"rg P \2>log", ["rg", "P", "2", ">", "log"]),
+        ("rg P 2 >log", ["rg", "P", "2", ">", "log"]),
+        ("rg P ²>log", ["rg", "P", "²", ">", "log"]),
+        ("cat 0<<EOF\nP\nEOF", ["cat", "0<<", "EOF", "\n"]),
+        ("cat 0<<-EOF\n\tP\n\tEOF", ["cat", "0<<-", "EOF", "\n"]),
+        ("cat 0<<<P", ["cat", "0<<<", "P"]),
+        ("cat 0<(true)", ["cat", "0", "<", "(true)"]),
+        ("echo 1>(true)", ["echo", "1", ">", "(true)"]),
+        ("cat <<2<file\nP\n2", ["cat", "<<", "2", "<", "file", "\n"]),
+    ],
+)
+def test_fd_redirect_token_boundaries(command: str, expected: list[str]) -> None:
+    scan = scan_shell_command(command)
+
+    assert shell_token_values(scan.tokens) == expected
+    assert len(scan.tokens) == len(scan.spans)
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        if not token.quoted:
+            assert command[start:end] == token.value
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat 0<(touch X)",
+        "cat 12<(touch X)",
+        "diff 3<(touch X) R/a.py",
+        "echo x 1>(touch X)",
+    ],
+)
+def test_numbered_process_substitution_keeps_writes(command: str) -> None:
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert "X" in data["canonical_file_paths"]
+
+
+@pytest.mark.parametrize("arguments", ["--max-depth 1", "--threads 4"])
+@pytest.mark.parametrize("change_directory", [False, True])
+def test_git_grep_value_options_preserve_worktree_scope(
+    tmp_path: Path, arguments: str, change_directory: bool
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    prefix = f"cd {outside}; " if change_directory else ""
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"{prefix}git grep {arguments} P"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data.get("canonical_search_revision_scoped") is not True
+    assert data["canonical_file_paths"] == [str(outside if change_directory else repo)]
+    assert data["canonical_code_navigation_repo_scope"] is (not change_directory)
+
+
+@pytest.mark.parametrize("search", ["rg P", "grep P", "grep -d skip P"])
+def test_stdin_search_after_unresolved_cd_keeps_unknown_scope(tmp_path: Path, search: str) -> None:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(tmp_path),
+        "project_path": str(tmp_path),
+        "tool_input": {"command": f'cd "$TARGET"; {search} <<< text'},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "search"
+    assert data.get("canonical_file_paths", []) == []
+    assert data["canonical_code_navigation_repo_scope"] is False

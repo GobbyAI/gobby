@@ -227,9 +227,7 @@ def boundary(
     )
     server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=None,
-        effect_fence=None,
         clock=None,
         front_door_secret="boundary-front-door",
     )

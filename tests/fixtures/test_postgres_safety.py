@@ -15,7 +15,6 @@ from _pytest.outcomes import Failed, Skipped
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from gobby.daemon_lease import ActiveDaemonLease
 from gobby.storage.schema_contract import SchemaContractError
 from tests.fixtures.postgres import (
     _ISOLATED_SCHEMA_APPLICATION_PREFIX,
@@ -43,8 +42,13 @@ def test_worker_databases_isolate_daemon_lease_and_are_dropped(postgres_database
             ):
                 names = [first.info.dbname, second.info.dbname]
                 assert names[0] != names[1]
-                first_keys = ActiveDaemonLease._resolve_keys(first)
-                second_keys = ActiveDaemonLease._resolve_keys(second)
+                # Match gdaemon's key derivation without a Python lease owner.
+                key_query = "SELECT hashtext(%s), hashtext(current_database())"
+                namespace = ("gobby-single-active-daemon-v1",)
+                first_keys = first.execute(key_query, namespace).fetchone()
+                second_keys = second.execute(key_query, namespace).fetchone()
+                assert first_keys is not None
+                assert second_keys is not None
                 assert first.execute(
                     "SELECT pg_try_advisory_lock(%s, %s)", first_keys
                 ).fetchone() == (True,)

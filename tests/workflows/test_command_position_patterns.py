@@ -15,9 +15,11 @@ leaves inert heredoc bodies out of the subject (#21056).
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -25,12 +27,14 @@ from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.criterion_commands import malformed_criterion_command_findings
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.command_matching import command_patterns_match, mask_quoted_spans
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.postgres import _reset_schema
 
 pytestmark = pytest.mark.unit
 
@@ -66,9 +70,36 @@ GIT_GLOBAL_OPTION_PREFIXES = (
 )
 
 
+@pytest.fixture(scope="module")
+def bundled_db(
+    postgres_database_url: str,
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> Iterator[HubDatabase]:
+    """Install rules once; individual cases roll back their rule selection and writes."""
+    database = PostgresHubDatabase(
+        postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    )
+    try:
+        _reset_schema(postgres_database_url, postgres_schema, postgres_canonical_seed)
+        _sync_bundled(database)
+        yield database
+    finally:
+        try:
+            _reset_schema(postgres_database_url, postgres_schema, postgres_canonical_seed)
+        finally:
+            database.close()
+
+
+class _RollbackCase(Exception):
+    """Roll back a successful case without running after-commit callbacks."""
+
+
 @pytest.fixture
-def db(temp_db: HubDatabase) -> HubDatabase:
-    return temp_db
+def db(bundled_db: HubDatabase) -> Iterator[HubDatabase]:
+    with suppress(_RollbackCase), bundled_db.transaction():
+        yield bundled_db
+        raise _RollbackCase
 
 
 @pytest.fixture
@@ -529,7 +560,6 @@ async def test_invocations_block_and_prose_allowed(
     monkeypatch: pytest.MonkeyPatch,
     case: RuleCase,
 ) -> None:
-    _sync_bundled(db)
     body = _get_rule(manager, case.name)
     env_prefixed = f"RULE_MATRIX_ENV=1 {case.blocked[0]}"
     for command in (*case.blocked, env_prefixed):
@@ -573,7 +603,6 @@ def test_git_global_options_do_not_bypass(
     rule_name: str,
     suffix: str,
 ) -> None:
-    _sync_bundled(db)
     body = _get_rule(manager, rule_name)
     for prefix in GIT_GLOBAL_OPTION_PREFIXES:
         command = f"{prefix} {suffix}"
@@ -587,13 +616,11 @@ def test_substitution_and_subshell_positions_block(
     rule_name: str,
     command: str,
 ) -> None:
-    _sync_bundled(db)
     body = _get_rule(manager, rule_name)
     assert _blocks(body, command), f"{rule_name} should block: {command}"
 
 
 def test_patterns_are_segment_anchored(db: HubDatabase, manager: RuleDefinitionManager) -> None:
-    _sync_bundled(db)
     for case in RULE_CASES:
         body = _get_rule(manager, case.name)
         entries = _block_pattern_entries(body)
@@ -608,7 +635,6 @@ def test_interactive_variants_share_patterns(
     db: HubDatabase,
     manager: RuleDefinitionManager,
 ) -> None:
-    _sync_bundled(db)
     rows = manager.list_all()
     bodies = {row.name: RuleDefinitionBody.model_validate(row.definition_json) for row in rows}
     pairs = [
@@ -659,7 +685,6 @@ async def test_heredoc_bodies_select_a_block_only_when_executable(
     rule_name: str,
     body: str,
 ) -> None:
-    _sync_bundled(db)
     rule = _get_rule(manager, rule_name)
     data = [f"{opener}\n{body}\nEOF" for opener in HEREDOC_DATA_OPENERS]
     executing = [f"{opener}\n{body}\nEOF" for opener in HEREDOC_EXECUTING_OPENERS]
@@ -687,7 +712,6 @@ async def test_python_heredoc_pytest_references_are_not_commands(
     manager: RuleDefinitionManager,
     body: str,
 ) -> None:
-    _sync_bundled(db)
     rule = _get_rule(manager, "require-pytest-guard-env")
     command = f"python <<'PY'\n{body}\nPY"
 
@@ -707,7 +731,6 @@ async def test_python_stdin_pytest_references_are_not_suite_runs(
     body: str,
 ) -> None:
     """The suite rule shares the guard-env pytest token: attributes are not invocations."""
-    _sync_bundled(db)
     rule = _get_rule(manager, "no-full-pytest-suite")
     command = f"python3 - <<'PY'\n{body}\nPY"
 
@@ -733,7 +756,6 @@ async def test_python_stdin_pytest_references_are_not_suite_runs(
 def test_commit_message_from_stdin_is_data_for_the_push_rule(
     db: HubDatabase, manager: RuleDefinitionManager
 ) -> None:
-    _sync_bundled(db)
     rule = _get_rule(manager, "no-force-push")
 
     assert not _blocks(rule, "git commit -F - <<'EOF'\nfix: stop the git push --force habit\nEOF")
@@ -743,7 +765,6 @@ def test_environment_exported_in_an_earlier_segment_still_exempts(
     db: HubDatabase, manager: RuleDefinitionManager
 ) -> None:
     """command_not_pattern reads the whole executable text: an exported guard env counts."""
-    _sync_bundled(db)
     rule = _get_rule(manager, "require-pytest-guard-env")
     exported = (
         "export GOBBY_TEST_PROTECT=1\n"
@@ -772,7 +793,6 @@ def _bash_event(command: str) -> HookEvent:
 
 async def test_engine_blocks_bare_pytest_and_allows_guarded_run(db: HubDatabase) -> None:
     """End-to-end engine check for the anchored require-pytest-guard-env rule."""
-    _sync_bundled(db)
     db.execute("DELETE FROM rule_definitions WHERE name != 'require-pytest-guard-env'")
     engine = RuleEngine(db)
 
@@ -847,7 +867,6 @@ async def test_full_suite_rules_match_criterion_authoring_for_default_agent(
     db: HubDatabase, command: str, full_suite: bool
 ) -> None:
     """An interactive default-agent session is blocked exactly where criterion authoring rejects."""
-    _sync_bundled(db)
     sync_bundled_agents(db)
     assert AgentDefinitionManager(db).get_by_name("default") is not None
     db.execute("DELETE FROM rule_definitions WHERE name <> ALL(%s)", (FULL_SUITE_RULE_NAMES,))
@@ -882,7 +901,6 @@ def test_mask_quoted_spans_blanks_data_and_keeps_substitution() -> None:
 
 def test_mask_quoted_is_opt_in(db: HubDatabase, manager: RuleDefinitionManager) -> None:
     """Without mask_quoted the same patterns still see quoted prose as code."""
-    _sync_bundled(db)
     body = _get_rule(manager, "require-pytest-guard-env")
     effect = next(e for e in body.resolved_effects if e.type == "block")
     assert effect.mask_quoted is True
@@ -905,7 +923,6 @@ async def test_engine_without_mask_quoted_blocks_quoted_prose(
     real engine, proving the pre-#20887 behavior is byte-for-byte preserved
     when the flag is omitted: quoted multi-line prose still trips the pattern.
     """
-    _sync_bundled(db)
     db.execute("DELETE FROM rule_definitions WHERE name != 'require-pytest-guard-env'")
     row = manager.get_by_name("require-pytest-guard-env")
     assert row is not None
@@ -936,7 +953,6 @@ def test_sibling_mask_quoted_rule_is_comment_aware(
     ``no-full-pytest-suite`` carries ``mask_quoted: true``; an apostrophe in a
     ``#`` comment must not blank the real suite run on the next line.
     """
-    _sync_bundled(db)
     body = _get_rule(manager, "no-full-pytest-suite")
 
     assert _blocks(body, "# don't\nuv run pytest")
@@ -970,7 +986,6 @@ def test_argument_content_rules_match_substitution_command_text(
 
     Commands are inert inputs to the bundled block effect, never shell executions.
     """
-    _sync_bundled(db)
     body = _get_rule(manager, "no-daemon-management-http")
 
     assert _blocks(body, command) is blocked

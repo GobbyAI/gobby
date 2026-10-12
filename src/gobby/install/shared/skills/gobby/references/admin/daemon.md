@@ -37,5 +37,12 @@ For lease diagnostics, fetch current status before attempting handoff, promotion
 or recovery. An active daemon's promote endpoint is a no-op, recovery refuses an
 already active owner, and cooperative handoff requires local quiescence.
 
+Lease acquisition, standby promotion and SIGTERM drain belong to `gdaemon`.
+Use an operator bearer key with `GET /api/admin/lease/status`,
+`POST /api/admin/lease/promote`, or
+`POST /api/admin/lease/recover?stale_after_seconds=30`. Recovery verifies the
+stale owner; a fresh owner returns 409. The Python lease CLI is retired.
+Local native Windows operation refuses startup; run Gobby inside WSL 2.
+
 See [admin operations](../../../../../../../../docs/guides/admin-operations.md)
 and [lifecycle CLI](../../../../../../../../docs/guides/cli-commands.md).

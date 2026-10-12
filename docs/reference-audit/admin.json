@@ -431,66 +431,6 @@
     },
     {
       "surface": "cli",
-      "command": "gobby lease status",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "status"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease promote",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "promote"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease handoff",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "handoff"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
-      "command": "gobby lease recover",
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "implementation": {
-        "path": "src/gobby/cli/daemon_lease.py",
-        "symbol": "recover"
-      },
-      "verification": [
-        "source-inventory",
-        "cli-registry",
-        "focused-sync-schema"
-      ],
-      "audience": "operator"
-    },
-    {
-      "surface": "cli",
       "command": "gobby datastores expose",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/installation.md",
       "implementation": {
@@ -1256,8 +1196,8 @@
     {
       "id": "focused-install-recovery",
       "kind": "test",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_install.py tests/cli/test_install_front_door.py tests/cli/test_cutover.py tests/cli/test_hub_maintenance.py tests/cli/test_hub_files_restore.py tests/cli/test_postgres_backup.py tests/cli/hub_backup/ tests/cli/test_files_migrate.py tests/cli/test_daemon_singleton.py tests/servers/test_daemon_lease_control.py -q --tb=short",
-      "result": "280 passed in 2.24s; isolated fixtures/test hub; before later documentation edits."
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_install.py tests/cli/test_install_front_door.py tests/cli/test_cutover.py tests/cli/test_hub_maintenance.py tests/cli/test_hub_files_restore.py tests/cli/test_postgres_backup.py tests/cli/hub_backup/ tests/cli/test_files_migrate.py tests/cli/test_daemon_singleton.py -q --tb=short",
+      "result": "280 passed in 2.24s; isolated fixtures/test hub; before later documentation edits. Historical pre-retirement result; the current command omits Python lease tests retired by #23458."
     },
     {
       "id": "catalog-initial",
@@ -1302,8 +1242,8 @@
     {
       "id": "focused-sync-schema",
       "kind": "test",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_daemon_lease.py tests/cli/test_cli_init.py tests/cli/test_cli_init_git_hooks.py tests/cli/test_cli_schema.py tests/cli/test_cli_sync_coverage.py tests/cli/test_sync_reinstall.py -q --tb=short",
-      "result": "95 passed in 1.91s; isolated fixtures/test hub."
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_cli_init.py tests/cli/test_cli_init_git_hooks.py tests/cli/test_cli_schema.py tests/cli/test_cli_sync_coverage.py tests/cli/test_sync_reinstall.py -q --tb=short",
+      "result": "95 passed in 1.91s; isolated fixtures/test hub. Historical pre-retirement result; the current command omits Python lease tests retired by #23458."
     },
     {
       "id": "release-source",
@@ -1375,7 +1315,7 @@
       "evidence": [
         "src/gobby/config/bootstrap.py::_parse_mode_owner_fields",
         "src/gobby/cli/installers/remote_preflight.py::probe_hub_user_md",
-        "src/gobby/daemon_lease_control.py::create_standby_app",
+        "crates/gdaemon/src/lease/admin_api.rs::handle",
         "ROADMAP.md decisions 11, 13, 17"
       ],
       "status": "documented_current_limitation"
@@ -1410,68 +1350,7 @@
     "mutations": "No live daemon, datastore, credential, network, or client mutation performed. Task #19600 audit metadata was corrected; root #22237 ownership preserved.",
     "installed_rows": "No installed rule/profile/workflow enabled-state claims made. References describe inspection requirements; capability installation cutover remains later work."
   },
-  "standby_variants": [
-    {
-      "route": "GET /api/health",
-      "implementation": {
-        "path": "src/gobby/daemon_lease_control.py",
-        "symbol": "create_standby_app.health"
-      },
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "verification": [
-        "route-decorators",
-        "focused-install-recovery"
-      ]
-    },
-    {
-      "route": "GET /api/admin/status",
-      "implementation": {
-        "path": "src/gobby/daemon_lease_control.py",
-        "symbol": "create_standby_app.status"
-      },
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "verification": [
-        "route-decorators",
-        "focused-install-recovery"
-      ]
-    },
-    {
-      "route": "GET /api/admin/lease/status",
-      "implementation": {
-        "path": "src/gobby/daemon_lease_control.py",
-        "symbol": "create_standby_app.lease_status"
-      },
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "verification": [
-        "route-decorators",
-        "focused-install-recovery"
-      ]
-    },
-    {
-      "route": "POST /api/admin/lease/promote",
-      "implementation": {
-        "path": "src/gobby/daemon_lease_control.py",
-        "symbol": "create_standby_app.promote"
-      },
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "verification": [
-        "route-decorators",
-        "focused-install-recovery"
-      ]
-    },
-    {
-      "route": "POST /api/admin/lease/recover",
-      "implementation": {
-        "path": "src/gobby/daemon_lease_control.py",
-        "symbol": "create_standby_app.recover"
-      },
-      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
-      "verification": [
-        "route-decorators",
-        "focused-install-recovery"
-      ]
-    }
-  ],
+  "standby_variants": [],
   "native_cli": [
     {
       "command": "gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daemon-url URL] [--token-file PATH] [--frame-delivery auto|direct|proxy] [--no-mouse] [--version] [--help]",

@@ -80,6 +80,27 @@ def _ensure_isolated_bootstrap() -> None:
 _ensure_isolated_bootstrap()
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config: pytest.Config) -> None:
+    """Isolate the home before plugin configuration probes bootstrap metadata."""
+    raw_home = os.environ.get("GOBBY_HOME")
+    operator_home = Path.home() / ".gobby"
+    if (
+        raw_home
+        and raw_home.strip()
+        and Path(raw_home).expanduser().resolve(strict=False) != operator_home.resolve(strict=False)
+    ):
+        _ensure_isolated_bootstrap()
+        return
+
+    home = tempfile.TemporaryDirectory(prefix="gobby-pytest-home-")
+    patcher = pytest.MonkeyPatch()
+    patcher.setenv("GOBBY_HOME", home.name)
+    config.add_cleanup(home.cleanup)
+    config.add_cleanup(patcher.undo)
+    _ensure_isolated_bootstrap()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _select_schema_contract_gdaemon() -> Iterator[None]:
     """Pin schema-contract gdaemon calls at the binary ``select_test_gdaemon`` chooses.

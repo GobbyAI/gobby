@@ -184,6 +184,10 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
 #[test]
 #[serial_test::serial]
 fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
+    let _env_guard = EnvVarsGuard::set(&[
+        ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+        ("GOBBY_AGENT_API_TOKEN", None),
+    ]);
     let home = temp_home();
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
@@ -273,6 +277,10 @@ fn success_with_stalled_or_truncated_body_is_transport_failure() {
 #[test]
 #[serial_test::serial]
 fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
+    let _env_guard = EnvVarsGuard::set(&[
+        ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+        ("GOBBY_AGENT_API_TOKEN", None),
+    ]);
     let home = temp_home();
 
     for body in ["sensitive-response-body", "{}", r#"{"config":{}}"#] {

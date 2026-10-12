@@ -527,7 +527,7 @@ class TestThreadingScenarios:
 
 
 class TestCancelledErrorHandling:
-    """Tests that CancelledError fails closed for STOP events and open for others."""
+    """Cancellation blocks tool/stop decisions and preserves shutdown propagation."""
 
     @staticmethod
     def _raise_cancelled(
@@ -593,10 +593,19 @@ class TestCancelledErrorHandling:
             assert result.decision == "block"
             audit.assert_called_once()
 
-    def test_cancelled_error_allows_non_stop_evaluate(self) -> None:
-        """CancelledError on non-STOP event should allow (fail-open)."""
-        event = self._make_event(HookEventType.BEFORE_TOOL)
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            event_type
+            for event_type in HookEventType
+            if event_type not in {HookEventType.BEFORE_TOOL, HookEventType.STOP}
+        ],
+    )
+    def test_cancelled_error_allows_other_events_evaluate(self, event_type: HookEventType) -> None:
+        """Other lifecycle events retain their cancellation response."""
+        event = self._make_event(event_type)
         runtime = MagicMock()
+        runtime.is_closing = False
         runtime.run.side_effect = self._raise_cancelled
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
             handler = WorkflowHookHandler(evaluation_runtime=runtime)
@@ -632,7 +641,7 @@ class TestCancelledErrorHandling:
         handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
         with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
-            result = handler._handle_cancelled(self._make_event(HookEventType.BEFORE_TOOL))
+            result = handler._handle_cancelled(self._make_event(HookEventType.BEFORE_AGENT))
 
         records = [
             record
@@ -649,16 +658,30 @@ class TestCancelledErrorHandling:
         runtime = MagicMock()
         runtime.is_closing = False
         handler = WorkflowHookHandler(evaluation_runtime=runtime)
+        event = self._make_event(HookEventType.BEFORE_TOOL)
 
-        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
-            result = handler._handle_cancelled(self._make_event(HookEventType.BEFORE_TOOL))
+        with (
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"),
+            patch("gobby.workflows.hooks.audit_source_block_sync") as audit,
+        ):
+            result = handler._handle_cancelled(event)
 
         records = [
             record
             for record in caplog.records
             if "Workflow evaluation cancelled" in record.getMessage()
         ]
-        assert result.decision == "allow"
+        assert result.decision == "block"
+        assert result.reason == (
+            "Workflow evaluation failed; blocking tool call for safety: "
+            "CancelledError: Workflow evaluation was cancelled."
+        )
+        audit.assert_called_once_with(
+            handler,
+            event,
+            rule_id="hook-before-tool-safety",
+            reason=result.reason,
+        )
         assert [record.levelno for record in records] == [logging.WARNING]
 
     def test_controlled_shutdown_stop_cancellation_still_warns_and_blocks(
@@ -684,9 +707,50 @@ class TestCancelledErrorHandling:
         assert [record.levelno for record in records] == [logging.WARNING]
         audit.assert_called_once()
 
+    def test_before_tool_cancelled_mid_flight_blocks_and_audits(self) -> None:
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(evaluation_runtime=runtime, timeout=0)
+            event = self._make_event(HookEventType.BEFORE_TOOL)
+            entered = threading.Event()
+
+            async def cancel_evaluation(
+                hook_event: HookEvent,
+                *,
+                blocking_deadline: BlockingEffectDeadline | None = None,
+            ) -> HookResponse:
+                del hook_event, blocking_deadline
+                entered.set()
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+                await wait_forever()
+                raise AssertionError("cancelled evaluation must not return allow")
+
+            with (
+                patch.object(handler, "_evaluate_rules", cancel_evaluation),
+                patch("gobby.workflows.hooks.audit_source_block_sync") as audit,
+            ):
+                response = handler.evaluate(event)
+
+            assert entered.is_set()
+            assert runtime.is_closing is False
+            assert response.decision == "block"
+            assert response.reason == (
+                "Workflow evaluation failed; blocking tool call for safety: "
+                "CancelledError: Workflow evaluation was cancelled."
+            )
+            audit.assert_called_once_with(
+                handler, event, rule_id="hook-before-tool-safety", reason=response.reason
+            )
+        finally:
+            runtime.shutdown()
+
+    @pytest.mark.parametrize("event_type", [HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL])
     def test_runtime_shutdown_cancels_the_in_flight_evaluation(
         self,
         caplog: pytest.LogCaptureFixture,
+        event_type: HookEventType,
     ) -> None:
         """The named canceller: a runtime teardown cancels the pending evaluation (#22706).
 
@@ -713,13 +777,16 @@ class TestCancelledErrorHandling:
                 await wait_forever()
                 raise AssertionError("the evaluation must be cancelled, not complete")
 
-            event = self._make_event(HookEventType.BEFORE_AGENT)
-            outcome: dict[str, HookResponse] = {}
+            event = self._make_event(event_type)
+            outcome: dict[str, HookResponse | asyncio.CancelledError] = {}
 
             def run_evaluate() -> None:
                 # No running loop on this thread, so evaluate() bridges to the
                 # isolated runtime, exactly as the hook adapter does.
-                outcome["response"] = handler.evaluate(event)
+                try:
+                    outcome["response"] = handler.evaluate(event)
+                except asyncio.CancelledError as exc:
+                    outcome["response"] = exc
 
             worker = threading.Thread(target=run_evaluate)
             with patch.object(handler, "_evaluate_rules", hold):
@@ -732,7 +799,12 @@ class TestCancelledErrorHandling:
 
             assert not worker.is_alive()
             response = outcome["response"]
-            assert response.decision == "allow"
+            if event_type == HookEventType.BEFORE_TOOL:
+                assert isinstance(response, asyncio.CancelledError)
+                assert str(response) == "Workflow evaluation cancelled during shutdown"
+            else:
+                assert isinstance(response, HookResponse)
+                assert response.decision == "allow"
             assert runtime.is_closing is True
             cancelled = [
                 record.getMessage()

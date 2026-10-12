@@ -126,9 +126,7 @@ def server(
     )
     http_server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=LOCAL_MACHINE_ID,
-        effect_fence=None,
         clock=None,
         front_door_secret=TEST_FRONT_DOOR_SECRET,
     )

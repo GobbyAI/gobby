@@ -8,9 +8,9 @@ local to each machine.
 **Exactly one daemon is active per shared hub.** The singleton lease is scoped to the
 shared database, so a second daemon pointed at the same datastores starts as a standby
 and exposes only the standby health and lease-control surface until it is promoted.
-Operators inspect ownership with `gobby lease status` and use `gobby lease acquire`
-or `gobby lease release` for explicit transitions. This is the current implementation;
-independent simultaneously active hub/node execution remains roadmap work.
+Operators inspect ownership through `GET /api/admin/lease/status` and request
+promotion or stale-owner recovery through the [native lease administration routes](admin-operations.md#lifecycle-and-recovery).
+Independent simultaneously active hub/node execution remains roadmap work.
 
 ```text
 workstation daemon --+

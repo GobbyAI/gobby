@@ -183,8 +183,12 @@ def test_delete_worktree_success(
 
 
 @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+@pytest.mark.parametrize("message", [None, "Worktree has uncommitted changes"])
 def test_delete_worktree_failure_reports_service_reason(
-    mock_url: MagicMock, mock_worktree_manager: MagicMock, mock_httpx: MagicMock
+    mock_url: MagicMock,
+    mock_worktree_manager: MagicMock,
+    mock_httpx: MagicMock,
+    message: str | None,
 ) -> None:
     """Test 'worktrees delete' failure uses the daemon's reason and exits nonzero."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
@@ -195,6 +199,7 @@ def test_delete_worktree_failure_reports_service_reason(
     mock_response.json.return_value = {
         "success": False,
         "error": "Worktree has uncommitted changes",
+        **({"message": message} if message is not None else {}),
     }
     mock_httpx.return_value = mock_response
 
@@ -203,8 +208,35 @@ def test_delete_worktree_failure_reports_service_reason(
 
     assert result.exit_code == 1
     assert "Failed to delete worktree: Worktree has uncommitted changes" in result.output
+    assert result.output.count("Worktree has uncommitted changes") == 1
     assert "Failed to delete worktree: None" not in result.output
     assert "Deleted worktree" not in result.output
+
+
+@patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+def test_delete_worktree_failure_reports_blocking_directory(
+    mock_url: MagicMock, mock_worktree_manager: MagicMock, mock_httpx: MagicMock
+) -> None:
+    mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
+    mock_worktree_manager.get.return_value = MOCK_WORKTREE
+    message = (
+        "Worktree remains registered; cannot remove it: "
+        "[Errno 13] Directory is not writable: '/tmp/worktree/read-only'"
+    )
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "success": False,
+        "error": "worktree_not_removable",
+        "message": message,
+    }
+    mock_httpx.return_value = mock_response
+
+    result = CliRunner().invoke(worktrees, ["delete", "wt-123", "--yes"])
+
+    assert result.exit_code == 1
+    assert f"Failed to delete worktree: worktree_not_removable: {message}" in result.output
+    assert "Deleted worktree" not in result.output
+    assert "merged_into" not in mock_httpx.call_args.kwargs["json"]
 
 
 def test_show_worktree(mock_worktree_manager: MagicMock) -> None:

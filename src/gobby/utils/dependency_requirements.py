@@ -45,6 +45,7 @@ class SrtRelease:
     runner_sha256: str
     http_proxy_sha256: str
     mux_proxy_sha256: str
+    macos_profile_sha256: str
 
     def receipt_fields(self) -> dict[str, str]:
         return {
@@ -57,6 +58,7 @@ class SrtRelease:
             "runner_sha256": self.runner_sha256,
             "http_proxy_sha256": self.http_proxy_sha256,
             "mux_proxy_sha256": self.mux_proxy_sha256,
+            "macos_profile_sha256": self.macos_profile_sha256,
         }
 
 
@@ -75,6 +77,7 @@ SRT_RELEASE = SrtRelease(
     runner_sha256="64b092b4104666fcb6d03c87c63788728274d45ec68cb1a244605cb1513862da",
     http_proxy_sha256="5ee6a6e26a95f063ffd38e5222b001c0ad888aab597b92a3a3eabd903fe0cfb6",
     mux_proxy_sha256="0a47d7841cd0c934734a2d65ad9094eec967481f59ac64381636a4a420b41755",
+    macos_profile_sha256="da4f9a0a08d937fbf28717027c197a43b8092e1313a7ef4e6c2fe9fe298c5d92",
 )
 
 

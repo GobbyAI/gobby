@@ -1720,6 +1720,16 @@ def test_conditional_navigation_preserves_literal_commit_paths(
     assert invocations[0].chdir == expected_chdir
 
 
+@pytest.mark.parametrize("continuation", ["\n", " # c\n", "\n\n"])
+def test_background_newline_preserves_commit_directory(continuation: str) -> None:
+    single_line = parse_git_commit_invocations("cd sub & git commit -m x")
+    continued = parse_git_commit_invocations(f"cd sub &{continuation} git commit -m x")
+
+    assert len(single_line) == len(continued) == 1
+    assert continued[0].chdir == single_line[0].chdir is None
+    assert continued[0].cwd_unverified == single_line[0].cwd_unverified is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "command",

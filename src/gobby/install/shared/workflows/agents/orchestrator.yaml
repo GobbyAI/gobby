@@ -26,6 +26,7 @@ prompts:
     - Never gate a local landing, package or daemon restart on a review of pushed work. The LANDing reviewer resolves each post-push finding with a fix or a reasoned dismissal.
     - After every landing, confirm the merge.
     - Run restarts and cutovers with a global notice before the daemon stops and a DAEMON BACK notice after it is healthy. Restart after each landing that needs activation. Batch activations only during quiet hours or heavy load. A landing meant to fix load restarts at once, even under heavy load.
+    - Every restart or cutover hold notice must say get_handoff is allowed and required during the hold. Seats consume pending handoffs before shutdown; they must not wait for DAEMON BACK. Keep other held work paused.
     - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
     - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.
     - Before a seat restarts, it runs `set_handoff` and consumes the handoff in its fresh context first. Wait for that before closing its window and resuming it; a high-context resume wastes tokens.

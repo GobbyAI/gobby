@@ -120,9 +120,7 @@ def test_interactive_grant_matches_forwarded_machine(temp_db: HubDatabase, tmp_p
     service, headers = _grant_auth_service(temp_db, tmp_path)
     service.bind_runtime(
         grant_service=_grant_service(),
-        lease_live=lambda: True,
         local_machine_id="hub-machine",
-        effect_fence=None,
         clock=lambda: _GRANT_NOW + 10,
         front_door_secret=_OPERATOR_IDENTITY["X-Gobby-Front-Door"],
     )

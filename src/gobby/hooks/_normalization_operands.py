@@ -282,9 +282,68 @@ _SEARCH_OPTIONS_WITH_VALUES = {
     "--regexp",
 }
 
+_GREP_DIRECTORY_OPTIONS = {
+    "--directories"[:length] for length in range(4, len("--directories") + 1)
+}
+_SEARCH_COMMAND_VALUE_OPTIONS = {
+    "rg": {
+        "-t",
+        "-T",
+        "-r",
+        "-j",
+        "-M",
+        "-E",
+        "--type",
+        "--type-not",
+        "--replace",
+        "--threads",
+        "--max-columns",
+        "--encoding",
+        "--max-depth",
+        "--iglob",
+        "--ignore-file",
+        "--pre",
+        "--pre-glob",
+        "--dfa-size-limit",
+        "--regex-size-limit",
+        "--engine",
+        "--max-filesize",
+        "--type-add",
+        "--type-clear",
+        "--color",
+        "--colors",
+        "--context-separator",
+        "--field-context-separator",
+        "--field-match-separator",
+        "--hostname-bin",
+        "--hyperlink-format",
+        "--path-separator",
+        "--sort",
+        "--sortr",
+        "--generate",
+    },
+    "git": {"--max-depth", "--threads"},
+    "grep": _GREP_DIRECTORY_OPTIONS
+    | {
+        "--include",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--include-dir",
+        "--label",
+        "--binary-files",
+        "--group-separator",
+    },
+}
 
-def _search_has_pattern_option(parts: list[str], start: int) -> bool:
+
+def _search_value_options(cmd: str) -> set[str]:
+    return _SEARCH_OPTIONS_WITH_VALUES | _SEARCH_COMMAND_VALUE_OPTIONS.get(cmd, set())
+
+
+def _search_has_pattern_option(parts: list[str], start: int, cmd: str) -> bool:
     """Find an e/f option using the same consuming grammar as positional parsing."""
+    option_args = _search_value_options(cmd)
     arguments = iter(parts[start:])
     for part in arguments:
         if part == "--":
@@ -292,11 +351,11 @@ def _search_has_pattern_option(parts: list[str], start: int) -> bool:
         if part in {"--regexp", "--file"} or part.startswith(("--regexp=", "--file=")):
             return True
         if part.startswith("--"):
-            if part in _SEARCH_OPTIONS_WITH_VALUES:
+            if part in option_args:
                 next(arguments, None)
         elif part.startswith("-"):
             for index, option in enumerate(part[1:], start=1):
-                if f"-{option}" in _SEARCH_OPTIONS_WITH_VALUES:
+                if f"-{option}" in option_args:
                     if option in "ef":
                         return True
                     if index == len(part) - 1:
@@ -309,13 +368,14 @@ def _shell_positional_args_after(
     parts: list[str],
     start: int,
     *,
+    cmd: str = "",
     option_args: set[str] | None = None,
 ) -> list[str]:
     positional: list[str] = []
     skip_next = False
     after_options = False
     if option_args is None:
-        option_args = _SEARCH_OPTIONS_WITH_VALUES
+        option_args = _search_value_options(cmd)
     for part in parts[start:]:
         if skip_next:
             skip_next = False
@@ -393,8 +453,8 @@ def _find_has_mutation_predicate(parts: list[str]) -> bool:
 def _git_grep_is_revision_scoped(parts: list[str]) -> bool:
     """Return whether git grep names a revision before its path separator."""
     before_paths = parts[: parts.index("--")] if "--" in parts else parts
-    pattern_from_option = _search_has_pattern_option(before_paths, 2)
-    positional = _shell_positional_args_after(before_paths, 2)
+    pattern_from_option = _search_has_pattern_option(before_paths, 2, "git")
+    positional = _shell_positional_args_after(before_paths, 2, cmd="git")
     return bool(positional) if pattern_from_option else len(positional) > 1
 
 
@@ -408,7 +468,7 @@ def _grep_is_recursive(parts: list[str]) -> bool:
         if part in {"--recursive", "--dereference-recursive"}:
             recursive = True
             continue
-        if part == "--directories" or part.startswith("--directories="):
+        if part.split("=", 1)[0] in _GREP_DIRECTORY_OPTIONS:
             directories = part.split("=", 1)[1] if "=" in part else next(arguments, None)
             recursive = directories == "recurse"
             continue
@@ -449,8 +509,8 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
         return _looks_path_target(candidate) or _contains_unexpanded_shell_reference(candidate)
 
     if cmd in {"rg", "grep"}:
-        positional = _shell_positional_args_after(parts, 1)
-        pattern_from_option = _search_has_pattern_option(parts, 1)
+        positional = _shell_positional_args_after(parts, 1, cmd=cmd)
+        pattern_from_option = _search_has_pattern_option(parts, 1, cmd)
         lists_files = cmd == "rg" and "--files" in parts[1:]
         candidate_paths = positional if pattern_from_option or lists_files else positional[1:]
         return [path for path in candidate_paths if is_path_operand(path)]
@@ -463,7 +523,7 @@ def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
             return [path for path in parts[separator_index + 1 :] if is_path_operand(path)]
         if _git_grep_is_revision_scoped(parts):
             return []
-        positional = _shell_positional_args_after(parts, 2)
+        positional = _shell_positional_args_after(parts, 2, cmd=cmd)
         return [path for path in positional[1:] if is_path_operand(path)]
 
     if cmd == "find":

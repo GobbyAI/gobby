@@ -61,8 +61,10 @@ from gobby.hooks._normalization_paths import (
     extract_structured_mutation_paths,
 )
 from gobby.hooks._normalization_pipeline import (
+    _interpreter_reads_program_from_stdin,
     _is_neutral_echo_segment,
     _is_read_only_pipeline_stage,
+    _stdin_program_interpreter,
 )
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
@@ -134,27 +136,6 @@ from gobby.hooks.shell_execution import (
 _CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
 # Script bodies the current top-level command may still read; none outside one.
 _script_reads_left: ContextVar[int] = ContextVar("_script_reads_left", default=0)
-
-
-def _stdin_program_interpreter(parts: list[str]) -> str | None:
-    interpreter_parts = _inline_interpreter_parts(parts)
-    if not interpreter_parts:
-        return None
-    interpreter = shell_command_name(interpreter_parts[0])
-    return interpreter if interpreter in {"node", "python", "python3", "ruby"} else None
-
-
-def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
-    interpreter_parts = _inline_interpreter_parts(parts)
-    if not interpreter_parts:
-        return False
-    interpreter = shell_command_name(interpreter_parts[0])
-    if interpreter not in {"node", "python", "python3", "ruby"}:
-        return False
-    args = interpreter_parts[1:]
-    if any(flag in {"-c", "-e", "--eval", "-m"} or flag.startswith("--eval=") for flag in args):
-        return False
-    return "-" in args or not any(not arg.startswith("-") for arg in args)
 
 
 def _normalize_shell_tool_metadata(
@@ -276,7 +257,8 @@ def _classify_shell_command(
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         if case_depth and index + 1 < len(segments):
             next_gap = command[segment_end : spans_by_token[id(segments[index + 1].tokens[0])][0]]
-            if ";&" in next_gap and not next_gap.lstrip().startswith("&"):
+            # Next-gap ;& is case fallthrough; a leading & backgrounds this command instead.
+            if ";&" in next_gap and not next_gap.replace("\\\n", "").lstrip().startswith("&"):
                 next_separator = ";"
         raw_parts = shell_token_values(segment.tokens)
         in_pipeline = (
@@ -402,6 +384,7 @@ def _classify_shell_command(
                     piped_stdin=segment.separator_before == "|",
                     base_cwd=segment_base,
                     invocation_cwd=segment_cwd,
+                    search_base_cwd=base_cwd,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
@@ -473,6 +456,7 @@ def _classify_shell_segment(
     piped_stdin: bool = False,
     base_cwd: Path | None = None,
     invocation_cwd: str | None = None,
+    search_base_cwd: Path | None = None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
     input_paths = _rebase_navigation_shell_paths(_input_redirection_paths(tokens), cwd)
@@ -500,6 +484,8 @@ def _classify_shell_segment(
         if body.startswith("(") and body.endswith(")") and not body.startswith("(("):
             stdin_parts = ["sh", "-c", body[1:-1]]
     stdin_parts = git_environment_parts(shell_token_values(tokens), stdin_parts)
+    if stdin_parts and shell_command_name(stdin_parts[0]) == "rg" and input_paths == ["/dev/null"]:
+        shell_stdin, cwd = False, cwd or str(search_base_cwd or base_cwd or ".")
 
     gcode_metadata = gcode_navigation_metadata(plain_parts)
     if gcode_metadata and not (

@@ -741,6 +741,167 @@ def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(seats: _Sea
     assert _current_step(seats.db, seats.former) == "claim"
 
 
+@pytest.mark.parametrize("closed_bound", [False, True])
+async def test_active_claim_rebinds_parked_or_closed_step_task(
+    seats: _Seats, closed_bound: bool, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
+    history = tasks.create_task(
+        project_id, "Historical binding", validation_criteria="The historical task is closed."
+    )
+    tasks.close_task(history.id, reason="completed", force=True)
+    active = tasks.create_task(
+        project_id, "Active claimed task", validation_criteria="The active claim can be handed off."
+    )
+    active_ref = f"#{active.seq_num}"
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    if closed_bound:
+        tasks.close_task(seats.task_id, reason="completed", force=True)
+    claim_task(seats.db, active.id, seats.former)
+    tasks.link_commit(active.id, COMMIT)
+    variables = SessionVariableManager(seats.db)
+    variables.merge_variables(
+        seats.former,
+        {
+            "assigned_task_id": history.id,
+            "assigned_task_ref": seats.ref,
+            "claimed_tasks": {seats.task_id: seats.ref, active.id: active_ref},
+            "active_task_id": active.id,
+        },
+    )
+    instances = AgentStepInstanceManager(seats.db)
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    instance.variables.update(bounced=True, _developer_handoff_tasks=[history.id])
+    instances.save(instance)
+
+    # Reconcile through the real BEFORE_TOOL hook, then use an ordinary idempotent claim.
+    with session_context_for_test(seats.former):
+        claimed = await _task_proxy(seats, full_hooks=True).call_tool(
+            "gobby-tasks",
+            "claim_task",
+            {"task_id": active_ref},
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+    assert "error" not in claimed
+    assert claimed["task_id"] == active.id
+    assert _current_step(seats.db, seats.former) == "claim"
+    # Codex supplies the provider completion hook for a non-agent-run session.
+    engine = RuleEngine(seats.db)
+    handler = WorkflowHookHandler(
+        rule_engine=engine,
+        task_manager=tasks,
+        session_manager=SessionManager(seats.db),
+        config=SimpleNamespace(workflow=SimpleNamespace(enabled=True, timeout=5.0)),
+    )
+
+    async def complete(event: HookEvent) -> None:
+        event.metadata["_platform_session_id"] = seats.former
+        event.cwd = str(tmp_path)
+        event.project_id = project_id
+        await handler._evaluate_rules(event)
+
+    await complete(
+        _after_tool(seats.former, "claim_task", {"task_id": active_ref}, claimed),
+    )
+    step, state = _instance_state(seats.db, seats.former)
+    assert step == "route_skills"
+    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (active.id, None)
+    assert state["bounced"] is False
+    assert state["_developer_handoff_tasks"] == [history.id]
+    session_state = variables.get_variables(seats.former)
+    assert (session_state["assigned_task_id"], session_state["assigned_task_ref"]) == (
+        active.id,
+        None,
+    )
+    if closed_bound:
+        assert seats.task_id not in session_state["claimed_tasks"]
+    else:
+        assert session_state["claimed_tasks"][seats.task_id] == seats.ref
+
+    instance = instances.get_for_session(seats.former)
+    assert instance is not None
+    instance.variables.update(skills_routed=True, additional_skills_loaded=True)
+    instances.save(instance)
+    await complete(
+        _after_tool(
+            seats.former, "get_task", {"task_id": active_ref}, {"id": active.id, "ref": active_ref}
+        ),
+    )
+    assert _current_step(seats.db, seats.former) == "submit"
+    _, state = _instance_state(seats.db, seats.former)
+    assert (state["assigned_task_id"], state["assigned_task_ref"]) == (active.id, active_ref)
+    session_state = variables.get_variables(seats.former)
+    assert (session_state["assigned_task_id"], session_state["assigned_task_ref"]) == (
+        active.id,
+        active_ref,
+    )
+    close_event = replace(
+        _after_tool(seats.former, "close_task", {"task_id": active_ref}, {}),
+        event_type=HookEventType.BEFORE_TOOL,
+    )
+    assert engine._check_step_tool_enforcement(close_event, seats.former, {}) is None
+    with session_context_for_test(seats.former):
+        result = await _task_proxy(seats, full_hooks=True).call_tool(
+            "gobby-tasks",
+            "escalate_task",
+            {"task_id": active_ref, "reason": "Handed off: reviewer LAND at linked commit"},
+            session_id=seats.former,
+            enforce_workflow=True,
+        )
+    assert result == {}
+    assert tasks.get_task(active.id).is_escalated
+    await complete(
+        _after_tool(
+            seats.former,
+            "escalate_task",
+            {"task_id": active_ref, "reason": "Handed off: reviewer LAND at linked commit"},
+            result,
+        ),
+    )
+    assert _current_step(seats.db, seats.former) == "claim"
+    if not closed_bound:
+        assert tasks.get_task(seats.task_id).claimed_by_session_id == seats.former
+
+
+@pytest.mark.parametrize("active_state", ["missing", "foreign", "closed", "same-ref"])
+def test_unusable_or_equivalent_active_claim_keeps_binding(
+    seats: _Seats, active_state: str
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    claim_task(seats.db, seats.task_id, seats.former)
+    _seat(seats, seats.former, "implement")
+    variables = SessionVariableManager(seats.db)
+    if active_state == "same-ref":
+        instances = AgentStepInstanceManager(seats.db)
+        instance = instances.get_for_session(seats.former)
+        assert instance is not None
+        instance.variables["assigned_task_id"] = seats.ref
+        instances.save(instance)
+    else:
+        other = tasks.create_task(
+            tasks.get_task(seats.task_id).project_id,
+            "Unusable target",
+            validation_criteria="The unusable target leaves the binding intact.",
+        )
+        if active_state == "foreign":
+            claim_task(seats.db, other.id, seats.successor)
+        elif active_state == "closed":
+            tasks.close_task(other.id, reason="completed", force=True)
+        projection = {seats.task_id: seats.ref}
+        if active_state != "missing":
+            projection[other.id] = f"#{other.seq_num}"
+        variables.merge_variables(
+            seats.former, {"claimed_tasks": projection, "active_task_id": other.id}
+        )
+
+    assert _current_step(seats.db, seats.former) == "implement"
+
+
 class _CountingDb:
     """Count every database entry point the step read can use."""
 

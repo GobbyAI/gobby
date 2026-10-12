@@ -35,6 +35,7 @@ PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/work
         ("team-coordination", "release-manager", "release manager"),
         ("team-coordination", "inbox-manager", "inbox manager"),
         ("team-coordination", "recovery-steward", "recovery steward"),
+        ("team-coordination", "consolidator", "consolidator"),
         ("team-planning", "plan-writer", "plan writer"),
         ("team-planning", "plan-adversary", "plan adversary"),
     ],

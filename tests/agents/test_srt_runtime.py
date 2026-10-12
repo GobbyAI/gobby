@@ -48,6 +48,53 @@ from gobby.utils.dependency_requirements import (
 pytestmark = pytest.mark.unit
 
 
+def test_macos_profile_grants_only_semaphore_limit_and_self_scheduling(tmp_path: Path) -> None:
+    from gobby.agents.srt_package_patch import MACOS_PROFILE_PATH
+    from tests.srt_fixture_helpers import upstream_proxy_bytes, write_srt_proxy_fixture
+
+    write_srt_proxy_fixture(tmp_path)
+    node = shutil.which("node")
+    assert node is not None
+    # Execute the pinned generator with empty filesystem helpers. Comparing
+    # its full output preserves every original process-info and sysctl rule.
+    script = r"""
+const fs = require('node:fs');
+const sources = JSON.parse(fs.readFileSync(0, 'utf8'));
+function generate(source) {
+  const body = source.match(/^function generateSandboxProfile\([\s\S]*?^}\n/m);
+  if (!body) throw new Error('missing pinned profile generator');
+  const factory = new Function(
+    'generateReadRules', 'generateWriteRules', 'writeRootEntries', 'resolveReadConfig',
+    `return (${body[0]})`);
+  return factory(() => [], () => [], () => [], () => undefined)({
+    libraryDenyEntries: [], needsNetworkRestriction: true, logTag: 'test-seat',
+  });
+}
+console.log(JSON.stringify(sources.map(generate)));
+"""
+    result = subprocess.run(
+        [node, "-e", script],
+        input=json.dumps(
+            [
+                upstream_proxy_bytes("macos-sandbox-utils").decode(),
+                (tmp_path / MACOS_PROFILE_PATH).read_text(),
+            ]
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    original, patched = json.loads(result.stdout)
+    assert "(allow process-info* (target same-sandbox))" in original
+    assert patched == (
+        original
+        + '\n(allow sysctl-read (sysctl-name "kern.sysv.semmns"))'
+        + "\n(allow system-sched (target self))"
+    )
+
+
 def test_previous_run_write_paths_keeps_shared_hook_inbox_writable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

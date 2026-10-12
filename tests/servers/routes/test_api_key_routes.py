@@ -51,9 +51,7 @@ def _server(db: HubDatabase) -> HTTPServer:
     )
     server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=require_machine_id(),
-        effect_fence=None,
         clock=None,
         front_door_secret=FRONT_DOOR_SECRET,
     )

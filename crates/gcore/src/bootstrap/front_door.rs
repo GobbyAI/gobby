@@ -123,7 +123,7 @@ pub fn is_loopback_host(host: &str) -> bool {
 /// Parse a boolean the same way `src/gobby/config/bootstrap.py` does. PyYAML
 /// resolves plain YAML 1.1 words such as `yes` to bool while serde_yaml keeps
 /// them as strings, so both parsers accept a bool or one of these words.
-fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
+pub(super) fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
     if let Some(flag) = value.as_bool() {
         return Some(flag);
     }

@@ -31,23 +31,21 @@ def test_patch_drains_only_the_two_upstream_close_handlers(tmp_path: Path) -> No
     verify_srt_proxy_patch(tmp_path)
 
 
-@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js"])
+@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js", "macos-sandbox-utils.js"])
 def test_patch_refuses_unknown_upstream_bytes_without_writing(tmp_path: Path, name: str) -> None:
     http = write_srt_proxy_fixture(tmp_path, patched=False)
     proxy = http.with_name(name)
-    original_http = http.read_bytes()
     corrupted = proxy.read_bytes() + b"// unexpected upstream drift\n"
     proxy.write_bytes(corrupted)
+    originals = {path: path.read_bytes() for path in http.parent.glob("*.js")}
 
     with pytest.raises(ValueError, match="pinned upstream source"):
         apply_srt_proxy_patch(tmp_path)
 
-    assert proxy.read_bytes() == corrupted
-    if name == "mux-proxy.js":
-        assert http.read_bytes() == original_http
+    assert {path: path.read_bytes() for path in originals} == originals
 
 
-@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js"])
+@pytest.mark.parametrize("name", ["http-proxy.js", "mux-proxy.js", "macos-sandbox-utils.js"])
 def test_verifier_rejects_unpatched_and_modified_proxy(tmp_path: Path, name: str) -> None:
     proxy = write_srt_proxy_fixture(tmp_path, patched=False).with_name(name)
     apply_srt_proxy_patch(tmp_path)

@@ -15,24 +15,35 @@ the #23273 precedent. The parent plan's D2 text stays unchanged. In this plan,
 "api-keys D2.n" names the parent's acceptance items, and "key-cutover" names
 `.gobby/plans/gdaemon-key-cutover.md` (#23273, Hub-side key validation,
 front-door identity, and shared-token cutover). Its code landed on `0.5.0`
-through #23519 and #23520; #23523 (Live activation of the key cutover) is its
-remaining manual activation.
+through #23519 and #23520, and #23523 (Live activation of the key cutover)
+closed on 2026-10-11. #23457 (Atomic gdaemon lifecycle ownership and native
+standby cutover) also closed on 2026-10-11. Its landed runtime is this plan's
+baseline (see Landed #23457 Baseline).
 
 **The problem.** A node bootstrap (`datastore_mode: remote`) can enroll against
-a hub (`gobby auth login`, 4.5), but nothing runs on the node afterwards. 4.6
-refuses the Python daemon on a node, and gdaemon's front door can only proxy to
-loopback Python. gdaemon has no run mode: it requires
-`GOBBY_FRONT_DOOR_SECRET` in every mode, and a node bootstrap carries no
-`database_url`, so its front door answers every `gobby_` bearer with 503
-`key_resolver_unavailable`. The hub has no record of which nodes are live, and
-no route lists machines.
+a hub (`gobby auth login`, 4.5), but nothing useful runs on the node
+afterwards:
+- gcore's bootstrap parser derives a run mode, but unlike Python it accepts
+  `(remote, hub: true)`, neither requires nor normalizes `hub_daemon_url`, and
+  has no `hub_cert`.
+- On a node, `gdaemon serve` takes no lease, but
+  `crates/gdaemon/src/state.rs::RuntimeState::prepare` still builds the
+  backend supervisor. So the node launches the Python daemon that 4.6 refuses
+  on a node. Python's own refusal (#23269) has not reached `0.5.0`; #24075
+  lands it.
+- The node's front door can only proxy to loopback Python. A node bootstrap
+  carries no `database_url`, so the front door answers every `gobby_` bearer
+  with 503 `key_resolver_unavailable`.
+- The hub has no record of which nodes are live, and no route lists machines.
 
 **When the leaves close:**
-- gdaemon's Rust bootstrap parser derives the same run mode as Python and
-  rejects `(remote, true)` (1.1).
-- gdaemon holds its services in a mode container. A node starts without the
-  front-door secret, key resolver, retention task, or terminal host, and
-  answers the interactive handshake challenge itself with its own key (1.2).
+- gcore's bootstrap parser derives the run mode and the normalized
+  `hub_daemon_url` exactly as Python does, rejects `(remote, true)`, and
+  carries `hub_cert` (1.1).
+- A node's `gdaemon serve` takes only the PID claim. It generates no
+  front-door secret, derives no backend ports, and starts no lease, backend,
+  key resolver, retention task, or terminal host. It answers the interactive
+  handshake challenge itself with its own key (1.2).
 - A node's front door relays every other HTTP request and WebSocket upgrade to
   its hub over one pooled connection pinned to `hub_cert` (1.3).
 - The node holds a WebSocket channel to the hub. The hub registers it,
@@ -46,38 +57,44 @@ no route lists machines.
 `kind: framing`
 
 Plan Writer decisions on 2026-10-05, refreshed on 2026-10-10 against the landed
-key cutover. They draw on the parent's settled D2 design, the plan of record's
-4.4, and the PD disposition in `.gobby/plans/gdaemon-front-door.md` (lines
-430-446). The Orchestrator flags Decisions 2 and 3 to Josh at approval,
-because they change behavior that the approved key-cutover plan specified.
+key cutover and on 2026-10-11 against the landed #23457 runtime. They draw on
+the parent's settled D2 design, the plan of record's 4.4, and the PD
+disposition in `.gobby/plans/gdaemon-front-door.md` (lines 430-446). The
+Orchestrator flags Decisions 2 and 3 to Josh at approval, because they change
+behavior that the approved key-cutover plan specified.
 
-1. **The plan expands only after key-cutover's live activation closes.** Every
-   leaf builds on the landed key cutover:
-   - 1.1 extends `HubDatabaseBootstrap`, which already carries `api_key` and a
-     manual `Debug`.
-   - 1.2 to 1.5 edit `serve.rs`, `front_door/mod.rs`, and the gdaemon test
-     harness around `front_door::auth::AuthState`,
-     `front_door::challenge::answer`, and the resolved identity headers.
+1. **Every leaf builds on landed code, with no external edge.** Each leaf
+   builds on the landed key cutover and the landed #23457 runtime:
+   - 1.1 extends `HubDatabaseBootstrap`, which already carries `api_key`,
+     `mode`, and a manual `Debug`.
+   - 1.2 to 1.5 edit `state.rs`, `serve.rs`, `front_door/mod.rs`, and the
+     gdaemon test harness around `state::RuntimeState`,
+     `front_door::auth::AuthState`, `front_door::challenge::answer`, and the
+     resolved identity headers.
    - 1.6 runs against a hub whose front door validates keys.
 
    The Orchestrator ruled on 2026-10-05 at 12:11 CT that
-   `docs/contracts/plan-coverage.md` (lines 321-324) has no exception for
+   `docs/contracts/plan-coverage.md` (lines 386-389) has no exception for
    external edges. So the six deliverables stay active, fully specified leaves
-   with no external edges and no typed deferrals. The plan expands only after
-   #23523 (Live activation of the key cutover) closes, so no leaf has an open
-   external prerequisite at expansion. Expansion is the Orchestrator's action,
-   and the Orchestrator holds it to that gate. #23523 changes no source in
-   `crates/gdaemon` or `crates/gcore` (Orchestrator, 2026-10-10).
+   with no external edges and no typed deferrals. Expansion waited for #23523
+   (Live activation of the key cutover), which closed on 2026-10-11, so that
+   gate is met. #23523 changed no source in `crates/gdaemon` or `crates/gcore`
+   (Orchestrator, 2026-10-10). On 2026-10-11 the Orchestrator ruled that this
+   plan targets the landed #23457 code, and that #24075 (lands #23269's node
+   refusal on `0.5.0`) is an edge the Orchestrator adds itself. This plan
+   carries no edge or deferral for #24075, and no leaf needs it: after 1.2 a
+   node never launches Python.
 2. **Node mode supersedes key-cutover Decision 15 and is exempt from its
    Decision 6.** A node's gdaemon validates nothing and holds no table. It
-   builds no `AuthState` at all: no key resolver and no
-   `GOBBY_FRONT_DOOR_SECRET`, because no Python backend sits behind it to
-   trust that secret. It forwards the bearer untouched. The hub's front door
-   validates the key and forwards the resolved identity to the hub's Python.
-   So a node never answers 503 `key_resolver_unavailable`; it relays (1.3).
-   A standalone or hub front door without `database_url` keeps its
-   resolver-less `AuthState` and still answers a `gobby_` bearer with that 503
-   (`crates/gdaemon/src/front_door/auth.rs::AuthState::authenticate`).
+   builds no `AuthState` at all: no key resolver and no front-door secret,
+   because no Python backend sits behind it to trust that secret. It forwards
+   the bearer untouched. The hub's front door validates the key and forwards
+   the resolved identity to the hub's Python. So a node never answers 503
+   `key_resolver_unavailable`; it relays (1.3). Since #23457, `gdaemon serve`
+   refuses a standalone or hub bootstrap without `database_url`
+   (`state.rs::RuntimeState::prepare`). So only an in-process `serve` door
+   lacks a key resolver, and that door still answers a `gobby_` bearer with
+   that 503 (`crates/gdaemon/src/front_door/auth.rs::AuthState::authenticate`).
 3. **The interactive handshake challenge stays native on a node.** gcore's
    grant client checks the proof against its own bearer: `expected =
    HMAC-SHA256(HMAC-SHA256(bearer, "gobby-interactive-proof-v1"), nonce)`,
@@ -104,9 +121,9 @@ because they change behavior that the approved key-cutover plan specified.
    `tests/e2e/test_auth_login_e2e.py::_node_home` writes all agree that a node
    has no `database_url`. api-keys Decision 2's remark that "a node's
    `database_url` is the hub's" describes the pre-4.6 lease hazard, not a
-   requirement. In node mode gdaemon never reads `database_url`: it builds no
-   key resolver, retention pool, terminal pool, or node pool, even when the
-   key is present.
+   requirement. In node mode gdaemon never reads `database_url`: it takes no
+   lease and builds no key resolver, retention or terminal pool, or node pool,
+   even when the key is present.
 5. **Relay semantics.** Each rule names the behavior it preserves.
    - **Target.** The HTTP listener relays to `hub_daemon_url` with the path and
      query unchanged.
@@ -158,6 +175,10 @@ because they change behavior that the approved key-cutover plan specified.
    | Hub | served natively | served natively |
    | Standalone | not mounted, so the request reaches Python, which answers 404 | served natively |
    | Node | relayed to the hub | relayed to the hub |
+
+   #23457's runtime gates in `FrontDoor::handle` run before authentication, so
+   a standby hub or standalone front door, or one whose backend was refused,
+   answers these paths with its 503 as it does every other path.
 9. **Channel protocol.**
    - **Open.** The node opens `GET /api/nodes/channel` (WebSocket) with
      `Authorization: Bearer <api_key>`. The hub's front door validates the
@@ -282,10 +303,12 @@ because they change behavior that the approved key-cutover plan specified.
     - Errors use gdaemon's existing body `{"error": msg, "code": code}`:
       - a request with no resolved key identity is 401 `missing_auth`;
       - an unknown, foreign, or malformed id is 404 `machine_not_found`;
-      - a query error, or a standalone front door with no `database_url`, is
-        503 `machines_unavailable`. Without `database_url` the front door has
-        no key resolver, so no caller carries a key identity and that
-        front door answers only 401 in practice.
+      - a query error, or a standalone door with no pool, is 503
+        `machines_unavailable`. `gdaemon serve` always gives a standalone door
+        a pool, because it refuses a standalone bootstrap without
+        `database_url` (Decision 2). Only an in-process `serve` door has no
+        pool, and it has no key resolver either, so no caller there carries a
+        key identity and it answers only 401 in practice.
 13. **Dependencies.** These follow the `crates/gdaemon/Cargo.toml` rule "ring
     only … aws-lc-rs stays out of the build". Every crate below is already in
     `Cargo.lock`:
@@ -314,116 +337,128 @@ because they change behavior that the approved key-cutover plan specified.
     - Rust `parse_hub_origin` lowercases the host, as Python's `urlparse`
       `hostname` does.
     - `parse_files_home_view` rejects `hub_daemon_url` on a local bootstrap
-      with "hub_daemon_url is not allowed on a local bootstrap", without
-      Python's "; this process is the owner" suffix. 1.1 changes that literal
-      to Python's text, so every Rust parser reports the rule identically. No
-      test asserts the old text.
+      with "hub_daemon_url is not allowed on a local bootstrap"
+      (`crates/gcore/src/bootstrap.rs`, line 328), without Python's "; this
+      process is the owner" suffix. 1.1 changes that literal to Python's text,
+      so every Rust parser reports the rule identically. No test asserts the
+      old text.
+    - #23457's inline mode match reports a non-boolean `hub` as "bootstrap hub
+      must be a boolean" and an unknown `datastore_mode` as "bootstrap
+      datastore_mode must be local or remote". 1.1 adopts Python's "hub must
+      be a boolean" and "datastore_mode must be one of: local, remote", and the
+      vectors cover both. The only test of those errors,
+      `crates/gcore/tests/bootstrap_mode.rs`, checks only that they fail.
     - Every local vector carries `files_home`, which only Python's parser
       requires.
 15. **No activation section.** Each leaf validates against isolated daemons
     and never restarts the running daemon. The Orchestrator promotes the
     coherent binary set and restarts under the per-landing restart rule
-    (`.gobby/roles/roster.md`, `2940eb9d01`). No node runs today. `gobby
-    start`, `restart`, and `cutover` refuse a node bootstrap (#23269), so an
-    operator starts a node by hand with `gdaemon serve`.
-16. **The mode container lands before the relay.** The Orchestrator ruled on
-    2026-10-10 that an early leaf creates `crates/gdaemon/src/state.rs`, split
-    from the relay, so #23457 (atomic gdaemon lifecycle) builds on it without
-    waiting for relay work. That leaf is 1.2:
-    - `AppState` holds `ModeServices::{Standalone { backend }, Hub { backend },
-      Node(Arc<NodeServices>)}`. This is the run-modes slice's former 2.2
-      obligation (`.gobby/plans/completed/gdaemon-run-modes.md`, Decision 4).
-    - No `Option` field stands in for a mode. The database-backed handles stay
-      `Option` only where `database_url` itself is optional: the existing
-      resolver and the standalone machines pool (1.5). Hub mode requires
-      `database_url` from 1.4 onward, because its channel checks keys.
-    - Standalone and hub variants are struct variants, and every match binds
-      them as `{ backend, .. }`. So 1.4, 1.5, and #23457 each add fields
-      without editing another's arms.
-    - 1.3 gives `NodeServices` the relay, 1.4 gives `Hub` the node registry
-      and its pool, and 1.5 gives `Standalone` the machines pool.
+    (`.gobby/roles/roster.md`, `2940eb9d01`). No node runs today, and an
+    operator starts one by hand with `gdaemon serve`. #23269's Python refusal
+    of a node bootstrap is not on `0.5.0` at `093e210fb7`: its commit
+    `91a483db0d` never landed, and #24075 lands it (Decision 1). After 1.2 a
+    node's `gdaemon serve` never launches Python, whether or not that refusal
+    has landed.
+16. **The landed #23457 runtime is the mode-aware owner, and no second
+    container exists.** #23457 landed `crates/gdaemon/src/state.rs::RuntimeState`
+    and gcore's `RunMode` instead of the `AppState` and `ModeServices` that
+    this plan's 2026-10-10 settlement specified. #23457's task records the
+    re-settlement (gobby#16181, through Lane 2's gobby#15997):
+    - gcore owns one `RunMode` parser that matches Python;
+    - gdaemon's state owns the PID claim, the lease, and the backend
+      lifecycle;
+    - a node holds no `ActiveDaemonLease`;
+    - #23274 consumes that parser and state and creates no second container.
+
+    So this plan builds no `AppState`:
+    - 1.1 completes the landed parser's Python parity in place and adds no
+      mode enum.
+    - 1.2 makes `serve.rs::run` branch on the mode before any backend-only
+      step. A node takes its PID claim through the new
+      `state.rs::NodeServices::prepare`, so `state.rs` stays the single
+      owner of the claim. `RuntimeState::prepare` keeps its signature and
+      refuses a node. A node's own services live in `NodeServices`, which 1.3
+      extends with the relay.
+    - Hub and standalone native routes ride `FrontDoorState`, which already
+      carries the runtime projection. 1.4 adds a `native: nodes::NativeRoutes`
+      field that `FrontDoorState::new` defaults, so `FrontDoor::new` and the
+      public `serve` keep their signatures and the in-process callers need no
+      edit.
+    - The parent's D2 prose names `AppState` as the mode container
+      (`.gobby/plans/gdaemon-api-keys-nodes.md`, line 1003). No api-keys item
+      D2.1 to D2.7 names it, so this plan maps every parent item (Parent D2
+      Mapping) without building it.
 17. **The node routes build their own pool.**
     `front_door::auth::PostgresKeyResolver` keeps its pool private and wrapped
-    in `Result`, and the retention task and the terminal host each build their
-    own (`crates/gdaemon/src/serve.rs::run`). The node routes follow that
-    precedent: one `gobby_core::postgres_pool::Pool` per process, with
-    `max_size` 4, `application_name` `gobby-gdaemon-nodes`, and
-    `acquire_timeout` 2 s, inside the 4 s recheck deadline. `Pool` is not
-    `Clone`, so it is shared through `Arc`. Lane 2's developer raised no
-    objection (2026-10-10).
+    in `Result`, and `crates/gdaemon/src/state_services.rs::ActiveServices::start`
+    builds the retention and terminal pools only while the lease is active.
+    The node routes follow the own-pool precedent: one
+    `gobby_core::postgres_pool::Pool` per process, built once in
+    `serve.rs::run`'s backend arm, with `max_size` 4, `application_name`
+    `gobby-gdaemon-nodes`, and `acquire_timeout` 2 s, inside the 4 s recheck
+    deadline. It lives as long as the process, because #23457's runtime gates
+    already answer these routes with 503 while the lease is inactive
+    (Decision 8). `Pool` is not `Clone`, so it is shared through `Arc`. Lane
+    2's developer raised no objection (2026-10-10).
 
-## Lifecycle Ownership Settlement (#23457)
+## Landed #23457 Baseline
 `kind: framing`
 
-This section settles how #23457 (atomic gdaemon lifecycle) and #23274 (Node
-channel, relay backend, and `/api/machines`, planned in
-`.gobby/plans/gdaemon-node-channel.md`) share gdaemon's run-mode code. It
-stands alone so it can be copied into #23457. The Orchestrator approved points
-(a) to (d) on 2026-10-10.
+#23457 (Atomic gdaemon lifecycle ownership and native standby cutover) closed
+on 2026-10-11 and is this plan's baseline. It supersedes points (a) and (b) of
+this plan's 2026-10-10 Lifecycle Ownership Settlement: no `AppState` or
+`ModeServices` exists, and no `#23457 blocked_by` edge is needed. Points (c)
+and (d) survive as the rules at the end of this section.
 
-**Settlement.**
-- (a) #23274's leaf 1.1 owns the gcore `RunMode` parser, and its leaf 1.2
-  (mode container) creates `crates/gdaemon/src/state.rs` with `AppState` and
-  `ModeServices`. Both precede the relay (leaf 1.3), so #23457 does not wait
-  on relay work.
-- (b) #23457 lands after that leaf. The Orchestrator adds `#23457 blocked_by
-  <the 1.2 task>` after expansion. Neither plan carries a manifest edge to the
-  other.
-- (c) No other order is fixed between #23457 and #23274's later leaves. Each
-  edits only its own fields and arms, listed below. #23457's standby gate runs
-  before the hub's native node routes. Whichever lands second rebases onto the
-  other's arms. A change that adds a field to a variant or to
-  `BackendServices` updates every direct constructor of it, including the
-  gdaemon test harness's standalone `AppState` literals
-  (`crates/gdaemon/tests/common/mod.rs`, `heartbeat.rs`, `http_contracts.rs`,
-  and `front_door.rs`).
-- (d) Node mode takes no lease, runs no backend, needs no front-door secret,
-  and starts no retention task or terminal host. It takes the same PID claim
-  as the other modes. #23457 owns the PID claim and implements it for every
-  mode, node included; #23274 adds nothing to it.
+**What landed.**
+- `crates/gcore/src/bootstrap.rs`: `HubDatabaseBootstrap` carries
+  `mode: RunMode` and a raw `hub_daemon_url: Option<String>`, and
+  `RunMode::{Standalone, Hub, Node}` exists. `parse_hub_database_bootstrap`
+  derives the mode inline. `crates/gdaemon/src/lease/mod.rs` re-exports
+  `RunMode` as `LeaseMode`, and `ActiveDaemonLease::new` refuses a node.
+- `crates/gdaemon/src/state.rs::RuntimeState { mode, lease, lease_state,
+  backend }`:
+  - `RuntimeState::prepare(bootstrap, home, secret)` claims
+    `<home>/gobby.pid` first and returns `Ok(None)` when another process holds
+    it. For standalone and hub it then takes an `ActiveDaemonLease`, which
+    requires `database_url`. It builds a `BackendSupervisor` that owns the
+    claim in every mode, node included.
+  - `RuntimeState::run` loops on the lease, starts
+    `state_services.rs::ActiveServices` (the retention task and the terminal
+    host, each over its own pool) while the lease is active, and runs the
+    supervisor.
+- `crates/gdaemon/src/serve.rs::run` generates the front-door secret (it no
+  longer reads `GOBBY_FRONT_DOOR_SECRET`), loads the bootstrap, and builds the
+  key resolver and `AuthState` in every mode. It then calls `prepare`, binds
+  both public ports, spawns the owner task, and serves through the private
+  `serve_with_runtime`. The public
+  `serve(listeners, routes, tls, auth, shutdown)` passes no runtime.
+- `FrontDoorState` holds `runtime: Option<Arc<RuntimeState>>`.
+  `FrontDoor::handle` runs `observe_peer`. With a runtime it then serves the
+  native lease-admin routes (`lease::admin_api`) and answers 503 for a refused
+  backend and for standby. Then it runs the native challenge,
+  `AuthState::authenticate`, and `ws::splice` or `RouteTable::dispatch`.
 
-**The contract after leaf 1.2.**
-- `crates/gdaemon/src/state.rs`:
-  - `pub struct AppState { pub mode: ModeServices }`.
-  - `pub enum ModeServices { Standalone { backend: BackendServices }, Hub {
-    backend: BackendServices }, Node(Arc<NodeServices>) }`.
-  - `#[derive(Clone)] pub struct BackendServices { pub auth: Arc<AuthState> }`.
-  - `AppState::from_bootstrap(bootstrap: &HubDatabaseBootstrap, path: &Path,
-    secret: Option<String>) -> Result<AppState>` branches on
-    `bootstrap.run_mode()`.
-- `crates/gdaemon/src/serve.rs::run` loads the bootstrap first, then reads
-  `GOBBY_FRONT_DOOR_SECRET` as an `Option` and passes it to
-  `AppState::from_bootstrap`. Only the standalone and hub arm requires it,
-  with the unchanged message "GOBBY_FRONT_DOOR_SECRET must be nonempty; launch
-  through the Python runner". The node arm ignores it.
-- `crates/gdaemon/src/serve.rs::serve` takes `app: Arc<AppState>` where it took
-  `auth: Arc<AuthState>`. In-process callers (the gdaemon test harness)
-  construct `AppState` directly. Per `.gobby/plans/gdaemon-front-door.md`
-  acceptance 5.2.20, `serve` itself starts no lease, backend, or child; #23457
-  keeps lifecycle startup in `run`.
-- `FrontDoor::handle` runs in this order:
-  - Standalone and hub: `observe_peer`, the native handshake challenge
-    (`front_door::challenge::answer`), `AuthState::authenticate`, #23457's
-    standby gate, the native mode routes (`/api/nodes/channel` on a hub from
-    1.4, `/api/machines` from 1.5), then `ws::splice` or
-    `RouteTable::dispatch`.
-  - Node: `observe_peer`, the native handshake challenge with the node's own
-    bootstrap, then the relay (from 1.3; before it, a 503 naming
-    `hub_daemon_url`).
+**What this plan changes on that baseline.**
+- 1.1 completes the parser's Python parity (Decision 14).
+- 1.2 fixes the node path. `run` branches on the mode first. A node generates
+  no secret, derives no backend ports, and takes only its PID claim through
+  `NodeServices::prepare`. `RuntimeState::prepare` refuses a node, so a node
+  never launches Python.
+- 1.4 and 1.5 add `FrontDoorState.native` and serve the native routes after
+  authentication, so #23457's gates answer first.
 
-**Ownership.**
-
-| Code | Owner |
-| --- | --- |
-| gcore `RunMode`, `HubDatabaseBootstrap` mode fields | #23274 (1.1) |
-| `AppState`, the `ModeServices` enum, `AppState::from_bootstrap`'s mode dispatch and node arm | #23274 (1.2) |
-| `NodeServices`, the `Node` variant, the node arm of `FrontDoor::handle`, the relay | #23274 (1.2, 1.3) |
-| `Hub { nodes }`, `Standalone { db }`, `nodes::NativeRoutes`, native mode-route dispatch | #23274 (1.4, 1.5) |
-| `BackendServices` fields beyond `auth` (lease, standby, backend supervisor) | #23457 |
-| The secret source in `from_bootstrap`'s standalone and hub arm (generation replaces the environment read) | #23457 |
-| The standby gate in `FrontDoor::handle`, and #23457's own changes to `front_door/health.rs` and `front_door/routes.rs` | #23457 |
-| Lease, backend, retention, and terminal startup in `run`'s standalone and hub branch | #23457 |
-| PID claim, all modes | #23457 |
+**Rules that survive the settlement.**
+- (c) Each plan edits only its own code. `RuntimeState`'s lease and backend
+  lifecycle, `ActiveServices`, the lease-admin routes, and the runtime gates
+  stay #23457's. This plan adds `run`'s mode branch, `NodeServices`,
+  `RuntimeState::prepare`'s node refusal, `bind_listeners`, `serve_doors`,
+  the node door, `FrontDoorState.native`, and the native routes. Whichever change in these files lands second rebases onto the
+  other's code.
+- (d) Node mode takes the same PID claim as the other modes and nothing else:
+  no lease, backend, front-door secret, backend port offsets, retention task,
+  or terminal host. The claim stays #23457's `claim_from_environment` on
+  `<home>/gobby.pid`, called only from `state.rs`.
 
 ## Constraints
 `kind: framing`
@@ -449,32 +484,50 @@ stands alone so it can be copied into #23457. The Orchestrator approved points
     nothing.
 - **No secret values in logs.** No new code logs the API key, a relayed
   `Authorization` value, or a channel bearer. The manual `Debug` on
-  `HubDatabaseBootstrap` redacts `api_key`, and 1.1's new fields are not
-  secret.
+  `HubDatabaseBootstrap` redacts `api_key`, and the fields 1.1 adds to it are
+  not secret.
 - **No backward compatibility.** 0.5.0 has not shipped.
-- **Monolith ceiling.** Measured on `0.5.0` at `879ca705d8`, production lines
+- **Monolith ceiling.** Measured on `0.5.0` at `093e210fb7`, production lines
   before the first `#[cfg(test)]`:
-  - gdaemon `serve.rs` 444 of 486, `front_door/mod.rs` 136,
-    `front_door/health.rs` 101 of 148, `front_door/proxy.rs` 114 of 137,
+  - gdaemon `serve.rs` 383 of 425, `state.rs` 129, `front_door/mod.rs` 181,
+    `front_door/health.rs` 105 of 152, `front_door/proxy.rs` 114 of 137,
     `front_door/ws.rs` 66, and `front_door/challenge.rs` 144.
-  - gcore `bootstrap.rs` 395 of 942, and `bootstrap/front_door.rs` 282.
+  - gcore `bootstrap.rs` 416 of 963, and `bootstrap/front_door.rs` 282.
 
-  No leaf brings a targeted file near 850 production lines. Each leaf
-  re-measures and splits any file it would push past that.
+  `crates/AGENTS.md` counts inline tests toward the 1,000-line ceiling, so
+  `bootstrap.rs` (963 lines in total) takes no new parsing logic. 1.1 puts it
+  in a new `bootstrap/run_mode.rs`, and `bootstrap.rs` stays under 1,000 lines
+  in total. No leaf brings a targeted file near 850 production lines. Each
+  leaf re-measures and splits any file it would push past that.
 - **Landed key-cutover names.** `front_door::auth::{AuthState, KeyIdentity,
   KeyResolver, PostgresKeyResolver, IDENTITY_HEADERS}`,
   `front_door::challenge::answer`, and
   `gobby_core::local_token::read_api_key_at` exist on `0.5.0`. The identity
   headers are `x-gobby-user-id`, `x-gobby-machine-id`, `x-gobby-key-id`, and
   `x-gobby-front-door`.
+- **Landed #23457 names.** `state::RuntimeState::{prepare, run, standby}`,
+  `state_services::ActiveServices`,
+  `lifecycle::pid_file::{claim_from_environment, PidFileClaim}`,
+  `lifecycle::backend::{BackendSupervisor, BackendStatus}`, `lease::admin_api`,
+  and `FrontDoorState.runtime` exist on `0.5.0`.
 - **Consumer sweeps.**
-  - Targets were swept read-only on `0.5.0` at `879ca705d8` (2026-10-10).
-    Since `b342c02eba`, only `docs/guides/configuration.md` (two lines,
-    #23521) and one Python test changed among the swept paths.
-  - `gcode grep -w` and `-F` for `HubDatabaseBootstrap {`, `FrontDoor::new`,
-    `FrontDoorState::new`, `AuthState::new`, `PublicListener`, `serve(`,
-    `health::unavailable`, `bad_gateway`, `read_files_home_view`,
-    `FilesHomeView`, and `yaml_bool`.
+  - Targets were swept read-only on `0.5.0` at `093e210fb7` (2026-10-11).
+  - `gcode grep -w` and `-F` for `HubDatabaseBootstrap {`, `RunMode`,
+    `hub_daemon_url`, `datastore_mode`, `FrontDoor::new`,
+    `FrontDoorState::new`, `FrontDoorState {`, `.runtime =`,
+    `RuntimeState {`, `RuntimeState::prepare`, `claim_from_environment`,
+    `serve_with_runtime`, `AuthState::new`, `PublicListener`, `serve(`,
+    `CARGO_BIN_EXE_gdaemon`, `unavailable(`, `bad_gateway(`,
+    `read_files_home_view`, `FilesHomeView`, and `yaml_bool`.
+  - Beyond each leaf's research context, the sweep found the following:
+    - `RuntimeState::prepare`'s only caller is `serve.rs::run`.
+    - The only `RuntimeState` literal is in `crates/gdaemon/tests/lease.rs`
+      (line 58), which builds a standalone projection that no leaf changes.
+    - No `FrontDoorState` literal exists outside `serve_with_runtime`'s
+      functional update.
+    - Every spawned `gdaemon serve` test is in
+      `crates/gdaemon/tests/front_door.rs` (lines 312, 994, and 1715). Two of
+      them write node bootstraps (1.1, 1.2).
   - `gcode grep` for `/api/machines`, `/api/nodes`, `hub_cert`, and
     `last_heartbeat_at`.
   - No `/api/machines` or `/api/nodes` consumer exists in `src/`, `crates/`,
@@ -502,56 +555,70 @@ Every api-keys D2 item maps to an item here:
 channel, and the hub can list machines with their connection state.
 
 **Granularity:** six leaves. Mode parsing (1.1) is a gcore parser with its own
-parity vectors. The mode container (1.2) is the startup owner #23457 builds
-on, and it is split from the relay by Orchestrator ruling (Decision 16). The
-relay (1.3) and the channel (1.4) are separate lifecycle owners: per-request
-forwarding versus a long-lived registry and a reconnecting client. Each is
-independently testable. The machines API (1.5) is a read model over the
-registry. The pair test (1.6) needs all of them. 1.3 and 1.4 each name more
-than six production Target files, because a new module ships with its
-registration, its mode wiring in `state.rs`, `front_door/mod.rs`, and
-`serve.rs`, and its `Cargo.toml` change; splitting them would leave an
-unwired module. 1.2's ten Targets are five production files plus its new
-test file and the four in-process `serve` callers that follow its one
-signature change. Each leaf stays at or below six acceptance items.
+parity vectors. Node startup (1.2) decides which lifecycle owners a node
+starts, and a spawned `gdaemon serve` tests it on its own. The relay (1.3) and
+the channel (1.4) are separate lifecycle owners: per-request forwarding versus
+a long-lived registry and a reconnecting client. Each is independently
+testable. The machines API (1.5) is a read model over the registry. The pair
+test (1.6) needs all of them. 1.3 and 1.4 each name more than six Target
+files, because a new module ships with its registration, its wiring in
+`state.rs` or `nodes/mod.rs`, `front_door/mod.rs`, and `serve.rs`, and its
+`Cargo.toml` change; splitting them would leave an unwired module. Each leaf
+stays at or below six acceptance items.
 
 ### 1.1 Rust bootstrap derives the run mode the way Python does [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/src/bootstrap.rs::*` — scope-reason: `HubDatabaseBootstrap` gains `datastore_mode`, `hub`, `hub_daemon_url`, `hub_cert`, and `run_mode()`, and its manual `Debug` prints them; `parse_hub_database_bootstrap` calls the mode parser; `parse_hub_origin` lowercases the host; `parse_files_home_view` takes Python's local-rejection text; registers and re-exports `run_mode`
+- `crates/gcore/src/bootstrap.rs::*` — scope-reason: `HubDatabaseBootstrap` gains `hub_cert`, and its manual `Debug` prints `mode`, `hub_daemon_url`, and `hub_cert`; `parse_hub_database_bootstrap` takes the mode and the normalized `hub_daemon_url` from `run_mode::parse_mode_fields` and reads `hub_cert`; `parse_hub_origin` lowercases the host; `parse_files_home_view` takes Python's local-rejection text; declares `mod run_mode`
 - `crates/gcore/src/bootstrap/run_mode.rs`
-- `crates/gcore/src/bootstrap/front_door.rs::*` — scope-reason: `yaml_bool` becomes `pub(super)` so `hub` parses with the same YAML-bool rules as `front_door.enabled`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: the default `HubDatabaseBootstrap` literal in `load_enabled_bootstrap` gains the new fields
+- `crates/gcore/src/bootstrap/front_door.rs::yaml_bool`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: the default `HubDatabaseBootstrap` literal in `load_enabled_bootstrap` gains `hub_cert: None`; later leaves edit the same file under `::*`
+- `crates/gcore/tests/bootstrap_mode.rs::native_mode_matches_python_bootstrap`
+- `crates/gdaemon/tests/front_door.rs::spawn_serve`
+- `crates/gdaemon/tests/front_door.rs::spawn_tls_serve`
 - `tests/fixtures/bootstrap_run_modes.json`
 - `crates/gcore/tests/bootstrap_run_modes.rs`
 - `tests/config/test_bootstrap_run_modes.py`
 
 **Research context:**
-- `crates/gcore/src/bootstrap.rs` defines the following:
-  - `HubDatabaseBootstrap` (line 43) has `database_url`, `api_key`,
-    `daemon_url`, `bind_host`, `daemon_port`, `websocket_port`, and
-    `front_door`, with a manual `Debug` (line 53) that redacts `api_key`.
-    This leaf extends that `Debug` with the four new fields.
-  - `parse_hub_database_bootstrap` (line 196) reads `bind_host` first, then
-    the front-door block, and reads `database_url` and `api_key` as
+- `crates/gcore/src/bootstrap.rs` (963 lines in total, inline tests from line
+  417) defines the following:
+  - `HubDatabaseBootstrap` (line 42) has `mode: RunMode`, `hub_daemon_url:
+    Option<String>`, `database_url`, `api_key`, `daemon_url`, `bind_host`,
+    `daemon_port`, `websocket_port`, and `front_door`. Its manual `Debug`
+    (line 65) redacts `api_key` and omits `mode` and `hub_daemon_url`.
+  - `RunMode::{Standalone, Hub, Node}` (line 57).
+  - `parse_hub_database_bootstrap` (line 207) reads `bind_host` first, then
+    the front-door block. It derives the mode inline: `remote` always yields
+    `Node`, even with `hub: true`. A local or absent `datastore_mode` requires
+    `hub` to be a YAML boolean ("bootstrap hub must be a boolean"), and any
+    other value fails with "bootstrap datastore_mode must be local or
+    remote". It reads `hub_daemon_url`, `database_url`, and `api_key` as
     unvalidated optional strings.
-  - `FilesHomeView` (line 89) and `parse_files_home_view` (line 278) already
+  - `FilesHomeView` (line 99) and `parse_files_home_view` (line 299) already
     parse `datastore_mode` as `DatastoreMode::{Local, Remote}`, and
-    `hub_daemon_url` through `parse_hub_origin` (line 356).
+    `hub_daemon_url` through `parse_hub_origin` (line 377).
     `parse_hub_origin` trims a trailing `/` and rejects `@`, `?`, `#`, and
     `/`, but it neither lowercases the host nor checks this process's own
-    origin. `parse_files_home_view`'s local rejection (line 307) lacks
+    origin. `parse_files_home_view`'s local rejection (line 328) lacks
     Python's suffix (Decision 14).
   - `read_files_home_view` has no caller outside `bootstrap.rs`;
     `.gobby/plans/gobby-backup.md` plans its first consumer, so it stays.
   - Struct literals of `HubDatabaseBootstrap` exist only in
     `parse_hub_database_bootstrap` and
-    `crates/gdaemon/src/serve.rs::load_enabled_bootstrap` (line 243).
+    `crates/gdaemon/src/serve.rs::load_enabled_bootstrap` (line 152).
+  - Readers of `mode` are `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+    and the `lease::LeaseMode` re-export. The type and values of `mode` stay
+    unchanged, so this leaf edits neither; 1.2 edits `state.rs` for the node
+    path. Nothing reads `hub_daemon_url` yet.
 - Python (`src/gobby/config/bootstrap.py`) derives the mode as follows:
   - `BootstrapConfig.run_mode()` (line 119) returns `node` for `remote`, then
     `hub` when `hub` is set, else `standalone`.
-  - `bootstrap_from_mapping` (line 194) parses `hub` with `_parse_yaml_bool`.
+  - `bootstrap_from_mapping` (line 194) parses `hub` with `_parse_yaml_bool`
+    (line 270), which raises "hub must be a boolean", and reads `hub_cert` as
+    an optional string in every mode. `_parse_datastore_mode` (line 517)
+    raises "datastore_mode must be one of: local, remote".
   - `_parse_mode_owner_fields` (line 404) applies these rules:
     - On local it rejects `hub_daemon_url` with "hub_daemon_url is not allowed
       on a local bootstrap; this process is the owner" and requires
@@ -564,7 +631,7 @@ Targets:
     `bind_host:daemon_port`, plus `daemon_url`.
   - `_parse_hub_daemon_url` (line 446) lowercases the host through `urlparse`
     and brackets an IPv6 host.
-- Probed on `0.5.0`:
+- Probed on `0.5.0` (Python is unchanged since):
   - `{datastore_mode: remote, hub_daemon_url: "https://HUB.Example:443/"}`
     yields `node` and `https://hub.example:443`.
   - `hub: "yes"` on local yields `hub`.
@@ -572,36 +639,53 @@ Targets:
   - A remote bootstrap whose `bind_host: localhost` matches its
     `hub_daemon_url` raises the own-origin error.
 - `crates/gcore/src/bootstrap/front_door.rs::yaml_bool` (line 126) is private.
-  `bootstrap.rs::front_door_enabled_matches_python` (line 789) already proves
+  `bootstrap.rs::front_door_enabled_matches_python` (line 809) already proves
   its parity with `_parse_yaml_bool`.
+- Rust tests that the stricter parser reaches:
+  - `crates/gcore/tests/bootstrap_mode.rs::native_mode_matches_python_bootstrap`
+    (from #23457) expects `datastore_mode: remote` with `hub: true`, and a
+    bare `datastore_mode: remote`, to yield `Node`. Python rejects both.
+  - `crates/gdaemon/tests/front_door.rs::spawn_serve` (line 970) and
+    `spawn_tls_serve` (line 1704) spawn `gdaemon serve` over a
+    `datastore_mode: remote` bootstrap with no `hub_daemon_url`, which the
+    stricter parser refuses at startup.
+  - `bootstrap.rs::reads_bootstrap_with_datastore_mode` (line 484) writes a
+    bare remote bootstrap but reads it through `read_daemon_endpoint_at`, which
+    this leaf does not change.
 - Precedent for a fixture read from a crate test:
   `crates/gdaemon/tests/ws_golden_proxy.rs::corpus` reads
   `../../tests/fixtures/terminal_ws_golden` through `CARGO_MANIFEST_DIR`.
 
 **Implementation:**
 - New `crates/gcore/src/bootstrap/run_mode.rs`:
-  - `pub enum RunMode { Standalone, Hub, Node }`.
   - `pub(super) fn parse_mode_fields(map, bind_host, daemon_port, daemon_url)`
-    returns `(DatastoreMode, bool, Option<String>, Option<String>)` for
-    `datastore_mode`, `hub`, `hub_daemon_url` (normalized by
-    `super::parse_hub_origin`), and `hub_cert`.
-  - It applies Python's rules and messages, including `(remote, true)`, the
-    remote requirement, the local rejection, and the own-origin rejection over
-    the same origin set as `_own_origins`.
+    returns `(RunMode, Option<String>)`: the existing `super::RunMode` and the
+    `hub_daemon_url` normalized by `super::parse_hub_origin`, present only for
+    a node. It adds no mode enum.
+  - It parses `hub` with `super::front_door::yaml_bool` and applies Python's
+    rules and messages: the boolean and `datastore_mode` errors,
+    `(remote, true)`, the remote requirement, the local rejection, and the
+    own-origin rejection over the same origin set as `_own_origins`.
   - It does not require `files_home`, which gdaemon never reads.
-- `HubDatabaseBootstrap` gains the four fields and
-  `pub fn run_mode(&self) -> RunMode`, mirroring `BootstrapConfig.run_mode`.
-- `parse_hub_origin` lowercases the host, so `FilesHomeView` and the mode
-  parser normalize alike. `parse_files_home_view`'s local-rejection literal
-  becomes Python's text (Decision 14).
-- `load_enabled_bootstrap`'s default literal sets `datastore_mode: Local`,
-  `hub: false`, and `None` for `hub_daemon_url` and `hub_cert`.
+- `bootstrap.rs`:
+  - `parse_hub_database_bootstrap` replaces its inline match with
+    `run_mode::parse_mode_fields` and reads `hub_cert` with
+    `optional_string_field`, in every mode, as Python does.
+  - `HubDatabaseBootstrap` gains `hub_cert: Option<String>`, and `Debug`
+    prints `mode`, `hub_daemon_url`, and `hub_cert`.
+  - `parse_hub_origin` lowercases the host, so `FilesHomeView` and the mode
+    parser normalize alike. `parse_files_home_view`'s local-rejection literal
+    becomes Python's text (Decision 14).
+  - The file stays under 1,000 lines in total.
+- `front_door.rs::yaml_bool` becomes `pub(super)`.
+- `load_enabled_bootstrap`'s default literal sets `hub_cert: None`.
 - `tests/fixtures/bootstrap_run_modes.json` holds a `cases` array. Each entry
-  has a `name`, a `bootstrap` mapping, and either
-  `mode` with `hub_daemon_url` or `error`. Cases:
+  has a `name`, a `bootstrap` mapping, and either `mode` with
+  `hub_daemon_url` or `error`. Cases:
   - standalone, and hub with `true` and with `"yes"`;
   - node, with host lowercasing, a trailing slash, and an IPv6 literal hub;
   - `(remote, true)`;
+  - a non-boolean `hub` and an unknown `datastore_mode`;
   - remote without `hub_daemon_url`;
   - local with `hub_daemon_url`;
   - own origin, both through `bind_host` and through `daemon_url`;
@@ -611,10 +695,17 @@ Targets:
 - `crates/gcore/tests/bootstrap_run_modes.rs` and
   `tests/config/test_bootstrap_run_modes.py` each load the file and assert
   every case.
+- `crates/gcore/tests/bootstrap_mode.rs::native_mode_matches_python_bootstrap`
+  gives its remote case a `hub_daemon_url` and moves `(remote, true)` and the
+  bare remote bootstrap to its failing cases.
+- `spawn_serve` and `spawn_tls_serve` add an `http` loopback
+  `hub_daemon_url` on a port other than their own to their node bootstraps.
 
 **Focused verification (planned):**
-`cargo nextest run -p gobby-core --test bootstrap_run_modes` and
-`cargo nextest run -p gobby-core bootstrap` (heavy work), then
+`cargo nextest run -p gobby-core --test bootstrap_run_modes --test bootstrap_mode`
+and `cargo nextest run -p gobby-core bootstrap`, then
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test front_door`
+(heavy work), then
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap_run_modes.py tests/config/test_bootstrap.py -q`.
 
 Consumers unchanged:
@@ -622,65 +713,74 @@ Consumers unchanged:
 - `crates/gcore/src/ai/effective_config.rs` — no-edit-reason: reads `database_url` through `postgres_database_url_from_bootstrap_file`, whose field it reads is unchanged.
 - `crates/gdaemon/src/main.rs` — no-edit-reason: same `database_url` read as `effective_config.rs`.
 - `crates/gdaemon/src/front_door/challenge.rs` — no-edit-reason: reads `api_key` through the same parser; the field is unchanged.
+- `crates/gdaemon/src/lease/mod.rs` — no-edit-reason: re-exports the unchanged `RunMode` as `LeaseMode`.
 
 **Acceptance:**
 
-- 1.1.1 - The Rust parser derives the mode, normalized `hub_daemon_url`, and `hub_cert` that every shared vector expects. It rejects `(remote, true)`, a remote bootstrap without `hub_daemon_url`, a local one with it, and this process's own origin, each with Python's message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
+- 1.1.1 - The Rust parser derives the mode and normalized `hub_daemon_url` that every shared vector expects, and reads `hub_cert`. It rejects `(remote, true)`, a non-boolean `hub`, an unknown `datastore_mode`, a remote bootstrap without `hub_daemon_url`, a local one with it, and this process's own origin, each with Python's message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
 - 1.1.2 - Python's `bootstrap_from_mapping` and `BootstrapConfig.run_mode` produce the same outcome on every case of the same vector file. test: `tests/config/test_bootstrap_run_modes.py::test_shared_vectors_match_rust`.
 
-### 1.2 Mode container: gdaemon starts by run mode, and a node needs no secret [category: code] (depends: 1.1)
+### 1.2 Node startup: a node takes only the PID claim and answers the challenge itself [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/src/state.rs`
-- `crates/gdaemon/src/lib.rs`
+- `crates/gdaemon/src/state.rs::*` — scope-reason: adds `NodeServices` and `NodeServices::prepare`, which takes a node's PID claim; `RuntimeState::prepare` refuses a node; the module comment describes the node path
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` branches on the mode before generating the secret, so a node skips the secret, the key resolver and `AuthState`, `backend_ports`, and the route-family warnings, and serves node doors; `bind` delegates to the new private `bind_listeners`; `serve_with_runtime` hands its doors to the new public `serve_doors`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: `FrontDoor` holds a private `Door` enum with a backend arm (today's state and route table) and a node arm; `FrontDoor::node` builds the node arm; in the node arm `handle` sends the handshake challenge to `challenge::answer` with the node's bootstrap path and answers everything else with `health::unavailable(hub_daemon_url, Down)`
-- `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: `unavailable` and `bad_gateway` take `target: impl std::fmt::Display`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run` loads the bootstrap, then builds `AppState` with the secret as an `Option`, and starts the retention task and terminal host only in standalone and hub modes; `serve` takes `Arc<AppState>` and builds each listener's door by mode
+- `crates/gdaemon/src/front_door/health.rs::unavailable`
+- `crates/gdaemon/src/front_door/health.rs::bad_gateway`
 - `crates/gdaemon/tests/run_modes.rs`
-- `crates/gdaemon/tests/common/mod.rs::*` — scope-reason: its two `serve` calls pass a standalone `AppState`
-- `crates/gdaemon/tests/heartbeat.rs::*` — scope-reason: its `serve` call passes a standalone `AppState`
-- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: `start_front_door`'s `serve` call passes a standalone `AppState`
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: `start_authenticated_front_door`'s `serve` call passes a standalone `AppState`, and `postgres_resolver_and_node_mode_fail_closed` is renamed `postgres_resolver_and_resolverless_door_fail_closed`, because a resolver-less door is now never a node
+- `crates/gdaemon/tests/front_door.rs::spawn_serve`
+- `crates/gdaemon/tests/front_door.rs::spawn_tls_serve`
+- `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_node_mode_fail_closed`
 
 **Research context:**
-- `crates/gdaemon/src/serve.rs::run` (line 46):
-  - It reads `GOBBY_FRONT_DOOR_SECRET` first and bails when it is missing or
-    empty, before it loads the bootstrap.
-  - It builds `PostgresKeyResolver::new(url)` when `database_url` is set, then
-    `AuthState::new(secret, resolver, path)`.
-  - Inside the runtime it starts the retention task (its own pool, `max_size`
-    2) when `database_url` is set, and the terminal family when
-    `front_door.routes.terminal_ws` is `native`. The terminal family requires
-    `database_url` ("Native terminal supervision requires database_url") and
-    builds its own pool (`max_size` 8). A `Pool::build` failure in either
-    stops startup.
-  - It binds both public ports with their backend ports, starts
-    `watch_parent_fd`, and calls `serve(listeners, &routes, tls, auth,
-    shutdown)`.
-- `crates/gdaemon/src/serve.rs::serve` (line 320) starts the `HeartbeatHost`
-  (no registered jobs and no database; `crates/gdaemon/src/heartbeat.rs`), and
-  for each `PublicListener { listener, backend }` builds
-  `FrontDoorState::new(backend, BackendState::Down, auth.clone())`,
-  `RouteTable::new(FAMILIES, routes, &state)`, and `FrontDoor::new(state,
-  table)`.
-- In-process `serve` callers: `crates/gdaemon/tests/common/mod.rs` (lines 32
-  and 77), `tests/heartbeat.rs` (line 323), `tests/http_contracts.rs`
-  (line 273), and `tests/front_door.rs` (line 421, in
-  `start_authenticated_front_door`). Each builds an `AuthState` and passes it.
-- `crates/gdaemon/src/front_door/mod.rs`:
-  - `FrontDoorState { target, backend_state, client, auth: Arc<AuthState> }`
-    (line 24). `FrontDoorState::new` callers are `serve`, `routes.rs` tests
-    (lines 263, 297, 319), and `tests/front_door.rs` (lines 77, 105, 243,
-    405). This leaf leaves it unchanged.
-  - `FrontDoor { state, table }` (line 48). `FrontDoor::new(state, table)`
-    callers are `serve` and `tests/front_door.rs` (lines 79, 107, 245, 414).
-    Its signature is unchanged here.
-  - `FrontDoor::handle` (line 64) runs `observe_peer`, then sends `POST
-    /api/runtime/handshake/challenge` to
-    `challenge::answer(&self.state.auth.bootstrap_path, request)`, then
-    `self.state.auth.authenticate`, then `ws::splice` or
-    `RouteTable::dispatch`. `state.auth` is read only here.
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare` (line 27):
+  - It claims `<home>/gobby.pid` through
+    `lifecycle::pid_file::claim_from_environment` and returns `Ok(None)` when
+    another live process holds the claim.
+  - For standalone and hub it reads `database_url` (else "native runtime
+    ownership requires bootstrap database_url"), the machine id, and the
+    deployment token, and takes an `ActiveDaemonLease`. For a node it takes
+    none.
+  - In every mode it then builds `BackendConfig::from_environment(home)`, sets
+    `GOBBY_FRONT_DOOR_SECRET` in that config's environment, and builds
+    `BackendSupervisor::with_lease(lease, claim, config)`, which owns the
+    claim from then on.
+  - `RuntimeState::run` (line 64) starts `ActiveServices` and runs the
+    supervisor, which launches `GOBBY_BACKEND_COMMAND` or else Python's
+    runner. So a node launches Python today.
+- `lifecycle::pid_file::PidFileClaim` (line 65) holds the lock until it is
+  dropped or released.
+- `crates/gdaemon/src/serve.rs::run` (line 53) does the following:
+  - It generates the secret, loads the bootstrap, and builds
+    `PostgresKeyResolver` when `database_url` is set, then
+    `AuthState::new(secret, resolver, path)`, in every mode.
+  - It computes the backend ports with
+    `gobby_core::bootstrap::backend_ports` (line 80), which refuses with
+    "backend ports for … exceed 65535" when either public port plus
+    `BACKEND_PORT_OFFSET` (100) overflows. It then warns about unimplemented
+    route families and loads TLS.
+  - Inside the runtime it calls `prepare`, binds both public ports with
+    `bind`, spawns `owner_run`, and calls
+    `serve_with_runtime(listeners, routes, tls, auth, Some(state), shutdown)`.
+    The shutdown future completes on `shutdown_signal()` or when the owner
+    task ends.
+- `serve.rs::bind(host, port, backend_port)` (line 177) binds the port and,
+  when it applies, its companion address, and pairs each listener with the
+  loopback backend address in a `PublicListener`. Its only other caller,
+  `tests/front_door.rs` (line 1368), passes backend port 1.
+- `serve.rs::serve_with_runtime` (line 252) starts the `HeartbeatHost`. For
+  each listener it builds a `FrontDoorState` carrying the runtime, a
+  `RouteTable`, and an `accept` loop over `FrontDoor::new(state, table)`. It
+  then selects over the shutdown and the accept loops. The public `serve`
+  (line 233) calls it with no runtime. Its in-process callers are
+  `crates/gdaemon/tests/common/mod.rs` (lines 32 and 77), `tests/heartbeat.rs`
+  (line 323), `tests/http_contracts.rs` (line 273), and `tests/front_door.rs`
+  (line 424). None changes here.
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle` (line 68) runs as
+  the baseline describes. `state.auth` is read only by the challenge and by
+  `authenticate`. `FrontDoor::new(state, table)` keeps its signature.
 - `crates/gdaemon/src/front_door/challenge.rs::answer` (line 39) takes a
   bootstrap `&Path`. It rejects any `Authorization` header with 401
   `credential_before_proof`, passes the `managed` kind through as `Ok`, and
@@ -691,42 +791,48 @@ Targets:
   `target.to_string()`, and `bad_gateway` (line 49) writes
   `{"status":"bad_gateway","backend":{"target"}}` the same way. Both take
   `target: SocketAddr`. Their production callers are `proxy::forward`,
-  `ws::splice`, and `routes.rs::compare`. `proxy::forward` and `ws::splice`
-  pass a `SocketAddr`, which the `Display` bound accepts unchanged, so this
-  leaf does not edit them; 1.3 edits both for the relay.
-- `tests/front_door.rs::postgres_resolver_and_node_mode_fail_closed` (line
-  235) calls a resolver-less `AuthState` door "node" and asserts it answers
-  a `gobby_` bearer with 503 `key_resolver_unavailable`. Under Decision 2
-  that door is a standalone or hub door without `database_url`, so only its
-  names change.
-- `tests/front_door.rs::resolver_error_is_503_and_missing_secret_refuses_start`
-  (line 273) spawns `gdaemon serve` over a standalone bootstrap (ports only)
-  without the secret and expects a refusal naming `GOBBY_FRONT_DOOR_SECRET`.
-  The secret check moving after the bootstrap load keeps that outcome.
+  `ws::splice`, and `routes.rs::compare`, and each passes a `SocketAddr`,
+  which the `Display` bound accepts unchanged. So this leaf does not edit
+  them; 1.3 edits `proxy.rs` and `ws.rs` for the relay.
+- `crates/gdaemon/tests/front_door.rs`:
+  - `postgres_resolver_and_node_mode_fail_closed` (line 236) calls a
+    resolver-less `AuthState` door "node" and asserts that it answers a
+    `gobby_` bearer with 503 `key_resolver_unavailable`. Under Decision 2 that
+    door is an in-process standalone door, so only its names change.
+  - `spawn_serve` and `spawn_tls_serve` spawn `gdaemon serve` over a node
+    bootstrap with `GOBBY_BACKEND_COMMAND` set to `/bin/sleep 600`, because a
+    node needs no `database_url` for a lease. Their callers,
+    `native_owner_survives_parent_eof_and_frees_ports_on_stop` (line 1042) and
+    `self_signed_generated_once_and_reused` (line 1752), assert that serve
+    outlives parent EOF, stops on SIGTERM with its ports freed, and answers
+    `/api/health` over self-signed TLS with 503. A node that launches no
+    backend keeps each of those outcomes, but it needs `api_key` to start.
+  - `resolver_error_is_503_and_missing_authority_refuses_start` (line 312)
+    spawns serve over a standalone bootstrap without `database_url` and
+    expects the `prepare` refusal. Standalone keeps today's startup order, so
+    that outcome stands.
 - A node bootstrap from `gobby auth login` carries `datastore_mode: remote`,
   `hub_daemon_url`, `api_key`, `api_key_id`, and `hub_cert` for an `https`
-  hub (`src/gobby/cli/auth_login.py::_publish`).
+  hub (`src/gobby/cli/auth_login.py::_publish`, line 275).
 
 **Implementation:**
-- `state.rs` contains the following:
-  - `pub struct AppState { pub mode: ModeServices }`.
-  - `pub enum ModeServices { Standalone { backend: BackendServices }, Hub {
-    backend: BackendServices }, Node(Arc<NodeServices>) }`. Every match binds
-    the first two as `{ backend, .. }` (Decision 16).
-  - `#[derive(Clone)] pub struct BackendServices { pub auth: Arc<AuthState> }`.
+- `state.rs`:
   - `pub struct NodeServices { pub bootstrap_path: PathBuf, pub
     hub_daemon_url: String }`.
-  - `AppState::from_bootstrap(bootstrap: &HubDatabaseBootstrap, path: &Path,
-    secret: Option<String>) -> Result<AppState>` matches
-    `bootstrap.run_mode()`:
-    - Standalone and hub take `secret` or fail with "GOBBY_FRONT_DOOR_SECRET
-      must be nonempty; launch through the Python runner". They build the
-      resolver from `database_url` and the `AuthState` exactly as `run` does
-      today.
-    - Node fails without `api_key` with "node bootstrap <path> has no
-      api_key; run `gobby auth login` to enroll". It builds no `AuthState`
-      and reads no `database_url`.
-  - `lib.rs` registers `state`.
+  - `NodeServices::prepare(bootstrap: &HubDatabaseBootstrap, path: &Path,
+    home: &Path) -> Result<Option<(Arc<NodeServices>, PidFileClaim)>>` first
+    fails without `api_key` with "node bootstrap <path> has no api_key; run
+    `gobby auth login` to enroll". It takes the `hub_daemon_url` that 1.1
+    guarantees on every node bootstrap, and it reads no `database_url`. It
+    then claims `<home>/gobby.pid` through `claim_from_environment`, as
+    `RuntimeState::prepare` does, and returns `Ok(None)` when another live
+    process holds the claim.
+  - `RuntimeState::prepare` keeps its signature and its standalone and hub
+    path. It refuses a node bootstrap before it claims the PID file, with "a
+    node takes no native runtime; NodeServices::prepare claims its PID file".
+    So no caller can build a backend supervisor for a node.
+  - The module comment says that `state.rs` remains the single owner of the
+    PID claim, and that a node takes only the claim and `NodeServices`.
 - `front_door/mod.rs`:
   - `FrontDoor` wraps a private `enum Door { Backend { state: FrontDoorState,
     table: Arc<RouteTable> }, Node(Arc<NodeServices>) }`.
@@ -738,72 +844,84 @@ Targets:
     `challenge::answer(&node.bootstrap_path, request)` and returns its `Err`
     response. Everything else, including a `managed` challenge that `answer`
     passes through, is answered with
-    `health::unavailable(&node.hub_daemon_url, BackendState::Down)`; 1.3
+    `health::unavailable(&node.hub_daemon_url, BackendState::Down)`. 1.3
     replaces that answer with the relay.
 - `health::unavailable` and `health::bad_gateway` take
   `target: impl std::fmt::Display` (Decision 7).
 - `serve.rs`:
-  - `run` resolves the bootstrap path, loads the bootstrap, reads
-    `GOBBY_FRONT_DOOR_SECRET` filtered to a nonempty `Option`, and builds
-    `Arc<AppState>` with `AppState::from_bootstrap` before computing backend
-    ports or loading TLS.
-  - The retention task and the terminal family start only when the mode is
-    standalone or hub, with today's conditions inside that branch. A node
-    starts neither (Decision 4).
-  - `serve(listeners, routes, tls, app: Arc<AppState>, shutdown)` builds each
-    listener's door by mode: standalone and hub build today's
-    `FrontDoorState` from `backend.auth` and `FrontDoor::new`; node builds
-    `FrontDoor::node(node.clone())`. A node still binds both public ports,
-    and their backend ports go unused. The `HeartbeatHost` starts in every
-    mode.
-- The in-process callers pass `Arc::new(AppState { mode:
-  ModeServices::Standalone { backend: BackendServices { auth } } })`.
+  - New `pub async fn serve_doors(doors: Vec<(TcpListener, FrontDoor)>, tls:
+    Option<Arc<ServerConfig>>, shutdown: impl Future<Output = ()>) ->
+    Result<()>` holds today's `HeartbeatHost` start and stop, the accept
+    loops, and the select. `serve_with_runtime` builds the backend doors as
+    today and calls it.
+  - New private `async fn bind_listeners(host: &str, port: u16) ->
+    Result<Vec<TcpListener>>` binds the port and, when it applies, its
+    companion address. `bind` keeps its signature and pairs each of those
+    listeners with the backend address.
+  - `run` loads the bootstrap first. Only for standalone and hub does it then
+    generate the front-door secret, build the key resolver and `AuthState`,
+    call `backend_ports`, and print the route-family warnings, in today's
+    order. It loads TLS in every mode, as today. Inside the runtime it
+    branches on the mode:
+    - A node calls `NodeServices::prepare(&bootstrap, &path, home)`. `None`
+      returns `Ok(())`. Otherwise it calls `bind_listeners` for
+      `daemon_port` and for `websocket_port`, and calls `serve_doors` with
+      `FrontDoor::node(node.clone())` for every listener and
+      `shutdown_signal()`. It holds the claim until `serve_doors` returns.
+      So any valid node port up to 65535 starts, and no node secret exists.
+    - Standalone and hub call `RuntimeState::prepare` with the secret and run
+      today's `bind`, owner task, and `serve_with_runtime`. Their overflow
+      refusal is unchanged.
 - `tests/run_modes.rs` builds its bootstraps with
   `gobby_core::bootstrap::parse_hub_database_bootstrap`. Every node bootstrap
   there uses an `http` `hub_daemon_url` at a refused loopback port, so 1.3's
   `hub_cert` rule leaves it valid. Its standalone and hub bootstraps carry no
-  `database_url`. It matches every variant with `{ .. }` and constructs none,
-  so later fields leave it compiling.
-- `tests/front_door.rs` renames
-  `postgres_resolver_and_node_mode_fail_closed` to
-  `postgres_resolver_and_resolverless_door_fail_closed`, its `node` binding to
-  `resolverless`, and its `"node auth"` message to `"resolverless auth"`. Its
-  assertions stay.
+  `database_url`. Each `prepare` call runs in its own temporary home.
+- `tests/front_door.rs`:
+  - `spawn_serve` and `spawn_tls_serve` add `api_key` to their node
+    bootstraps.
+  - `postgres_resolver_and_node_mode_fail_closed` is renamed
+    `postgres_resolver_and_resolverless_door_fail_closed`, its `node` binding
+    becomes `resolverless`, and its `"node auth"` message becomes
+    `"resolverless auth"`. Its assertions stay.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test run_modes --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test run_modes --test front_door --test lease --test ws_golden_proxy --test http_contracts --test heartbeat`
 and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work).
 
 Consumers unchanged:
-- `crates/gdaemon/src/front_door/routes.rs` — no-edit-reason: `compare` passes `state.target`, a `SocketAddr`, to `health::bad_gateway`, which accepts it through `impl std::fmt::Display` with byte-identical output (Decision 7); its tests build `FrontDoorState` directly, whose signature is unchanged.
+- `crates/gdaemon/src/front_door/routes.rs` — no-edit-reason: `compare` passes `state.target`, a `SocketAddr`, to `health::bad_gateway`, which accepts it through `impl std::fmt::Display` with byte-identical output (Decision 7); its tests build `FrontDoorState` through `new`, whose signature is unchanged.
 - `crates/gdaemon/src/front_door/challenge.rs` — no-edit-reason: `answer` already takes the bootstrap path, which the node arm supplies.
-- `crates/gdaemon/src/front_door/auth.rs` — no-edit-reason: `AuthState` is built as today, only for standalone and hub.
+- `crates/gdaemon/src/front_door/auth.rs` — no-edit-reason: `run` builds `AuthState` as today, only for standalone and hub.
+- `crates/gdaemon/tests/lease.rs` — no-edit-reason: it builds its `RuntimeState` literal and its doors directly and never calls `RuntimeState::prepare`, whose only change is refusing a node.
 
 **Acceptance:**
 
-- 1.2.1 - `AppState::from_bootstrap` yields `Standalone`, `Hub`, and `Node` for bootstraps that parse to those run modes. Standalone and hub without a secret fail with the `GOBBY_FRONT_DOOR_SECRET` message, a node without `api_key` fails with a message naming `gobby auth login`, and an enrolled node without a secret succeeds. test: `crates/gdaemon/tests/run_modes.rs::app_state_follows_the_run_mode`.
-- 1.2.2 - A spawned `gdaemon serve` whose node bootstrap carries an `http` `hub_daemon_url`, `api_key`, `database_url: "not a PostgreSQL DSN"`, and `front_door.routes.terminal_ws: native`, with no `GOBBY_FRONT_DOOR_SECRET`, starts and answers an `interactive` challenge on its loopback front door with the hex `HMAC-SHA256(HMAC-SHA256(api_key, "gobby-interactive-proof-v1"), nonce)`. Either the retention pool or the terminal pool would refuse that `database_url` at startup, so the node built neither. test: `crates/gdaemon/tests/run_modes.rs::node_serve_starts_without_secret_or_backend_services`.
+- 1.2.1 - `NodeServices::prepare` returns the node's services and its PID claim for a node bootstrap without `database_url`, and refuses a node bootstrap without `api_key` with a message naming `gobby auth login`. `RuntimeState::prepare` refuses a node bootstrap with a message naming `NodeServices::prepare`, and fails for standalone and hub bootstraps without `database_url` with the "native runtime ownership requires bootstrap database_url" message. test: `crates/gdaemon/tests/run_modes.rs::node_prepare_takes_only_the_claim`.
+- 1.2.2 - A spawned `gdaemon serve` whose node bootstrap carries an `http` `hub_daemon_url`, `api_key`, `database_url: "not a PostgreSQL DSN"`, and `front_door.routes.terminal_ws: native`, with `GOBBY_BACKEND_COMMAND` set to a command that creates a marker file, starts. It answers an `interactive` challenge on its loopback front door with the hex `HMAC-SHA256(HMAC-SHA256(api_key, "gobby-interactive-proof-v1"), nonce)`. It answers a request carrying a `gobby_` bearer with 503 whose `backend.target` is `hub_daemon_url`, never with `key_resolver_unavailable`, so no `AuthState` serves the node. Afterwards the process is still running and the marker is absent, so the node launched no backend and started no `ActiveServices`, whose pool would refuse that `database_url`. A second `gdaemon serve` on the same home exits 0 while the first holds the PID claim. test: `crates/gdaemon/tests/run_modes.rs::node_serve_takes_only_the_claim`.
 - 1.2.3 - A resolver-less standalone door still answers a `gobby_` bearer with 503 `key_resolver_unavailable`, as a door with a failing PostgreSQL resolver does. test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.
+- 1.2.4 - A spawned `gdaemon serve` over an enrolled node bootstrap with an `http` `hub_daemon_url`, `daemon_port` 65535, and a free `websocket_port` never prints the "exceed 65535" refusal. Either it binds 65535 and answers an `interactive` challenge on `websocket_port`, or 65535 is taken and it exits with an error naming "failed to bind". A spawned `gdaemon serve` over a standalone bootstrap without `database_url` and with `daemon_port` 65500 still exits with the "exceed 65535" refusal. test: `crates/gdaemon/tests/run_modes.rs::node_serve_derives_no_backend_ports`.
 
 ### 1.3 Node relay: a node's front door forwards to its hub over the pinned connection [category: code] (depends: 1.2)
 `kind: deliverable`
 
 Targets:
 - `crates/gdaemon/src/front_door/relay.rs`
-- `crates/gdaemon/src/state.rs`
+- `crates/gdaemon/src/state.rs::*` — scope-reason: `NodeServices` replaces `hub_daemon_url` with `relay`, and `NodeServices::prepare` enforces the `hub_cert` rule and builds the relay before it claims the PID file
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers `relay`; the node arm of `Door` gains `ws_listener`, and `handle` relays a passed-through challenge, every upgrade, and every other request in place of 1.2's 503
 - `crates/gdaemon/src/front_door/ws.rs::*` — scope-reason: `splice` is split so the upgrade exchange runs over a stream the caller has connected, and the relay reuses it over TLS
 - `crates/gdaemon/src/front_door/proxy.rs::*` — scope-reason: `strip_trailers` becomes `pub(super)` so the sibling `relay` module reuses it; `strip_hop_by_hop` is already `pub`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve` passes each node listener's `ws_listener` flag to `FrontDoor::node`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run`'s node arm passes each listener's `ws_listener` flag to `FrontDoor::node`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `crates/gdaemon/tests/nodes.rs`
 
 **Research context:**
-- After 1.2, `ModeServices::Node(Arc<NodeServices>)` carries
-  `bootstrap_path` and `hub_daemon_url`, and the node arm of
-  `FrontDoor::handle` answers the native challenge and returns
-  `health::unavailable(&hub_daemon_url, Down)` for everything else.
+- After 1.2, `state.rs::NodeServices` carries `bootstrap_path` and
+  `hub_daemon_url`, `serve.rs::run`'s node arm serves `FrontDoor::node` doors
+  through `serve_doors`, and the node arm of `FrontDoor::handle` answers the
+  native challenge and returns `health::unavailable(&hub_daemon_url, Down)`
+  for everything else.
 - `crates/gdaemon/src/front_door/proxy.rs`:
   - `client()` (line 34) builds `Client<HttpConnector, Body>` with a 2 s pool
     idle timeout.
@@ -823,10 +941,10 @@ Targets:
   (`connector/builder.rs`, lines 60-64). The test helpers
   `crates/gdaemon/tests/common/mod.rs::{self_signed, start_tls_front_door, tls_connect, refused_addr, ws_backend, frame, read_exact_into}`
   already exist.
-- `crates/gdaemon/src/serve.rs::bind` binds a port and, when it applies, its
-  companion address; both listeners share the port number. `PublicListener`
-  carries no listener kind, so `serve` tells the WebSocket listener by its
-  port.
+- After 1.2, `crates/gdaemon/src/serve.rs::bind_listeners` binds a port and,
+  when it applies, its companion address; both listeners share the port
+  number. `run`'s node arm calls it once for `daemon_port` and once for
+  `websocket_port`, so it knows each listener's kind.
 - Hub side: `src/gobby/servers/_app_ui.py::_mount_ws_endpoint` serves `/ws` and
   `/ws/{path}` on the HTTP port with the path discarded, and closes 4401 when
   authentication fails.
@@ -870,12 +988,11 @@ Targets:
 - `proxy.rs::strip_trailers` becomes `pub(super)`.
 - `state.rs`:
   - `NodeServices` replaces `hub_daemon_url` with `relay: HubRelay`, whose
-    `origin` is that URL, and gains `websocket_port: u16`.
-  - The node arm of `AppState::from_bootstrap` fails for an `https` hub
-    without `hub_cert` with "node bootstrap <path> has no hub_cert for an
-    https hub; run `gobby auth login` again". It then reads the PEM at
-    `hub_cert` and builds the relay. An `http` hub ignores `hub_cert`
-    (Decision 6).
+    `origin` is that URL.
+  - Before it claims the PID file, `NodeServices::prepare` fails for an
+    `https` hub without `hub_cert` with "node bootstrap <path> has no hub_cert for an https hub;
+    run `gobby auth login` again". It then reads the PEM at `hub_cert` and
+    builds the relay. An `http` hub ignores `hub_cert` (Decision 6).
 - `front_door/mod.rs`:
   - The node arm becomes `Node { node: Arc<NodeServices>, ws_listener: bool }`,
     and `FrontDoor::node(node, ws_listener)` takes the flag.
@@ -887,12 +1004,14 @@ Targets:
     never consults the route table. The only header it removes beyond
     hop-by-hop fields is `X-Gobby-Break-Glass`; the hub's front door strips
     and sets the identity headers itself.
-- `serve` sets `ws_listener` when the listener's local port equals
-  `node.websocket_port`.
+- `run`'s node arm passes `ws_listener` false for the listeners that
+  `bind_listeners` returns for `daemon_port`, and true for those it returns
+  for `websocket_port`.
 - `crates/gdaemon/Cargo.toml` adds `hyper-rustls` (Decision 13).
   `Cargo.lock` is updated if resolution changes.
 - `tests/nodes.rs` declares `mod common;` and keeps its node and TLS hub-stub
-  helpers local, because no other test file uses them.
+  helpers local, because no other test file uses them. It serves its node
+  doors through `serve::serve_doors`.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test run_modes --test front_door --test ws_golden_proxy --test http_contracts`
@@ -900,8 +1019,10 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 `cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing. This leaf leaves
 `crates/gdaemon/tests/run_modes.rs` unedited: 1.2.2's interactive challenge
 stays native, and its `http` hub needs no `hub_cert`. It also leaves
-`crates/gdaemon/tests/front_door.rs` unedited, because every door that file
-builds is a backend door, whose behavior and constructor are unchanged here.
+`crates/gdaemon/tests/front_door.rs` unedited. Its in-process doors are
+backend doors, whose behavior and constructor are unchanged here. Its spawned
+node serves use an `http` `hub_daemon_url` at a refused port, so the relay
+answers their `/api/health` with the same 503.
 
 Consumers unchanged:
 - `crates/gdaemon/tests/ws_golden_proxy.rs` — no-edit-reason: the loopback splice keeps its behavior; 1.3.3 replays the same corpus through a node.
@@ -912,7 +1033,7 @@ Consumers unchanged:
 - 1.3.2 - A node whose `hub_cert` names a different certificate than the hub presents answers 502 and never forwards the request. test: `crates/gdaemon/tests/nodes.rs::node_refuses_an_unpinned_hub`.
 - 1.3.3 - A WebSocket upgrade relayed through the node to the hub stub replays the terminal golden corpus and a 1000 close frame byte-equal in both directions. An upgrade on the HTTP listener keeps its path, and an upgrade on the WebSocket listener reaches `/ws` with its query. The same test also checks origin-to-dial-address derivation for omitted ports and bracketed IPv6, without binding privileged ports. test: `crates/gdaemon/tests/nodes.rs::node_relays_ws_over_pinned_tls`.
 - 1.3.4 - A node relays a `managed` handshake challenge to the hub stub, and still answers an `interactive` one with its own key while the stub accepts no connection. test: `crates/gdaemon/tests/nodes.rs::node_relays_managed_challenge_and_answers_interactive_natively`.
-- 1.3.5 - `AppState::from_bootstrap` refuses a node bootstrap with an `https` hub and no `hub_cert`, with a message naming `gobby auth login`, and accepts an `http` hub without one. A spawned `gdaemon serve` with an enrolled node bootstrap and no `GOBBY_FRONT_DOOR_SECRET` relays a request to the TLS hub stub. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
+- 1.3.5 - `NodeServices::prepare` refuses a node bootstrap with an `https` hub and no `hub_cert`, with a message naming `gobby auth login`, and accepts an `http` hub without one. A spawned `gdaemon serve` with an enrolled node bootstrap relays a request to the TLS hub stub. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
 - 1.3.6 - A node on the same host as a loopback TLS hub stub relays a request and a WebSocket upgrade that both carry `X-Gobby-Break-Glass`, and the stub receives neither with that header. test: `crates/gdaemon/tests/nodes.rs::node_strips_break_glass_before_the_hub`.
 
 ### 1.4 Node channel: the hub registers, heartbeats, replaces, and revokes node channels [category: code] (depends: 1.3)
@@ -922,15 +1043,12 @@ Targets:
 - `crates/gdaemon/src/nodes/mod.rs`
 - `crates/gdaemon/src/nodes/channel.rs`
 - `crates/gdaemon/src/nodes/registry.rs`
-- `crates/gdaemon/src/state.rs`
 - `crates/gdaemon/src/lib.rs`
-- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: the backend arm of `Door` gains `native: nodes::NativeRoutes`, `FrontDoor::new` takes it, and on a hub `handle` routes `/api/nodes/channel` to the channel endpoint after authentication and before `ws::splice`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve` passes each backend door its `NativeRoutes`; `run` spawns the node channel client in node mode and aborts it after `serve` returns
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: `FrontDoorState` gains `native: nodes::NativeRoutes`, which `FrontDoorState::new` defaults; on a hub `handle` routes `/api/nodes/channel` to the channel endpoint after authentication and before `ws::splice`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve_with_runtime` takes the `NativeRoutes` for its doors and the public `serve` passes the default; `run`'s backend arm builds `HubNodes` for a hub; its node arm spawns the channel client and aborts it after `serve_doors` returns
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `crates/gdaemon/tests/nodes.rs`
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: its four `FrontDoor::new` calls pass `NativeRoutes::default()`
-- `crates/gdaemon/tests/run_modes.rs`
 
 **Research context:**
 - The hub's front door handles every request through
@@ -967,10 +1085,17 @@ Targets:
   `std::env::consts::{OS, ARCH}`.
 - `gobby_core::local_token::read_api_key_at` reads `api_key` from a bootstrap
   path.
-- `crates/gdaemon/tests/run_modes.rs::app_state_follows_the_run_mode` (1.2.1)
-  builds a hub `AppState` without `database_url`, which this leaf refuses.
-- `crates/gdaemon/tests/front_door.rs` calls `FrontDoor::new` at lines 79,
-  107, 245, and 414.
+- `FrontDoorState::new` callers are `serve.rs::serve_with_runtime`, the
+  `routes.rs` tests (lines 263, 297, and 319), `tests/front_door.rs` (lines
+  77, 105, 243, and 408), and `tests/lease.rs` (line 67). The only
+  `FrontDoorState` literal is `serve_with_runtime`'s functional update of the
+  runtime field (line 268). So a field that `new` defaults needs no caller
+  edit.
+- #23457's runtime gates in `FrontDoor::handle` run before the challenge and
+  authentication, so a standby hub answers `/api/nodes/channel` with its 503
+  before the channel endpoint is reached (Decision 8).
+- `RuntimeState::prepare` already refuses a hub bootstrap without
+  `database_url`, so `run`'s backend arm always has one on a hub.
 
 **Implementation:**
 - `nodes/registry.rs` defines the following:
@@ -1097,38 +1222,44 @@ Targets:
   - `pub struct HubNodes { pub db: Pool, pub registry: Registry }`.
   - `#[derive(Clone, Default)] pub enum NativeRoutes { #[default] Standalone,
     Hub(Arc<HubNodes>) }`, the mode-native routes a backend door serves.
-- `state.rs`:
-  - `ModeServices::Hub` gains `nodes: Arc<HubNodes>`.
-  - The hub arm of `AppState::from_bootstrap` fails without `database_url`
-    with "hub mode requires database_url", then builds the pool with
-    Decision 17's settings and an empty registry.
 - `lib.rs` registers `nodes`.
 - `front_door/mod.rs`:
-  - The backend arm of `Door` gains `native: NativeRoutes`, and
-    `FrontDoor::new(state, table, native)` takes it.
+  - `FrontDoorState` gains `pub native: NativeRoutes`, which
+    `FrontDoorState::new` sets to `NativeRoutes::default()`.
+    `FrontDoor::new(state, table)` keeps its signature.
   - In the backend arm, after authentication and before the upgrade branch,
-    `handle` sends `/api/nodes/channel` to the channel endpoint when `native`
-    is `Hub`. A standalone door does not match it, so the request proxies to
-    Python (Decision 8).
+    `handle` sends `/api/nodes/channel` to the channel endpoint when
+    `state.native` is `Hub`. A standalone door does not match it, so the
+    request proxies to Python (Decision 8).
 - `serve.rs`:
-  - `serve` passes `NativeRoutes::Hub(nodes.clone())` to hub doors and
-    `NativeRoutes::Standalone` to standalone doors.
-  - In node mode, `run` spawns `nodes::channel::run_client(node,
-    ChannelTiming::default())` inside the runtime before `serve`, and aborts
-    it after `serve` returns.
-- `tests/front_door.rs` passes `NativeRoutes::default()` at its four
-  `FrontDoor::new` calls. `tests/run_modes.rs`'s hub case sets a
-  `database_url` that `Pool::build` accepts, and adds the "hub mode requires
-  database_url" refusal to `app_state_follows_the_run_mode`.
+  - `serve_with_runtime` gains `native: NativeRoutes` and sets it, with the
+    runtime, on each door's state. The public `serve` passes
+    `NativeRoutes::default()`.
+  - `run`'s backend arm passes
+    `NativeRoutes::Hub(Arc::new(HubNodes { db, registry }))` when
+    `bootstrap.mode` is `RunMode::Hub`, with the pool built from
+    `database_url` under Decision 17's settings and an empty registry, and
+    `NativeRoutes::default()` otherwise. A `Pool::build` error fails startup.
+  - `run`'s node arm spawns `nodes::channel::run_client(node.clone(),
+    ChannelTiming::default())` before `serve_doors`, and aborts it after
+    `serve_doors` returns.
+- `tests/nodes.rs` builds each hub door as `FrontDoorState { native:
+  NativeRoutes::Hub(..), ..FrontDoorState::new(..) }` with
+  `FrontDoor::new`, and serves hub and node doors through
+  `serve::serve_doors`.
 - `crates/gdaemon/Cargo.toml` adds the `axum` `"ws"` feature and
   `tokio-tungstenite` (Decision 13), and moves `futures-util = "0.3"` from
   `[dev-dependencies]` to `[dependencies]`. `Cargo.lock` is updated if
   resolution changes.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test run_modes --test front_door`
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test run_modes --test front_door --test lease`
 and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), then
-`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing.
+`cargo tree -p gobby-daemon -i aws-lc-rs` prints nothing. This leaf leaves
+`crates/gdaemon/tests/front_door.rs`, `run_modes.rs`, and `lease.rs`
+unedited: they build every `FrontDoorState` through `new`, whose new field
+defaults, and they call the public `serve` or `prepare`, whose signatures are
+unchanged.
 
 **Acceptance:**
 
@@ -1150,14 +1281,9 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work), th
 Targets:
 - `crates/gdaemon/src/nodes/machines_api.rs`
 - `crates/gdaemon/src/nodes/mod.rs`
-- `crates/gdaemon/src/state.rs`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: in the backend arm `handle` routes `/api/machines` and `/api/machines/{id}` to the machines router after authentication and before the route table, for both `NativeRoutes` variants
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `serve` passes the standalone machines pool in `NativeRoutes::Standalone`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `run`'s backend arm builds the standalone machines pool into `NativeRoutes::Standalone`
 - `crates/gdaemon/tests/nodes.rs`
-- `crates/gdaemon/tests/common/mod.rs::*` — scope-reason: its two standalone `AppState` literals from 1.2 gain `db: None`
-- `crates/gdaemon/tests/heartbeat.rs::*` — scope-reason: its standalone `AppState` literal from 1.2 gains `db: None`
-- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: `start_front_door`'s standalone `AppState` literal from 1.2 gains `db: None`
-- `crates/gdaemon/tests/front_door.rs::*` — scope-reason: `start_authenticated_front_door`'s standalone `AppState` literal from 1.2 gains `db: None`; its `NativeRoutes::default()` arguments from 1.4 stay
 - `docs/guides/configuration.md`
 
 **Research context:**
@@ -1168,10 +1294,14 @@ Targets:
   sets them only for a key-authenticated caller. So after authentication,
   `x-gobby-user-id` inside gdaemon is the caller's resolved user, and its
   absence means no key identity.
-- After 1.4, `NativeRoutes::{Standalone, Hub(Arc<HubNodes>)}` reaches every
-  backend door, and `HubNodes` holds the hub's pool and registry.
-  `NativeRoutes::default()` is `Standalone`, which `tests/front_door.rs`
+- After 1.4, `FrontDoorState.native` carries
+  `NativeRoutes::{Standalone, Hub(Arc<HubNodes>)}` to every backend door, and
+  `HubNodes` holds the hub's pool and registry. `NativeRoutes::default()` is
+  `Standalone`, which `FrontDoorState::new` sets and the public `serve`
   passes.
+- `RuntimeState::prepare` refuses a standalone bootstrap without
+  `database_url`, so `run`'s backend arm always has one for a standalone
+  front door.
 - Schema: `machines` has `id` (uuid), `hostname`, `os`, `label`,
   `tailscale_name`, `owner_user_id`, `first_seen`, `last_seen` (baseline),
   `ref` (migration 440), and `last_heartbeat_at` and `node_version` (migration
@@ -1208,33 +1338,27 @@ Targets:
   becomes `Standalone(Option<Arc<Pool>>)`, with a manual `Default` returning
   `Standalone(None)`. A hub serves the machines routes from `HubNodes`'s pool
   and registry.
-- `state.rs`: `ModeServices::Standalone` gains `db: Option<Arc<Pool>>`. The
-  standalone arm of `AppState::from_bootstrap` builds it with Decision 17's
-  settings when `database_url` is set. A `Pool::build` error fails
-  `from_bootstrap`, as the retention pool's does in `run`.
-- The four in-process `serve` callers that 1.2 gave standalone `AppState`
-  literals add `db: None`: `crates/gdaemon/tests/common/mod.rs` (two),
-  `crates/gdaemon/tests/heartbeat.rs`, `crates/gdaemon/tests/http_contracts.rs`,
-  and `crates/gdaemon/tests/front_door.rs`.
-- `serve` passes `NativeRoutes::Standalone(db.clone())` to standalone doors.
-  `FrontDoor::handle` routes the machines paths in the backend arm. A node
-  never reaches it, because it relays.
+- `run`'s backend arm passes
+  `NativeRoutes::Standalone(Some(Arc::new(pool)))` for a standalone
+  bootstrap, with the pool built from `database_url` under Decision 17's
+  settings. A `Pool::build` error fails startup. `FrontDoor::handle` routes
+  the machines paths in the backend arm. A node never reaches it, because it
+  relays.
 - `docs/guides/configuration.md` gains a "Nodes" section that covers:
   - the node bootstrap fields (`datastore_mode: remote`, `hub_daemon_url`,
     and `api_key`, `api_key_id`, `hub_cert` from `gobby auth login`);
-  - that a node runs only `gdaemon serve`, needs no front-door secret, and
-    holds no `database_url`;
+  - that a node runs only `gdaemon serve`, takes only the PID claim, launches
+    no backend, and holds no `database_url`;
   - the relay, including the native challenge and the `/ws` target;
   - the channel's heartbeat and close codes;
   - `/api/machines`.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door --test run_modes --test http_contracts --test heartbeat --test ws_golden_proxy`
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 cargo nextest run -p gobby-daemon --test nodes --test front_door --test run_modes --test lease --test http_contracts --test heartbeat --test ws_golden_proxy`
 (heavy work). `ws_golden_proxy`, `front_door`, and `http_contracts` include
-`crates/gdaemon/tests/common/mod.rs`. This leaf leaves
-`crates/gdaemon/tests/run_modes.rs` unedited: it matches every variant with
-`{ .. }`, constructs none, and its standalone bootstraps carry no
-`database_url` (1.2), so the `run_modes` run proves it survives the new field.
+`crates/gdaemon/tests/common/mod.rs`. This leaf leaves those files,
+`run_modes.rs`, and `lease.rs` unedited: `NativeRoutes::Standalone` gains its
+payload only behind `FrontDoorState::new`'s default, so no caller names it.
 
 **Acceptance:**
 
@@ -1249,7 +1373,7 @@ Targets:
 - `tests/e2e/test_hub_node_pair.py`
 
 **Research context:**
-- `tests/e2e/conftest.py::spawn_daemon_instance` (line 1152) takes
+- `tests/e2e/conftest.py::spawn_daemon_instance` (line 1174) takes
   `tls="self-signed"` and writes the front door's TLS block into the isolated
   bootstrap. The e2e bootstrap template sets no `hub` flag.
 - `tests/e2e/test_auth_login_e2e.py` provides the pattern for this test:
@@ -1264,15 +1388,15 @@ Targets:
 - `tests.fixtures.gdaemon_binary.select_test_gdaemon` selects the gdaemon
   binary under test.
 - The hub's `/api/health` returns `"mode": server.bootstrap_config.run_mode()`
-  (`src/gobby/servers/routes/admin/_health.py`).
+  (`src/gobby/servers/routes/admin/_health.py`, line 388).
 - The hub's WebSocketServer answers `{"type":"ping"}` with `{"type":"pong"}`
-  (`src/gobby/servers/websocket/handlers/core.py::_handle_ping`).
+  (`src/gobby/servers/websocket/handlers/core.py::_handle_ping`, line 154).
 - `src/gobby/storage/api_keys.py::ApiKeyManager` has `mint(user_id,
   machine_id, label)` (line 71) and `revoke(key_id, user_id)` (line 100).
 - `tests/e2e/conftest.py::e2e_config` seeds the project
   `00000000-0000-0000-0000-000000000e2e` through `_seed_e2e_runtime_state`
-  (line 555). The hub's handshake admits a project with a live `projects` row
-  (`src/gobby/runner_init/servers.py::_project_admitted`, line 600).
+  (line 566). The hub's handshake admits a project with a live `projects` row
+  (`src/gobby/runner_init/servers.py::_project_admitted`, line 599).
 - `src/gobby/runtime_grants/handshake.py::HandshakeService.issue_for_operator`
   (line 115) rejects a body `machine_id` that differs from the forwarded
   machine with `claims_mismatch`, and issues an `interactive` principal
@@ -1302,8 +1426,8 @@ Targets:
     directly over the pinned certificate with
     `ssl.create_default_context(cafile=…)`.
   - It starts a bare `gdaemon serve` from `select_test_gdaemon()`, with
-    `GOBBY_HOME` set to the node home, no `GOBBY_PARENT_FD` or
-    `GOBBY_FRONT_DOOR_SECRET`, and stderr captured. A fixture finalizer
+    `GOBBY_HOME` set to the node home and stderr captured. The node takes its
+    PID claim in the node home, apart from the hub's. A fixture finalizer
     terminates the node, and kills it after 5 s, on success, failure, or
     timeout.
 - **Readiness.** Listener readiness and channel registration are observed
@@ -1537,6 +1661,66 @@ Consumers unchanged:
     `list_tasks` (#23932, plan validation times out on slow label lookups).
   - Decisions 2 and 3 change key-cutover behavior, so Josh approves them
     explicitly along with the stamped bytes.
+- 2026-10-11: Refresh by the Plan Writer gobby#16361 for the Orchestrator
+  gobby#15977, against `0.5.0` at `093e210fb7`, with the Adversary
+  gobby#16364. #23457 (Atomic gdaemon lifecycle ownership and native standby
+  cutover) landed `RuntimeState` and gcore's `RunMode` in place of the
+  settlement's `AppState` and `ModeServices`, and its task records the
+  re-settlement that #23274 creates no second container. So:
+  - The Lifecycle Ownership Settlement becomes Landed #23457 Baseline.
+    Settlement points (a) and (b) are superseded, (c) and (d) survive, and
+    the Orchestrator adds no `#23457 blocked_by` edge.
+  - Decision 16 is replaced. 1.2 becomes node startup: `run` branches on
+    the mode before any backend-only step, `NodeServices::prepare` takes
+    only the node's PID claim, `RuntimeState::prepare` refuses a node, and a
+    new public `serve_doors` serves prebuilt doors. This also fixes the
+    landed node path, which built a backend supervisor and so launched
+    Python.
+  - 1.1 completes the landed parser's Python parity in place, adopts Python's
+    boolean and `datastore_mode` messages, and repairs the three Rust tests
+    that write remote bootstraps Python rejects.
+  - 1.3 to 1.5 rewire onto `NodeServices`, `FrontDoorState.native`, and
+    `run`'s two arms. The in-process `serve` callers need no edit, and 1.4
+    and 1.5 drop their test-literal Targets.
+  - 1.6 drops the secret and parent-fd clauses and refreshes its anchors.
+  - Decisions 1, 2, 4, 8, 12, 14, 15, and 17, the Constraints, and V2 are
+    refreshed. #23523 closed on 2026-10-11, so the expansion gate is met. The
+    Orchestrator manages #24075 (lands #23269's node refusal) as its own
+    edge, and no leaf needs it.
+  - The stale M1 block is withdrawn, and the Adversary derives a fresh one
+    after consensus.
+  - Decisions 2 and 3 still need Josh's explicit approval.
+- 2026-10-11: Consensus on the narrative at `3e5fd1e972`. Seats: Plan Writer
+  gobby#16361, Adversary gobby#16364, Orchestrator gobby#15977.
+  - The Adversary reviewed `743f0ca5cd` and raised two blocking findings
+    against 1.2. Both are resolved at `3e5fd1e972`:
+    - NC-R15: a node derived backend ports, so a valid node port near 65535
+      failed `backend_ports`. `run` now calls `backend_ports` and prints the
+      route-family warnings only for standalone and hub. A node binds
+      through `bind_listeners`, and 1.2.4 covers the boundary.
+    - NC-R16: a node generated a front-door secret it never used. `run` now
+      branches on the mode before generating it. In place of the
+      Adversary's proposed optional secret, the Writer dropped the
+      `Prepared` enum: `NodeServices::prepare` takes the node's PID claim in
+      `state.rs`, and `RuntimeState::prepare` keeps its signature and
+      refuses a node. The Adversary accepted this as fewer mechanisms.
+      Settlement rule (d) is reworded to match.
+  - No blocking or proportionality finding remains, and no disagreement is
+    open. No enhancer edits were received.
+  - Routing:
+    - 1.1 to 1.5 are code leaves: `task_type` feature,
+      `implementation_domain` backend, and `tdd` true.
+    - 1.6 is a test leaf: `task_type` chore, `assigned_agent` developer, and
+      `tdd` false. Lane 2's developer seats write the pair test
+      (Orchestrator, 2026-10-10).
+    - Dependencies follow the headings: 1.1 has none, 1.2 depends on 1.1,
+      1.3 on 1.2, 1.4 on 1.3, 1.5 on 1.4, and 1.6 on 1.3, 1.4, and 1.5.
+      There are no external edges. The Orchestrator manages #24075 as its
+      own edge (Decision 1).
+  - Validation: the project-aware `uv run gobby plans validate` passes on
+    this revision.
+  - Decisions 2 and 3 change key-cutover behavior, so Josh approves them
+    explicitly along with the stamped bytes.
 
 ## V2: Verification
 `kind: verification`
@@ -1547,8 +1731,9 @@ must hold before the expanded epic closes.
 
 1. The focused suites of 1.1 to 1.5 must pass together against the test hub,
    with `DATABASE_URL` set.
-2. `cargo nextest run -p gobby-daemon --test front_door --test ws_golden_proxy --test http_contracts --test heartbeat`
-   (heavy work) must pass, with the loopback bodies unchanged.
+2. `cargo nextest run -p gobby-daemon --test front_door --test lease --test ws_golden_proxy --test http_contracts --test heartbeat`
+   (heavy work) must pass, with the loopback bodies and #23457's runtime gates
+   unchanged.
 3. `tests/e2e/test_hub_node_pair.py` and `tests/e2e/test_auth_login_e2e.py`
    must pass against isolated daemons.
 4. `cargo tree -p gobby-daemon -i aws-lc-rs` must print nothing.
@@ -1563,10 +1748,11 @@ must hold before the expanded epic closes.
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: '1.1.1: The Rust parser derives the mode, normalized `hub_daemon_url`,
-    and `hub_cert` that every shared vector expects. It rejects `(remote, true)`,
-    a remote bootstrap without `hub_daemon_url`, a local one with it, and this process''s
-    own origin, each with Python''s message. test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
+  validation_criteria: '1.1.1: The Rust parser derives the mode and normalized `hub_daemon_url`
+    that every shared vector expects, and reads `hub_cert`. It rejects `(remote, true)`,
+    a non-boolean `hub`, an unknown `datastore_mode`, a remote bootstrap without `hub_daemon_url`,
+    a local one with it, and this process''s own origin, each with Python''s message.
+    test: `crates/gcore/tests/bootstrap_run_modes.rs::shared_vectors_match_python`.
 
     1.1.2: Python''s `bootstrap_from_mapping` and `BootstrapConfig.run_mode` produce
     the same outcome on every case of the same vector file. test: `tests/config/test_bootstrap_run_modes.py::test_shared_vectors_match_rust`.'
@@ -1576,32 +1762,47 @@ must hold before the expanded epic closes.
   tdd: true
   source_section: '1.1'
   implementation_domain: backend
-- title: 'Mode container: gdaemon starts by run mode, and a node needs no secret'
+- title: 'Node startup: a node takes only the PID claim and answers the challenge
+    itself'
   category: code
   task_type: feature
   depends_on:
   - '1.1'
-  validation_criteria: '1.2.1: `AppState::from_bootstrap` yields `Standalone`, `Hub`,
-    and `Node` for bootstraps that parse to those run modes. Standalone and hub without
-    a secret fail with the `GOBBY_FRONT_DOOR_SECRET` message, a node without `api_key`
-    fails with a message naming `gobby auth login`, and an enrolled node without a
-    secret succeeds. test: `crates/gdaemon/tests/run_modes.rs::app_state_follows_the_run_mode`.
+  validation_criteria: '1.2.1: `NodeServices::prepare` returns the node''s services
+    and its PID claim for a node bootstrap without `database_url`, and refuses a node
+    bootstrap without `api_key` with a message naming `gobby auth login`. `RuntimeState::prepare`
+    refuses a node bootstrap with a message naming `NodeServices::prepare`, and fails
+    for standalone and hub bootstraps without `database_url` with the "native runtime
+    ownership requires bootstrap database_url" message. test: `crates/gdaemon/tests/run_modes.rs::node_prepare_takes_only_the_claim`.
 
     1.2.2: A spawned `gdaemon serve` whose node bootstrap carries an `http` `hub_daemon_url`,
     `api_key`, `database_url: "not a PostgreSQL DSN"`, and `front_door.routes.terminal_ws:
-    native`, with no `GOBBY_FRONT_DOOR_SECRET`, starts and answers an `interactive`
-    challenge on its loopback front door with the hex `HMAC-SHA256(HMAC-SHA256(api_key,
-    "gobby-interactive-proof-v1"), nonce)`. Either the retention pool or the terminal
-    pool would refuse that `database_url` at startup, so the node built neither. test:
-    `crates/gdaemon/tests/run_modes.rs::node_serve_starts_without_secret_or_backend_services`.
+    native`, with `GOBBY_BACKEND_COMMAND` set to a command that creates a marker file,
+    starts. It answers an `interactive` challenge on its loopback front door with
+    the hex `HMAC-SHA256(HMAC-SHA256(api_key, "gobby-interactive-proof-v1"), nonce)`.
+    It answers a request carrying a `gobby_` bearer with 503 whose `backend.target`
+    is `hub_daemon_url`, never with `key_resolver_unavailable`, so no `AuthState`
+    serves the node. Afterwards the process is still running and the marker is absent,
+    so the node launched no backend and started no `ActiveServices`, whose pool would
+    refuse that `database_url`. A second `gdaemon serve` on the same home exits 0
+    while the first holds the PID claim. test: `crates/gdaemon/tests/run_modes.rs::node_serve_takes_only_the_claim`.
 
     1.2.3: A resolver-less standalone door still answers a `gobby_` bearer with 503
     `key_resolver_unavailable`, as a door with a failing PostgreSQL resolver does.
-    test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.'
+    test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.
+
+    1.2.4: A spawned `gdaemon serve` over an enrolled node bootstrap with an `http`
+    `hub_daemon_url`, `daemon_port` 65535, and a free `websocket_port` never prints
+    the "exceed 65535" refusal. Either it binds 65535 and answers an `interactive`
+    challenge on `websocket_port`, or 65535 is taken and it exits with an error naming
+    "failed to bind". A spawned `gdaemon serve` over a standalone bootstrap without
+    `database_url` and with `daemon_port` 65500 still exits with the "exceed 65535"
+    refusal. test: `crates/gdaemon/tests/run_modes.rs::node_serve_derives_no_backend_ports`.'
   labels:
   - covers:gdaemon-node-channel:1.2:1.2.1
   - covers:gdaemon-node-channel:1.2:1.2.2
   - covers:gdaemon-node-channel:1.2:1.2.3
+  - covers:gdaemon-node-channel:1.2:1.2.4
   tdd: true
   source_section: '1.2'
   implementation_domain: backend
@@ -1629,10 +1830,10 @@ must hold before the expanded epic closes.
     answers an `interactive` one with its own key while the stub accepts no connection.
     test: `crates/gdaemon/tests/nodes.rs::node_relays_managed_challenge_and_answers_interactive_natively`.
 
-    1.3.5: `AppState::from_bootstrap` refuses a node bootstrap with an `https` hub
-    and no `hub_cert`, with a message naming `gobby auth login`, and accepts an `http`
-    hub without one. A spawned `gdaemon serve` with an enrolled node bootstrap and
-    no `GOBBY_FRONT_DOOR_SECRET` relays a request to the TLS hub stub. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
+    1.3.5: `NodeServices::prepare` refuses a node bootstrap with an `https` hub and
+    no `hub_cert`, with a message naming `gobby auth login`, and accepts an `http`
+    hub without one. A spawned `gdaemon serve` with an enrolled node bootstrap relays
+    a request to the TLS hub stub. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`.
 
     1.3.6: A node on the same host as a loopback TLS hub stub relays a request and
     a WebSocket upgrade that both carry `X-Gobby-Break-Glass`, and the stub receives

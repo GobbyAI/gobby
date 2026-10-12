@@ -75,6 +75,8 @@ def build_handoff_continue_prompt() -> str:
     """Return the pull-only continuation directive used after compact and clear."""
     return (
         "Call `get_handoff()` on `gobby-sessions`, follow the returned handoff, then continue. "
+        "Consuming it is allowed and required during a restart or cutover hold; "
+        "do not wait for DAEMON BACK. Keep other held work paused. "
         "The previous `set_handoff` succeeded and compacted this session even if the transcript "
         "shows that call as cancelled; do not call `set_handoff` again unless there is new "
         "context pressure."

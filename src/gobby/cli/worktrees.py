@@ -96,6 +96,9 @@ def _call_worktree_tool(
     if success is False:
         error = result.get("error")
         reason = error if isinstance(error, str) and error else "No failure reason was provided"
+        message = result.get("message")
+        if isinstance(message, str) and message and message != reason:
+            reason = f"{reason}: {message}"
         raise WorktreeToolError(tool_name, reason)
     if success is not True:
         raise click.ClickException(

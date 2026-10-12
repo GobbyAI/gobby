@@ -185,12 +185,63 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "You coordinate the fleet" in prompt
     assert "Run restarts and cutovers with a global notice before the daemon stops" in prompt
     assert "a DAEMON BACK notice after it is healthy" in prompt
+    assert "get_handoff is allowed and required during the hold" in prompt
     assert "send the Archivist an update on every land" in prompt
     assert "with decisions as buttons" in prompt
     assert "Edit tasks as needed" in prompt
     assert "other seats' edit requests" in prompt
     assert "Recover stalled sessions" in prompt
     assert "Report each recovery to the Assistant" in prompt
+
+
+def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubDatabase) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    row = RuleDefinitionManager(temp_db).get_by_name("inject-seat-common")
+    assert row is not None
+    prompt = flat(row.definition_json["effects"][0]["template"])
+    assert "restart or cutover hold" in prompt
+    assert "`gobby-sessions:get_handoff` is always allowed and required" in prompt
+    assert "Do not wait for DAEMON BACK to consume it" in prompt
+
+
+def test_consolidator_is_propose_only_with_read_only_task_tools() -> None:
+    body = _load("consolidator")
+    prompt = _prompt("consolidator")
+    assert body.surfaces == ["spawn", "persona"]
+    assert body.execution_mode == "interactive"
+    assert body.timeout == 0
+    assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
+    assert body.step_workflow is not None
+    assert [step.name for step in body.step_workflow.steps] == ["load_skills", "consolidate"]
+    step = next(step for step in body.step_workflow.steps if step.name == "consolidate")
+    assert step.allowed_tools != "all"
+    assert not {"Bash", "exec_command", "Edit", "Write", "apply_patch"} & set(step.allowed_tools)
+    assert step.allowed_mcp_tools != "all"
+    task_tools = {tool for tool in step.allowed_mcp_tools if tool.startswith("gobby-tasks:")}
+    assert task_tools == {
+        "gobby-tasks:get_task",
+        "gobby-tasks:list_tasks",
+        "gobby-tasks:search_tasks",
+        "gobby-tasks:get_task_diff",
+        "gobby-tasks:get_dependency_tree",
+    }
+    assert "gobby-agents:send_message" in step.allowed_mcp_tools
+    assert "gobby-agents:spawn_agent" not in step.allowed_mcp_tools
+    assert "which applies every task edit" in prompt
+    assert "Never edit tasks, claim work, spawn agents" in prompt
+    assert "#23378 Lane 6 - Everything else" in prompt
+    assert "Exclude the whole #22978 triage subtree, including #22360" in prompt
+    assert "exclude all plan-expanded epics and their entire subtrees" in prompt
+
+
+def test_consolidator_syncs_with_shared_seat_rules(definition_db: PostgresHubDatabase) -> None:
+    result = sync_bundled_agents(definition_db)
+    assert result["success"] is True
+    row = AgentDefinitionManager(definition_db).get_by_name("consolidator")
+    assert row is not None
+    assert AgentDefinitionBody.model_validate(row.definition_json) == _load("consolidator")
+    selected = _selected_rules("consolidator", definition_db)
+    assert {"inject-seat-common", "no-send-keys", "block-update-task"} <= selected
 
 
 def test_root_panes_keep_interactive_git_guards_without_worker_rules(temp_db: HubDatabase) -> None:
@@ -218,7 +269,10 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "Check lanes, work with orchestrator to address blockers, keep agents working" in (
         prompt
     )
-    assert "edit requests to the Orchestrator" in prompt
+    assert "Report through the Inbox Manager" in prompt
+    assert "Send task edit requests through the Inbox Manager" in prompt
+    assert "Found work goes to the Inbox Manager" in prompt
+    assert "blockers to the Orchestrator" not in prompt
     assert "sent unprompted to the Assistant" in prompt
     assert "the project's operating policy" in prompt
 
@@ -290,6 +344,8 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "with wake=true" in prompt
     assert 'single word "steady"' in prompt
     assert "close backlog above 10" in prompt
+    assert "found work that blocks a lane task or its landing" in prompt
+    assert "a HOLD or RESUME ACK" in prompt
     assert "close backlog above 5" not in prompt
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
     assert "local_cli_token" not in prompt
