@@ -133,6 +133,8 @@ class TestDaemonStop:
 
         # Verify process is running
         assert daemon_instance.is_alive(), "Daemon should be running before stop"
+        assert Path(daemon_instance.command[0]).name == "gdaemon"
+        backend = _backend_child(pid)
 
         # Send SIGTERM
         os.kill(pid, signal.SIGTERM)
@@ -148,6 +150,14 @@ class TestDaemonStop:
 
         # Process should have stopped
         assert not daemon_instance.is_alive(), "Daemon should stop after SIGTERM"
+        assert daemon_instance.process.returncode == 0
+        wait_for_condition(
+            lambda: _gone(backend),
+            timeout=5.0,
+            interval=0.1,
+            description="native supervisor drained its Python backend",
+        )
+        assert _ports_free(daemon_instance.http_port, daemon_instance.ws_port)
 
     def test_no_orphan_processes_after_stop(self, daemon_instance: DaemonInstance) -> None:
         """Verify no orphan child processes remain after daemon stops."""

@@ -347,9 +347,7 @@ def _http_server(stack: _Stack, temp_db: HubDatabase, tmp_path: Path) -> HTTPSer
     )
     server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=None,
-        effect_fence=None,
         clock=None,
         front_door_secret="workspaces-front-door",
     )

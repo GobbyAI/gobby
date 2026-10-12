@@ -1,5 +1,6 @@
 """Contained Python runners consume native authority without owning its lease."""
 
+import ast
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,13 +12,71 @@ import pytest
 
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner, run_gobby
-from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+from gobby.runner_pid_file import ProbeState, claim_pid_file, probe_daemon_lock
 from gobby.runtime_grants.lease_view import RuntimeLeaseView, current_lease
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import LiveLeaseGrantService
 from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.unit
+def test_runner_has_no_lease_paths() -> None:
+    source_root = Path(__file__).resolve().parents[1] / "src/gobby"
+    retired = (
+        "daemon_lease.py",
+        "daemon_lease_control.py",
+        "servers/lease_fence.py",
+        "cli/daemon_lease.py",
+        "servers/admit_barrier.py",
+    )
+    for relative in retired:
+        assert not (source_root / relative).exists()
+    retired_modules = {"gobby." + path.removesuffix(".py").replace("/", ".") for path in retired}
+    for source_file in source_root.rglob("*.py"):
+        for node in ast.walk(ast.parse(source_file.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                assert not retired_modules.intersection(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                assert node.module not in retired_modules
+                assert not retired_modules.intersection(
+                    f"{node.module}.{alias.name}" for alias in node.names
+                )
+    runner_source = (source_root / "runner.py").read_text(encoding="utf-8")
+    for retired_path in (
+        "ActiveDaemonLease",
+        "acquire_windows_lease",
+        "run_windows_backend",
+        "effect_fence",
+    ):
+        assert retired_path not in runner_source
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("supplied_claim", [False, True])
+async def test_native_windows_local_start_refuses_before_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supplied_claim: bool
+) -> None:
+    from gobby.runner_init import StartRefusal
+
+    pid_file = tmp_path / "gobby.pid"
+    ownership = claim_pid_file(pid_file) if supplied_claim else None
+    if supplied_claim:
+        assert ownership is not None
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "gobby.config.bootstrap.load_bootstrap",
+        lambda *_args, **_kwargs: BootstrapConfig(database_url="postgresql://unused/test"),
+    )
+    create = AsyncMock()
+    monkeypatch.setattr(GobbyRunner, "create", create)
+    with pytest.raises(StartRefusal, match="WSL 2"):
+        await run_gobby(ownership_resolution=ownership)
+    create.assert_not_awaited()
+    assert not pid_file.exists()
+    assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
 
 
 @pytest.fixture

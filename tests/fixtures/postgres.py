@@ -97,7 +97,6 @@ _SCHEMA_BOOKKEEPING_TABLES = frozenset({"schema_migrations"})
 _CANONICAL_TABLES_BY_SCHEMA: dict[str, frozenset[str]] = {}
 _PROBE_TABLE_NAMES = (
     "ambient_items",
-    "lease_fence_probe",
     "manager_surface_items",
 )
 

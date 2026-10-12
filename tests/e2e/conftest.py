@@ -258,7 +258,7 @@ def configure_task_close_validation(
 
 @dataclass
 class DaemonInstance:
-    """Represents a running daemon instance."""
+    """An isolated gdaemon supervisor and its contained Python backend."""
 
     process: subprocess.Popen[bytes]
     pid: int
@@ -309,7 +309,7 @@ class DaemonInstance:
         return ""
 
     def stop(self) -> None:
-        """Stop the daemon and wait for its health endpoint to disappear."""
+        """Send SIGTERM to gdaemon, which drains the backend and releases ownership."""
         if self.is_alive():
             self.process.terminate()
             try:
@@ -325,7 +325,7 @@ class DaemonInstance:
         pytest.fail(f"Daemon health endpoint on port {self.http_port} remained available")
 
     def restart(self) -> None:
-        """Restart the daemon with the fixture's original process configuration."""
+        """Restart the original gdaemon command with isolated state and ports."""
         if self.is_alive():
             raise RuntimeError("Cannot restart a running daemon")
 

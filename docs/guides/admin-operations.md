@@ -342,6 +342,24 @@ identity, claims the singleton, starts local managed services, and waits for
 health and readiness. Remote mode skips local Compose lifecycle. An accepted
 OS service request alone does not establish readiness.
 
+`gdaemon` owns the active-daemon PostgreSQL lease, standby promotion and drain.
+Python reads the native runtime row for grants; it does not acquire the lease
+or fence writes. A normal SIGTERM to `gdaemon` drains its backend before
+releasing native ownership. Native Windows local daemon operation is unsupported;
+install and run Gobby inside WSL 2. Remote-mode Windows remains supported.
+
+Lease administration uses these native routes with an operator bearer key:
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/api/admin/lease/status` | Reports active/standby mode, holder PID and heartbeat age. |
+| POST | `/api/admin/lease/promote` | Promotes a standby when the lease is free; a held lease returns 409. |
+| POST | `/api/admin/lease/recover?stale_after_seconds=30` | Recovers a verified stale owner and attempts promotion; a fresh owner returns 409. |
+
+The recovery threshold defaults to 30 seconds and must be greater than zero
+and at most 86,400 seconds. A refused runtime requires a full restart, and
+node mode has no singleton lease. The Python `gobby lease` command is retired.
+
 Stop/restart can be refused by maintenance ownership, protected cron runs, or
 pending handoffs. Inspect the reported blocker. `--wait` defers eligible work;
 `--force` and `--wait` are mutually exclusive and do not bypass every gate.

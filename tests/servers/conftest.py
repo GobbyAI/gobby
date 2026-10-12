@@ -273,9 +273,7 @@ def http_server(
     )
     server.auth_service.bind_runtime(
         grant_service=None,
-        lease_live=None,
         local_machine_id=TEST_FRONT_DOOR_IDENTITY["X-Gobby-Machine-Id"],
-        effect_fence=None,
         clock=None,
         front_door_secret=TEST_FRONT_DOOR_SECRET,
     )

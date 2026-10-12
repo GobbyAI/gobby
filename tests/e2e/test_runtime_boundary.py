@@ -7,7 +7,6 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -24,7 +23,6 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from gobby.deployment import deployment_token
 from gobby.runtime_grants.handshake import encode_grant_header
 from gobby.runtime_grants.launch import write_grant_file
 from gobby.runtime_grants.schema import FalkorDirect, GrantBundle, PostgresDirect, QdrantDirect
@@ -38,7 +36,6 @@ from tests.e2e.conftest import (
     authenticated_daemon_client_for_home,
     daemon_auth_headers,
     daemon_health_unavailable,
-    find_free_port,
     wait_for_daemon_health,
 )
 
@@ -171,7 +168,6 @@ def e2e_pre_daemon_setup(
         (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
     )
     _seed_identity_rows(postgres_db, E2E_MACHINE_ID, TEST_USER_ID)
-    _seed_identity_rows(postgres_db, STANDBY_MACHINE_ID, TEST_USER_ID)
     mutations = ConfigMutations(postgres_db)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
@@ -198,7 +194,6 @@ def e2e_pre_daemon_setup(
 
 E2E_PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
 E2E_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
-STANDBY_MACHINE_ID = "21000000-0000-4000-8000-000000000099"
 SEMANTIC_WARNING = {
     "lane": "semantic",
     "cause": "daemon_unreachable",
@@ -422,26 +417,6 @@ def _start_qdrant_key_proxy(upstream: str, api_key: str) -> _LoopbackProxy:
             _forward_http(upstream, self)
 
     return _start_loopback_proxy(Handler)
-
-
-def _admit_barrier_paths(home: Path) -> tuple[Path, Path, Path]:
-    runtime = home / "runtime"
-    runtime.mkdir(parents=True, exist_ok=True)
-    flag = runtime / "e2e-admit-barrier"
-    return (
-        flag,
-        flag.with_name("e2e-admit-barrier.admitted"),
-        flag.with_name("e2e-admit-barrier.release"),
-    )
-
-
-def _wait_for_path(path: Path, *, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if path.is_file():
-            return
-        time.sleep(0.05)
-    raise AssertionError(f"timed out waiting for {path}")
 
 
 def _interactive_cache_path(home: Path, token: str, project_id: str) -> Path:
@@ -682,77 +657,6 @@ def _restore_schema(database_url: str, schema: str, dump: Path, postgres_db: Any
         text=True,
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout
-
-
-def _spawn_same_deployment_standby(
-    boundary: BoundaryHarness,
-    *,
-    database_url: str,
-) -> DaemonInstance:
-    http_port = find_free_port()
-    ws_port = find_free_port()
-    work = boundary.project_dir / f".standby-{http_port}"
-    logs = work / "logs"
-    logs.mkdir(parents=True)
-    (work / "machine_id").write_text((boundary.home / "machine_id").read_text())
-    bootstrap = work / "bootstrap.yaml"
-    files_home = work / "files"
-    files_home.mkdir()
-    bootstrap.write_text(
-        "\n".join(
-            (
-                "hub_backend: postgres",
-                f"database_url: {database_url}",
-                f"daemon_port: {http_port}",
-                "bind_host: localhost",
-                f"websocket_port: {ws_port}",
-                f"files_home: {files_home}",
-                "",
-            )
-        )
-    )
-    bootstrap.chmod(0o600)
-    env = dict(boundary.daemon.env)
-    env["GOBBY_HOME"] = str(boundary.home)
-    env["HOME"] = str(boundary.home)
-    env.pop("GOBBY_CONFIG", None)
-    script = (
-        "import asyncio, sys\n"
-        "from pathlib import Path\n"
-        "from gobby.runner import run_gobby\n"
-        "from gobby.runner_pid_file import FailOpenPidOwnership\n"
-        "asyncio.run(run_gobby(\n"
-        "    Path(sys.argv[1]),\n"
-        "    ownership_resolution=FailOpenPidOwnership('e2e-same-deployment-standby'),\n"
-        "))\n"
-    )
-    log_file = logs / "daemon.log"
-    error_log_file = logs / "daemon_error.log"
-    command = [sys.executable, "-c", script, str(bootstrap)]
-    with log_file.open("wb") as log_handle, error_log_file.open("wb") as error_handle:
-        process = subprocess.Popen(
-            command,
-            stdout=log_handle,
-            stderr=error_handle,
-            stdin=subprocess.DEVNULL,
-            cwd=boundary.project_dir,
-            env=env,
-            start_new_session=True,
-        )
-    return DaemonInstance(
-        process=process,
-        pid=process.pid,
-        http_port=http_port,
-        ws_port=ws_port,
-        project_dir=boundary.project_dir,
-        gobby_dir=boundary.project_dir / ".gobby",
-        log_file=log_file,
-        error_log_file=error_log_file,
-        db_path=work / "hub-postgres.db",
-        config_path=bootstrap,
-        command=command,
-        env=env,
-    )
 
 
 @dataclass
@@ -1166,215 +1070,6 @@ def test_restore_replay_rejected(
         _assert_typed_failure(expired_offline, "expired", "daemon_required")
     finally:
         qdrant_proxy.close()
-
-
-def test_takeover_fencing(
-    boundary: BoundaryHarness,
-    postgres_database_url: str,
-    postgres_schema: str,
-    postgres_db: Any,
-) -> None:
-    from tests.e2e.conftest import _postgres_url_for_schema, terminate_process_tree
-
-    token = deployment_token(boundary.home)
-    assert token == boundary.grant.deployment.token
-    with authenticated_daemon_client(boundary.daemon) as client:
-        current = client.get("/api/config/values")
-        assert current.status_code == 200, current.text
-        patched = client.patch(
-            "/api/config/values",
-            json={
-                "expected_revision": current.json()["revision"],
-                "values": {
-                    "databases": {
-                        "qdrant": {
-                            "url": os.environ.get("GOBBY_TEST_QDRANT_URL", "http://127.0.0.1:6333"),
-                            "api_key": "e2e",
-                        }
-                    }
-                },
-            },
-        )
-    assert patched.status_code == 200, patched.text
-    qdrant_grant = _handshake_grant(boundary.daemon, boundary.project_dir)
-    if qdrant_grant.capabilities.qdrant.mode == "unavailable":
-        if boundary.daemon.is_alive():
-            boundary.daemon.stop()
-        boundary.daemon.restart()
-        qdrant_grant = _handshake_grant(boundary.daemon, boundary.project_dir)
-    persist_interactive_grant(boundary.home, boundary.daemon.http_url, qdrant_grant)
-    boundary.grant = qdrant_grant
-    boundary.grant_path = persist_interactive_grant(
-        boundary.home, boundary.daemon.http_url, qdrant_grant
-    )
-    assert qdrant_grant.capabilities.qdrant.mode != "unavailable", qdrant_grant.capabilities.qdrant
-    postgres_db.execute(
-        """
-        INSERT INTO code_indexed_projects (id) VALUES (%s)
-        ON CONFLICT (id) DO NOTHING
-        """,
-        (E2E_PROJECT_ID,),
-    )
-    postgres_db.execute(
-        """
-        INSERT INTO code_indexed_project_states (
-            machine_id, project_id, root_path
-        ) VALUES (%s, %s, %s)
-        ON CONFLICT (machine_id, project_id) DO UPDATE
-           SET root_path = EXCLUDED.root_path
-        """,
-        (E2E_MACHINE_ID, E2E_PROJECT_ID, str(boundary.project_dir)),
-    )
-    postgres_db.execute(
-        """
-        INSERT INTO code_index_prune_dirty_projects (
-            machine_id, project_id, root_path, reason
-        ) VALUES (%s, %s, %s, %s)
-        ON CONFLICT (machine_id, project_id) DO UPDATE
-           SET reason = EXCLUDED.reason
-        """,
-        (E2E_MACHINE_ID, E2E_PROJECT_ID, str(boundary.project_dir), "e2e-takeover"),
-    )
-    scoped_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
-    standby = _spawn_same_deployment_standby(boundary, database_url=scoped_url)
-    try:
-
-        def standby_is_ready() -> bool:
-            if standby.process.poll() is not None:
-                pytest.fail(
-                    "same-deployment standby exited\n"
-                    f"--- log ---\n{standby.read_logs()}\n"
-                    f"--- error ---\n{standby.read_error_logs()}"
-                )
-            try:
-                health = httpx.get(f"{standby.http_url}/api/health", timeout=1.0)
-            except httpx.HTTPError:
-                return False
-            return health.status_code == 200 and health.json().get("lease_mode") == "standby"
-
-        try:
-            wait_for_condition(
-                standby_is_ready,
-                timeout=30,
-                interval=0.1,
-                description="same-deployment standby lease mode",
-            )
-        except AssertionError as exc:
-            pytest.fail(
-                f"{exc}\n--- log ---\n{standby.read_logs()}\n"
-                f"--- error ---\n{standby.read_error_logs()}"
-            )
-
-        admitted: dict[str, int | str | None] = {
-            "status": None,
-            "code": None,
-            "error": None,
-        }
-        flag, admitted_path, release_path = _admit_barrier_paths(boundary.home)
-        for leftover in (admitted_path, release_path, flag):
-            leftover.unlink(missing_ok=True)
-        flag.write_text("1")
-
-        def _in_flight_invalidate() -> None:
-            try:
-                with httpx.Client(base_url=boundary.daemon.http_url, timeout=45.0) as client:
-                    response = client.post(
-                        "/api/code-index/invalidate",
-                        headers=boundary.grant_headers(),
-                        json={"project_id": E2E_PROJECT_ID},
-                    )
-                admitted["status"] = response.status_code
-                payload = response.json() if response.content else {}
-                admitted["code"] = payload.get("code") or payload.get("error")
-            except Exception as exc:
-                admitted["error"] = repr(exc)
-
-        worker = threading.Thread(target=_in_flight_invalidate, daemon=True)
-        worker.start()
-        try:
-            _wait_for_path(admitted_path)
-            assert admitted["status"] is None
-            headers = daemon_auth_headers(boundary.home)
-            recover = httpx.post(
-                f"{standby.http_url}/api/admin/lease/recover",
-                headers=headers,
-                params={"stale_after_seconds": 0},
-                timeout=20.0,
-            )
-            assert recover.status_code == 200, recover.text
-            release_path.write_text("1")
-            worker.join(timeout=45)
-            assert worker.is_alive() is False, admitted
-            assert admitted["status"] == 409, admitted
-            assert admitted["code"] in {"stale_epoch", "lease_not_held"}, admitted
-            remaining = postgres_db.fetchone(
-                """
-                SELECT root_path FROM code_indexed_project_states
-                 WHERE machine_id = %s AND project_id = %s
-                """,
-                (E2E_MACHINE_ID, E2E_PROJECT_ID),
-            )
-            assert remaining is not None
-            assert remaining["root_path"] == str(boundary.project_dir)
-
-            wait_for_daemon_health(standby.http_port, log_file=standby.log_file)
-            successor_grant = _handshake_grant(standby, boundary.project_dir, home=boundary.home)
-            persist_interactive_grant(boundary.home, standby.http_url, successor_grant)
-            successor_headers = {
-                **headers,
-                "X-Gobby-Runtime-Grant": encode_grant_header(successor_grant),
-                "X-Gobby-Machine-Id": successor_grant.principal.machine_id,
-                "X-Gobby-Caller-Project-Id": successor_grant.principal.project_id,
-                "X-Gobby-Project-Id": successor_grant.principal.project_id,
-                "X-Gobby-Session-Id": successor_grant.principal.session_id or "",
-            }
-            with httpx.Client(base_url=standby.http_url, timeout=20.0) as owner:
-                committed = owner.post(
-                    "/api/code-index/invalidate",
-                    headers=successor_headers,
-                    json={"project_id": E2E_PROJECT_ID},
-                )
-            assert committed.status_code in {200, 207}, committed.text
-            gone = postgres_db.fetchone(
-                """
-                SELECT root_path FROM code_indexed_project_states
-                 WHERE machine_id = %s AND project_id = %s
-                """,
-                (E2E_MACHINE_ID, E2E_PROJECT_ID),
-            )
-            assert gone is None
-            try:
-                with httpx.Client(base_url=boundary.daemon.http_url, timeout=5.0) as displaced:
-                    refused = displaced.post(
-                        "/api/code-index/invalidate",
-                        headers=boundary.grant_headers(),
-                        json={"project_id": E2E_PROJECT_ID},
-                    )
-                # A draining backend refuses with 503 shutdown_in_progress. In front-door
-                # mode gdaemon then answers for it: 503 once it refuses connections and
-                # 502 when it closes an accepted socket.
-                if refused.status_code == 503:
-                    body = refused.json()
-                    assert (
-                        body.get("code") == "shutdown_in_progress"
-                        or body.get("backend", {}).get("state") == "down"
-                    ), refused.text
-                elif refused.status_code == 502:
-                    assert refused.json()["status"] == "bad_gateway", refused.text
-                else:
-                    assert refused.status_code == 409, refused.text
-            except (httpx.ConnectError, httpx.RemoteProtocolError):
-                # Lease-loss drain also shuts the displaced listener down: the
-                # connect is refused, or an accepted socket closes before any
-                # response. A 409, a down backend, or a dropped socket proves it
-                # cannot mutate.
-                pass
-        finally:
-            release_path.write_text("1")
-            flag.unlink(missing_ok=True)
-    finally:
-        if standby.is_alive():
-            terminate_process_tree(standby.pid)
 
 
 def test_rotation_drain_and_revocation(boundary: BoundaryHarness, postgres_db: Any) -> None:

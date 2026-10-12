@@ -38,7 +38,6 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `hub-backup` | Back up and verify every hub datastore. | `src/gobby/cli/hub_backup/` |
 | `init` | Initialize `.gobby/project.json`. | `src/gobby/cli/init.py` |
 | `install` | Install required infrastructure, configuration, integrations, and hooks. | `src/gobby/cli/install.py` |
-| `lease` | Inspect and control single-active-daemon ownership. | `src/gobby/cli/daemon_lease.py` |
 | `linear` | Manage Linear integration. | `src/gobby/cli/linear.py` |
 | `mcp-proxy` | Inspect and call tools through the MCP proxy. | `src/gobby/cli/mcp_proxy.py` |
 | `mcp-server` | Run the stdio MCP server. | `src/gobby/cli/mcp.py` |
