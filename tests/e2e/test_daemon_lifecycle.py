@@ -194,7 +194,7 @@ class TestDaemonStop:
         ]
         assert still_running == []
 
-    def test_stop_is_idempotent_on_non_running_daemon(self, e2e_project_dir) -> None:
+    def test_stop_is_idempotent_on_non_running_daemon(self, e2e_project_dir: Path) -> None:
         """Verify stopping a non-running daemon doesn't error."""
         # Create a fake PID file with a non-existent PID
         pid_file = e2e_project_dir / ".gobby-home" / "gobby.pid"
@@ -239,8 +239,8 @@ class TestDaemonRestart:
 
     def test_restart_has_no_state_leakage(
         self,
-        e2e_project_dir,
-        e2e_config,
+        e2e_project_dir: Path,
+        e2e_config: tuple[Path, int, int],
     ) -> None:
         """Verify restarted daemon doesn't inherit state from previous instance."""
         import subprocess
@@ -472,7 +472,14 @@ def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[
     env = _daemon_env(config_path)
     log_dir = gobby_home / "logs"
     command = native_daemon_command(
-        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        env,
+        [
+            sys.executable,
+            str(Path(__file__).with_name("readiness_bootstrap.py")),
+            "gobby.runner",
+            "--config",
+            str(config_path),
+        ],
     )
     with (
         open(log_dir / "daemon.log", "a") as log_f,
@@ -640,7 +647,11 @@ class TestFrontDoor:
         child: psutil.Process | None = None
         descendants: list[psutil.Process] = []
         try:
-            wait_for_daemon_health(http_port, log_file=config_path.parent / "logs" / "daemon.log")
+            wait_for_daemon_health(
+                http_port,
+                log_file=config_path.parent / "logs" / "daemon.log",
+                process=runner,
+            )
             child = _backend_child(runner.pid)
             descendants = psutil.Process(runner.pid).children(recursive=True)
             labels = {p.pid: _label(p) for p in descendants}

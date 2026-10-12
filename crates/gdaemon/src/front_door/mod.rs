@@ -91,6 +91,10 @@ impl FrontDoor {
                 return crate::lease::admin_api::handle(runtime, request).await;
             }
             let backend = runtime.backend.borrow().clone();
+            state.backend_state = match &backend {
+                crate::lifecycle::backend::BackendStatus::Starting { .. } => BackendState::Starting,
+                _ => BackendState::Down,
+            };
             let refusal = match backend {
                 crate::lifecycle::backend::BackendStatus::Refused { reason } => Some(
                     serde_json::json!({"error": "backend_refused", "status": "unavailable", "backend": {
@@ -111,7 +115,6 @@ impl FrontDoor {
                     true,
                 );
             }
-            state.backend_state = BackendState::Starting;
         }
         if request.method() == axum::http::Method::POST
             && request.uri().path() == "/api/runtime/handshake/challenge"

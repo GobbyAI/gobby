@@ -91,6 +91,10 @@ pub fn run() -> Result<()> {
         let Some((state, supervisor)) =
             crate::state::RuntimeState::prepare(&bootstrap, home, &secret)?
         else {
+            eprintln!(
+                "gdaemon serve: runtime singleton claim unavailable (another owner or live service reservation): {}",
+                home.join("gobby.pid").display()
+            );
             return Ok(());
         };
         let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;

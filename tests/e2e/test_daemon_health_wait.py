@@ -1,13 +1,16 @@
 """Tests for isolated-daemon health polling."""
 
+import selectors
 import signal
 import subprocess
-import time
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
 import httpx
+import psutil
 import pytest
 
 from tests.e2e.conftest import (
@@ -19,6 +22,72 @@ from tests.e2e.conftest import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("related", [True, False], ids=["descendant", "unrelated"])
+def test_timeout_capture_targets_only_diagnostic_descendants(tmp_path: Path, related: bool) -> None:
+    from tests.e2e.readiness_capture import capture_readiness_timeout
+
+    child_script = """
+import os, signal, sys, time
+from pathlib import Path
+logs = Path(sys.argv[1])
+def threads(sig, frame):
+    (logs / 'startup-threads.log').write_text('Thread: child_startup')
+def tasks(sig, frame):
+    (logs / 'startup-tasks.log').write_text('Task: child_startup')
+    (logs / 'readiness-tasks.ready').write_text(str(os.getpid()))
+signal.signal(signal.SIGUSR2, threads)
+signal.signal(signal.SIGUSR1, tasks)
+(logs / 'startup-timings.jsonl').write_text('child stage started')
+(logs / 'readiness-diagnostics.pid').write_text(str(os.getpid()))
+print('ready', flush=True)
+time.sleep(30)
+"""
+    parent_script = "import subprocess, sys; subprocess.run(sys.argv[1:])"
+    with (
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                parent_script,
+                sys.executable,
+                "-c",
+                child_script,
+                str(tmp_path),
+            ],
+            stdout=subprocess.PIPE,
+        ) as parent,
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"]) as other,
+    ):
+        child: psutil.Process | None = None
+        try:
+            marker = tmp_path / "readiness-diagnostics.pid"
+            assert parent.stdout is not None
+            with selectors.DefaultSelector() as selector:
+                selector.register(parent.stdout, selectors.EVENT_READ)
+                assert selector.select(timeout=5.0), "diagnostic child must announce readiness"
+                assert parent.stdout.readline() == b"ready\n"
+            assert marker.exists(), "diagnostic child must become ready"
+            child = psutil.Process(int(marker.read_text()))
+            capture = capture_readiness_timeout(tmp_path, parent if related else other)
+            if related:
+                assert "Thread: child_startup" in capture.thread_stack_tail
+                assert "Task: child_startup" in capture.task_stack_tail
+                assert (tmp_path / "readiness-tasks.ready").read_text() == str(child.pid)
+            else:
+                assert capture.thread_stack_tail == "<unavailable>"
+                assert capture.task_stack_tail == "<unavailable>"
+                assert child.is_running(), "unrelated diagnostic child must survive"
+            assert capture.startup_timing_tail == "child stage started"
+        finally:
+            if child is not None and child.is_running():
+                child.terminate()
+            else:
+                for descendant in psutil.Process(parent.pid).children(recursive=True):
+                    descendant.terminate()
+            parent.terminate()
+            other.terminate()
 
 
 def test_timed_out_probes_make_documented_minimum_attempts(
@@ -125,21 +194,37 @@ def test_unready_daemon_reports_bounded_mcp_startup_tail(
         assert f"<unable to read {mcp_log}:" in message
 
 
-def test_daemon_that_never_serves_route_fails_promptly(tmp_path: Path) -> None:
+def test_daemon_that_never_serves_route_fails_promptly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     log_file = tmp_path / "daemon.log"
     log_file.write_text("startup stopped making progress\n")
-    started = time.monotonic()
+    elapsed = 0.0
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    def refused(url: str, *, timeout: float) -> httpx.Response:
+        advance(0.02)
+        raise httpx.ConnectError("isolated listener unavailable")
+
+    monkeypatch.setattr(
+        "tests.e2e.conftest.time", SimpleNamespace(monotonic=lambda: elapsed, sleep=advance)
+    )
+    monkeypatch.setattr("tests.e2e.conftest.httpx.get", refused)
 
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(
-            find_free_port(),
+            1,
             log_file=log_file,
             timeout=0.05,
             min_attempts=3,
         )
 
-    assert time.monotonic() - started < 1.0
-    assert exc_info.value.connect_refused >= 1
+    assert exc_info.value.elapsed_seconds == pytest.approx(0.09)
+    assert exc_info.value.attempts == 3
+    assert exc_info.value.connect_refused == 3
     assert "startup stopped making progress" in str(exc_info.value)
 
 

@@ -759,6 +759,52 @@ async fn refused_backend_returns_typed_503() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn unavailable_native_backend_reports_supervisor_state() {
+    use gobby_core::bootstrap::RunMode;
+    use gobby_daemon::{lifecycle::backend::BackendStatus, state::RuntimeState};
+
+    let backend = refused_addr().await;
+    for (status, expected) in [
+        (BackendStatus::Standby, "down"),
+        (
+            BackendStatus::Backoff {
+                delay: Duration::from_secs(1),
+            },
+            "down",
+        ),
+        (BackendStatus::Starting { pid: 42 }, "starting"),
+    ] {
+        let (_status, receiver) = tokio::sync::watch::channel(status);
+        let mut state = FrontDoorState::new(
+            backend,
+            BackendState::Down,
+            Arc::new(AuthState::new("boot-secret".into(), None, Default::default()).unwrap()),
+        );
+        state.runtime = Some(Arc::new(RuntimeState {
+            mode: RunMode::Node,
+            lease: None,
+            lease_state: None,
+            backend: receiver,
+        }));
+        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+        let door = FrontDoor::new(state, table);
+        let response = door
+            .handle(
+                Request::get("/api/auth/status")
+                    .body(Body::empty())
+                    .unwrap(),
+                "127.0.0.1:1234".parse().unwrap(),
+                false,
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = response_json(response).await;
+        assert_eq!(body["backend"]["state"], expected);
+    }
+}
+
 /// Read one chunked HTTP/1.1 message, head through the trailer section.
 /// A keep-alive backend that, like uvicorn at its keep-alive expiry, closes a
 /// connection without answering when a request arrives after `idle_limit` idle.
