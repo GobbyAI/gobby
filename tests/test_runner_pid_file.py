@@ -58,6 +58,20 @@ def _isolate_daemon_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("gobby.utils.local_token._daemon_bootstrap", None)
 
 
+@pytest.fixture
+def contention_bootstrap(tmp_path: Path) -> Path:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap_path.write_text(
+        "database_url: postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test\n"
+        f"files_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    return bootstrap_path
+
+
 def _daemon_probe(pid: int = 4242) -> SingletonProbe:
     return SingletonProbe(state=ProbeState.DAEMON, pid=pid, role="daemon")
 
@@ -477,6 +491,7 @@ def test_probe_daemon_lock_reports_owner_while_held(tmp_path: Path) -> None:
 async def test_run_gobby_contention_returns_before_runner_construction(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    contention_bootstrap: Path,
 ) -> None:
     """A losing daemon returns before any mutable subsystem is constructed."""
     with (
@@ -490,7 +505,7 @@ async def test_run_gobby_contention_returns_before_runner_construction(
         ) as probe,
         caplog.at_level(logging.INFO, logger="gobby.runner"),
     ):
-        await run_gobby()
+        await run_gobby(config_path=contention_bootstrap)
 
     runner_cls.assert_not_called()
     probe.assert_not_called()
@@ -900,7 +915,7 @@ class TestTransitioningAndFailures:
         assert probe_daemon_lock(pid_file).state is ProbeState.ABSENT
 
     async def test_run_gobby_does_not_convert_lock_failure_to_fail_open(
-        self, tmp_path: Path
+        self, tmp_path: Path, contention_bootstrap: Path
     ) -> None:
         with (
             patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
@@ -911,7 +926,7 @@ class TestTransitioningAndFailures:
             patch("gobby.runner.GobbyRunner") as runner_cls,
             pytest.raises(SingletonOpenError),
         ):
-            await run_gobby()
+            await run_gobby(config_path=contention_bootstrap)
         runner_cls.assert_not_called()
 
 
@@ -1083,7 +1098,7 @@ class TestStartStopBarriers:
 
 class TestRunGobbyMaintenanceContention:
     async def test_run_gobby_treats_maintenance_as_contention(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, contention_bootstrap: Path
     ) -> None:
         probe = SingletonProbe(state=ProbeState.MAINTENANCE, pid=99, role="maintenance")
         with (
@@ -1097,7 +1112,7 @@ class TestRunGobbyMaintenanceContention:
             ) as version_probe,
             caplog.at_level(logging.INFO, logger="gobby.runner"),
         ):
-            await run_gobby()
+            await run_gobby(config_path=contention_bootstrap)
         runner_cls.assert_not_called()
         version_probe.assert_not_called()
         assert "maintenance" in caplog.text.lower()
