@@ -496,6 +496,8 @@ async def test_bundled_skill_gate_holds_until_skill_is_loaded(
     step_variables = dict(workflow["variables"])
     step_variables[skill_list] = [skill]
     step_variables[gate_variable] = False
+    # Additional skill loading follows a claim; an unclaimed seat returns to claim.
+    step_variables["task_claimed"] = current_step == "load_additional_skills"
 
     instance_manager = _setup_workflow(
         db,

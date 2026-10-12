@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.hooks.tool_outcomes import tool_outcome_from_data
+from gobby.hooks.tool_outcomes import classify_raw_tool_result, tool_outcome_from_data
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -481,6 +481,10 @@ class EnforcementCompletionMixin:
             outcome = tool_outcome_from_data(event.data)
         tool_output = event.data.get("tool_output")
         tool_failed = bool(event.metadata.get("is_failure", False)) or outcome.succeeded is False
+        # PostToolUse proves transport completion, but an MCP payload may still
+        # report failure. Success handlers require both layers to succeed.
+        if tool_output is not None and classify_raw_tool_result(tool_output).succeeded is False:
+            tool_failed = True
         if not tool_failed:
             await offload(
                 self._audit_step_tool_call,
