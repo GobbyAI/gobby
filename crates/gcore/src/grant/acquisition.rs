@@ -112,6 +112,7 @@ pub(super) struct AcquireCtx {
     managed_bootstrap: Option<PathBuf>,
     managed_envelope: Option<String>,
     expected_execution_id: Option<String>,
+    last_reachability: std::cell::Cell<Option<bool>>,
 }
 
 pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantError> {
@@ -119,12 +120,21 @@ pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantErr
 }
 
 pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
-    let ctx = AcquireCtx::from_request(request)?;
-    handshake::reject_remote_endpoint(&ctx.daemon_url)?;
-    if let Some(path) = managed_bootstrap_path(&ctx) {
-        return acquire_managed(&ctx, &path);
-    }
-    acquire_interactive(&ctx)
+    acquire_with_reachability(request).map_err(|(error, _)| error)
+}
+
+/// Preserve acquisition's reachability verdict for consumers that classify errors.
+pub(crate) fn acquire_with_reachability(
+    request: &AcquireRequest<'_>,
+) -> Result<AcquiredGrant, (GrantError, Option<bool>)> {
+    let ctx = AcquireCtx::from_request(request).map_err(|error| (error, None))?;
+    handshake::reject_remote_endpoint(&ctx.daemon_url).map_err(|error| (error, None))?;
+    let result = if let Some(path) = managed_bootstrap_path(&ctx) {
+        acquire_managed(&ctx, &path)
+    } else {
+        acquire_interactive(&ctx)
+    };
+    result.map_err(|error| (error, ctx.last_reachability.get()))
 }
 
 /// Present ``present`` with the current grant. A stale-epoch or rotated-signature
@@ -192,6 +202,7 @@ impl AcquireCtx {
             managed_bootstrap: request.managed_bootstrap.clone(),
             managed_envelope: request.managed_envelope.clone(),
             expected_execution_id: request.expected_execution_id.clone(),
+            last_reachability: std::cell::Cell::new(None),
         })
     }
 
@@ -214,11 +225,13 @@ impl AcquireCtx {
     }
 
     fn reachable(&self) -> bool {
-        Instant::now() < self.deadline
+        let reachable = Instant::now() < self.deadline
             && daemon_reachable(
                 &self.daemon_url,
                 REACHABILITY_PROBE.min(self.deadline.saturating_duration_since(Instant::now())),
-            )
+            );
+        self.last_reachability.set(Some(reachable));
+        reachable
     }
 
     fn remaining(&self) -> Result<Duration, GrantError> {

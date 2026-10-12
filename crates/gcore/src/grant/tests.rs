@@ -17,6 +17,72 @@ use super::handshake::{
 use super::*;
 use crate::local_token::AUTHORIZATION_HEADER;
 
+thread_local! {
+    pub(super) static REACHABILITY_SCRIPT: std::cell::RefCell<std::collections::VecDeque<bool>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+#[cfg(feature = "ai")]
+struct ReachabilityScript;
+
+#[cfg(feature = "ai")]
+impl ReachabilityScript {
+    fn new(sequence: impl IntoIterator<Item = bool>) -> Self {
+        REACHABILITY_SCRIPT.with(|script| {
+            assert!(script.borrow().is_empty());
+            script.borrow_mut().extend(sequence);
+        });
+        Self
+    }
+}
+
+#[cfg(feature = "ai")]
+impl Drop for ReachabilityScript {
+    fn drop(&mut self) {
+        REACHABILITY_SCRIPT.with(|script| script.borrow_mut().clear());
+    }
+}
+
+#[test]
+#[cfg(feature = "ai")]
+fn managed_effective_config_retains_offline_verdict_when_daemon_recovers() {
+    let harness = Harness::new();
+    let now = unix_now();
+    let mut grant = fixture_grant(PrincipalKind::AgentRun);
+    grant.issued_at = now - 100;
+    grant.expires_at = now + 3500;
+    grant.schema_identity.latest_version -= 1;
+    grant = grant.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &grant).expect("stale managed grant");
+    let _env = PoisonedEnv::apply(&path);
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores all changed variables.
+    unsafe {
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "exec-1");
+        std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
+        std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
+        std::env::set_var("GOBBY_SESSION_ID", "cli");
+        std::env::set_var("GOBBY_PROJECT_ID", PROJECT);
+    }
+    let _script = ReachabilityScript::new([false, true]);
+    let result =
+        crate::ai::effective_config::daemon_mode_layers_at("http://127.0.0.1:1", &harness.home);
+    assert!(
+        matches!(
+            result,
+            Err(
+                crate::ai::effective_config::EffectiveConfigError::Transport {
+                    kind: crate::ai::effective_config::EffectiveConfigTransportKind::Unreachable,
+                }
+            )
+        ),
+        "offline acquisition must stay unreachable: {result:?}"
+    );
+    REACHABILITY_SCRIPT.with(|script| {
+        assert_eq!(script.borrow().iter().copied().collect::<Vec<_>>(), [true]);
+    });
+}
+
 const TOKEN: &str = "operator-token";
 
 #[test]

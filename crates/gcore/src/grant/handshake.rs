@@ -96,6 +96,12 @@ pub fn is_default_local_endpoint(daemon_url: &str) -> Result<bool, GrantError> {
 }
 
 pub fn daemon_reachable(daemon_url: &str, timeout: Duration) -> bool {
+    #[cfg(test)]
+    if let Some(reachable) =
+        super::tests::REACHABILITY_SCRIPT.with(|script| script.borrow_mut().pop_front())
+    {
+        return reachable;
+    }
     let Ok((_, port)) = url_host_port(daemon_url) else {
         return false;
     };
