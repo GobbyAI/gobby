@@ -165,6 +165,30 @@ def test_case_arm_subshell_list_read_only(tmp_path: Path, separator: str) -> Non
 
 
 @pytest.mark.parametrize(
+    "prefix",
+    [
+        "case x in a) echo $(true);; b)",
+        "case x in a) x=$(true);; b)",
+        "case x in a) true $(true);; b)",
+        "case x in a) echo ${x/)/};; b)",
+        "case $(echo x) in b)",
+        "case ${x/)/} in b)",
+        "case x in a) echo `true`;; b)",
+        "case $(case x in x) echo x;; esac) in b)",
+        "case $(case $(echo x) in x) echo x;; esac) in b)",
+        "case x in $${x})",
+        "case x in a)\\\n",
+    ],
+)
+def test_case_arm_after_expansion_preserves_write_scope(tmp_path: Path, prefix: str) -> None:
+    data = _invocation_metadata(
+        f"{prefix}(touch a.py; touch b.py);; esac", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_file_paths"] == ["a.py", "b.py"]
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "echo `case y in y) git apply x.patch;; esac`",

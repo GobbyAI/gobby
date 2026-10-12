@@ -549,6 +549,15 @@ def test_parameter_data_still_inspects_executable_substitutions(body: str) -> No
     assert blocks_direct_provider_launch("Bash", {"command": f"bash -c '{body}'"}) is True
 
 
+@pytest.mark.parametrize("command", ["echo $${", "bash -c 'echo $${'"])
+def test_pid_parameter_with_literal_brace_is_data(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+def test_pid_parameter_with_literal_brace_still_inspects_substitution() -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": "bash -c 'echo $${x:-$(claude)}'"})
+
+
 @pytest.mark.parametrize(
     "command",
     [

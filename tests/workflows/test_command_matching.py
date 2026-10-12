@@ -143,6 +143,39 @@ def test_glued_case_arm_subshell_list_matches(body: str, mask_quoted: bool) -> N
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+def test_pid_parameter_before_quoted_push_preserves_matching(mask_quoted: bool) -> None:
+    assert command_patterns_match(
+        '(echo $${); "git" push', pattern=r"^git\s+push\b", mask_quoted=mask_quoted
+    )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "case x in a) echo $(true);; b)",
+        "case x in a) x=$(true);; b)",
+        "case x in a) true $(true);; b)",
+        "case x in a) echo ${x/)/};; b)",
+        "case $(echo x) in b)",
+        "case ${x/)/} in b)",
+        "case x in a) echo `true`;; b)",
+        "case $(case x in x) echo x;; esac) in b)",
+        "case $(case $(echo x) in x) echo x;; esac) in b)",
+        "case x in $${x})",
+        "case x in a)\\\n",
+    ],
+)
+def test_case_arm_after_expansion_preserves_matching(prefix: str, mask_quoted: bool) -> None:
+    for separator in (" ", ""):
+        assert command_patterns_match(
+            f'{prefix}{separator}(true; "git" push);; esac',
+            pattern=r"^git\s+push\b",
+            mask_quoted=mask_quoted,
+        )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
     "command,pattern",
     [

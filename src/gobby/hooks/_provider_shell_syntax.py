@@ -1,7 +1,7 @@
 """Shell syntax masking for bounded executable-context inspection."""
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
-from gobby.hooks._case_syntax import CaseSyntax
+from gobby.hooks._case_syntax import CaseSyntax, pid_parameter_end
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _skip_heredocs,
@@ -175,6 +175,10 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
         if char == "\\" and quote != "'":
             output.append(command[index : index + 2])
             index += 2
+            continue
+        if quote not in {"'", "$"} and (pid_end := pid_parameter_end(command, index)) is not None:
+            output.append(command[index:pid_end])
+            index = pid_end
             continue
         if quote not in {"'", "$"} and command.startswith("${", index):
             parameter_quotes.append(quote)
