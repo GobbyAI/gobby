@@ -236,15 +236,21 @@ def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
 
     for phrase in (
         "gobby-agents:list_running_agents",
+        'gobby-communications:send_operator_message(channel="gobby-telegram", '
+        "content=<whole markdown report>)",
+        "only success=true confirms delivery",
+        "If direct delivery fails or is unavailable",
         'gobby-sessions:list_sessions(agent_type="assistant")',
-        'gobby-agents:send_message(target="session", target_id=<session ref>)',
-        'gobby-sessions:list_sessions(agent_type="orchestrator")',
-        "skip rows whose status is `expired` or `archived`",
-        "Decisions needed:",
+        'gobby-agents:send_message(target="session", target_id=<Assistant session ref>)',
+        "Skip expired or archived rows",
+        "same markdown and the exact delivery error",
+        "Operator decisions:",
         "Systems nominal",
         "Every #NNNNN carries its title",
         "gobby-agents:end_agent_run",
-        "`current_state`",
-        "`next_steps`",
+        "passing current_state containing mode, elapsed time",
+        "direct message_id or fallback message_id, delivery status, and any gaps",
+        "next_steps says the next tick is due in 30 minutes",
+        "If both delivery paths fail",
     ):
         assert phrase in prompt, phrase
