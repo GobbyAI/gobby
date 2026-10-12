@@ -21,8 +21,72 @@ pytestmark = pytest.mark.unit
 pytest_plugins = ["pytester"]
 
 
+@pytest.mark.asyncio
+async def test_grant_cache_denied_with_own_bootstrap_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.agents.srt_runtime import render_srt_settings
+
+    home = tmp_path / "home"
+    home.mkdir()
+    grants = home / "grants"
+    resolved_grants = tmp_path / "grant-cache"
+    resolved_grants.mkdir()
+    grants.symlink_to(resolved_grants, target_is_directory=True)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bootstrap = home / "runtime/managed-executions/own/assets/grant.json"
+
+    async def no_git_metadata(*_args: object, **_kwargs: object) -> GitFailed:
+        return GitFailed(
+            status="failed",
+            argv=("git", "rev-parse"),
+            returncode=128,
+            stdout="",
+            stderr="not a git repository",
+        )
+
+    monkeypatch.setattr("gobby.agents.sandbox.daemon_git.run", no_git_metadata)
+    paths = await compute_sandbox_paths(
+        config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        workspace_path=str(workspace),
+        env={"PATH": "", "GOBBY_MANAGED_EXECUTION_BOOTSTRAP": str(bootstrap)},
+    )
+    settings = render_srt_settings(paths)
+    filesystem = settings["filesystem"]
+    assert str(grants) in filesystem["denyRead"]
+    assert str(resolved_grants) in filesystem["denyRead"]
+    assert str(bootstrap) in filesystem["allowRead"]
+    for root in (grants, resolved_grants):
+        for name in ("foreign.json", ".grant-123-1.tmp", "nested/.grant-123-2.tmp"):
+            cached = root / name
+            assert any(cached.is_relative_to(denied) for denied in filesystem["denyRead"])
+            assert not any(Path(allowed).is_relative_to(root) for allowed in paths.read_paths)
+
+
+@pytest.mark.parametrize("grant", ["foreign.json", ".grant-123-1.tmp", "nested/*"])
+@pytest.mark.parametrize("resolved", [False, True])
+def test_grant_cache_cannot_be_readmitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grant: str, resolved: bool
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "grant-cache"
+    target.mkdir()
+    (home / "grants").symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    root = target if resolved else home / "grants"
+    with pytest.raises(ValueError, match="sandbox allow path contains sensitive root"):
+        sandbox_policy.assert_sensitive_path_contract([str(root / grant)])
+
+
 @pytest.fixture(autouse=True)
-def _cleanup_pre_commit_store_spare(tmp_path: Path) -> Iterator[None]:
+def _cleanup_pre_commit_store_spare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    # Tests that exercise copying replace this with their small synthetic store.
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(tmp_path / "pre-commit"))
     yield
     sandbox_policy.shutdown_pre_commit_store_spare()
     # Tests chmod operator stores read-only; leaving them so turns pytest's later
