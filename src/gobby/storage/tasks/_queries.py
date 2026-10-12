@@ -198,7 +198,11 @@ def list_tasks(
         where += " AND updated_at >= %s"
         params.append(updated_since)
     if candidate is not None:
-        where += f" AND {'NOT ' if not candidate else ''}EXISTS ({_candidate_message_sql()})"
+        where += f""" AND {"NOT " if not candidate else ""}EXISTS (
+            SELECT 1 FROM ({_candidate_message_sql()}) events
+            WHERE events.project_id = tasks.project_id
+              AND events.seq_text = tasks.seq_num::text
+        )"""
     if current_stage_state:
         clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
         if clause:
@@ -294,15 +298,17 @@ def list_tasks(
 
 
 def _candidate_message_sql() -> str:
-    """The fleet's explicit CANDIDATE event is evidence, not a linked commit."""
+    """Group explicit events before task joins so extraction runs once per message."""
     return """
-        SELECT m.sent_at FROM inter_session_messages m
+        SELECT sender.project_id,
+               SUBSTRING(m.content FROM
+                   '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]]+TASK=#([0-9]+)(?:[[:space:]]|$)')
+                   AS seq_text,
+               MIN(m.sent_at) AS sent_at
+        FROM inter_session_messages m
         JOIN sessions sender ON sender.id = m.from_session
-        WHERE sender.project_id = tasks.project_id
-          AND m.content LIKE '%%EVENT=CANDIDATE%%'
-          AND SUBSTRING(m.content FROM
-              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]]+TASK=#([0-9]+)(?:[[:space:]]|$)')
-              = tasks.seq_num::text
+        WHERE m.content LIKE '%%EVENT=CANDIDATE%%'
+        GROUP BY 1, 2
     """
 
 
@@ -310,17 +316,13 @@ def candidate_sent_times(db: HubDatabase, task_ids: list[str]) -> dict[str, date
     if not task_ids:
         return {}
     rows = db.fetchall(
-        """
-        SELECT tasks.id, MIN(m.sent_at) AS candidate_sent_at
+        f"""
+        SELECT tasks.id, events.sent_at AS candidate_sent_at
         FROM tasks
-        JOIN sessions sender ON sender.project_id = tasks.project_id
-        JOIN inter_session_messages m ON m.from_session = sender.id
+        JOIN ({_candidate_message_sql()}) events
+          ON events.project_id = tasks.project_id
+         AND events.seq_text = tasks.seq_num::text
         WHERE tasks.id = ANY(%s::uuid[])
-          AND m.content LIKE '%%EVENT=CANDIDATE%%'
-          AND SUBSTRING(m.content FROM
-              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]]+TASK=#([0-9]+)(?:[[:space:]]|$)')
-              = tasks.seq_num::text
-        GROUP BY tasks.id
         """,
         (task_ids,),
     )

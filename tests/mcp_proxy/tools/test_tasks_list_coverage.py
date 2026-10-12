@@ -75,6 +75,53 @@ async def test_candidate_filter_uses_sent_event_and_deduplicates_review_recipien
     assert "SubPlan" not in "\n".join(str(row["QUERY PLAN"]) for row in plan)
 
 
+def test_candidate_queries_group_extraction_before_joining_tasks(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    seat = session_manager.register(
+        external_id="candidate-plan-author",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Candidate plan item {number}",
+            validation_criteria="Candidate filtering extracts each event before task joins.",
+        )
+        for number in range(4)
+    ]
+    messages = InterSessionMessageManager(temp_db)
+    for task in tasks[:2]:
+        messages.create_message(seat.id, seat.id, f"EVENT=CANDIDATE TASK=#{task.seq_num}")
+    with patch.object(temp_db, "fetchall", wraps=temp_db.fetchall) as fetchall:
+        times = manager.get_candidate_sent_times([task.id for task in tasks])
+        candidates = manager.list_tasks(
+            project_id=sample_project["id"], candidate=True, closed=False, sort_by="created_at"
+        )
+        others = manager.list_tasks(
+            project_id=sample_project["id"], candidate=False, closed=False, sort_by="created_at"
+        )
+    assert set(times) == {task.id for task in tasks[:2]}
+    assert {task.id for task in candidates} == {task.id for task in tasks[:2]}
+    assert {task.id for task in others} == {task.id for task in tasks[2:]}
+    statements = [
+        (call.args[0], call.args[1])
+        for call in fetchall.call_args_list
+        if "inter_session_messages" in call.args[0]
+    ]
+    assert len(statements) == 3
+    for statement, params in statements:
+        lines = [str(row["QUERY PLAN"]) for row in temp_db.fetchall("EXPLAIN " + statement, params)]
+        plan = "\n".join(lines)
+        assert "SubPlan" not in plan, plan
+        assert any("Group Key" in line and "substring" in line.lower() for line in lines), plan
+
+
 @pytest.mark.asyncio
 async def test_list_tasks_caps_only_compact_view() -> None:
     manager = MagicMock()
@@ -137,7 +184,7 @@ async def test_compact_ref_page_budget_preserves_source_offsets(
         )
         for number in range(3)
     ]
-    refs = ["missing-task", *(f"#{task.seq_num}" for task in tasks)]
+    refs = ["missing-task", *(f"#{task.seq_num}" for task in tasks), "missing-end"]
     with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
         context.return_value = {"id": sample_project["id"]}
         first = await registry.call("list_tasks", {"refs": refs, "view": "compact"})
@@ -149,7 +196,9 @@ async def test_compact_ref_page_budget_preserves_source_offsets(
     assert first["next_offset"] == 3
     assert second["count"] == 1
     assert second["next_offset"] is None
-    assert [row[0] for page in (first, second) for row in page["rows"]] == refs[1:]
+    assert [row[0] for page in (first, second) for row in page["rows"]] == refs[1:-1]
+    assert [error["offset"] for error in first["ref_errors"]] == [0]
+    assert [error["offset"] for error in second["ref_errors"]] == [4]
     assert all(
         len(json.dumps(page, default=str, indent=2).encode()) < 15_000 for page in (first, second)
     )

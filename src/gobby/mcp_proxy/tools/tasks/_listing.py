@@ -153,7 +153,12 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             )
             next_offset = result.get("next_offset")
             if isinstance(next_offset, int):
-                result["next_offset"] = positions[next_offset - offset]
+                next_offset = positions[next_offset - offset]
+                result["next_offset"] = next_offset
+                if ref_errors:
+                    result["ref_errors"] = [
+                        error for error in ref_errors if error["offset"] < next_offset
+                    ]
             elif offset + limit < len(refs):
                 result["next_offset"] = offset + limit
             if ref_errors and view == "default":
