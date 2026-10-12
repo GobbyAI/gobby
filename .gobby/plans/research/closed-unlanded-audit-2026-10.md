@@ -3693,4 +3693,225 @@ Correction validation additionally reproduces all touched-path counts, verifies
 the 14 exact added lines are absent from both live paths, and checks the three
 new referral SHAs and lack of holding refs.
 
+## Semantic recovery review: batch 3 (45 of 89 cumulative)
+
+This addendum reviews positions 31–45 in the unchanged newest-first snapshot.
+Evidence remains bound to commit `4ccb3e966ed18fe13cd9f268d55143128d034048`,
+tree `428e1e0a2babda4fe2edf5c6bf56ae4950dbaf43`, gcode checkout project
+`19b73420-3946-5c6a-8a06-4c7522f77543`. The report branch was cleanly
+fast-forwarded to batch 2 landing `6b2c42eb3e9a7f0e220d50eb77b088978d157257`
+on the Lane Manager’s direction; the evidence pin remains fixed.
+
+### Batch 3 classifications
+
+| Task and title | Unproven revision | Classification | Pinned evidence and disposition |
+| --- | --- | --- | --- |
+| #21886 — Preserve receipt wording and reference kinds in recovered work | `19ad378d4e` | missing | B15 lacks six additive receipt/counter/reference-kind instructions in the surviving archival prompt and golden fixture. Generated recovery halves are retired; these live prompt edits have no named withdrawal. |
+| #21832 — Reuse the existing summary generator and parsed transcript recovery | `3e1c1e9584` | missing | B14 retains configured single-call Markdown generation and validation. Ordered Source Records recovery and reduction are superseded by B11–B12. Its archival system/prompt guidance distinguishing expiration from completion, reconciling later accomplishments, preventing invented follow-up and preserving attribution is absent from B14–B15. This partial loss needs adaptation to the current transcript input, not replay of the old generator. |
+| #21847 — Keep explicit session references out of handoff task evidence | `39d5fc517b` | intentionally superseded | Both changed paths are retired generated-evidence/selection modules. B11 explicitly excludes the event-ledger/source-position mechanism; B12 supplies authored-content evidence. No surviving independent path is changed. |
+| #21842 — Update prompt sync tests for retired session prompts | `e416a26215` | missing | C2 retains the removal of retired prompt assertions and generic orphan deletion coverage. Five surviving test methods still have untyped db parameters; the revision’s HubDatabase annotations and corresponding baseline reduction are missing. Its transcript_recovery expectations are obsolete and should not be restored. |
+| #21826 — Accept fenced structured model output during handoff recovery | `2a76e1d76e` | intentionally superseded | Only the retired generated handoff_synthesis module and its test change. Fenced structured JSON normalization is superseded by the authored Markdown delivery contract in B11–B12. |
+| #21793 — Select session UI summaries by lifecycle status | `4056b4b32f` | missing | C1 still prefers any summary_markdown before handoff_markdown without considering lifecycle status. The revision’s expired-only archival selector, active/paused continuation preference and route/UI regressions are missing across three surviving paths. |
+| #21822 — Wrap overlong session lifecycle test comments and SQL | `eb53e743b4` | missing | This shares the revision with delivered #21820 Fair archive retries, but its 15 E501 test wraps are independently absent. The focused Ruff command below reproduces exactly those 15 failures. Recovery is already filed as #24113 Test-line wraps. |
+| #21792 — Expose attributable project-scoped handoff retrieval | `46843a7290` | missing | C3 lacks the query-tool registration; both query modules and their test are absent. Bound searches find no search_handoffs or get_handoff_record. Project-defaulted read-only retrieval, text search, filtering and stable pagination remain missing. Retired provenance/epoch fields require adaptation to authored records; no explicit withdrawal covers the query affordance itself. |
+| #21791 — Retire summary revisions with a recoverable mechanical migration | `c37094fba7` | delivered | Named replacement #21889 Remove session summary revision history explicitly preserves generation, handoffs and current summary fields. C4 removes the pointer/table with transactional RESTRICT; C5 stores current fields atomically. The draft’s destructive backup/metadata-transfer variant is intentionally superseded by this ordinary migration. Its provenance-dependent tests and version/checksum artifacts are obsolete. |
+| #21781 — Recover structured session work and synthesize expired summaries | `88e6e32668` | missing | The generated structured recovery, gap fingerprints, forced regeneration, epoch-only CLI and replacement dispatcher flow are superseded by B11–B12 and #21889 Revision retirement. All 29 surviving paths were checked. The rewritten live archival prompt/fixture also contains independent expiration/completion, later-accomplishment reconciliation and attribution/no-invented-follow-up guidance absent from B15. Coalesce that partial prompt-policy loss with #21832 Generator reuse; preserve current architecture. |
+| #21770 — Add handoff provenance and transcript source-range selection | `7e8bffd406` | intentionally superseded | B11 explicitly retires full-source epoch recovery, provenance ledger and source-position verification. Surviving transcript index/sidecar/reader/parser changes exclusively support that mechanism; current handoff records retain authored narrative and delivery receipts without those columns. Its empty-next_steps change conflicts with the current nonblank continuation contract. Schema pins and tests belong to that retired design. |
+| #21414 — Fix project-scoped secret upsert conflict | `39211c1fe7` | delivered | C6 retains project_id in INSERT/RETURNING and ON CONFLICT(name,project_id); current scope resolution additionally supports explicit project writes. No database execution or live activation is claimed. |
+| #21251 — Resolve schema 412 number collision between checkout identity and MCP templates | `0ebdca49db` | delivered | C7–C12 embed checkout identity, MCP templates, project-scoped secrets and feedback review fields in baseline@420. Named landed replacement #21511 Canonical baseline, 95e809ee251d64e742b68032065c241cce34b179, and #22368 Baseline lineage repair, b705b0254841bbcadd3bb0b55e2c8dc5f5ec08ba, replace the old 412/413/414 files and identity/golden pins. The old collision is eliminated rather than replayed. |
+| #20303 — Add project_checkouts via 412_project_checkouts.sql | `74feea869d` | delivered | C7–C10 retain machine/project/root checkout columns, RLS read scope and lock-only UPDATE with WITH CHECK(false). C13–C14 retain the privilege manifest and its regression in the current column_operations shape. The old migration and numeric identity pins are replaced by baseline@420; the permission comparison preserves lock-only semantics, not row mutation. |
+| #19133 — Reduce routine daemon INFO noise | `2771fbfced` | delivered | Same-task landed replacement cc82f7a5a395a0fa033c5bdfa8cf1376b4ced824 is an ancestor of the pin. Surviving logging demotions, mode transitions and caplog regressions remain. The aggregate sync behavior moved to C15. The draft’s unrelated dream semaphore change is replaced by landed #19253 Batched related-evidence retrieval, 06112ec3cc40a44b66cb6dde1ceb63590525fc73: C16 starts keyword/vector channels independently with bounded deadlines. Retired codewiki/summary-action and close-log paths need no replay. |
+
+Batch totals: **5 delivered, 3 intentionally superseded, 7 missing**.
+Cumulative totals: **16 delivered, 10 intentionally superseded, 19 missing**;
+**44 tasks remain**. These are source classifications, not fresh test passes,
+installed registry assertions or live activation receipts. B11’s explicit
+preservation of archival-summary behavior does not withdraw independent prompt
+policy. The mixed missing rows distinguish those losses from retired mechanisms.
+
+### Batch 3 recovery referrals
+
+All seven revisions remain readable Git objects with **no holding branch or other
+ref**. Recovery must target the named missing behavior using the current design.
+The Inbox Manager receives Orchestrator-bound findings; the Lane Manager receives
+copies. Prompt losses should coalesce with #24108 Archival prompt fidelity.
+
+Referral receipts: Inbox Manager `5800892a-e00f-469b-a5f6-0fb90ea42f22`;
+Lane Manager copy `6c9503a2-6b81-4622-af24-dbb75f134038`. Both durable messages
+carry all seven full SHAs, titles, missing behaviors, paths and absent holding refs.
+
+| Task and title | Full unlanded SHA | Missing behavior and paths | Holding branch |
+| --- | --- | --- | --- |
+| #21886 — Preserve receipt wording and reference kinds in recovered work | `19ad378d4e65347ec6406b04d83597c57ed2e342` | Six receipt-fidelity lines in src/gobby/install/shared/prompts/handoff/session_end.md and tests/prompts/fixtures/handoff_session_end_golden.md. | none |
+| #21832 — Reuse the existing summary generator and parsed transcript recovery | `3e1c1e95841fea08e029533bea2893f6c1a9221a` | Archival summary system/prompt safeguards in src/gobby/sessions/summary_generation.py, src/gobby/config/sessions.py and the session_end prompt/fixture. Adapt input terminology; preserve single-call Markdown generation. | none |
+| #21842 — Update prompt sync tests for retired session prompts | `e416a262151a9edef6609d1ae4578f32acaf8c2b` | Five HubDatabase db-parameter annotations in tests/prompts/test_prompt_sync.py; reconcile .gobby/test-types-baseline.json after the scoped type audit. Generic orphan-deletion behavior already exists. | none |
+| #21793 — Select session UI summaries by lifecycle status | `4056b4b32f3c54c37b08ea751089097bfd18dc95` | Lifecycle-aware selector and regressions in web/src/components/activity/SessionsTab.tsx, web/src/components/activity/__tests__/SessionsTab.test.tsx and tests/servers/test_servers_sessions_routes.py. | none |
+| #21822 — Wrap overlong session lifecycle test comments and SQL | `eb53e743b4e268e42e2fd46b85aabd413f4acb6d` | 15 comment/SQL wraps in tests/storage/sessions/test_pruning.py and tests/sessions/test_sessions_lifecycle.py; already filed as #24113 Test-line wraps. | none |
+| #21792 — Expose attributable project-scoped handoff retrieval | `46843a72909cf5cd1d2b13e3d88732631556f755` | Read-only handoff retrieval/search/filtering/pagination in src/gobby/mcp_proxy/tools/sessions/_factory.py, _handoff_queries.py, src/gobby/sessions/handoff_search.py and tests/sessions/test_handoff_search.py. Adapt retired provenance filters rather than replay them. | none |
+| #21781 — Recover structured session work and synthesize expired summaries | `88e6e32668d01bf284bf7ceb85374245478fe397` | Independent archival prompt safeguards in src/gobby/install/shared/prompts/handoff/session_end.md and tests/prompts/fixtures/handoff_session_end_golden.md. Coalesce with #21832 Generator reuse; do not replace current generation, hooks or CLI. | none |
+
+The six exact additive lines missing from both live paths in #21886 Receipt wording:
+
+```text
+Hexadecimal appearance does not establish a Git commit; retain the source's label
+for a review, run or other identifier, and leave an unspecified kind unspecified.
+Keep receipt wording and counters tied to the observation that establishes them.
+Successful sending is not confirmed delivery; a null delivery timestamp confirms neither outcome.
+When later receipts update a counter, attribute the new value to the later receipt.
+Omit incidental activity counters unless they explain task progress or a decision.
+```
+
+The independent prompt safeguards from #21781 Structured synthesis and #21832
+Generator reuse distinguish expiration from completion, reconcile earlier next
+steps with later accomplishments, retain decisions and unsuccessful approaches,
+prohibit invented commits/validation/review/closure follow-up, distinguish reported
+observations from verified outcomes, and attribute inherited context. Their old
+source_records/previous_context interfaces and structured JSON output are retired;
+the referral requests those safeguards in the current archival prompt contract.
+B14 uses only the generic comprehensive/actionable system instruction. B15 still
+asks for remaining commit/link/validation/closure actions when implementation is
+complete without those reconciliation safeguards.
+
+The focused command below failed with exactly **15 E501 diagnostics**:
+
+```bash
+uv run ruff check --select E501 tests/storage/sessions/test_pruning.py tests/sessions/test_sessions_lifecycle.py
+```
+
+Pruning lines: 57, 337, 367, 396, 429, 457, 492, 518, 552, 588, 793, 941.
+Lifecycle lines: 802, 961, 2060. The historical removed overlong lines match the
+pin. This finding is confined to audited source and referred through #24113
+Test-line wraps; no source fixes are authorized in this report-only task.
+
+### Batch 3 bound gcode excerpts
+
+Each SHA-256 hashes raw UTF-8, including the final newline. B11–B15 are reused
+from batch 2. Bound literal searches over src/gobby for search_handoffs and
+get_handoff_record returned no items; C3 separately proves absent registration.
+
+| Evidence | Path | Lines | Excerpt SHA-256 |
+| --- | --- | --- | --- |
+| C1 | `web/src/components/activity/SessionsTab.tsx` | 49–67 | `2cd92106ded4d7d6ae307bf6eff959c817d6a8c4aa90f890fc1bf67a7a0458e0` |
+| C2 | `tests/prompts/test_prompt_sync.py` | 19–110 | `74e34793b48a7438a0c307fa583352d85cf70ec8019337ab2877de1b929b5317` |
+| C3 | `src/gobby/mcp_proxy/tools/sessions/_factory.py` | 1–90 | `aeb9ae1fad89fa01f0fb305a6b96b0f87bf193b592ed9b720581657ccdc84f13` |
+| C4 | `crates/gcore/assets/schema/migrations/427_remove_session_summary_revisions.sql` | 1–24 | `a766908d0dbfac143765e98530a8dd16b25b4060a2b9039d31c309269fb9b140` |
+| C5 | `src/gobby/storage/sessions/_summary_update.py` | 16–68 | `38d7dad5590187917f86b6b70d9c0e1d2c4ef9d78f694625711a4bd78770a6d2` |
+| C6 | `src/gobby/storage/secrets.py` | 562–600 | `1ab682813da2318e0fde04f082e738eebfe7114ca95bfb4d47db13446f8b4cd8` |
+| C7 | `crates/gcore/assets/schema/baseline.sql` | 2995–3003 | `29f2755733d028dc1a4d722ae69f4e739f2b90a94f7d917ab3167481bf6900c3` |
+| C8 | `crates/gcore/assets/schema/baseline.sql` | 4479–4483 | `afd5ae23b5cfb12a95b1d86cfc18d1c5e085c9486c11be0df56c86baef0b978b` |
+| C9 | `crates/gcore/assets/schema/baseline.sql` | 5926–5960 | `8d8051c23d6cb87a98b98524652b367d2b5eb6ebf4666b216f04dd3f3376a931` |
+| C10 | `crates/gcore/assets/schema/baseline.sql` | 6347–6358 | `c2c1290ec71bee9534159c359b02acfc7653a4df5e940e34a571a3657d95f1ab` |
+| C11 | `crates/gcore/assets/schema/baseline.sql` | 2677–2690 | `86224a61d5b2da46539886022a7a57f2aba9cfa00076475cc92fedd35f813fce` |
+| C12 | `crates/gcore/assets/schema/baseline.sql` | 3338–3380 | `3cc0fd68be318008822b084279cd6a1b1b8581eadeb0bcb55136906af69b925d` |
+| C13 | `crates/gcode/security/managed_postgres_privileges.json` | 1–35 | `7d1d2cf99b56af27d75f28b40c1948c9bb1aba106fb87e439eead21901ef5709` |
+| C14 | `tests/code_index/test_gcode_privilege_manifest.py` | 72–92 | `b780c98a1f53cba21cbf356f77768b8992b3e3ab4d0bdf4e7730115758f82fb8` |
+| C15 | `src/gobby/sync_registry.py` | 90–129 | `d3e418680ffa1e44f2ac13f644a24dc22d9f792097b54b1e8c5019ee7913006d` |
+| C16 | `src/gobby/memory/dream/related.py` | 328–400 | `69320b4ed44cfac6c44807a3bc36ff557bdee119af6d3a7113eb4e4a77f87f39` |
+
+### Batch 3 touched-path audit
+
+Every revision’s complete changed-path list was checked against the pin. Surviving
+production/test deltas were compared individually; retired paths were mapped to
+B11–B12 or the named replacement. Numeric schema identities, catalog manifests
+and grant golden vectors were inspected as generated artifacts of their schema
+versions, not as independent runtime behavior. Prompt/fixture policy losses are
+retained as partial missing findings even when their generation interfaces retire.
+
+| Task and title | Revision | Paths present at pin | Paths absent at pin |
+| --- | --- | --- | --- |
+| #21886 — Preserve receipt wording and reference kinds in recovered work | `19ad378d4e` | 2 | 5 |
+| #21832 — Reuse the existing summary generator and parsed transcript recovery | `3e1c1e9584` | 5 | 10 |
+| #21847 — Keep explicit session references out of handoff task evidence | `39d5fc517b` | 0 | 2 |
+| #21842 — Update prompt sync tests for retired session prompts | `e416a26215` | 2 | 0 |
+| #21826 — Accept fenced structured model output during handoff recovery | `2a76e1d76e` | 0 | 2 |
+| #21793 — Select session UI summaries by lifecycle status | `4056b4b32f` | 3 | 0 |
+| #21822 — Wrap overlong session lifecycle test comments and SQL | `eb53e743b4` | 5 | 1 |
+| #21792 — Expose attributable project-scoped handoff retrieval | `46843a7290` | 1 | 3 |
+| #21791 — Retire summary revisions with a recoverable mechanical migration | `c37094fba7` | 13 | 3 |
+| #21781 — Recover structured session work and synthesize expired summaries | `88e6e32668` | 29 | 11 |
+| #21770 — Add handoff provenance and transcript source-range selection | `7e8bffd406` | 13 | 7 |
+| #21414 — Fix project-scoped secret upsert conflict | `39211c1fe7` | 1 | 0 |
+| #21251 — Resolve schema 412 number collision between checkout identity and MCP templates | `0ebdca49db` | 14 | 5 |
+| #20303 — Add project_checkouts via 412_project_checkouts.sql | `74feea869d` | 16 | 1 |
+| #19133 — Reduce routine daemon INFO noise | `2771fbfced` | 20 | 6 |
+
+### Batch 3 reproducible report validation
+
+Run the following focused source/report check from this seat’s worktree. It uses
+the immutable audit cache already present here; it runs no runtime test suite.
+
+```bash
+uv run python - <<'PY'
+# batch-3-audit
+import hashlib
+import json
+import re
+import subprocess
+from collections import Counter
+from pathlib import Path
+
+PIN = "4ccb3e966ed18fe13cd9f268d55143128d034048"
+REPORT = Path(".gobby/plans/research/closed-unlanded-audit-2026-10.md").read_text()
+CACHE = json.loads(Path(".gobby/audit-cache-24076.json").read_text())
+EXCLUDE = {23201, 23252, 23304, 23345, 23519, 23626, 23269}
+
+def git(*args):
+    return subprocess.check_output(["/usr/bin/git", *args])
+
+inventory = []
+for task in CACHE["tasks"]:
+    oids = [CACHE["status"].get(raw, {}).get("oid") for raw in task["commits"]]
+    oids = [oid for oid in oids if CACHE["supersession"].get(oid, {}).get("verdict") == "needs_inspection"]
+    if oids and task["seq_num"] not in EXCLUDE:
+        inventory.append((task, oids))
+inventory.sort(key=lambda row: (row[0]["closed_at"] or "", row[0]["seq_num"]), reverse=True)
+assert len(inventory) == 89
+batch = REPORT.split("## Semantic recovery review: batch 3", 1)[1]
+classification = batch.split("### Batch 3 classifications", 1)[1].split("Batch totals:", 1)[0]
+rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (missing|delivered|intentionally superseded) \|", classification)
+assert [(int(n), sha) for n, sha, _ in rows] == [(t["seq_num"], oids[0][:10]) for t, oids in inventory[30:45]]
+assert Counter(v for _, _, v in rows) == {"delivered": 5, "intentionally superseded": 3, "missing": 7}
+assert "44 tasks remain" in batch
+hashes = re.findall(r"\| C\d+ \| `([^`]+)` \| (\d+)–(\d+) \| `([0-9a-f]{64})`", batch)
+assert len(hashes) == 16
+for path, start, end, expected in hashes:
+    excerpt = b"".join(git("show", f"{PIN}:{path}").splitlines(keepends=True)[int(start)-1:int(end)])
+    assert hashlib.sha256(excerpt).hexdigest() == expected, path
+path_rows = re.findall(r"\| #(\d+) — .*? \| `([0-9a-f]+)` \| (\d+) \| (\d+) \|", batch)
+assert len(path_rows) == 15
+for (n, prefix, present, absent), (task, oids) in zip(path_rows, inventory[30:45], strict=True):
+    assert int(n) == task["seq_num"] and prefix == oids[0][:10]
+    paths = CACHE["changed_paths"][oids[0]]
+    found = sum(subprocess.run(["/usr/bin/git", "cat-file", "-e", f"{PIN}:{row['path']}"], capture_output=True).returncode == 0 for row in paths)
+    assert (found, len(paths)-found) == (int(present), int(absent))
+    assert not git("for-each-ref", f"--contains={oids[0]}")
+for task, oids in inventory[30:45]:
+    if any(n == str(task["seq_num"]) and v == "missing" for n, _, v in rows):
+        assert oids[0] in batch
+for ancestor in ("cc82f7a5a395a0fa033c5bdfa8cf1376b4ced824", "06112ec3cc40a44b66cb6dde1ceb63590525fc73", "95e809ee251d64e742b68032065c241cce34b179", "b705b0254841bbcadd3bb0b55e2c8dc5f5ec08ba"):
+    subprocess.run(["/usr/bin/git", "merge-base", "--is-ancestor", ancestor, PIN], check=True)
+lines = batch.split("```text\n", 1)[1].split("\n```", 1)[0].splitlines()
+assert len(lines) == 6
+for path in ("src/gobby/install/shared/prompts/handoff/session_end.md", "tests/prompts/fixtures/handoff_session_end_golden.md"):
+    current = git("show", f"{PIN}:{path}").decode()
+    historical = git("show", f"19ad378d4e65347ec6406b04d83597c57ed2e342:{path}").decode()
+    assert all(line in historical and line not in current for line in lines)
+assert sum(line.startswith("```") for line in REPORT.splitlines()) % 2 == 0
+assert REPORT.rstrip().endswith("_Last verified: 2026-10-12_")
+print("PASS: 89 inventory; batch order/counts; 16 hashes; 15 path/ref checks; 7 referrals; 4 ancestors; 6 live prompt losses; Markdown/footer")
+PY
+```
+
+Also check whitespace with:
+
+```bash
+git diff --check
+```
+
+Validation passed: exact 89-task inventory and batch order/counts, 16 bound
+excerpt hashes, 15 touched-path/ref inventories, seven missing full-SHA referrals,
+four replacement ancestors, six exact live prompt losses, and Markdown/footer.
+The focused AST check also confirms the five missing db annotations. Whitespace
+check passed. No full suite or heavy command ran.
+
 _Last verified: 2026-10-12_
