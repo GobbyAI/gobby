@@ -592,8 +592,7 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        match = re.search(r"\$\(|`|[<>]\(", command[start:end])
-        if match is not None:
+        for match in re.finditer(r"\$\(|`|[<>]\(", command[start:end]):
             opening = start + match.start()
             tick = command[opening] == "`"
             try:
@@ -681,7 +680,11 @@ def _subjects(
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
-            group_scan = scan_shell_command(candidate)
+            try:
+                group_scan = scan_shell_command(candidate)
+            except ValueError:
+                subjects.append(candidate)
+                continue
             group_spans = dict(zip(map(id, group_scan.tokens), group_scan.spans, strict=True))
             for stage in _pipeline_stages(group_scan.tokens):
                 head = _command_tokens(stage)
