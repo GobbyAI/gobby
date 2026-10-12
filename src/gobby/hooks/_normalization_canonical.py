@@ -70,6 +70,11 @@ from gobby.hooks._normalization_pipeline import (
     _is_read_only_pipeline_stage,
     _stdin_program_interpreter,
 )
+from gobby.hooks._normalization_redirects import (
+    extract_redirection_paths,
+    has_mutating_output_redirection,
+    redirects_stdout_to_file,
+)
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
@@ -89,10 +94,7 @@ from gobby.hooks._normalization_shell import (
     _rebase_shell_paths,
     _shell_positional_args,
     _strip_shell_wrappers,
-    extract_redirection_paths,
-    has_mutating_output_redirection,
     has_shell_input_redirection,
-    redirects_stdout_to_file,
     scan_shell_command,
     shell_token_values,
     strip_input_redirections,

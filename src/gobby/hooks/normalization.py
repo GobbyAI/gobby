@@ -61,11 +61,11 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_paths import (
     _setdefault_tool_input_paths as _setdefault_tool_input_paths,
 )
-from gobby.hooks._normalization_shell import (
-    _SHELL_TOOLS as _SHELL_TOOLS,
+from gobby.hooks._normalization_redirects import (
+    _extract_redirection_paths as _extract_redirection_paths,
 )
 from gobby.hooks._normalization_shell import (
-    _extract_redirection_paths as _extract_redirection_paths,
+    _SHELL_TOOLS as _SHELL_TOOLS,
 )
 from gobby.hooks._normalization_shell import (
     _get_command_text as _get_command_text,

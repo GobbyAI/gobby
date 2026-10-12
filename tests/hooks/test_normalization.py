@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks._normalization_redirects import has_mutating_output_redirection
 from gobby.hooks._normalization_shell import (
     HeredocBody,
-    has_mutating_output_redirection,
     scan_shell_command,
     shell_token_values,
     strip_output_redirections,

@@ -8,7 +8,9 @@ from typing import Any
 
 import pytest
 
-from gobby.hooks._normalization_shell import redirects_stdout_to_file, tokenize_shell_command
+from gobby.hooks._normalization_redirects import redirects_stdout_to_file
+from gobby.hooks._normalization_segments import _split_shell_segments
+from gobby.hooks._normalization_shell import scan_shell_command
 from gobby.hooks.code_navigation_recovery import navigation_requires_index
 from gobby.hooks.normalization import normalize_tool_fields
 
@@ -29,6 +31,17 @@ STDOUT_REDIRECT_CASES = [
     ("&> /tmp/x", True),
     ("> /tmp/x 2>&1", True),
     ("2>&1 > /tmp/x", True),
+    (">& 2", False),
+    ("> /tmp/x >& 2", False),
+    (">> /tmp/x >& 2", False),
+    ("> /tmp/x 1<&2", False),
+    ("> /tmp/x 1<& 2", False),
+    ("3>&1 > /dev/fd/3", False),
+    (">& /tmp/x", True),
+    (">&2 >& /tmp/x", True),
+    ("&> 2", True),
+    ("> /tmp/x 2>& 1", True),
+    ("2>& 1 > /tmp/x", True),
 ]
 
 
@@ -549,8 +562,57 @@ def test_source_read_uses_final_stdout_destination(
     ],
 )
 def test_stdout_redirection_proof_tracks_order(redirect: str, file_redirected: bool) -> None:
-    tokens = tokenize_shell_command(f"cat src/long.py {redirect}")
+    tokens = scan_shell_command(f"cat src/long.py {redirect}").tokens
     assert redirects_stdout_to_file(tokens) is file_redirected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash -c 'for f in src/long.py; do cat \"$f\" >& 2; done'",
+        'F=src/long.py; cat "$F" >& 2',
+    ],
+)
+def test_spaced_stdout_duplication_keeps_wrapped_and_assigned_reads(
+    repo: Path, command: str
+) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    ("command", "file_redirected"),
+    [
+        ("cat X > /tmp/x 1<& 2", False),
+        ("cat X 2>& 1 > /tmp/x", True),
+        ("cat X >& /tmp/x", True),
+    ],
+)
+def test_descriptor_duplication_reaches_stdout_proof_whole(
+    command: str, file_redirected: bool
+) -> None:
+    tokens = scan_shell_command(command).tokens
+    segments = _split_shell_segments(tokens)
+    assert len(segments) == 1
+    assert segments[0].tokens == tokens
+    assert redirects_stdout_to_file(segments[0].tokens) is file_redirected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("cmd & other", [["cmd"], ["other"]]),
+        ("cmd '>' & 2", [["cmd", ">"], ["2"]]),
+        ("cmd > & '2'", [["cmd", ">"], ["2"]]),
+        ("cmd > & other", [["cmd", ">"], ["other"]]),
+        ("cat a 2>&1 & 2", [["cat", "a", "2>&1"], ["2"]]),
+        ("cat a > /tmp/x & 2", [["cat", "a", ">", "/tmp/x"], ["2"]]),
+        ("cat a >& 2 & 2", [["cat", "a", ">&", "2"], ["2"]]),
+    ],
+)
+def test_background_separator_still_splits(command: str, expected: list[list[str]]) -> None:
+    segments = _split_shell_segments(scan_shell_command(command).tokens)
+    assert [[token.value for token in segment.tokens] for segment in segments] == expected
+    assert [segment.separator_before for segment in segments] == [None, "&"]
 
 
 @pytest.mark.parametrize(
