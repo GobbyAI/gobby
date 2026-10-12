@@ -125,7 +125,7 @@ wrong against the code at `48071323c9`:
    existing body shape. A 401 during an outage would send operators to re-login
    against a hub that cannot verify anything.
 6. **gdaemon refuses runtime ownership without bootstrap `database_url`.**
-   The refusal reports `runtime ownership requires bootstrap database_url`.
+   The refusal reports `native runtime ownership requires bootstrap database_url`.
    gdaemon generates the front-door secret and passes it to its Python backend.
 7. **The native interactive challenge reads `api_key` from the bootstrap on
    every request.** After `gobby auth key --rotate`, the next challenge uses the
@@ -847,7 +847,7 @@ examples are 1.5; the CLI is 1.4.
   `AuthService.bind_runtime(front_door_secret=…)`. Runtime ownership in every
   mode except Node requires bootstrap `database_url`
   (`crates/gdaemon/src/state.rs::RuntimeState::prepare`); a missing value reports
-  `runtime ownership requires bootstrap database_url` (Decision 6).
+  `native runtime ownership requires bootstrap database_url` (Decision 6).
 - **Python trusts the front door.** `AuthService` gains
   `_front_door_identity(request)`, which returns user, machine, and key ids
   only when `X-Gobby-Front-Door` equals the bound secret (constant time) and
@@ -970,7 +970,7 @@ V2.
 - 1.3.10 - Startup on an install that still stores `auth.api_token_hash` deletes that row before fail-closed resolution, and a different unknown stored key still refuses. test: `tests/config/test_removed_config_fields.py::test_retired_auth_token_hash_row_is_deleted`.
 - 1.3.11 - After the bootstrap key changes, the next frames hello with the new key is accepted and one with the old key is refused with `invalid_token`, an attached connection keeps streaming, and an empty or unreadable bootstrap key is refused. test: `crates/gterminal/tests/frame_protocol.rs::rotated_key_applies_to_next_hello`.
 - 1.3.12 - With gdaemon's key resolution failing, a loopback request carrying only the break-glass header passes the front door unchanged and Python admits it with no front-door identity. test: `crates/gdaemon/tests/front_door.rs::break_glass_header_passes_through_when_resolver_fails`.
-- 1.3.13 - A resolver database error answers 503 `key_resolver_unavailable`, and gdaemon refuses to start when bootstrap `database_url` is missing, reporting `runtime ownership requires bootstrap database_url`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_authority_refuses_start`.
+- 1.3.13 - A resolver database error answers 503 `key_resolver_unavailable`, and gdaemon refuses to start when bootstrap `database_url` is missing, reporting `native runtime ownership requires bootstrap database_url`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_authority_refuses_start`.
 - 1.3.14 - The API-key routes take the principal from verified front-door identity, ignore unverified identity headers, and list or revoke only the caller's keys. test: `tests/servers/routes/test_api_key_routes.py::test_key_routes_use_verified_front_door_identity`.
 - 1.3.15 - `src/gobby/terminals/native_runtime.py` and `crates/gcore/src/grant/acquisition.rs` are below 850 production lines after their moves. file: `src/gobby/terminals/native_frames.py`.
 - 1.3.16 - `open_storage_and_config` provisions the API key and neither writes `local_cli_token` nor stores `auth.api_token_hash`. test: `tests/test_runner_init.py::test_startup_provisions_no_operator_token`.
@@ -1592,8 +1592,8 @@ After every leaf has passed:
     no front-door identity. test: `crates/gdaemon/tests/front_door.rs::break_glass_header_passes_through_when_resolver_fails`.
 
     1.3.13: A resolver database error answers 503 `key_resolver_unavailable`, and
-    gdaemon refuses to start when bootstrap `database_url` is missing, reporting `runtime
-    ownership requires bootstrap database_url`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_authority_refuses_start`.
+    gdaemon refuses to start when bootstrap `database_url` is missing, reporting `native
+    runtime ownership requires bootstrap database_url`. test: `crates/gdaemon/tests/front_door.rs::resolver_error_is_503_and_missing_authority_refuses_start`.
 
     1.3.14: The API-key routes take the principal from verified front-door identity,
     ignore unverified identity headers, and list or revoke only the caller''s keys.
