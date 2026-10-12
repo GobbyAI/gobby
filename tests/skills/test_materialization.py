@@ -11,7 +11,7 @@ import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import Any, cast
 
@@ -722,11 +722,33 @@ def test_process_start_identity_does_not_shell_out(monkeypatch: pytest.MonkeyPat
 async def test_timeout_reaps_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pgid_file = tmp_path / "pgid"
     program = (
-        "import os, signal; "
+        "import os, signal, time; time.sleep(0.5)\n"
+        "if os.fork() == 0: signal.pause()\n"
         f"open({str(pgid_file)!r}, 'w').write(str(os.getpgrp())); "
-        "os.fork(); signal.pause()"
+        "print('ready', flush=True); "
+        "signal.pause()"
     )
     monkeypatch.setattr(materialization_test_support, "subprocess_timeout_seconds", 0.25)
+    wait_for = asyncio.wait_for
+    communicate = asyncio.subprocess.Process.communicate
+    started = asyncio.Event()
+
+    async def communicate_started(
+        process: asyncio.subprocess.Process, input: bytes | None = None
+    ) -> tuple[bytes, bytes]:
+        assert process.stdout is not None
+        assert await process.stdout.readline() == b"ready\n"
+        started.set()
+        return await communicate(process, input)
+
+    async def wait_for_started[T](future: Awaitable[T], timeout: float | None) -> T:
+        # Exercise timeout cleanup only after the process group has started.
+        async with asyncio.timeout(10):
+            await started.wait()
+        return await wait_for(future, timeout)
+
+    monkeypatch.setattr(asyncio.subprocess.Process, "communicate", communicate_started)
+    monkeypatch.setattr(asyncio, "wait_for", wait_for_started)
 
     with pytest.raises(materializer.SkillMaterializationError, match="Timed out"):
         await materialization_test_support.run_owned_subprocess(
