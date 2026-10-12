@@ -233,17 +233,17 @@ impl KeyResolver for FixedResolver {
 struct FailedResolver;
 
 #[tokio::test]
-async fn postgres_resolver_and_node_mode_fail_closed() {
+async fn postgres_resolver_and_resolverless_door_fail_closed() {
     let target = refused_addr().await;
     let resolver = Arc::new(PostgresKeyResolver::new("not a PostgreSQL DSN"));
     let front_door = authenticated_front_door(target, resolver);
     let auth = Arc::new(
-        AuthState::new("boot-secret".into(), None, Default::default()).expect("node auth"),
+        AuthState::new("boot-secret".into(), None, Default::default()).expect("resolverless auth"),
     );
     let state = FrontDoorState::new(target, BackendState::Down, auth);
     let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
-    let node = FrontDoor::new(state, table);
-    for door in [front_door, node] {
+    let resolverless = FrontDoor::new(state, table);
+    for door in [front_door, resolverless] {
         let request = Request::builder()
             .uri("/api/mcp/servers")
             .header("authorization", format!("Bearer {TEST_API_KEY}"))
@@ -1032,7 +1032,7 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     std::fs::write(
         home.path().join("bootstrap.yaml"),
         format!(
-            "datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
+            "datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\napi_key: {TEST_API_KEY}\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
             ports[0], ports[1]
         ),
     )
@@ -1752,12 +1752,12 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
     use std::process::{Command, Stdio};
 
     let log = home.join(log);
-    // TLS transport tests need native node ownership, without a hub lease.
+    // TLS transport tests use a node's PID claim, without a hub lease.
     let bootstrap = home.join("bootstrap.yaml");
     let content = std::fs::read_to_string(&bootstrap).expect("read bootstrap");
     std::fs::write(
         &bootstrap,
-        format!("datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\n{content}"),
+        format!("datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\napi_key: {TEST_API_KEY}\n{content}"),
     )
     .expect("node bootstrap");
     let mut child = TlsServe(

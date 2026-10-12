@@ -51,15 +51,33 @@ impl FrontDoorState {
 /// A listener's request handler: upgrades are spliced, everything else is routed.
 #[derive(Clone)]
 pub struct FrontDoor {
-    state: FrontDoorState,
-    table: Arc<RouteTable>,
+    door: Door,
+}
+
+#[derive(Clone)]
+enum Door {
+    Backend {
+        state: FrontDoorState,
+        table: Arc<RouteTable>,
+    },
+    #[cfg(unix)]
+    Node(Arc<crate::state::NodeServices>),
 }
 
 impl FrontDoor {
     pub fn new(state: FrontDoorState, table: RouteTable) -> Self {
         Self {
-            state,
-            table: Arc::new(table),
+            door: Door::Backend {
+                state,
+                table: Arc::new(table),
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn node(node: Arc<crate::state::NodeServices>) -> Self {
+        Self {
+            door: Door::Node(node),
         }
     }
 
@@ -72,7 +90,20 @@ impl FrontDoor {
         https: bool,
     ) -> Response<Body> {
         observe_peer(request.headers_mut(), peer, https);
-        let state = self.state.clone();
+        let (backend_state, table) = match &self.door {
+            Door::Backend { state, table } => (state, table),
+            #[cfg(unix)]
+            Door::Node(node) => {
+                if request.method() == axum::http::Method::POST
+                    && request.uri().path() == "/api/runtime/handshake/challenge"
+                    && let Err(response) = challenge::answer(&node.bootstrap_path, request).await
+                {
+                    return *response;
+                }
+                return health::unavailable(&node.hub_daemon_url, BackendState::Down);
+            }
+        };
+        let state = backend_state.clone();
         #[cfg(unix)]
         let mut state = state;
         #[cfg(unix)]
@@ -119,18 +150,18 @@ impl FrontDoor {
         if request.method() == axum::http::Method::POST
             && request.uri().path() == "/api/runtime/handshake/challenge"
         {
-            request = match challenge::answer(&self.state.auth.bootstrap_path, request).await {
+            request = match challenge::answer(&backend_state.auth.bootstrap_path, request).await {
                 Ok(request) => request,
                 Err(response) => return *response,
             };
         }
-        if let Err(response) = self.state.auth.authenticate(request.headers_mut()).await {
+        if let Err(response) = backend_state.auth.authenticate(request.headers_mut()).await {
             return *response;
         }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&state, request).await
         } else {
-            self.table.dispatch(&state, request).await
+            table.dispatch(&state, request).await
         }
     }
 }

@@ -1,7 +1,6 @@
 //! Typed backend unavailability and the native `health` route family.
 
 use std::error::Error;
-use std::net::SocketAddr;
 
 use axum::Router;
 use axum::body::Body;
@@ -36,7 +35,7 @@ impl BackendState {
 }
 
 /// The typed 503 returned while the backend at `target` refuses connections.
-pub fn unavailable(target: SocketAddr, state: BackendState) -> Response<Body> {
+pub fn unavailable(target: impl std::fmt::Display, state: BackendState) -> Response<Body> {
     let body = json!({
         "status": "unavailable",
         "backend": {"state": state.as_str(), "target": target.to_string()},
@@ -46,7 +45,7 @@ pub fn unavailable(target: SocketAddr, state: BackendState) -> Response<Body> {
 
 /// The 502 returned when the backend accepted the connection but answered malformed.
 /// `error` carries its whole source chain, so a hyper send failure names its cause.
-pub fn bad_gateway(target: SocketAddr, error: impl Error) -> Response<Body> {
+pub fn bad_gateway(target: impl std::fmt::Display, error: impl Error) -> Response<Body> {
     let mut message = error.to_string();
     let mut source = error.source();
     while let Some(cause) = source {
@@ -106,6 +105,7 @@ async fn native_health(State(state): State<FrontDoorState>, request: Request) ->
 #[cfg(test)]
 mod tests {
     use std::fmt;
+    use std::net::SocketAddr;
 
     use http_body_util::BodyExt;
 
