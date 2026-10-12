@@ -199,6 +199,7 @@ def _classify_shell_command(
         for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
     }
     spans_by_token = dict(zip((id(token) for token in tokens), scan.spans, strict=True))
+    token_positions = {id(token): index for index, token in enumerate(tokens)}
     case_depth = 0
     pending_case_pattern = False
     previous_end = 0
@@ -209,9 +210,10 @@ def _classify_shell_command(
     leading_assignments = True
     for index, segment in enumerate(segments):
         consuming_case_pattern = pending_case_pattern
-        start = spans_by_token[id(segment.tokens[0])][0]
-        gap = command[previous_end:start]
-        previous_end = spans_by_token[id(segment.tokens[-1])][1]
+        start = token_positions[id(segment.tokens[0])]
+        # The scanner has already removed comments and joined line continuations.
+        gap = "".join(token.value for token in tokens[previous_end:start])
+        previous_end = token_positions[id(segment.tokens[-1])] + 1
         # Case subjects and patterns can execute substitutions before arm syntax is stripped.
         segment_start = min(spans_by_token[id(token)][0] for token in segment.tokens)
         segment_end = max(spans_by_token[id(token)][1] for token in segment.tokens)
@@ -251,9 +253,10 @@ def _classify_shell_command(
         )
         next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
         if case_depth and index + 1 < len(segments):
-            next_gap = command[segment_end : spans_by_token[id(segments[index + 1].tokens[0])][0]]
+            next_start = token_positions[id(segments[index + 1].tokens[0])]
+            next_gap = "".join(token.value for token in tokens[previous_end:next_start])
             # Next-gap ;& is case fallthrough; a leading & backgrounds this command instead.
-            if ";&" in next_gap and not next_gap.replace("\\\n", "").lstrip().startswith("&"):
+            if ";&" in next_gap and not next_gap.startswith("&"):
                 next_separator = ";"
         raw_parts = shell_token_values(segment.tokens)
         in_pipeline = (
