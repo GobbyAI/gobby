@@ -203,6 +203,133 @@
                 "hub_daemon_url": "https://hub.example/api"
             },
             "error": "hub_daemon_url path must be empty or /"
+        },
+        {
+            "name": "null_datastore_mode",
+            "bootstrap": {
+                "datastore_mode": null,
+                "files_home": "/tmp/gobby-vector-files"
+            },
+            "error": "datastore_mode must be one of: local, remote"
+        },
+        {
+            "name": "remote_files_home",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "files_home": "/tmp/gobby-vector-files"
+            },
+            "error": "files_home is not allowed on a remote bootstrap"
+        },
+        {
+            "name": "remote_non_string_files_home",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "files_home": 42
+            },
+            "error": "files_home is not allowed on a remote bootstrap"
+        },
+        {
+            "name": "remote_empty_files_home",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "files_home": "   "
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
+            "name": "padded_hub_cert",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "hub_cert": "  hub.pem  "
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example",
+            "hub_cert": "  hub.pem  "
+        },
+        {
+            "name": "blank_hub_cert",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "hub_cert": "   "
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example"
+        },
+        {
+            "name": "non_string_hub_cert",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example",
+                "hub_cert": 42
+            },
+            "error": "hub_cert must be a string"
+        },
+        {
+            "name": "non_string_hub_url",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": 42
+            },
+            "error": "hub_daemon_url must be a string"
+        },
+        {
+            "name": "local_non_string_hub_url",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub_daemon_url": 42
+            },
+            "error": "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
+        },
+        {
+            "name": "signed_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:+443"
+            },
+            "error_type": "ValueError",
+            "error": "Port could not be cast to integer value as '+443'"
+        },
+        {
+            "name": "negative_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:-443"
+            },
+            "error_type": "ValueError",
+            "error": "Port could not be cast to integer value as '-443'"
+        },
+        {
+            "name": "non_digit_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:44x"
+            },
+            "error_type": "ValueError",
+            "error": "Port could not be cast to integer value as '44x'"
+        },
+        {
+            "name": "unicode_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:٤٤٣"
+            },
+            "error_type": "ValueError",
+            "error": "Port could not be cast to integer value as '٤٤٣'"
+        },
+        {
+            "name": "out_of_range_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:65536"
+            },
+            "error_type": "ValueError",
+            "error": "Port out of range 0-65535"
         }
     ]
 }

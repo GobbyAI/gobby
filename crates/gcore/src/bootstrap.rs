@@ -239,7 +239,15 @@ pub fn parse_hub_database_bootstrap(
     Ok(Some(HubDatabaseBootstrap {
         mode,
         hub_daemon_url,
-        hub_cert: optional_string_field(map, "hub_cert")?,
+        hub_cert: match map.get("hub_cert") {
+            None | Some(serde_yaml::Value::Null) => None,
+            Some(value) => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("hub_cert must be a string"))?;
+                (!text.trim().is_empty()).then(|| text.to_owned())
+            }
+        },
         database_url: optional_string_field(map, "database_url")?,
         api_key: optional_string_field(map, "api_key")?,
         daemon_url,
@@ -308,31 +316,26 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
             "bootstrap.yaml must contain a YAML mapping".to_string(),
         ));
     };
-    let datastore_mode = match optional_string_field(map, "datastore_mode")
-        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?
-        .as_deref()
-    {
-        None | Some("local") => DatastoreMode::Local,
-        Some("remote") => DatastoreMode::Remote,
-        Some(other) => {
-            return Err(FilesHomeError::Invalid(format!(
-                "datastore_mode must be one of: local, remote (got {other})"
-            )));
+    let datastore_mode = match map.get("datastore_mode") {
+        None => DatastoreMode::Local,
+        Some(value) if value.as_str() == Some("local") => DatastoreMode::Local,
+        Some(value) if value.as_str() == Some("remote") => DatastoreMode::Remote,
+        _ => {
+            return Err(FilesHomeError::Invalid(
+                "datastore_mode must be one of: local, remote".to_owned(),
+            ));
         }
     };
-    let files_home = optional_string_field(map, "files_home")
-        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?;
-    let hub_daemon_url = optional_string_field(map, "hub_daemon_url")
-        .map_err(|error| FilesHomeError::Invalid(error.to_string()))?;
     match datastore_mode {
         DatastoreMode::Local => {
-            if hub_daemon_url.is_some() {
+            if run_mode::configured_value(map, "hub_daemon_url") {
                 return Err(FilesHomeError::Invalid(
-                    "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
-                        .to_string(),
+                    run_mode::LOCAL_HUB_URL_REFUSAL.to_owned(),
                 ));
             }
-            let Some(raw) = files_home else {
+            let Some(raw) = optional_string_field(map, "files_home")
+                .map_err(|error| FilesHomeError::Invalid(error.to_string()))?
+            else {
                 return Err(FilesHomeError::Invalid(
                     "files_home is required for datastore_mode: local".to_string(),
                 ));
@@ -344,12 +347,14 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
             })
         }
         DatastoreMode::Remote => {
-            if files_home.is_some() {
+            if run_mode::configured_value(map, "files_home") {
                 return Err(FilesHomeError::Invalid(
                     "files_home is not allowed on a remote bootstrap".to_string(),
                 ));
             }
-            let Some(raw) = hub_daemon_url else {
+            let Some(raw) = run_mode::hub_daemon_url(map)
+                .map_err(|error| FilesHomeError::Invalid(error.to_string()))?
+            else {
                 return Err(FilesHomeError::Invalid(
                     "hub_daemon_url is required for datastore_mode: remote".to_string(),
                 ));

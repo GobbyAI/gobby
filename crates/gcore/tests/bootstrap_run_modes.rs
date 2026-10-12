@@ -19,6 +19,18 @@ struct Case {
 }
 
 #[test]
+fn files_home_rejects_null_datastore_mode() {
+    let error = gobby_core::bootstrap::parse_files_home_view(
+        "datastore_mode: null\nfiles_home: /tmp/gobby-vector-files\n",
+    )
+    .expect_err("null datastore mode must be refused");
+    assert_eq!(
+        error.to_string(),
+        "datastore_mode must be one of: local, remote"
+    );
+}
+
+#[test]
 fn shared_vectors_match_python() -> Result<()> {
     let corpus: Corpus = serde_json::from_str(include_str!(
         "../../../tests/fixtures/bootstrap_run_modes.json"

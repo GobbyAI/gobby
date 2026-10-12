@@ -1,4 +1,23 @@
-use super::{FilesHomeError, RunMode, front_door::yaml_bool, optional_string_field};
+use super::{FilesHomeError, RunMode, front_door::yaml_bool};
+
+pub(super) const LOCAL_HUB_URL_REFUSAL: &str =
+    "hub_daemon_url is not allowed on a local bootstrap; this process is the owner";
+
+pub(super) fn configured_value(map: &serde_yaml::Mapping, name: &str) -> bool {
+    map.get(name).is_some_and(|value| {
+        !value.is_null() && value.as_str().is_none_or(|text| !text.trim().is_empty())
+    })
+}
+
+pub(super) fn hub_daemon_url(map: &serde_yaml::Mapping) -> anyhow::Result<Option<String>> {
+    if !configured_value(map, "hub_daemon_url") {
+        return Ok(None);
+    }
+    let text = map["hub_daemon_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("hub_daemon_url must be a string"))?;
+    Ok(Some(text.trim().to_owned()))
+}
 
 pub(super) fn parse_mode_fields(
     map: &serde_yaml::Mapping,
@@ -16,12 +35,9 @@ pub(super) fn parse_mode_fields(
         None => false,
         Some(value) => yaml_bool(value).ok_or_else(|| anyhow::anyhow!("hub must be a boolean"))?,
     };
-    let hub_daemon_url = optional_string_field(map, "hub_daemon_url")?;
     if !remote {
-        if hub_daemon_url.is_some() {
-            anyhow::bail!(
-                "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
-            );
+        if configured_value(map, "hub_daemon_url") {
+            anyhow::bail!(LOCAL_HUB_URL_REFUSAL);
         }
         return Ok((
             if hub {
@@ -35,7 +51,10 @@ pub(super) fn parse_mode_fields(
     if hub {
         anyhow::bail!("hub: true requires datastore_mode: local");
     }
-    let raw = hub_daemon_url
+    if configured_value(map, "files_home") {
+        anyhow::bail!("files_home is not allowed on a remote bootstrap");
+    }
+    let raw = hub_daemon_url(map)?
         .ok_or_else(|| anyhow::anyhow!("hub_daemon_url is required for datastore_mode: remote"))?;
     let origin = parse_hub_origin(&raw)?;
     let own_origins = [
@@ -105,7 +124,20 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     }
     match port.filter(|port| !port.is_empty()) {
         Some(port) => {
-            let port: u16 = port.parse().map_err(|_| invalid())?;
+            if !port.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(FilesHomeError::Invalid(format!(
+                    "Port could not be cast to integer value as '{port}'"
+                )));
+            }
+            // Leading zeros do not affect the numeric range.
+            let digits = port.trim_start_matches('0');
+            let port: u16 = if digits.is_empty() {
+                0
+            } else {
+                digits
+                    .parse()
+                    .map_err(|_| FilesHomeError::Invalid("Port out of range 0-65535".to_owned()))?
+            };
             Ok(format!("{scheme}://{host}:{port}"))
         }
         None => Ok(format!("{scheme}://{host}")),
