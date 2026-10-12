@@ -4,6 +4,37 @@ use gobby_core::schema::schema_identity;
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
 const SECRET_DSN: &str = "postgresql://schema_user:do-not-leak@127.0.0.1:1/gobby";
 
+#[cfg(unix)]
+#[test]
+fn serve_logs_unavailable_singleton() -> anyhow::Result<()> {
+    use gobby_daemon::lifecycle::pid_file::{Role, claim_pid_file};
+
+    let home = tempfile::tempdir()?;
+    std::fs::write(
+        home.path().join("bootstrap.yaml"),
+        "datastore_mode: remote\n",
+    )?;
+    let pid_file = home.path().join("gobby.pid");
+    let _claim = claim_pid_file(&pid_file, Role::Maintenance)?
+        .expect("isolated singleton claim must be available");
+    let output = Command::cargo_bin("gdaemon")?
+        .arg("serve")
+        .env("GOBBY_HOME", home.path())
+        .env_remove("GOBBY_SERVICE_LAUNCH")
+        .env_remove("GOBBY_SERVICE_NONCE")
+        .timeout(std::time::Duration::from_secs(10))
+        .output()?;
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains("runtime singleton claim unavailable"),
+        "serve must explain its exit: {stderr}"
+    );
+    assert!(stderr.contains(&pid_file.display().to_string()));
+    assert!(!pid_file.exists(), "serve must not replace the held claim");
+    Ok(())
+}
+
 #[test]
 fn verify_connection_failure_is_retryable_and_redacted() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
@@ -69,7 +100,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
     // One literal stays as the human tripwire, deliberately: a bare version number is
     // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 466);
+    assert_eq!(identity["latest_version"], 467);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)
