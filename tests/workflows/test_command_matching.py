@@ -670,3 +670,27 @@ def test_selector_cache_hits_match_misses(command: str, outcomes: set[bool]) -> 
 
     assert hits == misses
     assert set(misses) == outcomes
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hi | (case x in x) gem push x;; esac)",
+        "! (case x in x) gem push x;; esac)",
+        "time (case x in x) gem push x;; esac)",
+        "if (case x in x) gem push x;; esac); then :; fi",
+        "{ (case x in x) gem push x;; esac); }",
+        "while (case x in x) gem push x;; esac); do :; done",
+        "echo hi |& (case x in x) gem push x;; esac)",
+        "time -p (case x in x) gem push x;; esac)",
+        "until (case x in x) gem push x;; esac); do :; done",
+        "if true; then (case x in x) gem push x;; esac); fi",
+        "if true; then :; else (case x in x) gem push x;; esac); fi",
+        "if false; then :; elif (case x in x) gem push x;; esac); then :; fi",
+        "while true; do (case x in x) gem push x;; esac); done",
+        "echo hi | case x in x) gem push x;; esac",
+    ],
+)
+def test_command_position_group_case_matches_blocks(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)

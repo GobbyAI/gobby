@@ -634,37 +634,16 @@ def _subjects(
             spans=spans_by_token,
         )
         while kept:
-            case_tokens = kept
-            while (
-                case_tokens
-                and not case_tokens[0].quoted
-                and case_tokens[0].value
-                in {
-                    "if",
-                    "then",
-                    "else",
-                    "elif",
-                    "fi",
-                    "while",
-                    "until",
-                    "do",
-                    "done",
-                    "!",
-                    "time",
-                    "{",
-                    "}",
-                }
-            ):
-                word = case_tokens[0].value
-                case_tokens = case_tokens[1:]
-                if word == "time":
-                    for option in ("-p", "--"):
-                        if (
-                            case_tokens
-                            and not case_tokens[0].quoted
-                            and case_tokens[0].value == option
-                        ):
-                            case_tokens = case_tokens[1:]
+            case_tokens = next(
+                (
+                    kept[next(index for index, token in enumerate(kept) if token is head[0]) :]
+                    for stage in _pipeline_stages(kept)
+                    if (head := _command_tokens(stage))
+                    and not head[0].quoted
+                    and head[0].value in {"case", "esac"}
+                ),
+                [],
+            )
             if (
                 not case_tokens
                 or case_tokens[0].quoted
@@ -702,14 +681,24 @@ def _subjects(
     subjects: list[str] = []
     for text, arm_text, segment in zip(raw, arms, segments, strict=True):
         for candidate in [text] if arm_text is None else [text, arm_text]:
-            if candidate.startswith("(") and not candidate.startswith("(("):
-                try:
-                    end = _substitution_end(candidate, 1, False, depth + 1)
-                except ValueError:
-                    pass
-                else:
+            group_scan = scan_shell_command(candidate)
+            group_spans = dict(zip(map(id, group_scan.tokens), group_scan.spans, strict=True))
+            for stage in _pipeline_stages(group_scan.tokens):
+                head = _command_tokens(stage)
+                if not head or head[0].quoted:
+                    continue
+                opening = group_spans[id(head[0])][0]
+                if candidate.startswith("(", opening) and not candidate.startswith("((", opening):
+                    try:
+                        end = _substitution_end(candidate, opening + 1, False, depth + 1)
+                    except ValueError:
+                        continue
                     subjects.extend(
-                        _subjects(candidate[1:end], depth + 1, correlated_subjects=correlations)
+                        _subjects(
+                            candidate[opening + 1 : end],
+                            depth + 1,
+                            correlated_subjects=correlations,
+                        )
                     )
             if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
                 subjects.append(candidate)
@@ -910,6 +899,37 @@ def _substitution_spans(body: str) -> list[str]:
         return _prepare(body, 0, data=True)[1]
     except ValueError:
         return [body]
+
+
+def _command_tokens(tokens: list[ShellToken]) -> list[ShellToken]:
+    """Remove shell control prefixes to expose a stage's command position."""
+    while (
+        tokens
+        and not tokens[0].quoted
+        and tokens[0].value
+        in {
+            "if",
+            "then",
+            "else",
+            "elif",
+            "fi",
+            "while",
+            "until",
+            "do",
+            "done",
+            "!",
+            "time",
+            "{",
+            "}",
+        }
+    ):
+        word = tokens[0].value
+        tokens = tokens[1:]
+        if word == "time":
+            for option in ("-p", "--"):
+                if tokens and not tokens[0].quoted and tokens[0].value == option:
+                    tokens = tokens[1:]
+    return tokens
 
 
 def _pipeline_stages(tokens: list[ShellToken]) -> list[list[ShellToken]]:
