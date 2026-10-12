@@ -2,8 +2,99 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from gobby.storage.session_tasks import SessionTaskManager
+
+if TYPE_CHECKING:
+    from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
+    from gobby.storage.agents import AgentRun
+
+
+def compact_running_agents(
+    runs: list[AgentRun],
+    ctx: AgentsRegistryContext,
+    offset: int,
+) -> dict[str, Any]:
+    """Bound each page without losing seats, claim titles, or timestamps."""
+    if ctx.db is None or ctx.session_manager is None:
+        return {"success": False, "error": "Compact view requires database and session manager"}
+    claims = SessionTaskManager(ctx.db).get_current_claims(
+        [run.child_session_id for run in runs if run.child_session_id]
+    )
+    columns = [
+        "session",
+        "role",
+        "lane",
+        "seat",
+        "worktree",
+        "status",
+        "wait_kind",
+        "last_progress_at",
+        "progress_age_seconds",
+        "stall_suspected",
+        "claims",
+    ]
+    result: dict[str, Any] = {
+        "success": True,
+        "columns": columns,
+        "rows": [],
+        "count": 0,
+        "total": len(runs),
+        "next_offset": None,
+        "claim_columns": ["ref", "title", "claimed_at", "path"],
+        "claims_source": "current task owner; first recorded session claim",
+    }
+    rows: list[list[Any]] = result["rows"]
+    for index, run in enumerate(sorted(runs, key=lambda run: run.id)[offset:], start=offset):
+        payload = _list_run_payload(run)
+        session = ctx.session_manager.get(run.child_session_id) if run.child_session_id else None
+        worktree = (
+            ctx.worktree_storage.get(run.worktree_id)
+            if ctx.worktree_storage is not None and run.worktree_id
+            else None
+        )
+        seat = payload["seat"]
+        owned_worktrees = sorted(
+            {
+                claim["worktree"]
+                for claim in claims.get(run.child_session_id or "", [])
+                if claim["worktree"]
+            }
+        )
+        row = [
+            f"#{session.seq_num}" if session and session.seq_num else run.child_session_id,
+            run.agent_name,
+            payload["lane"],
+            seat["title"] if seat else None,
+            worktree.worktree_path if worktree else owned_worktrees or None,
+            run.child_status or run.status,
+            run.wait_kind,
+            payload["last_progress_at"],
+            run.progress_age_seconds,
+            run.stall_suspected,
+            [
+                [claim["ref"], claim["title"], claim["claimed_at"], claim["path"]]
+                for claim in claims.get(run.child_session_id or "", [])
+            ],
+        ]
+        rows.append(row)
+        result["count"] = len(rows)
+        # Leave margin for proxy metadata and pretty-print whitespace.
+        if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
+            rows.pop()
+            result["count"] = len(rows)
+            result["next_offset"] = index
+            if not rows:
+                return {
+                    "success": False,
+                    "error": "One seat exceeds compact page budget",
+                    "session": row[0],
+                }
+            break
+    return result
 
 
 def _list_run_payload(run: Any) -> dict[str, Any]:

@@ -772,8 +772,12 @@ def register_agent_query_tools(
         scope: str = "all",
         status: str = "active",
         limit: int = 100,
+        view: str = "default",
+        offset: int = 0,
     ) -> dict[str, Any]:
-        limit = _clamp_limit(limit)
+        if view not in {"default", "compact"} or offset < 0:
+            return {"success": False, "error": "Use view=default|compact and offset >= 0"}
+        limit = max(1, min(limit, 500)) if view == "compact" else _clamp_limit(limit)
         scope_key = scope.strip().lower().replace("_", "-")
         if scope_key in {"build", "build-wide"}:
             scope_key = "all"
@@ -858,6 +862,13 @@ def register_agent_query_tools(
         else:
             runs = ctx.agent_run_manager.list_by_status(status="pending", limit=limit)
         runs = await overlay_runs_live_activity(runs, ctx.transcript_reader)
+
+        if view == "compact":
+            from gobby.mcp_proxy.tools.agents_run_payload import compact_running_agents
+
+            result = compact_running_agents(runs, ctx, offset)
+            result["query_limit_reached"] = len(runs) == limit
+            return result
 
         return {
             "success": True,

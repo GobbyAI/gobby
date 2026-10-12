@@ -9,6 +9,7 @@ This module provides query operations for listing and filtering tasks:
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub._ambient import ambient_transaction
@@ -151,6 +152,8 @@ def list_tasks(
     offset: int = 0,
     sort_by: str | None = None,
     sort_order: str = "asc",
+    updated_since: datetime | None = None,
+    candidate: bool | None = None,
 ) -> list[Task]:
     """List tasks with filtering.
 
@@ -191,6 +194,11 @@ def list_tasks(
     if project_id:
         where += " AND project_id = %s"
         params.append(project_id)
+    if updated_since is not None:
+        where += " AND updated_at >= %s"
+        params.append(updated_since)
+    if candidate is not None:
+        where += f" AND {'NOT ' if not candidate else ''}EXISTS ({_candidate_message_sql()})"
     if current_stage_state:
         clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
         if clause:
@@ -283,6 +291,36 @@ def list_tasks(
     hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return tasks
+
+
+def _candidate_message_sql() -> str:
+    """The fleet's explicit CANDIDATE event is evidence, not a linked commit."""
+    return """
+        SELECT m.sent_at FROM inter_session_messages m
+        JOIN sessions sender ON sender.id = m.from_session
+        WHERE sender.project_id = tasks.project_id
+          AND SUBSTRING(m.content FROM
+              '(?:^|[[:space:]])EVENT=CANDIDATE[[:space:]].*TASK=#([0-9]+)(?:[[:space:]]|$)')
+              = tasks.seq_num::text
+    """
+
+
+def candidate_sent_times(db: HubDatabase, task_ids: list[str]) -> dict[str, datetime]:
+    if not task_ids:
+        return {}
+    rows = db.fetchall(
+        f"""
+        SELECT tasks.id, (SELECT MIN(sent_at) FROM ({_candidate_message_sql()}) events)
+            AS candidate_sent_at
+        FROM tasks WHERE id = ANY(%s::uuid[])
+        """,
+        (task_ids,),
+    )
+    return {
+        str(row["id"]): row["candidate_sent_at"]
+        for row in rows
+        if row["candidate_sent_at"] is not None
+    }
 
 
 def _hierarchy_page(
