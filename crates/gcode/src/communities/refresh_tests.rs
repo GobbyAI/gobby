@@ -157,6 +157,28 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             .expect("write overlay marker");
         }
     }
+    // TMPDIR can live inside the lane's linked worktree. Give the fixture
+    // parent its own Git boundary so resolution cannot inherit that worktree.
+    let parent_git = std::process::Command::new("git")
+        .current_dir(&parent_root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "init",
+            "--quiet",
+            "--template=",
+        ])
+        .arg("--separate-git-dir")
+        .arg(tmp_root.join("parent-gitdir"))
+        .output()
+        .expect("initialize fixture parent repository");
+    assert!(
+        parent_git.status.success(),
+        "{}",
+        String::from_utf8_lossy(&parent_git.stderr)
+    );
     let admitted_id = crate::project::code_index_id_for_root(&admitted_root);
     let foreign_id = crate::project::code_index_id_for_root(&foreign_root);
     let _admitted_cleanup = ProjectCleanup {
@@ -244,7 +266,8 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             );
             assert_eq!(crate::dispatch::classify_run_error(&error).exit, 2);
 
-            let parent_ctx = resolve(&parent_root).expect("parent remains readable");
+            let mut parent_ctx = resolve(&parent_root).expect("parent remains readable");
+            parent_ctx.quiet = false;
             let parent_symbols =
                 crate::visibility::visible_symbols_for_file(managed.client(), &parent_ctx, rel)
                     .expect("read parent through managed role");
@@ -275,12 +298,37 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                     .expect("read-only project freshness skips writes"),
                 FreshnessStatus::Checked
             );
+            crate::dispatch::ensure_project_fresh(&parent_ctx, false)
+                .expect("read-only parent dispatch skips writes");
             assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
             fs::write(parent_root.join(rel), "pub fn located() {}\n")
                 .expect("restore parent source");
 
-            let ctx = resolve(&admitted_root).expect("resolve admitted managed overlay");
+            let mut ctx = resolve(&admitted_root).expect("resolve admitted managed overlay");
+            ctx.quiet = false;
+            // This synthetic overlay can be beneath an ignored scratch path.
+            // Index its explicit fixture files independently of outer ignore rules.
+            ctx.indexing.respect_gitignore = false;
             assert!(ctx.can_refresh_index().expect("overlay write authority"));
+            // A writable, unindexed overlay must warn when its refresh lock is
+            // held. This positive control proves the absence checks can observe
+            // warnings from the same dispatch path.
+            let mut holder =
+                db::connect_readwrite(&owner_database_url).expect("connect refresh lock holder");
+            let lock_key = crate::index_lock::project_lock_key(&ctx.project_id);
+            holder
+                .execute("SELECT pg_advisory_lock($1)", &[&lock_key])
+                .expect("hold overlay refresh lock");
+            crate::test_env::clear_captured_logs();
+            crate::dispatch::ensure_project_fresh(&ctx, false)
+                .expect("busy overlay dispatch serves existing index");
+            assert!(
+                crate::test_env::captured_logs(log::Level::Warn)
+                    .iter()
+                    .any(|line| line.contains("gcode index refresh already running")),
+                "busy writable overlay must emit a captured refresh warning"
+            );
+            drop(holder);
             let mut context_connection =
                 db::connect_readonly(&ctx.database_url).expect("connect from managed context");
             let context_role: String = context_connection
@@ -469,7 +517,16 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                     .trim()
                     .to_string()
             };
-            git(&["init", "--quiet"]);
+            let foreign_git_dir = tmp_root.join("foreign-gitdir");
+            git(&[
+                "init",
+                "--quiet",
+                "--template=",
+                "--separate-git-dir",
+                foreign_git_dir
+                    .to_str()
+                    .expect("foreign fixture Git directory"),
+            ]);
             git(&["add", rel]);
             git(&["commit", "--quiet", "-m", "review fixture"]);
             let mut developer_ctx = test_context(
@@ -500,8 +557,9 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 IndexOptions::default(),
             )
             .expect("developer indexes committed candidate");
-            let review_ctx =
+            let mut review_ctx =
                 resolve(&foreign_root).expect("live assignment admits reviewer evidence");
+            review_ctx.quiet = false;
             assert!(
                 !review_ctx
                     .can_refresh_index()
@@ -534,6 +592,8 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                     .expect("read-only review skips refresh"),
                 FreshnessStatus::Checked
             );
+            crate::dispatch::ensure_project_fresh(&review_ctx, false)
+                .expect("read-only review dispatch skips writes");
             assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
             let write_error = crate::commands::index::run(
                 &review_ctx,

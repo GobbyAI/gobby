@@ -103,7 +103,7 @@ pub(super) fn resolve_exact_file(
 
 fn warn_if_busy(ctx: &config::Context, status: freshness::FreshnessStatus) {
     if let Some(line) = freshness_warning(ctx.quiet, &status) {
-        eprintln!("{line}");
+        log::warn!("{line}");
     }
 }
 
