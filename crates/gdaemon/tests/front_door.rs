@@ -986,7 +986,7 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     std::fs::write(
         home.path().join("bootstrap.yaml"),
         format!(
-            "datastore_mode: remote\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
+            "datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\nbind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
             ports[0], ports[1]
         ),
     )
@@ -1709,8 +1709,11 @@ fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsSe
     // TLS transport tests need native node ownership, without a hub lease.
     let bootstrap = home.join("bootstrap.yaml");
     let content = std::fs::read_to_string(&bootstrap).expect("read bootstrap");
-    std::fs::write(&bootstrap, format!("datastore_mode: remote\n{content}"))
-        .expect("node bootstrap");
+    std::fs::write(
+        &bootstrap,
+        format!("datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\n{content}"),
+    )
+    .expect("node bootstrap");
     let mut child = TlsServe(
         Command::new(env!("CARGO_BIN_EXE_gdaemon"))
             .arg("serve")

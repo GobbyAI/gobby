@@ -1,0 +1,136 @@
+{
+    "cases": [
+        {
+            "name": "standalone",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub_cert": "local.pem"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": "local.pem"
+        },
+        {
+            "name": "hub_boolean",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub": true,
+                "hub_cert": "hub.pem"
+            },
+            "mode": "hub",
+            "hub_daemon_url": null,
+            "hub_cert": "hub.pem"
+        },
+        {
+            "name": "hub_yaml_yes",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub": "yes"
+            },
+            "mode": "hub",
+            "hub_daemon_url": null
+        },
+        {
+            "name": "node_normalized",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://HUB.Example:443/",
+                "hub_cert": "node.pem"
+            },
+            "mode": "node",
+            "hub_daemon_url": "https://hub.example:443",
+            "hub_cert": "node.pem"
+        },
+        {
+            "name": "node_ipv6",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "http://[2001:DB8::1]:60887/"
+            },
+            "mode": "node",
+            "hub_daemon_url": "http://[2001:db8::1]:60887"
+        },
+        {
+            "name": "remote_hub",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub": true,
+                "hub_daemon_url": "https://hub.example"
+            },
+            "error": "hub: true requires datastore_mode: local"
+        },
+        {
+            "name": "invalid_hub",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub": "maybe"
+            },
+            "error": "hub must be a boolean"
+        },
+        {
+            "name": "invalid_mode",
+            "bootstrap": {
+                "datastore_mode": "typo"
+            },
+            "error": "datastore_mode must be one of: local, remote"
+        },
+        {
+            "name": "missing_hub_url",
+            "bootstrap": {
+                "datastore_mode": "remote"
+            },
+            "error": "hub_daemon_url is required for datastore_mode: remote"
+        },
+        {
+            "name": "local_hub_url",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub_daemon_url": "https://hub.example"
+            },
+            "error": "hub_daemon_url is not allowed on a local bootstrap; this process is the owner"
+        },
+        {
+            "name": "own_bind_origin",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "bind_host": "localhost",
+                "daemon_port": 60887,
+                "hub_daemon_url": "https://LOCALHOST:60887/"
+            },
+            "error": "hub_daemon_url must not be this process's own origin"
+        },
+        {
+            "name": "own_daemon_url",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "daemon_url": "https://node.example:443",
+                "hub_daemon_url": "https://NODE.example:443/"
+            },
+            "error": "hub_daemon_url must not be this process's own origin"
+        },
+        {
+            "name": "hub_userinfo",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://user@hub.example"
+            },
+            "error": "hub_daemon_url must not include userinfo"
+        },
+        {
+            "name": "hub_query",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example?x=1"
+            },
+            "error": "hub_daemon_url must not include a query or fragment"
+        },
+        {
+            "name": "hub_path",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example/api"
+            },
+            "error": "hub_daemon_url path must be empty or /"
+        }
+    ]
+}

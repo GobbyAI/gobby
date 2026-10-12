@@ -420,11 +420,11 @@ def test_run_mode_from_datastore_mode_and_hub(tmp_path: Path) -> None:
 
 def test_writers_emit_hub_flag(tmp_path: Path) -> None:
     """2.1.2: fresh and injected bootstraps carry hub: false; remote drops hub."""
-    fresh = tmp_path / "fresh.yaml"
+    fresh = tmp_path / "bootstrap.yaml"
     files_home = tmp_path / "files"
     files_home.mkdir()
     with (
-        patch("gobby.cli.install_setup.Path.expanduser", return_value=fresh),
+        patch("gobby.cli.install_setup.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.install_setup.get_install_dir", return_value=tmp_path / "missing-install"),
     ):
         ensure_daemon_config(files_home=files_home)
