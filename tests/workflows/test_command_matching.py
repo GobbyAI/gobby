@@ -384,6 +384,25 @@ def test_function_continuation_and_heredoc_match_blocks(command: str, mask_quote
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("gem push x <<-#\\\nx", True),
+        ("gem push x; bash -c 'true <<-#\\\nx'", True),
+        ("x=$(true <<-#\\\nx); gem push x", True),
+        ("\\<<-#; f() { gem push x; }; f", True),
+        ("true <<-#\\\nx", False),
+        ("true <<-\\\n#\\\nx", False),
+        ("true <<<-#\\\nx", False),
+    ],
+)
+def test_heredoc_comment_continuation_matches(
+    command: str, expected: bool, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted) is expected
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 def test_quoted_function_header_continuation_stays_literal(mask_quoted: bool) -> None:
     command = "echo 'f\\\n() { gem push x; }'"
     assert not command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)

@@ -23,6 +23,7 @@ def shell_function_bodies(
     quote = ""
     escaped = False
     word_start = True
+    less_than_run = 0
     in_backtick = False
     heredoc_ends = (
         {body.start: body.end for body in scan_shell_command(command).heredocs}
@@ -49,7 +50,11 @@ def shell_function_bodies(
                 view.append(command[original])
             index = end
             continue
-        word_start = not quote and not escaped and (char.isspace() or char in ";&|()<>")
+        unquoted = not quote and not escaped
+        word_start = unquoted and (
+            char.isspace() or char in ";&|()<>" or (char == "-" and less_than_run == 2)
+        )
+        less_than_run = less_than_run + 1 if unquoted and char == "<" else 0
         if not quote and not escaped and char == "`":
             in_backtick = not in_backtick
         positions[index] = len(view)

@@ -119,6 +119,19 @@ def test_function_header_continuation_reports_write(tmp_path: Path, command: str
     assert metadata["canonical_file_paths"] == ["a.py"]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "touch a.py<<-#\\\ndo",
+        "time touch a.py<<-#do time while\\\nx",
+    ],
+)
+def test_heredoc_comment_continuation_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_file_paths"] == ["a.py"]
+
+
 def test_quoted_function_header_continuation_stays_literal(tmp_path: Path) -> None:
     metadata = _metadata("echo 'f\\\n() (touch a.py)'", tmp_path)
     assert not metadata.get("canonical_repo_mutation")
