@@ -16,6 +16,7 @@ from gobby.workflows.step_instances import (
     AgentStepInstanceManager,
     StaleStepInstanceWriteError,
 )
+from gobby.workflows.task_claim_state import active_task_id_for_edit, resolve_target_task_id
 
 BOUND_TASK_VARIABLE = "assigned_task_id"
 
@@ -51,10 +52,10 @@ def release_lost_binding(
     instance: AgentStepInstance,
     session_variables: dict[str, Any],
 ) -> AgentStepInstance:
-    """Return a seat past its binding step to that step once its task claim is gone.
+    """Rewind a seat when its claim is lost or another owned claim becomes active.
 
-    The session's ``claimed_tasks`` projection gates the task read, so a binding
-    the session still holds costs no query.
+    An unchanged held binding costs no task query. A different active selection
+    must still be authoritatively owned before it can replace a parked binding.
     """
     snapshot = instance.workflow
     binding = _binding_step_index(snapshot)
@@ -66,12 +67,16 @@ def release_lost_binding(
     bound = {**session_variables, **instance.variables}.get(BOUND_TASK_VARIABLE)
     if not bound:
         return instance
-    claimed = session_variables.get("claimed_tasks")
-    if isinstance(claimed, dict) and (bound in claimed or bound in claimed.values()):
-        return instance
-    task = _read_task(db, str(bound))
-    if task is not None and is_task_claimed_by_session(task, instance.session_id):
-        return instance
+    active = active_task_id_for_edit(session_variables)
+    bound_id = resolve_target_task_id(session_variables, bound) or str(bound)
+    selected = _read_task(db, active) if active is not None and active != bound_id else None
+    if selected is None or not is_task_claimed_by_session(selected, instance.session_id):
+        claimed = session_variables.get("claimed_tasks")
+        if isinstance(claimed, dict) and (bound in claimed or bound in claimed.values()):
+            return instance
+        task = _read_task(db, str(bound))
+        if task is not None and is_task_claimed_by_session(task, instance.session_id):
+            return instance
 
     rewound = instance.model_copy(deep=True)
     defaults = copy.deepcopy(snapshot.variables)
