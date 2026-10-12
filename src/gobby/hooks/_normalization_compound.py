@@ -196,7 +196,12 @@ def case_arm_tokens(
                 # Only the word crossing the boundary needs retokenization;
                 # preserve the identities and quote provenance of other words.
                 tail_start = terminator + 1
-                tail = scan_shell_command(command[tail_start:word_end])
+                try:
+                    tail = scan_shell_command(command[tail_start:word_end])
+                except ValueError:
+                    # Keep the unsliced arm when its apparent boundary leaves
+                    # an incomplete shell construct; callers match it conservatively.
+                    return parts, case_depth, False
                 for arm_token, (left, right) in zip(tail.tokens, tail.spans, strict=True):
                     spans[id(arm_token)] = (tail_start + left, tail_start + right)
                     if raw is not None:

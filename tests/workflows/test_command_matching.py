@@ -91,6 +91,11 @@ def test_malformed_grouped_case_matching_does_not_raise(mask_quoted: bool) -> No
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+def test_malformed_case_arm_tail_does_not_raise(mask_quoted: bool) -> None:
+    assert not command_patterns_match("case;<())(", pattern=r"\btouch\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
     "command",
     [

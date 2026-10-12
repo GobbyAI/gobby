@@ -101,6 +101,11 @@ def test_malformed_grouped_case_classification_does_not_raise(tmp_path: Path) ->
     assert isinstance(data.get("canonical_repo_mutation", False), bool)
 
 
+def test_malformed_case_arm_tail_does_not_raise(tmp_path: Path) -> None:
+    data = _invocation_metadata("case;<())(", tool_cwd=tmp_path, project_path=tmp_path)
+    assert isinstance(data.get("canonical_repo_mutation", False), bool)
+
+
 @pytest.mark.parametrize(
     "command",
     [
