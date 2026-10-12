@@ -33,13 +33,13 @@ Daemon subprocesses cannot see a pytest process's patched machine-ID cache.
 the scoped PostgreSQL identity rows must agree with it. Give each fixture its own
 state home, bootstrap, logs, and ports before starting the runner.
 
-For same-deployment takeover, `_spawn_same_deployment_standby` in
-`tests/e2e/test_runtime_boundary.py` copies the boundary fixture's synthetic
-`machine_id` into the standby bootstrap directory. It also supplies the boundary's
-isolated `HOME` and `GOBBY_HOME` to the child. A standby bootstrap path alone does
-not seed machine identity or isolate every home-based lookup. Reuse the fixture's
-identity; do not obtain one from the operator's real home or change production
-identity handling to accommodate a test.
+Native ownership tests in `crates/gdaemon/tests/lifecycle.rs` and `lease.rs`
+exercise lease-loss drain, successor acquisition, and epoch/signing-secret
+rotation against the protected test hub. The obsolete Python standby runner and
+guard-to-commit admission barrier are retired. Any multi-daemon fixture must
+supply isolated `HOME`, `GOBBY_HOME`, machine identity, bootstrap, logs, and ports
+to each `gdaemon` process. A bootstrap path alone does not isolate home-based
+lookups; never obtain identity from the operator's real home.
 
 ## Preserve the live-hub guard
 

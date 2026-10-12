@@ -210,7 +210,6 @@ def test_protected_routes_require_auth_when_enabled(
         "revoked",
         "missing_grant",
         "forged_identity",
-        "lease_not_held",
         "capability_expired",
         "run_inactive",
         "identity_mismatch",
