@@ -1,8 +1,10 @@
 """Safety checks for shell stdin consumers, pipeline stages and output markers."""
 
+from pathlib import Path
+
+from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_shell import (
     ShellToken,
-    _has_sed_inplace_option,
     has_mutating_output_redirection,
     has_shell_input_redirection,
 )
@@ -40,14 +42,21 @@ def _interpreter_reads_program_from_stdin(parts: list[str]) -> bool:
     return "-" in args or not any(not arg.startswith("-") for arg in args)
 
 
-def _is_read_only_pipeline_stage(tokens: list[ShellToken], parts: list[str]) -> bool:
+def _is_read_only_pipeline_stage(
+    tokens: list[ShellToken],
+    parts: list[str],
+    *,
+    raw_parts: tuple[str, ...] | None = None,
+    cwd: str | None = None,
+    base_cwd: Path | None = None,
+) -> bool:
     if not parts:
         return False
     if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
         return False
     cmd = shell_command_name(parts[0])
-    if cmd == "sed" and _has_sed_inplace_option(parts):
-        return False
+    if cmd == "sed":
+        return classify_sed_segment(parts, cwd, raw_parts, base_cwd).kind == "read"
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
 
 

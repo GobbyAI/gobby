@@ -1,36 +1,76 @@
 """Sed program, file operand, and mutation-scope classification."""
 
+from dataclasses import dataclass
+from pathlib import Path
+
 from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
-    _has_sed_inplace_option,
     _looks_file_like,
     _looks_path_target,
     _rebase_navigation_shell_paths,
     _rebase_shell_paths,
     _shell_positional_args,
 )
+from gobby.hooks._sed_program import sed_write_paths
 from gobby.hooks.code_navigation import sed_line_count, source_read_navigation_metadata
+from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
+
+_LONG_OPTIONS = (
+    "--expression",
+    "--file",
+    "--in-place",
+    "--line-length",
+    "--quiet",
+    "--silent",
+    "--debug",
+    "--follow-symlinks",
+    "--help",
+    "--posix",
+    "--regexp-extended",
+    "--sandbox",
+    "--separate",
+    "--unbuffered",
+    "--version",
+)
+
+
+@dataclass(frozen=True)
+class _SedOperands:
+    inputs: tuple[str, ...]
+    script_files: tuple[str, ...]
+    programs: tuple[str, ...]
+    unresolved: bool
+    inplace: bool
 
 
 def classify_sed_segment(
-    parts: list[str], cwd: str | None, raw_parts: tuple[str, ...] | None
+    parts: list[str], cwd: str | None, raw_parts: tuple[str, ...] | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata:
     positional = _shell_positional_args(parts)
-    read_operands, write_operands, unresolved_script = _sed_file_operands(parts, raw_parts)
-    if unresolved_script:
+    operands = _sed_file_operands(parts, raw_parts)
+    if operands.unresolved:
         # Expanded sed programs can contain file-writing commands.
         return _ShellSegmentMetadata("write", repo_mutation=True)
-    if _has_sed_inplace_option(parts):
-        paths = [item for item in write_operands if _looks_path_target(item)]
-        rebased_paths = tuple(_rebase_shell_paths(paths, cwd))
-        return _ShellSegmentMetadata(
-            "write",
-            paths=rebased_paths,
-            write_paths=rebased_paths,
-            repo_mutation=True,
-        )
+    programs = list(operands.programs)
+    unresolved = len(operands.script_files) > SCRIPT_READ_BUDGET
+    script_base = base_cwd if cwd is None else Path(cwd) if Path(cwd).is_absolute() else None
+    for word in operands.script_files[:SCRIPT_READ_BUDGET]:
+        script = read_script_body(word, script_base) if word != "-" else None
+        if script is None:
+            unresolved = True
+        else:
+            programs.append(script[1])
+    writes: list[str] = []
+    for program in programs:
+        destinations, unknown = sed_write_paths(program)
+        writes.extend(destinations)
+        unresolved |= unknown
+    inplace = operands.inplace
+    if inplace:
+        writes = [item for item in operands.inputs if _looks_path_target(item)] + writes
+    read_operands = [*operands.script_files, *operands.inputs]
     paths = _rebase_navigation_shell_paths(
         [
             item
@@ -39,6 +79,15 @@ def classify_sed_segment(
         ],
         cwd,
     )
+    if inplace or writes or unresolved:
+        write_paths = tuple(dict.fromkeys(_rebase_shell_paths(writes, cwd)))
+        return _ShellSegmentMetadata(
+            "write",
+            paths=write_paths,
+            write_paths=write_paths,
+            repo_mutation=True,
+            extra={"_canonical_repo_mutation_scope_unknown": True} if unresolved else None,
+        )
     line_count = sed_line_count(parts, positional)
     read_scope = "line_range" if line_count is not None else "full_file"
     return _ShellSegmentMetadata(
@@ -52,15 +101,15 @@ def classify_sed_segment(
     )
 
 
-def _sed_file_operands(
-    parts: list[str], raw_parts: tuple[str, ...] | None
-) -> tuple[list[str], list[str], bool]:
+def _sed_file_operands(parts: list[str], raw_parts: tuple[str, ...] | None) -> _SedOperands:
     """Separate sed's program and script files from its input file operands."""
     positional: list[str] = []
     positional_indices: list[int] = []
     script_files: list[str] = []
+    programs: list[str] = []
     explicit_script = False
     unresolved_script = False
+    inplace = False
     after_options = False
     index = 1
 
@@ -78,6 +127,10 @@ def _sed_file_operands(
             continue
         if not after_options and word.startswith("--"):
             option, equals, value = word.partition("=")
+            matches = [candidate for candidate in _LONG_OPTIONS if candidate.startswith(option)]
+            if len(matches) == 1:
+                option = matches[0]
+            inplace |= option == "--in-place"
             if option in {"--expression", "--file", "--line-length"}:
                 if not equals and index < len(parts):
                     source_index = index
@@ -88,27 +141,39 @@ def _sed_file_operands(
                     unresolved_script |= unresolved(value, source_index)
                     if option == "--file" and value:
                         script_files.append(value)
+                    elif option == "--expression":
+                        programs.append(value)
             continue
         if not after_options and word.startswith("-") and word != "-":
             for offset, option in enumerate(word[1:], start=1):
-                if option in "efl":
+                if option == "l":
+                    value = word[offset + 1 :]
+                    if value.isdigit():
+                        break
+                    if not value and index < len(parts) and parts[index].isdigit():
+                        index += 1
+                        break
+                    continue
+                if option in "ef":
                     value = word[offset + 1 :]
                     if not value and index < len(parts):
                         source_index = index
                         value = parts[index]
                         index += 1
-                    if option != "l":
-                        explicit_script = True
-                        unresolved_script |= unresolved(value, source_index)
-                        if option == "f" and value:
-                            script_files.append(value)
+                    explicit_script = True
+                    unresolved_script |= unresolved(value, source_index)
+                    if option == "f" and value:
+                        script_files.append(value)
+                    elif option == "e":
+                        programs.append(value)
                     break
-                if option == "i":
-                    # BSD accepts a separate empty or dot-prefixed backup suffix.
+                if option in "iI":
+                    inplace = True
+                    # BSD -I requires a suffix; -i also accepts empty/dot-prefixed suffixes.
                     if (
                         offset == len(word) - 1
                         and index < len(parts)
-                        and (parts[index] == "" or parts[index].startswith("."))
+                        and (option == "I" or parts[index] == "" or parts[index].startswith("."))
                     ):
                         index += 1
                     break
@@ -118,4 +183,7 @@ def _sed_file_operands(
     inputs = positional if explicit_script else positional[1:]
     if not explicit_script and positional:
         unresolved_script |= unresolved(positional[0], positional_indices[0])
-    return script_files + inputs, inputs, unresolved_script
+        programs.append(positional[0])
+    return _SedOperands(
+        tuple(inputs), tuple(script_files), tuple(programs), unresolved_script, inplace
+    )

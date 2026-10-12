@@ -937,18 +937,6 @@ def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
     return paths
 
 
-def _has_sed_inplace_option(parts: list[str]) -> bool:
-    """Return True when a sed command performs in-place editing."""
-    for part in parts[1:]:
-        if part in {"-i", "--in-place"}:
-            return True
-        if part.startswith("-i"):
-            return True
-        if part.startswith("--in-place="):
-            return True
-    return False
-
-
 def _has_perl_inplace_option(parts: list[str]) -> bool:
     """Return True when a perl command edits files in place."""
     for part in parts[1:]:

@@ -365,7 +365,13 @@ def _classify_shell_command(
             )
             continue
 
-        if segment.separator_before == "|" and _is_read_only_pipeline_stage(segment.tokens, parts):
+        if segment.separator_before == "|" and _is_read_only_pipeline_stage(
+            segment.tokens,
+            parts,
+            raw_parts=source_parts[-len(parts) :],
+            cwd=segment_cwd,
+            base_cwd=segment_base,
+        ):
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -860,7 +866,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     if cmd == "sed" and len(parts) >= 2:
-        return classify_sed_segment(parts, cwd, raw_parts)
+        return classify_sed_segment(parts, cwd, raw_parts, base_cwd)
 
     return classify_file_command(cmd, parts, cwd, base_cwd)
 
