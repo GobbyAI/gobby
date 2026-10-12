@@ -292,8 +292,7 @@
                 "datastore_mode": "remote",
                 "hub_daemon_url": "https://hub.example:+443"
             },
-            "error_type": "ValueError",
-            "error": "Port could not be cast to integer value as '+443'"
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
         },
         {
             "name": "negative_port",
@@ -301,8 +300,7 @@
                 "datastore_mode": "remote",
                 "hub_daemon_url": "https://hub.example:-443"
             },
-            "error_type": "ValueError",
-            "error": "Port could not be cast to integer value as '-443'"
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
         },
         {
             "name": "non_digit_port",
@@ -310,8 +308,7 @@
                 "datastore_mode": "remote",
                 "hub_daemon_url": "https://hub.example:44x"
             },
-            "error_type": "ValueError",
-            "error": "Port could not be cast to integer value as '44x'"
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
         },
         {
             "name": "unicode_port",
@@ -319,8 +316,7 @@
                 "datastore_mode": "remote",
                 "hub_daemon_url": "https://hub.example:٤٤٣"
             },
-            "error_type": "ValueError",
-            "error": "Port could not be cast to integer value as '٤٤٣'"
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
         },
         {
             "name": "out_of_range_port",
@@ -328,8 +324,23 @@
                 "datastore_mode": "remote",
                 "hub_daemon_url": "https://hub.example:65536"
             },
-            "error_type": "ValueError",
-            "error": "Port out of range 0-65535"
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
+        },
+        {
+            "name": "quoted_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:4'4"
+            },
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
+        },
+        {
+            "name": "multiple_colons_port",
+            "bootstrap": {
+                "datastore_mode": "remote",
+                "hub_daemon_url": "https://hub.example:443:80"
+            },
+            "error": "hub_daemon_url port must be an integer between 0 and 65535"
         }
     ]
 }

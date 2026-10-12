@@ -19,6 +19,13 @@ pub(super) fn hub_daemon_url(map: &serde_yaml::Mapping) -> anyhow::Result<Option
     Ok(Some(text.trim().to_owned()))
 }
 
+pub(super) fn hub_flag(map: &serde_yaml::Mapping) -> anyhow::Result<bool> {
+    match map.get("hub") {
+        None => Ok(false),
+        Some(value) => yaml_bool(value).ok_or_else(|| anyhow::anyhow!("hub must be a boolean")),
+    }
+}
+
 pub(super) fn parse_mode_fields(
     map: &serde_yaml::Mapping,
     bind_host: &str,
@@ -31,10 +38,7 @@ pub(super) fn parse_mode_fields(
         Some(value) if value.as_str() == Some("remote") => true,
         _ => anyhow::bail!("datastore_mode must be one of: local, remote"),
     };
-    let hub = match map.get("hub") {
-        None => false,
-        Some(value) => yaml_bool(value).ok_or_else(|| anyhow::anyhow!("hub must be a boolean"))?,
-    };
+    let hub = hub_flag(map)?;
     if !remote {
         if configured_value(map, "hub_daemon_url") {
             anyhow::bail!(LOCAL_HUB_URL_REFUSAL);
@@ -76,6 +80,11 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     let invalid = || {
         FilesHomeError::Invalid("hub_daemon_url must be an http(s) origin with a host".to_owned())
     };
+    let invalid_port = || {
+        FilesHomeError::Invalid(
+            "hub_daemon_url port must be an integer between 0 and 65535".to_owned(),
+        )
+    };
     let (scheme, rest) = value.trim().split_once("://").ok_or_else(invalid)?;
     let scheme = scheme.to_ascii_lowercase();
     if !matches!(scheme.as_str(), "http" | "https") {
@@ -100,7 +109,7 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         (format!("[{}]", host.to_lowercase()), port)
     } else {
         let (host, port) = netloc
-            .rsplit_once(':')
+            .split_once(':')
             .map_or((netloc, None), |(host, port)| (host, Some(port)));
         if host.is_empty() || host.contains([':', '[', ']']) {
             return Err(invalid());
@@ -125,18 +134,14 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     match port.filter(|port| !port.is_empty()) {
         Some(port) => {
             if !port.bytes().all(|byte| byte.is_ascii_digit()) {
-                return Err(FilesHomeError::Invalid(format!(
-                    "Port could not be cast to integer value as '{port}'"
-                )));
+                return Err(invalid_port());
             }
             // Leading zeros do not affect the numeric range.
             let digits = port.trim_start_matches('0');
             let port: u16 = if digits.is_empty() {
                 0
             } else {
-                digits
-                    .parse()
-                    .map_err(|_| FilesHomeError::Invalid("Port out of range 0-65535".to_owned()))?
+                digits.parse().map_err(|_| invalid_port())?
             };
             Ok(format!("{scheme}://{host}:{port}"))
         }

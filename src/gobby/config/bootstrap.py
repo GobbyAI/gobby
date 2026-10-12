@@ -467,7 +467,13 @@ def _parse_hub_daemon_url(value: object) -> str:
     host = parsed.hostname
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    netloc = host if parsed.port is None else f"{host}:{parsed.port}"
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise BootstrapConfigError(
+            "hub_daemon_url port must be an integer between 0 and 65535"
+        ) from exc
+    netloc = host if port is None else f"{host}:{port}"
     return f"{parsed.scheme}://{netloc}"
 
 
