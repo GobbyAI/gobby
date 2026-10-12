@@ -120,6 +120,24 @@ def test_unresolvable_tilde_write_fails_closed(tmp_path: Path, command: str) -> 
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "tool_input"),
+    [
+        ("Write", {"file_path": "y.py"}),
+        ("Edit", {"file_path": "y.py", "old_string": "a", "new_string": "b"}),
+        ("Bash", {"command": "touch y.py"}),
+        ("Bash", {"command": "echo x > y.py"}),
+    ],
+)
+def test_relative_write_without_cwd_does_not_gain_unknown_scope(
+    tool_name: str, tool_input: dict[str, str]
+) -> None:
+    data: dict[str, Any] = {"tool_name": tool_name, "tool_input": tool_input}
+    normalize_tool_fields(data)
+    assert data["canonical_repo_mutation"] is True
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
 @pytest.mark.parametrize("prefix", ["", "cd /tmp; "])
 @pytest.mark.parametrize("navigation", ["cd", "pushd"])
 def test_tilde_parent_keeps_repository_anchor(

@@ -59,7 +59,12 @@ def apply_path_scope_metadata(
                 and not scope_resolved_by_loop_binding
             )
             or (metadata.get("canonical_structured_mutation") is not True and not paths)
-            or any(resolve_tool_path(raw_path, cwd) is None for raw_path in paths)
+            or any(
+                isinstance(raw_path, str)
+                and raw_path.startswith("~")
+                and resolve_tool_path(raw_path, cwd) is None
+                for raw_path in paths
+            )
             or (
                 unverified
                 and not all(
