@@ -259,11 +259,17 @@ async def derive_close_transcript_evidence(
                     attempted_paths=(),
                 )
             logger.debug("Skipping close evidence for missing linked session %s", session_id)
+            evidence.append(
+                TranscriptEvidence(
+                    degraded_capabilities=(f"Linked session {session_id} was not found",)
+                )
+            )
             continue
         effective_window: str | datetime | None = window_start
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
+        temporally_scoped_paths: frozenset[str] = frozenset()
         # Released pairs still prove the earlier worker's transcript edits after
         # a transfer. Live ownership checks continue to use only the live ledger.
         task_checkout_paths = task_edited_checkout_paths(
@@ -319,9 +325,20 @@ async def derive_close_transcript_evidence(
             other_task_paths = other_task_edited_checkout_paths(
                 variables, task_id, completed_other_tasks
             )
-            # A live or overlapping historical pair cannot identify which
-            # transcript edit belongs to this close.
-            task_checkout_paths -= other_task_paths
+            # Complete selection history can attribute overlapping paths at each
+            # edit's timestamp. A later task must not erase an earlier RED/GREEN.
+            # Without that history, overlapping pairs remain ambiguous.
+            history = task_selection_events(variables.get("task_selection_history"))
+            window_epoch = _evidence_epoch(effective_window)
+            temporal_pairs = (
+                task_checkout_paths & other_task_paths
+                if history
+                and window_epoch is not None
+                and min(at for at, _ in history) <= window_epoch
+                else frozenset()
+            )
+            temporally_scoped_paths = frozenset(path for _, path in temporal_pairs)
+            task_checkout_paths -= other_task_paths - temporal_pairs
             legacy_closed_tasks = _legacy_closed_other_tasks(
                 task_links,
                 task_id,
@@ -356,7 +373,8 @@ async def derive_close_transcript_evidence(
             ):
                 # The owner leaves too: once this task is handed off it may claim newer
                 # work, whose runs must neither fail nor pass this close (#23665). It
-                # still holds this task, so its edits to the task's files always count.
+                # still holds this task, so its unambiguous edits continue to count;
+                # shared paths need selection at the edit's timestamp.
                 if task_links is None:
                     task_links = await asyncio.to_thread(
                         ctx.session_task_manager.get_session_tasks, session_id
@@ -378,6 +396,7 @@ async def derive_close_transcript_evidence(
                         session_evidence,
                         presence,
                         keep_edits=session_id == owner_session_id,
+                        temporally_scoped_paths=temporally_scoped_paths,
                     )
             try:
                 excluded = await derive_prelink_runs(
@@ -389,12 +408,25 @@ async def derive_close_transcript_evidence(
                 )
                 excluded = ()
             evidence.append(
-                replace(session_evidence, excluded_runs=excluded) if excluded else session_evidence
+                replace(
+                    session_evidence,
+                    excluded_runs=(*session_evidence.excluded_runs, *excluded),
+                )
+                if excluded
+                else session_evidence
             )
         except TranscriptEvidenceUnavailable as exc:
             if session_id in required:
                 raise
             logger.warning("Skipping close evidence for linked session %s: %s", session_id, exc)
+            evidence.append(
+                TranscriptEvidence(
+                    attempted_paths=exc.attempted_paths,
+                    degraded_capabilities=(
+                        f"Transcript evidence unavailable for linked session {session_id}: {exc}",
+                    ),
+                )
+            )
     # Merging rebuilds every run, and each rebuild re-classifies its command, so a
     # long session's merge stays off the event loop (#22708).
     return await asyncio.to_thread(merge_transcript_evidence, *evidence)
@@ -529,6 +561,7 @@ def _while_on_task(
     presence: list[tuple[float, bool]],
     *,
     keep_edits: bool = False,
+    temporally_scoped_paths: frozenset[str] = frozenset(),
 ) -> TranscriptEvidence:
     """Keep only the runs and edits a linked session made while working this task.
 
@@ -551,9 +584,19 @@ def _while_on_task(
         evidence,
         validation_runs=tuple(r for r in evidence.validation_runs if on_task(r.started_at)),
         command_runs=tuple(r for r in evidence.command_runs if on_task(r.started_at)),
-        edits=evidence.edits
-        if keep_edits
-        else tuple(e for e in evidence.edits if on_task(e.timestamp)),
+        excluded_runs=(
+            *evidence.excluded_runs,
+            *(
+                replace(run, exclusion_reason="off-task", output=None)
+                for run in (*evidence.validation_runs, *evidence.command_runs)
+                if not on_task(run.started_at)
+            ),
+        ),
+        edits=tuple(
+            edit
+            for edit in evidence.edits
+            if (keep_edits and edit.path not in temporally_scoped_paths) or on_task(edit.timestamp)
+        ),
     )
 
 

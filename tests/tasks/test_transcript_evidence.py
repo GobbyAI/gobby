@@ -52,7 +52,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
-from gobby.tasks.transcript_evidence_snapshots import load_durable_snapshot
+from gobby.tasks.transcript_evidence_snapshots import derivation_fingerprint, load_durable_snapshot
 from gobby.tasks.transcript_evidence_transfer import CHUNK_RECORDS, ChunkedPayload, decode, encode
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
@@ -250,6 +250,10 @@ def _concurrent_pool_probe(directory: str) -> int:
 @pytest.mark.slow
 async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path) -> None:
     try:
+        os.sysconf("SC_SEM_NSEMS_MAX")
+    except OSError as exc:
+        pytest.skip(f"nested-SRT sandbox denies process-pool semaphore probe: {exc}")
+    try:
         await transcript_evidence_pool.prewarm_transcript_evidence_pool()
         pids = await asyncio.gather(
             *(
@@ -402,6 +406,10 @@ time.sleep(600)
 
 
 def test_pool_processes_exit_when_the_daemon_is_killed() -> None:
+    try:
+        os.sysconf("SC_SEM_NSEMS_MAX")
+    except OSError as exc:
+        pytest.skip(f"nested-SRT sandbox denies process-pool semaphore probe: {exc}")
     # A SIGKILLed daemon runs no shutdown; its workers and tracker must still go.
     owner = subprocess.Popen(
         [sys.executable, "-c", _POOL_OWNER], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL
@@ -5369,6 +5377,10 @@ async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_pa
 async def test_derivation_yields_to_event_loop_between_record_chunks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    try:
+        os.sysconf("SC_SEM_NSEMS_MAX")
+    except OSError as exc:
+        pytest.skip(f"nested-SRT sandbox denies process-pool semaphore probe: {exc}")
     # Deterministic guard for the loop-stall fix: no clock and no host load. Records
     # cross the pool boundary only inside bounded chunks, and the loop runs other
     # ready tasks between every chunk it encodes or decodes. A transfer that
@@ -5537,7 +5549,7 @@ async def test_chunked_derivation_fails_closed_on_invalid_chunks(
             session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
         )
 
-    fingerprint = transcript_evidence._derivation_fingerprint(
+    fingerprint = derivation_fingerprint(
         session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path), None
     )
     # Worker persistence completes before daemon-side decoding starts.
@@ -5576,7 +5588,7 @@ async def test_chunked_derivation_cancelled_mid_decode_keeps_worker_checkpoint(
         await derivation
 
     assert not finished
-    fingerprint = transcript_evidence._derivation_fingerprint(
+    fingerprint = derivation_fingerprint(
         session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path), None
     )
     # Worker persistence completes before daemon-side decoding starts.
