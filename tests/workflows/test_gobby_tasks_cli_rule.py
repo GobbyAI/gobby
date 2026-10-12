@@ -3,31 +3,53 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.postgres import _reset_schema
 
 pytestmark = pytest.mark.unit
 
 _ODD_PYTHON_SOURCE = "python3 - <<'PY'\nprint('it\\'s done')\nPY\n"
 
 
-@pytest.fixture
-def db(temp_db: HubDatabase) -> HubDatabase:
-    database = temp_db
-    sync_bundled_rules(database, get_bundled_rules_path())
-    database.execute("UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'")
-    return database
+@pytest.fixture(scope="module")
+def db(
+    postgres_database_url: str,
+    postgres_schema: str,
+    postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
+) -> Iterator[HubDatabase]:
+    """Selectors are read-only; reset and install rules once per module/worker."""
+    database = PostgresHubDatabase(
+        postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    )
+    try:
+        _reset_schema(postgres_database_url, postgres_schema, postgres_canonical_seed)
+        sync_bundled_rules(database, get_bundled_rules_path())
+        database.execute(
+            "UPDATE rule_definitions SET source = 'installed' WHERE source = 'template'"
+        )
+        yield database
+    finally:
+        try:
+            _reset_schema(postgres_database_url, postgres_schema, postgres_canonical_seed)
+        finally:
+            database.close()
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def effect(db: HubDatabase) -> RuleEffect:
     manager = RuleDefinitionManager(db)
     row = manager.get_by_name("block-gobby-tasks-cli")
@@ -37,6 +59,29 @@ def effect(db: HubDatabase) -> RuleEffect:
     assert body.event.value == "before_tool"
     assert body.resolved_effects[0].type == "block"
     return body.resolved_effects[0]
+
+
+def test_selector_cases_reuse_setup() -> None:
+    """Observe real fixture setup across cases without relying on test ordering."""
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "pytest",
+            f"{Path(__file__).resolve()}::test_blocks_mutating_task_cli_commands",
+            "--setup-show",
+            "--no-cov",
+            "-q",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    setups = [line.strip() for line in result.stdout.splitlines() if "SETUP" in line]
+    assert sum(" db " in line for line in setups) == 1, setups
+    assert sum(" effect " in line for line in setups) == 1, setups
 
 
 def _shell_event(tool_name: str, command: str) -> HookEvent:
