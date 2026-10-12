@@ -668,8 +668,8 @@ def test_lane_manager_relays_reviewer_landings_and_gates_the_close_release() -> 
     ):
         assert event in prompt
         assert event in event_list
-    assert "Relay each of those lines to the Orchestrator" in prompt
-    assert "Relay `EVENT=ALREADY_LANDED` to the Orchestrator" in prompt
+    assert "Relay each of those lines through the Inbox Manager" in prompt
+    assert "Relay `EVENT=ALREADY_LANDED` through the Inbox Manager" in prompt
     assert "original `RECEIPT` and `LANDED_BY_SESSION_ID`" in prompt
     assert "It neither releases nor holds the close" in prompt
     assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
