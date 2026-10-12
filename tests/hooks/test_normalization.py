@@ -2046,6 +2046,36 @@ class TestHeredocTokenization:
 
         assert shell_token_values(tokens) == ["cat", "<<", "EOF", "first\nsecond", "\n"]
 
+    @pytest.mark.parametrize(
+        ("raw", "operator"),
+        [
+            ("<\\\n<", "<<"),
+            ("<\\\n<<", "<<<"),
+            ("<<\\\n<", "<<<"),
+            ("<\\\n<-", "<<-"),
+            ("<<\\\n-", "<<-"),
+            ("<\\\n<\\\n<", "<<<"),
+            ("<\\\n<\\\n-", "<<-"),
+            ("<\\\n\\\n<", "<<"),
+            (">\\\n>", ">>"),
+            ("&\\\n>>", "&>>"),
+            ("&>\\\n>", "&>>"),
+            ("&\\\n>", "&>"),
+            ("&\\\n&", "&&"),
+            ("|\\\n|", "||"),
+            (">\\\n&2", ">&2"),
+            (">&\\\n2", ">&2"),
+            (">&1\\\n2", ">&12"),
+            ("<\\\n&-", "<&-"),
+        ],
+    )
+    def test_scan_joins_split_operators_and_keeps_raw_spans(self, raw: str, operator: str) -> None:
+        command = f"cat {raw} target"
+        scan = scan_shell_command(command)
+        assert shell_token_values(scan.tokens) == ["cat", operator, "target"]
+        assert scan.spans == [(0, 3), (4, 4 + len(raw)), (5 + len(raw), len(command))]
+        assert command[slice(*scan.spans[1])] == raw
+
     def test_scan_keeps_token_spans_and_heredoc_facts(self) -> None:
         command = "cat >> f <<'EOF'\nbody line\nEOF\nbash <<EOF\n$(x)\nEOF"
 
