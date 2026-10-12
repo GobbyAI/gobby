@@ -357,7 +357,7 @@ class TestSessionSummaryConfig:
         assert "claude/haiku" in candidate_labels(config.candidates)
         # prompt now has a default template with placeholders
         assert config.prompt is not None
-        assert "Generate a concise session summary" in config.prompt
+        assert "Generate a concise archival summary" in config.prompt
         assert "## Current State" in config.prompt
         assert "## Next Steps" in config.prompt
 
