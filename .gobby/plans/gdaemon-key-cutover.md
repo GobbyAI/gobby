@@ -276,7 +276,7 @@ Targets:
 - `tests/utils/test_break_glass.py`
 - `tests/servers/test_break_glass.py`
 - `tests/agents/test_sandbox_policy.py::*` — scope-reason: the eight cases that patch `sandbox_policy.get_gobby_home` set `GOBBY_HOME` with `monkeypatch.setenv` instead, so the moved helpers follow the test home, and the credential-root case asserts that the break-glass file and the bound startup bootstrap are denied for reads and writes
-- `tests/test_runner_front_door.py::*` — scope-reason: gains the case proving `run_gobby` creates the credential before the front door starts, including with `--config` outside `GOBBY_HOME`
+- `tests/test_runner_front_door.py::*` — scope-reason: historical startup-wrapper tests, since retired from the 0.5.0 file set
 - `docs/guides/admin-operations.md`
 - `docs/contracts/secrets.md`
 
@@ -301,8 +301,8 @@ Targets:
 - `run_gobby` (`src/gobby/runner.py`, 713 lines) calls `verify_schema`, then
   `FrontDoorChild.from_bootstrap(bootstrap, Path(config_path).expanduser().parent if config_path is not None else get_gobby_home())`,
   then starts the child. Callers: `runner.py::main`,
-  `tests/test_runner_lifecycle.py`, `tests/test_runner_pid_file.py`, and
-  `tests/test_runner_front_door.py`. None changes, because the signature is
+  `tests/test_runner_lifecycle.py` and `tests/test_runner_pid_file.py`. None
+  changes, because the signature is
   unchanged.
 - Credential location. Startup key provisioning writes
   `resolve_bootstrap_path(runner._config_file)`
@@ -399,7 +399,7 @@ Targets:
   denied to managed sandboxes).
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/utils/test_break_glass.py tests/servers/test_break_glass.py tests/agents/test_sandbox_policy.py tests/agents/test_sandbox.py tests/agents/test_external_write_grants.py tests/test_runner_front_door.py tests/servers/test_auth_service.py -q`,
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/utils/test_break_glass.py tests/servers/test_break_glass.py tests/agents/test_sandbox_policy.py tests/agents/test_sandbox.py tests/agents/test_external_write_grants.py tests/servers/test_auth_service.py -q`,
 then `uv run ruff check` and `uv run mypy` on the touched modules.
 
 **Acceptance:**
@@ -407,7 +407,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.1.1 - `ensure_break_glass_credential` creates a mode-0600 file when it is absent and leaves an existing file byte-identical, and `break_glass_matches` refuses a file with any group or other mode bit, a file owned by another uid, and a wrong value. test: `tests/utils/test_break_glass.py::test_credential_is_owner_only_and_never_rewritten`.
 - 1.1.2 - With the database getter raising, a loopback request carrying the break-glass header is admitted to a non-grant route, while a non-loopback peer with the header and a loopback peer with a wrong or missing header get 401. The database getter is never called on the admitted path. test: `tests/servers/test_break_glass.py::test_break_glass_admits_only_loopback_holder_without_database`.
 - 1.1.3 - On a grant route, the break-glass header yields the operator bearer principal and the request is still refused without a grant. test: `tests/servers/test_break_glass.py::test_break_glass_still_requires_grant_on_grant_routes`.
-- 1.1.4 - `run_gobby` creates the credential before it starts the front door, in the startup bootstrap's directory even when `--config` lies outside a different `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits that file's value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.
+- 1.1.4 - `run_gobby` creates the credential before it starts the front door, in the startup bootstrap's directory even when `--config` lies outside a different `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits that file's value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door` (historical startup-wrapper test, since retired from the 0.5.0 file set).
 - 1.1.5 - Managed sandboxes may neither read nor write the break-glass file or the startup bootstrap, including when the daemon bootstrap is bound to a directory outside a different `GOBBY_HOME` and inside an allowed root. test: `tests/agents/test_sandbox_policy.py::test_break_glass_file_is_a_credential_root`.
 - 1.1.6 - The admin guide documents break-glass access. behavior: "Break-glass access" in `docs/guides/admin-operations.md`.
 
@@ -491,7 +491,7 @@ call-site swaps.
   `tests/events/test_wake_recovery.py`,
   `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py`,
   `tests/test_runner_lifecycle_restart_replay.py`,
-  `tests/test_runner_lease_lifecycle.py`, and `tests/test_runner_front_door.py`
+  and `tests/test_runner_lease_lifecycle.py`
   patch `read_local_api_token` as a bearer, which this leaf does not touch.
   `spawn_agent/_implementation.py` uses the token as a bearer (Decision 11).
   `tests/runtime_grants/test_golden_vectors.py` and
@@ -951,7 +951,7 @@ examples are 1.5; the CLI is 1.4.
   `cli-registry` evidence.
 
 **Focused verification (planned):**
-`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/storage/test_storage_auth.py tests/storage/test_managed_credentials.py tests/storage/test_revisioned_config_store.py tests/config/ tests/utils/ tests/agents/test_agent_constants.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/cli/ tests/hooks/ tests/terminals/ tests/mcp_proxy/test_workspaces_registry.py tests/test_runner_front_door.py tests/test_runner_init.py tests/contracts/ tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q`.
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/ tests/storage/test_storage_auth.py tests/storage/test_managed_credentials.py tests/storage/test_revisioned_config_store.py tests/config/ tests/utils/ tests/agents/test_agent_constants.py tests/agents/test_spawn_executor.py tests/agents/test_isolation.py tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/cli/ tests/hooks/ tests/terminals/ tests/mcp_proxy/test_workspaces_registry.py tests/test_runner_init.py tests/contracts/ tests/skills/test_reference_library.py::test_reference_contract_3_2_1 -q`.
 Heavy work: `cargo nextest run -p gdaemon -p gobby-core -p gclient -p gcode -p ghook -p gterminal` and
 `cargo clippy --workspace --all-targets -- -D warnings`. The e2e files run in
 V2.
@@ -1470,7 +1470,8 @@ After every leaf has passed:
     1.1.4: `run_gobby` creates the credential before it starts the front door, in
     the startup bootstrap''s directory even when `--config` lies outside a different
     `GOBBY_HOME`, and an `AuthService` built with defaults in that process admits
-    that file''s value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`.
+    that file''s value. A creation failure does not stop startup. test: `tests/test_runner_front_door.py::test_run_gobby_creates_break_glass_before_front_door`
+    (historical startup-wrapper test, since retired from the 0.5.0 file set).
 
     1.1.5: Managed sandboxes may neither read nor write the break-glass file or the
     startup bootstrap, including when the daemon bootstrap is bound to a directory
