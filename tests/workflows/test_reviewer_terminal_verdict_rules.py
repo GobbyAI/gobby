@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -277,6 +278,47 @@ async def test_failed_validation_does_not_set_pending(db: HubDatabase) -> None:
 
     assert response.decision == "allow"
     assert variables.get("reviewer_terminal_verdict_pending") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [False, True])
+@pytest.mark.parametrize(
+    "server,tool,agent_type",
+    [
+        ("gobby-tasks-ops", "approve_review", "qa-reviewer"),
+        ("gobby-tasks-ops", "reject_review", "qa-reviewer"),
+        ("gobby-tasks-ops", "complete_stage", "epic-reviewer"),
+        ("gobby-tasks-ops", "fail_stage", "epic-reviewer"),
+        ("gobby-tasks", "escalate_task", "epic-reviewer"),
+    ],
+)
+async def test_claude_verdict_payload_controls_pending(
+    db: HubDatabase, success: bool, server: str, tool: str, agent_type: str
+) -> None:
+    variables: dict[str, Any] = {
+        **_review_vars(agent_type),
+        "reviewer_terminal_verdict_pending": True,
+        "reviewer_terminal_verdict_validation_command": "uv run pytest tests/agents -q",
+    }
+    event = ClaudeCodeAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PostToolUse",
+            "input_data": {
+                "session_id": SESSION_ID,
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {"server_name": server, "tool_name": tool, "arguments": {}},
+                "tool_response": {"success": success},
+            },
+        }
+    )
+
+    response = await RuleEngine(db).evaluate(event, str(uuid.uuid4()), variables)
+
+    assert response.decision == "allow"
+    assert variables["reviewer_terminal_verdict_pending"] is (not success)
+    assert variables["reviewer_terminal_verdict_validation_command"] == (
+        "" if success else "uv run pytest tests/agents -q"
+    )
 
 
 @pytest.mark.asyncio

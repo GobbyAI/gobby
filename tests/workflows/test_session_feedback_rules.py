@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -201,6 +202,33 @@ class TestSurveyIsActive:
 
 
 class TestSessionFeedbackRules:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("success", [False, True])
+    async def test_claude_feedback_payload_controls_submission(
+        self, db: HubDatabase, success: bool
+    ) -> None:
+        _sync_bundled(db)
+        _enable_rules(db, "mark-gobby-session-feedback-submitted")
+        variables: dict[str, Any] = {
+            "project": _project(),
+            "_gobby_feedback_epoch_submitted": False,
+        }
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {
+                "hook_type": "PostToolUse",
+                "input_data": {
+                    "session_id": SESSION_ID,
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {"server_name": "gobby-sessions", "tool_name": "feedback"},
+                    "tool_response": {"success": success},
+                },
+            }
+        )
+
+        await _engine(db).evaluate(event, SESSION_ID, variables)
+
+        assert variables["_gobby_feedback_epoch_submitted"] is success
+
     def test_bundled_rules_are_product_gates(
         self, db: HubDatabase, manager: RuleDefinitionManager
     ) -> None:
