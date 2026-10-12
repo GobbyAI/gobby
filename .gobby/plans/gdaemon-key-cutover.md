@@ -707,7 +707,7 @@ Targets:
 - `tests/terminals/test_frame_client.py::*` — scope-reason: same
 - `tests/terminals/test_native_runtime.py::*` — scope-reason: same, and `_frame_token` patches follow the mixin
 - `tests/terminals/test_runtime_contract.py::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
-- `tests/test_runner_front_door.py::*` — scope-reason: asserts the child env carries the secret and a respawn reuses it
+- `tests/test_runner_front_door.py::*` — scope-reason: historical startup-wrapper tests, since retired from the 0.5.0 file set
 - `tests/e2e/test_daemon_auth.py::*` — scope-reason: authenticates with the provisioned key
 - `tests/e2e/test_external_terminal_attach.py::*` — scope-reason: writes or reads the token file; provisions a bootstrap carrying `api_key` instead
 - `tests/e2e/test_single_active_daemon.py::*` — scope-reason: same
@@ -844,8 +844,9 @@ examples are 1.5; the CLI is 1.4.
   them with URL-safe base64 without padding. `RuntimeState::prepare` passes
   the secret to the Python backend through `GOBBY_FRONT_DOOR_SECRET`.
   `_bind_runtime_grants` reads that environment variable and passes it to
-  `AuthService.bind_runtime(front_door_secret=…)`. Hub runtime ownership
-  requires bootstrap `database_url`; a missing value reports
+  `AuthService.bind_runtime(front_door_secret=…)`. Runtime ownership in every
+  mode except Node requires bootstrap `database_url`
+  (`crates/gdaemon/src/state.rs::RuntimeState::prepare`); a missing value reports
   `runtime ownership requires bootstrap database_url` (Decision 6).
 - **Python trusts the front door.** `AuthService` gains
   `_front_door_identity(request)`, which returns user, machine, and key ids
