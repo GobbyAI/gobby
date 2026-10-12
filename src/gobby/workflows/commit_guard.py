@@ -17,13 +17,15 @@ from psycopg_pool import PoolTimeout
 
 from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import (
-    _COMMAND_SUBSTITUTION,
+    _MAX_SUBSTITUTION_DEPTH,
     ShellToken,
     _contains_unexpanded_shell_reference,
     _literal_cd_target,
+    _strip_shell_wrappers,
+    scan_shell_command,
     shell_token_values,
-    tokenize_shell_command,
 )
+from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -95,16 +97,30 @@ class DirtyEditOwnershipInspectionError(RuntimeError):
 
 def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...]:
     """Parse Git commit invocations from one shell command."""
+    return _parse_git_commit_invocations(command, 0)
+
+
+def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitInvocation, ...]:
+    if depth > _MAX_SUBSTITUTION_DEPTH:
+        return (GitCommitInvocation(pathspecs=(), cwd_unverified=True),)
     if not command.strip():
         return ()
     try:
-        shell_tokens = tokenize_shell_command(command)
+        prepared, expansions = _prepare(command, depth)
+        scan = scan_shell_command(prepared)
+        shell_tokens = scan.tokens
+        for heredoc in scan.heredocs:
+            if not heredoc.quoted:
+                expansions.extend(_prepare(heredoc.text, depth, data=True)[1])
         cwd_unverified = False
     except ValueError:
         shell_tokens = [ShellToken(part) for part in command.split()]
+        expansions = []
         cwd_unverified = True
 
     invocations: list[GitCommitInvocation] = []
+    if any(_parse_git_commit_invocations(text, depth + 1) for text in expansions):
+        invocations.append(GitCommitInvocation(pathspecs=(), cwd_unverified=True))
     shell_chdir: str | None = None
     conditional_chdir = False
     segments = _split_shell_segments(_without_shell_comments(shell_tokens))
@@ -126,7 +142,10 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             # other navigation forms below can move a later commit somewhere the
             # linear cd model cannot follow. Refuse rather than guess.
             cwd_unverified = True
-        if any(parse_git_commit_invocations(text) for text in _nested_shell_texts(segment.tokens)):
+        if any(
+            _parse_git_commit_invocations(text, depth + 1)
+            for text in _nested_shell_texts(segment.tokens)
+        ):
             # A commit inside a nested shell string runs where that string says.
             invocations.append(
                 GitCommitInvocation(
@@ -138,7 +157,11 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             # later commands in the parent. Dynamic targets are unprovable.
             if segment.separator_before != "|" and next_separator not in {"|", "&"}:
                 target = _literal_cd_target(tokens)
-                if target is None or target.startswith("~") or segment.separator_before == "||":
+                if (
+                    target is None
+                    or _unproven_commit_path(target)
+                    or segment.separator_before == "||"
+                ):
                     # The tokenizer's quoted bit also covers partial quoting,
                     # which does not prove a leading tilde stayed literal.
                     cwd_unverified = True
@@ -171,8 +194,8 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
                     root_options=root_options,
                     cwd_unverified=cwd_unverified
                     or any(
-                        _contains_unexpanded_shell_reference(path) or path.startswith("~")
-                        for path in (chdir, work_tree, *root_options)
+                        _unproven_commit_path(path)
+                        for path in (chdir, work_tree, *root_options, *pathspecs)
                         if path is not None
                     ),
                 )
@@ -213,13 +236,21 @@ def _is_git_word(token: str) -> bool:
 def _unmodeled_navigation(tokens: list[ShellToken]) -> bool:
     """Whether a segment may change the cwd in a way the linear cd model cannot follow."""
     values = shell_token_values(tokens)
-    if values[0] in _SHELL_KEYWORDS or values[0] in {"pushd", "popd"}:
+    head = _strip_shell_wrappers(values)
+    if (
+        values[0] in _SHELL_KEYWORDS
+        or values[0] in {"pushd", "popd"}
+        or (head and head[0] in {"eval", "source", "."})
+    ):
         return True
     for position, token in enumerate(tokens):
         if token.value.startswith("CDPATH=") or (position and token.value in _NAVIGATION_WORDS):
             return True
         if not token.quoted and (
-            token.value in {"{", "}"} or any(char in token.value for char in "()`")
+            token.value in {"{", "}"}
+            or any(char in token.value for char in "()`")
+            or token.value.startswith(("__gobby_group_", "__gobby_process_"))
+            or token.value == "__gobby_expansion__"
         ):
             return True
     # Position-independent so assignments and wrappers (`command env`, `FOO=x env`)
@@ -228,6 +259,18 @@ def _unmodeled_navigation(tokens: list[ShellToken]) -> bool:
     head = values[:git_index]
     return any(value.rsplit("/", maxsplit=1)[-1] == "env" for value in head) and any(
         value.startswith(("-C", "--chdir")) for value in head
+    )
+
+
+def _unproven_commit_path(path: str) -> bool:
+    """Decoded shell expansion markers are never literal ownership targets."""
+    return (
+        _contains_unexpanded_shell_reference(path)
+        or path.startswith("~")
+        or any(
+            marker in path
+            for marker in ("__gobby_expansion__", "__gobby_group_", "__gobby_process_")
+        )
     )
 
 
@@ -243,15 +286,9 @@ def _nested_shell_texts(tokens: list[ShellToken]) -> list[str]:
             and any(_SHELL_C_FLAG.fullmatch(later) for later in values[index + 1 :])
         ):
             return values[index + 1 :]
-    return [
-        token.value[1:-1]
-        for token in tokens
-        if not token.quoted and token.value.startswith("(") and token.value.endswith(")")
-    ] + [
-        token.value
-        for token in tokens
-        if token.quoted and _COMMAND_SUBSTITUTION.search(token.value)
-    ]
+    # Expansions and groups are extracted from raw source by _prepare, before
+    # token decoding discards the quotes that distinguish data from execution.
+    return []
 
 
 def _skip_git_global_options(
