@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
 from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -236,7 +238,7 @@ async def test_compact_page_elides_oversized_row_without_losing_neighbors(
         if number == oversized_position:
             assert "elided" in row["title"]
             assert "get_task" in row["title"]
-            assert row["ref"] in row["title"]
+            assert tasks[number].id in row["title"]
             assert "brief=false" in row["title"]
         else:
             assert row["title"] == tasks[number].title
@@ -307,6 +309,48 @@ async def test_compact_receipt_facts_preserve_summaries_and_full_fetch(
         [receipt.kind, receipt.commit_sha, receipt.recorded_at, facts] for receipt in receipts
     ]
     assert len(json.dumps(page, default=str, indent=2).encode()) < 14_000
+
+
+@pytest.mark.asyncio
+async def test_compact_cross_project_pointer_fetches_the_originating_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    other_project = install_isolated_checkout_project(
+        temp_db, tmp_path / "other-project", name="other-project", machine_id=require_machine_id()
+    ).project
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    caller_task = manager.create_task(
+        sample_project["id"], "Caller task", validation_criteria="Belongs to the caller project."
+    )
+    other_task = manager.create_task(
+        other_project.id,
+        "Other task " + "x" * 16_000,
+        validation_criteria="Full pointer fetch stays in its project.",
+    )
+    assert caller_task.seq_num == other_task.seq_num
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+            return_value={"id": sample_project["id"]},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
+            return_value={"id": sample_project["id"]},
+        ),
+    ):
+        page = await registry.call("list_tasks", {"view": "compact", "all_projects": True})
+        rows = [dict(zip(page["columns"], row, strict=True)) for row in page["rows"]]
+        other_row = next(row for row in rows if "elided" in row["title"])
+        pointer = other_row["title"]
+        fetch_id = pointer.split("task_id='", 1)[1].split("'", 1)[0]
+        full = await registry.call("get_task", {"task_id": fetch_id, "brief": False})
+    assert full["id"] == other_task.id
+    assert fetch_id == other_task.id
+    assert other_row["ref"] == f"#{other_task.seq_num}"
+    assert full["title"] == other_task.title
 
 
 @pytest.mark.asyncio

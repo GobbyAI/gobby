@@ -24,6 +24,7 @@ class TaskStateFilters(TypedDict, total=False):
 def _bound_compact_row(
     row: list[Any],
     columns: list[str],
+    task_id: str,
     ref_errors: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
     """Omit large values with full-fetch pointers before eliding a whole row."""
@@ -34,7 +35,7 @@ def _bound_compact_row(
         return row
 
     ref = row[0]
-    pointer = f"Value elided; get_task(task_id='{ref}', brief=false)"
+    pointer = f"Value elided; get_task(task_id='{task_id}', brief=false)"
     for column in sorted(
         (1, 7, 8, 11), key=lambda index: len(json.dumps(row[index], default=str)), reverse=True
     ):
@@ -103,7 +104,7 @@ def compact_tasks(
             ],
             task.commits[-1] if task.commits else None,
         ]
-        row = _bound_compact_row(row, columns, ref_errors if not rows else None)
+        row = _bound_compact_row(row, columns, task.id, ref_errors if not rows else None)
         rows.append(row)
         result["count"] = len(rows)
         if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
