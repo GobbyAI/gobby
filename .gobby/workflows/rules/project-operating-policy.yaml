@@ -27,8 +27,8 @@ rules:
           - Integration branch: `0.5.0`. Authorized pushes run `git push origin <sha>:refs/heads/0.5.0`.
           - Lanes, in priority order. Each lane's open epic carries the `lane` label; `gobby-tasks:list_tasks(label="lane")` is the current list.
             1. Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed.
-            2. Rust front door, Stage 1 (#21543). Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
-            3. Telegram direct registration: a registered agent's operator chat routes to Telegram without the Assistant relaying. Sub-lanes allowed.
+            2. Rust front door, Stage 1 (#21543), except #21555, which is Lane 3. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
+            3. API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed.
             4. Close-out: close tasks whose commits sit in lane worktrees, then retire those worktrees. One seat.
           - No new task outside a lane. Found work goes to the Orchestrator, which files it in the lane that owns it. Existing tasks and epics outside the lanes stay where they are.
           - Lane tasks first, in every lane. Found work is filed at low priority unless it blocks a lane task or its landing; only a blocker takes a seat ahead of lane tasks. Found work that a lane task's progress resolves folds into that task.
