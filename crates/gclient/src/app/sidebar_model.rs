@@ -178,7 +178,7 @@ impl AgentEntry {
         let family = self
             .model
             .as_deref()
-            .and_then(|raw| raw.split('-').next())
+            .and_then(|raw| raw.split_once('-').map(|(family, _)| family))
             .map(str::to_lowercase)
             .filter(|family| !family.is_empty());
         if let Some(family) = family {
