@@ -41,6 +41,9 @@ _MAX_LENGTH = 131_072
 _blocked_memo: ContextVar[dict[tuple[str, int, ShellDialect, str | None], bool] | None] = (
     ContextVar("_blocked_memo", default=None)
 )
+_function_consumer_memo: ContextVar[dict[tuple[str, bool, ShellDialect], bool | None] | None] = (
+    ContextVar("_function_consumer_memo", default=None)
+)
 
 # Subcommands that answer a literal help request, by provider. A word maps to
 # its child subcommands; an empty mapping is a leaf, which may take a prompt.
@@ -408,9 +411,19 @@ def _segment_consumes(
         ):
             return True
     if words and functions and words[0] in functions:
-        return _stream_consumes(
-            functions[words[0]], depth + 1, dialect, python=python, functions=functions
+        memo = _function_consumer_memo.get()
+        definition = functions[words[0]]
+        key = (definition, python, dialect)
+        if memo is not None:
+            if key in memo:
+                return memo[key] is True
+            memo[key] = None  # A recursive reference in progress is non-consuming.
+        consumes = _stream_consumes(
+            definition, depth + 1, dialect, python=python, functions=functions
         )
+        if memo is not None:
+            memo[key] = consumes
+        return consumes
     if _python_program(words)[1] if python else _shell_stdin(words):
         return True
     script = _shell_script(words)
@@ -563,9 +576,11 @@ def _blocked(
 ) -> bool:
     memo = _blocked_memo.get()
     token = None
+    consumer_token = None
     if memo is None:
         memo = {}
         token = _blocked_memo.set(memo)
+        consumer_token = _function_consumer_memo.set({})
     try:
         key = (command, depth, dialect, output_consumer)
         if key not in memo:
@@ -574,6 +589,8 @@ def _blocked(
     finally:
         if token is not None:
             _blocked_memo.reset(token)
+        if consumer_token is not None:
+            _function_consumer_memo.reset(consumer_token)
 
 
 def _evaluate_blocked(
@@ -648,7 +665,12 @@ def _evaluate_blocked(
                 for word in words[1:]:
                     group = re.fullmatch(r"__gobby_group_([0-9]+)__", word)
                     if group is not None and int(group[1]) < len(expansions):
-                        functions[name[:-2]] = expansions[int(group[1])]
+                        for header in words:
+                            if header.endswith("()"):
+                                functions[header[:-2]] = expansions[int(group[1])]
+                                memo = _function_consumer_memo.get()
+                                if memo is not None:
+                                    memo.clear()
                 continue
             has_input_payload = bool(bodies) or any(
                 not token.quoted and token.value.lstrip("0123456789") == "<<<" for token in segment
@@ -713,6 +735,8 @@ def _evaluate_blocked(
                     ):
                         return True
                 if any(execution.reads_pattern for execution in executions):
+                    if any(execution.pattern_modified for execution in executions):
+                        return True
                     if any(path != "-" for path in operands.inputs) or not _sed_known_input(
                         segment, expansions, incoming, [body.text for body in bodies], depth
                     ):

@@ -254,6 +254,8 @@ def _program_write_paths(
             operand = program[index:end].strip()
             if operand:
                 execution.commands.append(operand)
+                # Conservatively retain pattern execution for semicolon suffixes.
+                execution.reads_pattern |= operand.startswith(";")
             else:
                 execution.reads_pattern = True
             index = end

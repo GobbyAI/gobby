@@ -10,7 +10,7 @@ from gobby.hooks._normalization_shell import (
 )
 
 
-def _function_header(tokens: list[ShellToken], index: int) -> tuple[str, int] | None:
+def _function_header(tokens: list[ShellToken], index: int) -> tuple[tuple[str, ...], int] | None:
     """Recognize the literal function header forms accepted by Bash and zsh."""
     first = index
     if tokens[index].quoted:
@@ -18,24 +18,33 @@ def _function_header(tokens: list[ShellToken], index: int) -> tuple[str, int] | 
     keyword = tokens[index].value == "function"
     if keyword:
         index += 1
-    if index >= len(tokens) or tokens[index].quoted:
-        return None
-    word = tokens[index].value
-    attached = word.endswith("()")
-    name = word[:-2] if attached else word
-    if not name.isidentifier():
-        return None
-    if not attached and index + 1 < len(tokens) and tokens[index + 1] == ShellToken("()"):
+    names: list[str] = []
+    while index < len(tokens) and not tokens[index].quoted:
+        word = tokens[index].value
+        if word == "()":
+            return tuple(names), index
+        if word == "{" and keyword:
+            return tuple(names), max(first, index - 1)
+        attached = word.endswith("()")
+        name = word[:-2] if attached else word
+        if (
+            not name
+            or name.isspace()
+            or name in {"{", "}", "(", ")", ";", "|", "|&", "&", "&&", "||", ";;", ";&", ";;&"}
+        ):
+            break
+        if any(char in name for char in "$'\"\\="):
+            break
+        names.append(name)
+        if attached:
+            return tuple(names), index
         index += 1
-        attached = True
-    if not keyword and not attached:
-        return None
-    return name, max(first, index)
+    return None
 
 
 def _group_spans(
     command: str,
-) -> tuple[dict[int, int], dict[int, tuple[int, int, int]], dict[int, tuple[str, int]]]:
+) -> tuple[dict[int, int], dict[int, tuple[int, int, int]], dict[int, tuple[tuple[str, ...], int]]]:
     """Match reserved group words only where the shell expects a command.
 
     Substitutions and heredoc payloads are already opaque scanner tokens.
@@ -44,7 +53,8 @@ def _group_spans(
     scan = scan_shell_command(command)
     braces: dict[int, int] = {}
     compounds: dict[int, tuple[int, int, int]] = {}
-    functions: dict[int, tuple[str, int]] = {}
+    functions: dict[int, tuple[tuple[str, ...], int]] = {}
+    fallback_braces: set[int] = set()
     stack: list[tuple[str, int, int]] = []
     position = True
     closing = {
@@ -64,11 +74,23 @@ def _group_spans(
         if not token.quoted and word in {";", "\n", "|", "|&", "&", "&&", "||", ";;", ";&", ";;&"}:
             position = True
             continue
+        if (
+            not position
+            and not token.quoted
+            and word == "{"
+            and (start == 0 or command[start - 1].isspace() or command[start - 1] in ";|&(")
+            and end < len(command)
+            and command[end].isspace()
+        ):
+            stack.append((word, start, end))
+            fallback_braces.add(start)
+            position = True
+            continue
         if position and not token.quoted:
             header = _function_header(scan.tokens, index)
             if header is not None:
-                name, skip = header
-                functions[start] = (name, scan.spans[skip][1])
+                names, skip = header
+                functions[start] = (names, scan.spans[skip][1])
                 continue
             if word == "coproc":
                 if (
@@ -97,7 +119,7 @@ def _group_spans(
                 continue
         position = False
     for opener, start, _ in stack:
-        if opener == "{":
+        if opener == "{" and start not in fallback_braces:
             braces[start] = -1
     return braces, compounds, functions
 
@@ -119,8 +141,8 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
         char = command[index]
         pattern_paren = not data and not quote and cases.pattern_paren(command, index, 0)
         if index in functions and not quote:
-            name, index = functions[index]
-            output.append(f"{name}()")
+            names, index = functions[index]
+            output.append(" ".join(f"{name}()" for name in names))
             continue
         if index in compounds and not quote:
             body, body_end, end = compounds[index]

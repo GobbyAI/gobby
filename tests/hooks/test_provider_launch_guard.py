@@ -22,6 +22,108 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("f() { cat; }; echo hi | f; f() { bash; }; echo 'claude -p hi' | f", True),
+        ("f() { cat; }; f <<< hi; f() { bash; }; f <<< 'claude -p hi'", True),
+        ("f() { g; }; g() { cat; }; echo hi | f; g() { bash; }; echo 'claude -p hi' | f", True),
+        ("a() { bash; }; b() { bash; }; echo hi | a; echo 'claude -p hi' | b", True),
+        ("f() { g() { bash; }; echo 'claude -p hi' | g; }; g() { cat; }; echo hi | g; f", True),
+        ("f() { bash; }; echo hi | f; f() { cat; }; echo 'claude -p hi' | f", False),
+        ("f() { g; }; g() { bash; }; echo hi | f; g() { cat; }; echo 'claude -p hi' | f", False),
+        ("f() { f; f; f; }; echo hi | f", False),
+        ("f() { bash; }; echo 'claude -p hi' | f; f() { cat; }; echo hi | f", True),
+        ("f() { bash; }; echo hi | f; f() { cat; }; echo hi | f", False),
+    ],
+)
+def test_function_consumer_memo_tracks_redefinitions(command: str, blocked: bool) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("echo x | sed 's/x/claude -p hi/;e'", True),
+        ("sed 's/x/claude -p hi/;e' <<< x", True),
+        ("echo x | gsed -e 's/x/claude -p hi/' -e e", True),
+        ("printf x | sed 'y/x/c/;e'", True),
+        (r"printf 'x\nclaude -p hi\n' | sed 'N;s/x\n//;e'", True),
+        ("echo x | sed 's/x/claude -p hi/;h;x;e'", True),
+        ("echo x | sed 's/x/claude -p hi/;H;G;e'", True),
+        ("echo x | sed -n 's/x/claude -p hi/;e;p'", True),
+        ("echo x | sed '1{s/x/claude -p hi/;e\n}'", True),
+        ("echo x | sed -z 's/x/claude -p hi/;e'", True),
+        ("echo x | sed --expression='s/x/claude -p hi/' --expression=e", True),
+        ("echo x | sed 's/x/claude -p hi/M;e'", True),
+        ("echo 'claude -p hi' | sed 'h;g;e'", True),
+        ("echo 'claude -p hi' | sed 'x;G;e'", True),
+        ("echo 'claude -p hi' | sed 'n;e'", True),
+        ("echo 'claude -p hi' | sed 'D;e'", True),
+        ("echo claude | sed 's/.*/& -p hi/e'", True),
+        (r"echo claude | sed 's/\(.*\)/\1 -p hi/e'", True),
+        ("echo hi | sed e", False),
+        ("sed e <<< 'echo hi'", False),
+        ("echo x | sed 's/x/claude -p hi/'", False),
+        ("sed 's/^.*$/echo hi/e' f", False),
+    ],
+)
+def test_sed_pattern_execution_after_modification(command: str, blocked: bool) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ("function my-f { claude -p hi; }; my-f", True),
+        ("my-f() { claude -p hi; }", True),
+        ("f.x() { claude -p hi; }; f.x", True),
+        ("function f:g { claude -p hi; }; f:g", True),
+        ("() { claude -p hi; }", True),
+        ("() { claude -p hi; } a b", True),
+        ("function { claude -p hi; }", True),
+        ("repeat 1 { claude -p hi; }", True),
+        ("for i (1) { claude -p hi; }", True),
+        ("function f g { claude -p hi; }; g", True),
+        ("f g() { claude -p hi; }; g", True),
+        ("() { echo 'claude -p hi'; } | bash", True),
+        ("my-f() { bash; }; echo 'claude -p hi' | my-f", True),
+        ("my-f() { echo 'claude -p hi'; }; my-f | bash", True),
+        ("my-f() { echo hi; }; my-f", False),
+        ("function f g { echo hi; }; g", False),
+        ("{ echo {; echo hi; } | bash", False),
+        ("{ echo '}'; echo hi; }", False),
+    ],
+)
+def test_final_spec_function_headers(command: str, blocked: bool) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
+
+
+@pytest.mark.parametrize(
+    ("leaf", "producer", "blocked"),
+    [("cat", "echo hi", False), ("bash", "echo 'claude -p hi'", True), ("f0", "echo hi", False)],
+)
+def test_function_consumer_resolution_is_linear(
+    monkeypatch: pytest.MonkeyPatch, leaf: str, producer: str, blocked: bool
+) -> None:
+    prepare = _prepare
+    calls = 0
+
+    def counted_prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
+        nonlocal calls
+        calls += 1
+        assert calls <= 16 * 12
+        return prepare(command, depth, data=data)
+
+    monkeypatch.setattr(provider_launch_guard, "_prepare", counted_prepare)
+    definitions = "; ".join(
+        f"f{index}() {{ f{index + 1}; f{index + 1}; f{index + 1}; }}" for index in range(12)
+    )
+    command = f"{definitions}; f12() {{ {leaf}; }}; {producer} | f0"
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is blocked
+    assert calls <= 16 * 12
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "function f { claude -p hi; }; f",
