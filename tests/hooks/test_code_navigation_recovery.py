@@ -293,6 +293,50 @@ def test_unverifiable_bounds_and_variable_paths_stay_blocked(repo: Path, command
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        "sed -n -f script.sed src/long.py",
+        "sed -n -f missing.sed src/long.py",
+        "sed -n '/value/w out.txt' src/long.py",
+        'sed -n -e 1,5p -e "$x" src/long.py',
+        "sed -n -e 1,5p -f script.sed src/long.py",
+    ],
+)
+def test_sed_classified_as_write_stays_broad_read(repo: Path, command: str) -> None:
+    (repo / "script.sed").write_text("w out.txt\n")
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sed -n 1,5p src/long.py",
+        'sed -i "$prog" src/long.py',
+        "sed -i 's/a/b/' src/long.py",
+    ],
+)
+def test_bounded_sed_reads_and_inplace_edits_are_not_broad_reads(repo: Path, command: str) -> None:
+    assert not broad_read_blocked(repo, command)
+
+
+def test_sed_read_operands_do_not_enter_write_scope(repo: Path) -> None:
+    known = event(repo, "sed -n '/value/w out.txt' src/long.py")
+    assert known["canonical_write_file_paths"] == ["out.txt"]
+    assert known["canonical_file_paths"] == ["out.txt"]
+    unresolved = event(repo, 'sed -n "${start},${end}p" src/long.py')
+    assert "canonical_file_paths" not in unresolved
+    assert unresolved["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_typed_outage_opens_sed_read_classified_as_write(repo: Path) -> None:
+    variables = turn(repo, "gcode grep VALUE src", OUTAGE, failed=True)
+    assert [record["action"] for record in variables["code_index_recoveries"]] == ["outage"]
+    assert not navigation_requires_index(
+        event(repo, 'sed -n "${start},${end}p" src/long.py'), variables
+    )
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         ("rg pattern web/dist/assets", False),
