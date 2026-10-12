@@ -42,6 +42,63 @@ from gobby.storage.sessions import SessionManager
 _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
+@pytest.mark.asyncio
+async def test_operator_dm_clears_topic_thread_without_detaching(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    from gobby.mcp_proxy.tools.communications import create_communications_registry
+    from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.utils.machine_id import require_machine_id
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    manager, channel, holder, adapter = operator_telegram
+    caller = SessionManager(temp_db).register(
+        external_id="topic-attached-assistant",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=str(sample_project["id"]),
+        agent_depth=1,
+    )
+    AgentDefinitionManager(temp_db).create(
+        name="assistant",
+        definition_json={
+            "name": "assistant",
+            "prompts": {"agent": "Assist the operator."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "operator_message_channels": [channel.name],
+        },
+        source="custom",
+    )
+    SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "assistant")
+    holder.id = caller.id
+    holder.transcript_path = None
+    manager.attach_conversation(channel.name, "topic:-100123:77", caller.id)
+    manager._thread_manager.track_thread(channel.id, caller.id, "77")
+    manager._outbound.start()
+    handler = create_communications_registry(manager, db=temp_db).get_tool("send_operator_message")
+    assert handler is not None
+    try:
+        with patch(
+            "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
+        ):
+            result = await handler(channel=channel.name, content="**Status**")
+        assert result["success"] is True
+        sent = adapter.send_message.call_args.args[0]
+        assert sent.session_id == caller.id
+        assert sent.metadata_json["platform_destination"] == "42"
+        assert sent.platform_thread_id is None
+        assert manager.attached_destination(channel.id, caller.id) == "topic:-100123:77"
+
+        reply = await manager.send_message(channel.name, "Topic reply", session_id=caller.id)
+        assert reply.status == "sent"
+        assert reply.metadata_json["platform_destination"] == "-100123"
+        assert reply.platform_thread_id == "77"
+    finally:
+        await manager._outbound.stop()
+
+
 @pytest.fixture
 def operator_telegram() -> tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock]:
     channel = make_channel(
