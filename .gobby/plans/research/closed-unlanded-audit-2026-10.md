@@ -1,8 +1,8 @@
 # Closed-task unlanded-commit audit, October 2026
 
-208 closed tasks reference 274 commits that are neither ancestors of the audited `0.5.0` tip nor patch-equivalent to its history. The initial proof pass found supersession evidence for all residual commits of 112 tasks and left 96 tasks for recovery review. The requested six-task semantic check identifies three missing corrections and three delivered/superseded results. The other 90 retain **missing linked revision, semantic supersession not proven**.
+208 closed tasks reference 274 commits that are neither ancestors of the audited `0.5.0` tip nor patch-equivalent to its history. The initial proof pass found supersession evidence for all residual commits of 112 tasks and left 96 tasks for recovery review. The requested six-task semantic check identifies three missing corrections and three delivered/superseded results. Of the other 90, **89** retain **missing linked revision, semantic supersession not proven**; **#23269 — Node bootstraps refuse the Python daemon** is confirmed missing and already tracked by #24075 — Land node-bootstrap refusal.
 
-Separately, 514 closed tasks reference 493 unavailable SHA strings. One additional task links a blob instead of a commit. These 515 tasks cannot be assessed as lost work from the local object store. The three groups do not overlap; the report covers all 723 exceptional tasks.
+Separately, 512 closed tasks reference 491 unavailable SHA strings. One additional task links a blob instead of a commit. These 513 tasks cannot be assessed as lost work from the local object store. The three groups do not overlap; the report covers all 721 exceptional tasks.
 
 ## Scope and counts
 
@@ -10,7 +10,7 @@ Separately, 514 closed tasks reference 493 unavailable SHA strings. One addition
 - Task snapshot: 2026-10-12T01:09:32.196764+00:00; obtained through `gobby-tasks:backup_tasks` to a temporary JSONL file. PostgreSQL task data came through MCP, not direct SQL or the operator tasks CLI.
 - 18,069 project task records; 17,762 closed tasks; **15,553 closed tasks with linked commits examined**.
 - 24,166 task/commit links; 21,797 distinct linked SHA strings; 18,810 distinct resolved commit objects. Short/full aliases account for the difference.
-- 20,401 linked SHA strings resolve to ancestors; 628 to patch-equivalent commits; 274 to unlanded commits; 493 are absent; one resolves to a blob.
+- 628 linked SHA strings resolve to patch-equivalent commits; 274 to unlanded commits; 491 are absent; one resolves to a blob. Two malformed comma-joined references are excluded from the absent count after their four component commits were verified as ancestors. The original ancestor-string total is omitted; raw inventory counts above remain unchanged.
 - Within the 274 unlanded commits, 153 have supersession evidence and 121 remain unproven. The 96 recovery-review tasks may also contain superseded revisions.
 - The task snapshot is fixed. Closures after its cutoff are outside the sweep. The six-task semantic addendum separately pins newer integration source.
 
@@ -29,11 +29,35 @@ Separately, 514 closed tasks reference 493 unavailable SHA strings. One addition
 
 **#23269 — Node bootstraps refuse the Python daemon**: linked revision `91a483db0d906938cd6adecc4c8f9ba89e90980d` is unlanded, with no upstream patch-ID match and a positive cherry result. It is held by `task-23269-node-refusal`. MCP task **#24075 — Land the node-bootstrap refusal** records that the refusal and its tests are absent and already owns the port to the post-lease-retirement lifecycle seam. This audit creates no duplicate landing task.
 
+## Review correction and lane-3-runbooks-4 check
+
+The independent review found two malformed linked reference strings. **#1130 — Implement handoff artifact context injection** links `4d1513f,e1f7fa4`; **#1356 — Fix premature stop counter to reset on tool calls** links `6923875,48f7811`. Each is a comma-joined pair, not an absent commit. Read-only `git merge-base --is-ancestor <component> 8eb6e7a8b568fc3eec51f0111689e124db2b34c1` returned exit zero for all four resolved commits:
+
+- `4d1513f789212d7cfd07beb08daf5639f70c14e8`
+- `e1f7fa4cfc7541754d5c079e77b119dddc855828`
+- `692387554225099f57f546bc1bd70c22b6fbbca5`
+- `48f781117f036f2020a164ef96069b7f5b9a5b88`
+
+Both tasks are landed and removed from the unavailable-object table. The corrected counts are **512 unavailable-object tasks / 491 absent strings / 721 exceptional tasks**. The 24,166 links and 21,797 distinct strings are the raw snapshot inventory, including these malformed strings; their ancestor-string aggregate is omitted. Neither task ledger was rewritten.
+
+The Orchestrator also requested a read-only check of two commits held by `lane-3-runbooks-4`. This does not retire the worktree or add previously unlinked commits to the sweep.
+
+| Commit / task | Audit coverage | Evidence and recovery conclusion |
+| --- | --- | --- |
+| `1e55ed055636d6b8807e37bbaeb14687f5c74ea9` — #23752, Merge Manager and Inbox Manager seat definitions | **Outside the original linked snapshot, but patch-equivalent to landed work** | Snapshot links are `44cc5e0d69`, `5e74dd758a`, `8be6418fa4`; this branch revision was not linked there. `git cherry <sweep-pin> 1e55ed0556 1e55ed0556^` returned `- 1e55ed055636d6b8807e37bbaeb14687f5c74ea9`. Both this commit and landed `5e74dd758a7c8cdbe6e2e0399e7a378d373aa1b1` have stable patch ID `26baee20de8cf48f6631115154113c0901fa9068`. The complete Inbox Manager role-text test patch landed; **no recovery needed**. |
+| `0d903330ac95fa7b802554ee13d38c796d2afedf` — #23754, spawn_agent resumes an existing provider thread for crew relaunch | **Included in the original unlanded table; superseded** | Later landed same-task `88fda9494010c7fdfad75c04d6bddede5038a42d` covers every one of its 14 changed paths and adds corrected relaunch lifecycle state. That commit is an ancestor of the sweep pin. Current source below retains provider resume propagation, relaunch preparation and rollback state preservation; **no recovery needed for this branch revision**. |
+
+Fresh source evidence for the second conclusion is pinned to `3ab433a9e8079fa48c1cc54aa7afda59659c51f7`, tree `43fe57cd499ae43c3107468b9e869d5ff72e73d5`, observed 2026-10-12 around 03:01 UTC:
+
+- `src/gobby/agents/spawn_executor_providers.py:458-464`, excerpt hash `1b74676c7b6e91ce93a58c3370d10f02cfe13a2cc0443b4ddefdca56049178f7`: `459|         cli="codex",`, `460|         resume_session_id=request.resume_session_id,`.
+- `src/gobby/agents/runtime_cleanup.py:44-66`, excerpt hash `cb824ac4c2355cac31bf17f1284f0722afab6d43832e46fdb5d642ded745a8b7`: `51|             preserve_session_state = bool(metadata and metadata.get("resume_existing_session"))`, `66|     if child_session_id and not preserve_session_state:`.
+- `src/gobby/agents/spawn.py:340-404`, excerpt hash `da89e8262a49a0272e9f8758a8cbd1206aa29476bcbb1ffd9b6b6c38638b596f`: `372|     relaunch: bool = False,`, `399|             relaunch_parent_session_id=parent_session_id if relaunch else None,`.
+
 ## Bounded semantic check of six recent tasks
 
 The Orchestrator requested these six checks before the report commit. Source evidence below is pinned separately to `0.5.0` commit `b3944b8da2e1d2bc98fd31cc25607e59a73cff4c`, tree `3231a99c5481055e5358366bc4b8e4b7dd966afe`, observed 2026-10-12 around 02:00 UTC. This addendum does not recompute the original ancestry/patch-ID sweep.
 
-Of the original 96 recovery-review tasks, these six resolve to **three with missing linked behavior/correction** and **three with delivered or intentionally superseded behavior**. The other 90 retain **missing linked revision, semantic supersession not proven**. The original 153/121 revision-proof counts describe the initial sweep; semantic conclusions here override the six tasks' recovery interpretation, without changing their unlanded SHA status.
+Of the original 96 recovery-review tasks, these six resolve to **three with missing linked behavior/correction** and **three with delivered or intentionally superseded behavior**. Of the other 90, **89** retain **missing linked revision, semantic supersession not proven**; **#23269 — Node bootstraps refuse the Python daemon** is confirmed missing and already tracked by #24075 — Land node-bootstrap refusal. The original 153/121 revision-proof counts describe the initial sweep; semantic conclusions here override the six tasks' recovery interpretation, without changing their unlanded SHA status.
 
 | Task | Semantic result at addendum pin | Missing work / delivered evidence |
 | --- | --- | --- |
@@ -44,7 +68,7 @@ Of the original 96 recovery-review tasks, these six resolve to **three with miss
 | #23519 — Shared-token cutover: gdaemon validates keys and Python trusts only the front door | **Core authentication delivered; linked test-isolation correction missing** | Rust strips caller identity, validates an API key and stamps identity with its secret; Python verifies that secret. Missing residual `cc5581cd4f46a77503e2bc93b0356069eac14e72` adds early pytest home isolation before plugin bootstrap probes; current conftest has no such configuration hook. `crates/gdaemon/src/front_door/auth.rs:126-163`; `src/gobby/servers/auth_service.py:191-206`; `tests/conftest.py:46-84`; `tests/fixtures/postgres.py:219-229`. |
 | #23626 — gclient chrome fixes: lane-title ticker, Help wheel scroll, header/tab colours, theme rename | **Delivered; residual merge is superseded release bookkeeping** | Pinned session ref plus ticking title, dialog wheel routing, distinct menu-bar role and Midnight moss are present. `80d5923ae04c0432043a1706a6ea87bdd74f648a` resolves only 0.1.28-versus-0.1.27 version conflicts; later source/release versions supersede that decision. `crates/gclient/src/ui/sidebar_rows.rs:438-473`; `app/live_loop/mouse/wheel.rs:17-55`; `ui/menu_bar.rs:60-73`; `theme/catalog.rs:135-139`. |
 
-Recovery tasks filed by the Orchestrator: **#24084 — Recover reopen memory withdrawal** and **#24085 — Recover artifact-reference command exclusion** in Lane 1; **#24086 — Recover early pytest GOBBY_HOME isolation** in Lane 3. The already tracked **#24075 — Land node-bootstrap refusal** remains separate.
+Recovery tasks filed by the Orchestrator: **#24084 — Recover #23201 reopen memory review** and **#24085 — Recover artifact-reference command exclusion** in Lane 1; **#24086 — Recover early pytest GOBBY_HOME isolation** in Lane 3. The already tracked **#24075 — Land node-bootstrap refusal** remains separate.
 
 ### Evidence: missing reopen withdrawal
 
@@ -292,7 +316,7 @@ No missing chrome behavior was identified from the residual merge. Installation/
 | #23182 — Runner lifecycle and shutdown tests log ERRORs from mis-shaped mocks | 2026-10-01T12:59:17.731073+00:00 | `2bff65e61cf980e11f941de9e5e19b5885952ae4`, `a4ba740b17837103f7ae5351c5f10b6d656375dc`, `ba18e3174ef0afa76b8ef7865b62eefd9a75da01` | No captured local/remote branch | No captured holding worktree | Superseded; per-commit evidence below |
 | #23192 — Reconcile gdaemon front-door plan with the #23098 contract-corpus slice plan | 2026-10-01T18:08:19.497754+00:00 | `3f8d7baf3bedb75d3449e5154d40b2170864e54e`, `a30789fbec328ac6bc41519b2862c5c0ef91d81d`, `a5d275a0591cf3bc8f572b41edd6741086e3da7a`, `aaf14701926e9f7a48951c6a2861adf00211a8de`, `b9015c8be267fbe3c2e05f3e108f8623f755a81e`, `f36e62274aeecd94d2ee24307f90f6d1e612e92f` | No captured local/remote branch | No captured holding worktree | Missing linked revision, semantic supersession not proven |
 | #23198 — Stop unsandboxed cargo fingerprint thrash between operator-shell and agent builds | 2026-10-01T13:48:16.721716+00:00 | `af3423ce740e1c5f7da2f7460d3c95fcd3c6a686` | No captured local/remote branch | No captured holding worktree | Superseded; per-commit evidence below |
-| #23201 — Reopening a task leaves its post-close memory review demanded by the stop gate | 2026-10-01T13:39:55.475812+00:00 | `81a71a4d8088028f4dabea73cb209109bfb3f19c` | refs/heads/task-23201-reopen-memory-review | No captured holding worktree | Confirmed missing reopen withdrawal; recovery #24084 — Reopen memory withdrawal |
+| #23201 — Reopening a task leaves its post-close memory review demanded by the stop gate | 2026-10-01T13:39:55.475812+00:00 | `81a71a4d8088028f4dabea73cb209109bfb3f19c` | refs/heads/task-23201-reopen-memory-review | No captured holding worktree | Confirmed missing reopen withdrawal; recovery #24084 — Recover #23201 reopen memory review |
 | #23208 — Epoch adoption, single-owner supervision, and restart preservation | 2026-10-08T20:50:05.024786+00:00 | `3552b143917dfb30286396de36574434ae982094`, `ce1d4061858ef1df3e064881a57433e22987e119` | No captured local/remote branch | No captured holding worktree | Superseded; per-commit evidence below |
 | #23225 — Decompose the near-ceiling gclient files | 2026-10-06T07:56:38.063136+00:00 | `3a2f06df003ed314bcdca376c86812c54d97ad56` | No captured local/remote branch | No captured holding worktree | Missing linked revision, semantic supersession not proven |
 | #23228 — Typed input and control path | 2026-10-06T02:41:06.421420+00:00 | `ac8f1ae9f65e68da2b6762300d1c35a8bb6d5056`, `f1a0b777dbafd323e5b0d4fe25a84024f0355276` | refs/heads/prep-23229-attach-jobs, refs/heads/task-23228-typed-input | No captured holding worktree | Superseded; per-commit evidence below |
@@ -2855,7 +2879,7 @@ Landed evidence: `cf45a0369d34283e0708aacc4c8012363fdd2518` (#23985 — Shell at
 
 ## Unavailable objects: every affected closed task
 
-These 514 tasks contain 493 distinct SHA strings absent from the main checkout object store. An absent object cannot be tested for ancestry/equivalence or mapped to a holding branch/worktree. Verdict for every row: **object unavailable; landed/superseded/missing content not determinable**.
+These 512 tasks contain 491 distinct SHA strings absent from the main checkout object store. An absent object cannot be tested for ancestry/equivalence or mapped to a holding branch/worktree. Verdict for every row: **object unavailable; landed/superseded/missing content not determinable**.
 
 | Task | Closed (UTC) | Unavailable linked SHAs | Holding branch/worktree |
 | --- | --- | --- | --- |
@@ -2863,14 +2887,12 @@ These 514 tasks contain 493 distinct SHA strings absent from the main checkout o
 | #649 — Implement checkbox extractor | 2026-01-11T01:26:15.124636+00:00 | `329e314` | Cannot resolve: object absent |
 | #651 — Detect parallelizable phases from structure | 2026-01-11T01:26:15.124853+00:00 | `43ba26d` | Cannot resolve: object absent |
 | #1078 — Fix pre-commit mypy type: ignore conflicts | 2026-01-11T01:26:14.926395+00:00 | `23695b6` | Cannot resolve: object absent |
-| #1130 — Implement handoff artifact context injection | 2026-01-25T01:43:54.000000+00:00 | `4d1513f,e1f7fa4` | Cannot resolve: object absent |
 | #1136 — Implement MergeResolver with tiered strategy | 2026-01-11T01:26:15.209703+00:00 | `266c5f2` | Cannot resolve: object absent |
 | #1193 — Implement hash-based caching for compression results | 2026-01-11T01:26:16.056314+00:00 | `ed44be5` | Cannot resolve: object absent |
 | #1194 — Implement compress() method with context-aware ratios | 2026-01-11T01:26:16.054632+00:00 | `ed44be5` | Cannot resolve: object absent |
 | #1195 — Implement fallback truncation for graceful degradation | 2026-01-11T01:26:16.055591+00:00 | `ed44be5` | Cannot resolve: object absent |
 | #1196 — Update compression __init__.py to export TextCompressor | 2026-01-11T01:26:16.055948+00:00 | `24f5553` | Cannot resolve: object absent |
 | #1355 — Decompose mcp.py routes using Strangler Fig pattern | 2026-01-11T01:26:14.886043+00:00 | `5a5d346` | Cannot resolve: object absent |
-| #1356 — Fix premature stop counter to reset on tool calls | 2026-01-25T01:43:54.000000+00:00 | `6923875,48f7811` | Cannot resolve: object absent |
 | #1377 — Run full test suite and document changes | 2026-01-25T01:43:54.000000+00:00 | `5a5d346` | Cannot resolve: object absent |
 | #1490 — Add terminal context output to GeminiAdapter | 2026-01-11T01:26:14.941308+00:00 | `98b5260` | Cannot resolve: object absent |
 | #1935 — Fix todo_list KeyError in session summary generation | 2026-01-12T05:45:27.944721+00:00 | `03ca4c4e` | Cannot resolve: object absent |
