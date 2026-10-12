@@ -208,8 +208,6 @@ async def spawn_agent_impl(
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-    # Structural failures block planning roles. Authoring roles may continue
-    # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
     gate_result = await asyncio.to_thread(
