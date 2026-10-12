@@ -1,6 +1,8 @@
 //! gcore grant client: handshake, cache, renewal, and typed errors.
 
 mod acquisition;
+#[cfg(feature = "ai")]
+pub(crate) use acquisition::acquire_with_reachability;
 mod bundle;
 mod cache;
 pub mod fixture;

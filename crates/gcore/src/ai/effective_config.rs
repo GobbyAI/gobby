@@ -86,6 +86,7 @@ pub fn daemon_mode_layers_at(
             }
         })?;
         let started = Instant::now();
+        let mut acquisition_reachable = None;
         let settings = (|| {
             let mut request = crate::grant::AcquireRequest::from_process_for_project_id(
                 &grant.principal.project_id,
@@ -93,7 +94,12 @@ pub fn daemon_mode_layers_at(
             request.home = Some(gobby_home);
             request.daemon_url = Some(base_url.to_owned());
             request.deadline = Some(EFFECTIVE_CONFIG_TIMEOUT);
-            let acquired = crate::grant::acquire_with(&request)?;
+            let acquired = crate::grant::acquire_with_reachability(&request).map_err(
+                |(error, reachable)| {
+                    acquisition_reachable = reachable;
+                    error
+                },
+            )?;
             match acquired.settings {
                 Some(settings) => Ok(settings),
                 None if acquired.daemon_reachable => {
@@ -124,12 +130,7 @@ pub fn daemon_mode_layers_at(
                 // Acquisition retains a stale grant's schema error offline. For
                 // config consumers, an unavailable refresh is a transport failure.
                 crate::grant::GrantError::SchemaMismatch { .. }
-                    if !crate::grant::daemon_reachable(
-                        base_url,
-                        EFFECTIVE_CONFIG_TIMEOUT
-                            .saturating_sub(started.elapsed())
-                            .min(Duration::from_millis(150)),
-                    ) =>
+                    if acquisition_reachable == Some(false) =>
                 {
                     EffectiveConfigError::Transport {
                         kind: EffectiveConfigTransportKind::Unreachable,
