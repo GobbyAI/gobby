@@ -11,8 +11,11 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.sessions.processor import SessionMessageProcessor
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from tests._timing import wait_for_async_condition
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +27,12 @@ class MockWebSocketServer:
 
     async def broadcast(self, message: dict[str, Any]) -> None:
         self.broadcasted_messages.append(message)
+
+    async def broadcast_session_usage_updated(self, message: dict[str, Any]) -> None:
+        await self.broadcast(message)
+
+    async def broadcast_token_event(self, message: dict[str, Any]) -> None:
+        await self.broadcast(message)
 
     # TODO: Exercise MockWebSocketServer.feed_attached_session_tts in future TTS E2E coverage.
     async def feed_attached_session_tts(
@@ -37,12 +46,28 @@ class MockWebSocketServer:
 
 
 @pytest.fixture
-async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, Any]]:
+async def env(
+    tmp_path: Path,
+    hub_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[dict[str, Any]]:
     db = hub_db
+    home = tmp_path / "gobby-home"
+    files_home = home / "files"
+    files_home.mkdir(parents=True)
+    bootstrap = home / "bootstrap.yaml"
+    bootstrap.write_text(f"datastore_mode: local\nfiles_home: {files_home}\n", encoding="utf-8")
+    bootstrap.chmod(0o600)
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    project = isolated_checkout_factory(db, "Test Project", root=tmp_path)
     # Mock WebSocket
     ws = MockWebSocketServer()
 
-    processor = SessionMessageProcessor(db, poll_interval=0.1, websocket_server=ws)
+    session_manager = SessionManager(db)
+    processor = SessionMessageProcessor(
+        db, poll_interval=0.1, websocket_server=ws, session_manager=session_manager
+    )
 
     # Configure mock config
     mock_config = MagicMock()
@@ -53,33 +78,32 @@ async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, A
     # Memory config must be None (not MagicMock) so default MemoryConfig is used
     mock_config.memory = None
 
-    # Create HookManager
-    hm = HookManager(
-        daemon_host="test",
-        message_processor_resolver=lambda: processor,
-        config=mock_config,
-        database=db,
-    )
-
-    # Force daemon status to be ready for tests
-    with patch.object(
-        hm,
-        "_get_cached_daemon_status",
-        MagicMock(return_value=(True, "OK", "running", None)),
-    ):
-        # Insert a valid project for FK constraints
-        db.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, %s, %s)",
-            ("proj-1", "Test Project", datetime.now(), datetime.now()),
+    # Keep daemon health checks isolated while exercising real hook/session handling.
+    with patch("gobby.hooks.factory.HealthMonitor", autospec=True) as monitor_type:
+        monitor_type.return_value.get_cached_status.return_value = (True, "OK", "running", None)
+        hm = HookManager(
+            daemon_host="test",
+            message_processor_resolver=lambda: processor,
+            config=mock_config,
+            database=db,
+            session_manager=session_manager,
         )
-
         # Start processor
         await processor.start()
-
-        yield {"hm": hm, "proc": processor, "ws": ws, "db": db, "tmp": tmp_path}
-
-        await processor.stop()
-        hm.shutdown()
+        try:
+            yield {
+                "hm": hm,
+                "proc": processor,
+                "ws": ws,
+                "db": db,
+                "tmp": tmp_path,
+                "project_id": project.project.id,
+                "machine_id": project.machine_id,
+                "reader": TranscriptReader(session_manager),
+            }
+        finally:
+            await processor.stop()
+            await hm.shutdown_async()
 
 
 @pytest.mark.e2e
@@ -103,10 +127,26 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
         session_id="cli-session-1",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(),
-        data={"transcript_path": str(transcript_file), "cwd": str(tmp), "project_id": "proj-1"},
+        machine_id=env["machine_id"],
+        data={
+            "transcript_path": str(transcript_file),
+            "cwd": str(tmp),
+            "project_id": env["project_id"],
+        },
     )
 
-    hm.handle(start_event)
+    response = await hm.handle_async(start_event)
+    assert response.decision == "allow"
+    # Ordinary startup is stateless; first activity materializes the session.
+    prompt_event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="cli-session-1",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(),
+        machine_id=env["machine_id"],
+        data={**start_event.data, "prompt": "Hello E2E"},
+    )
+    await hm.handle_async(prompt_event)
 
     # Verify registration in DB
     row = db.fetchone("SELECT id FROM sessions WHERE external_id = %s", ("cli-session-1",))
@@ -125,22 +165,19 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
         f.write(msg1 + "\n")
 
     await wait_for_async_condition(
-        lambda: len(
-            db.fetchall("SELECT * FROM session_messages WHERE session_id = %s", (session_id,))
-        )
-        >= 1,
+        lambda: any(message["type"] == "session_message" for message in ws.broadcasted_messages),
         timeout=2.0,
-        description="stored session message",
+        description="processed session message",
     )
 
-    # 5. Verify DB Storage
-    msgs = db.fetchall("SELECT * FROM session_messages WHERE session_id = %s", (session_id,))
+    # Verify transcript-backed message storage through the current reader API.
+    msgs = await env["reader"].get_messages(session_id)
     assert len(msgs) == 1
     assert msgs[0]["content"] == "Hello E2E"
 
     # 6. Verify WebSocket Broadcast
     assert len(ws.broadcasted_messages) >= 1
-    last_msg = ws.broadcasted_messages[-1]
+    last_msg = [m for m in ws.broadcasted_messages if m["type"] == "session_message"][-1]
     assert last_msg["type"] == "session_message"
     assert last_msg["session_id"] == session_id
     assert last_msg["message"]["content"] == "Hello E2E"
@@ -151,11 +188,12 @@ async def test_full_lifecycle(env: dict[str, Any]) -> None:
         session_id="cli-session-1",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(),
+        machine_id=env["machine_id"],
         metadata={"_platform_session_id": session_id},
         data={"transcript_path": str(transcript_file)},
     )
 
-    hm.handle(end_event)
+    await hm.handle_async(end_event)
 
     # 8. Verify Unregistration (processor loop keeps running but shouldn't track session)
     assert session_id not in env["proc"]._active_sessions
