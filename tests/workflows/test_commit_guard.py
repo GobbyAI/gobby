@@ -1543,6 +1543,7 @@ def test_shell_cd_combines_relative_navigation_with_git_c() -> None:
     [
         'cd "$W" && git commit --only -m x -- foreign.txt',
         'git -C "$W" commit --only -m x -- foreign.txt',
+        'git --work-tree "$(pwd)" commit -m x',
     ],
 )
 async def test_dynamic_cwd_refuses_without_git_or_operational_warning(

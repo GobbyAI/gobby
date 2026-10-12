@@ -71,3 +71,51 @@ def test_real_nested_commit_remains_unverified(command: str) -> None:
     invocations = parse_git_commit_invocations(command)
     assert len(invocations) == 1
     assert invocations[0].cwd_unverified is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git --git-dir "$(pwd)" commit -m x',
+        'git --work-tree "$(pwd)" commit -m x',
+        'git --work-tree="$(pwd)" commit -m x',
+        'git -C "$(pwd)" commit -m x',
+        'git -C "`pwd`" commit -m x',
+        'git -C="$(pwd)" commit -m x',
+        'cd "$(pwd)" && git commit -m x',
+        "git -C $(echo sub) commit -m x",
+        'git commit -m x -- "$(cat files)"',
+        'git commit -m x -- "$F"',
+        'eval "cd /x"; git commit -m x -- a.py',
+        "eval 'cd /x'; git commit -m x -- a.py",
+        'source "$(echo f)"; git commit -m x -- a.py',
+        ". script.sh; git commit -m x -- a.py",
+    ],
+)
+def test_dynamic_commit_targets_refuse_before_ownership_lookup(command: str) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert len(invocations) == 1
+    assert invocations[0].cwd_unverified is True
+
+
+@pytest.mark.parametrize(
+    "opening,closing", [("{ ", "; }"), ("if true; then ", "; fi"), ("echo $(", ")")]
+)
+def test_deep_shell_groups_refuse_without_recursing(opening: str, closing: str) -> None:
+    command = opening * 600 + "git commit -m nested" + closing * 600
+    invocations = parse_git_commit_invocations(command)
+    assert len(invocations) == 1
+    assert invocations[0].cwd_unverified is True
+
+
+def test_unquoted_data_heredoc_still_executes_substitutions() -> None:
+    invocations = parse_git_commit_invocations("cat <<EOF\n$(git commit -m q)\nEOF")
+    assert len(invocations) == 1
+    assert invocations[0].cwd_unverified is True
+
+
+@pytest.mark.parametrize("argument", ['-m "eval"', '-m "source"', "-m x -- ."])
+def test_navigation_names_in_commit_data_remain_literal(argument: str) -> None:
+    invocations = parse_git_commit_invocations(f"git commit {argument}")
+    assert len(invocations) == 1
+    assert invocations[0].cwd_unverified is False
