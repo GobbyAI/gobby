@@ -144,6 +144,8 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             marker = (
                 f"__gobby_process_input_{len(expansions)}__"
                 if command.startswith("<(", index)
+                else f"__gobby_process_output_{len(expansions)}__"
+                if command.startswith(">(", index)
                 else "__gobby_expansion__"
             )
             expansions.append(command[start:end])
@@ -676,6 +678,30 @@ def _cat_stdin(words: list[str]) -> bool:
     )
 
 
+def _process_output_to_shell(
+    segment: list[ShellToken],
+    expansions: list[str],
+    depth: int,
+    dialect: ShellDialect,
+    *,
+    python: bool = False,
+) -> bool:
+    """Treat stdout redirected to a process substitution like a pipeline."""
+    for index, token in enumerate(segment[1:], 1):
+        redirect = segment[index - 1]
+        match = re.fullmatch(r"__gobby_process_output_([0-9]+)__", token.value)
+        if match is None or redirect.quoted or redirect.value not in {">", "1>"}:
+            continue
+        expansion_index = int(match[1])
+        if expansion_index >= len(expansions):
+            continue
+        prepared, _ = _prepare(expansions[expansion_index], depth + 1)
+        tokens = scan_shell_command("| " + prepared, dialect=dialect).tokens
+        if _piped_to_shell(tokens, 0, python=python):
+            return True
+    return False
+
+
 def _process_input_consumer(
     segment: list[ShellToken],
     words: list[str],
@@ -733,9 +759,15 @@ def _blocked(
             name = words[0].rsplit("/", 1)[-1]
             # A named shell decodes the script it runs in its own dialect.
             inner: ShellDialect = "zsh" if name == "zsh" else "bash"
-            piped = output_consumer == "shell" or _piped_to_shell(scan.tokens, end)
-            python_piped = output_consumer == "python" or _piped_to_shell(
-                scan.tokens, end, python=True
+            piped = (
+                output_consumer == "shell"
+                or _piped_to_shell(scan.tokens, end)
+                or _process_output_to_shell(segment, expansions, depth, dialect)
+            )
+            python_piped = (
+                output_consumer == "python"
+                or _piped_to_shell(scan.tokens, end, python=True)
+                or _process_output_to_shell(segment, expansions, depth, dialect, python=True)
             )
             producer_consumer = output_consumer
             if producer_consumer is None:

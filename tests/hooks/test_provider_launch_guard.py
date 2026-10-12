@@ -83,6 +83,33 @@ def test_process_substitution_data_stays_allowed(command: str) -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "echo 'claude -p hi' > >(bash)",
+        "printf '%s' 'codex exec hi' > >(sh)",
+        "echo 'claude -p hi' 1> >(env bash)",
+        "echo 'import os; os.system(\"claude -p hi\")' > >(python3)",
+        "cat <<'EOF' > >(bash)\nclaude -p hi\nEOF\n",
+    ],
+)
+def test_output_process_substitution_blocks_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'claude -p hi' > >(cat)",
+        "echo 'echo harmless' > >(bash)",
+        "echo 'claude -p hi' 2> >(bash)",
+        "echo 'import os; os.system(\"claude\")' > >(python3 -c 'print(1)')",
+    ],
+)
+def test_output_process_substitution_data_stays_allowed(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "bash 0<<<'claude -p hi'",
         "sh 0<<<'codex exec hi'",
         "python3 0<<<'import os; os.system(\"claude -p hi\")'",
