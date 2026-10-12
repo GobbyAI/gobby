@@ -1339,6 +1339,14 @@ deferral:
   until the node confirms (2.6.6). `workspace.remove` is idempotent and names
   no run. The writer closed the matching run-side gap: 2.6's run sweep settles
   an active remote run whose terminals have all exited (2.6.7).
+- 2026-10-12: Consensus on the revision for Josh's review. Plan Adversary
+  gobby#16491 and Plan Writer gobby#16490 agree that HM-F12 and HM-F13 are
+  resolved at 88619241b1. The sweep pages every active run, collects them
+  before settling, and re-reads each candidate. No blocking finding remains.
+  Coordinator gobby#15977 raised no objection to the five readings. Those
+  readings are: no separate machine list, D3.1 and D1 deferred as
+  needs-planning, the hub module for remote rows, and the row written before
+  `workspace.prepare`.
 
 ## V2: Verification
 `kind: verification`
