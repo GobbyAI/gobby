@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,12 +62,13 @@ def effect(db: HubDatabase) -> RuleEffect:
     return body.resolved_effects[0]
 
 
+@pytest.mark.usefixtures("postgres_database_url")
 def test_selector_cases_reuse_setup() -> None:
     """Observe real fixture setup across cases without relying on test ordering."""
     result = subprocess.run(
         [
-            "uv",
-            "run",
+            sys.executable,
+            "-m",
             "pytest",
             f"{Path(__file__).resolve()}::test_blocks_mutating_task_cli_commands",
             "--setup-show",
