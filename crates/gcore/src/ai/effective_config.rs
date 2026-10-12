@@ -86,12 +86,26 @@ pub fn daemon_mode_layers_at(
                 reason: "managed grant file could not be loaded",
             }
         })?;
-        let settings = crate::config::fetch_machine_config(
-            base_url,
-            &grant,
-            token.as_deref(),
-            EFFECTIVE_CONFIG_TIMEOUT,
-        )
+        let settings = (|| {
+            let started = Instant::now();
+            let mut request = crate::grant::AcquireRequest::from_process_for_project_id(
+                &grant.principal.project_id,
+            );
+            request.home = Some(gobby_home);
+            request.daemon_url = Some(base_url.to_owned());
+            request.deadline = Some(EFFECTIVE_CONFIG_TIMEOUT);
+            let acquired = crate::grant::acquire_with(&request)?;
+            let remaining = EFFECTIVE_CONFIG_TIMEOUT
+                .checked_sub(started.elapsed())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or(crate::grant::GrantError::Timeout)?;
+            crate::config::fetch_machine_config(
+                base_url,
+                &acquired.bundle,
+                token.as_deref(),
+                remaining,
+            )
+        })()
         .map_err(|error| {
             log::warn!("managed runtime config fetch failed: {}", error.cli_code());
             match error {
