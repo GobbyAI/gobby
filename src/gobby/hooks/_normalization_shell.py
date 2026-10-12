@@ -10,6 +10,11 @@ from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c
 from gobby.hooks._case_syntax import CaseSyntax, _balanced_parens_end
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY, strip_shell_wrappers
 from gobby.hooks._normalization_paths import _append_unique_path
+from gobby.hooks._shell_syntax import (
+    _scan_unquoted_shell_operator,
+    joined_prefix_end,
+    skip_line_continuations,
+)
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
 # several adapters and transcripts use shell aliases that should behave the same.
@@ -51,9 +56,6 @@ _FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 # opening files, so it is neither a mutating redirection nor a segment separator.
 # The scan variant's lookahead keeps ``>&2file`` (bash: redirect to the *file*
 # ``2file``) out of fd-dup territory: the fd digits must end at a delimiter.
-_FD_DUP_SCAN_RE = re.compile(
-    r"[<>](?:\\\n)*&(?:\\\n)*(?:\d(?:(?:\\\n)*\d)*|-)(?=(?:\\\n)*(?:$|[\s;&|<>]))"
-)
 _FD_DUP_TOKEN_RE = re.compile(r"^\d*[<>]&(?:\d+|-)$")
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -65,7 +67,7 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 # positional parameter (`$1`), or special parameter — anything expanded at runtime.
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
 # `$(cmd)` (but not arithmetic `$((`) or a backtick substitution: commands that run.
-_COMMAND_SUBSTITUTION = re.compile(r"\$\((?!\()|`")
+_COMMAND_SUBSTITUTION = re.compile(r"\$(?:\\\n)*\((?!(?:\\\n)*\()|`")
 _MAX_SUBSTITUTION_DEPTH = 24
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
     r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
@@ -207,6 +209,9 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
                 current.append(char)
                 escaped = False
             elif char == "\\":
+                if command.startswith("\\\n", index):
+                    index += 2
+                    continue
                 quoted = True
                 escaped = True
             elif char == '"':
@@ -214,7 +219,9 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             elif (close := _quoted_substitution_close(command, index)) is not None:
                 # Bash runs a substitution inside double quotes too; its body is
                 # scanned on its own so heredocs and newlines keep the word whole.
-                body_start = index + (1 if char == "`" else 2)
+                body_start = (
+                    index + 1 if char == "`" else skip_line_continuations(command, index + 1) + 1
+                )
                 quoted_substitution_redirects.extend(
                     _substitution_output_redirects(command, body_start, close)
                 )
@@ -308,7 +315,7 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             # Only a whole unquoted digit word adjacent to < or > is an IO_NUMBER.
             if (
                 operator[0] in "<>"
-                and command[index : index + 2] not in {"<(", ">("}
+                and joined_prefix_end(command, index, operator[0] + "(") is None
                 and current
                 and not quoted
                 and heredoc_operator is None
@@ -358,8 +365,8 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
     Returns None when nothing opens here or the construct never closes, so the
     caller falls back to ordinary word scanning.
     """
-    if command.startswith("$((", index):
-        return _balanced_parens_end(command, index + 1)
+    if joined_prefix_end(command, index, "$((") is not None:
+        return _balanced_parens_end(command, skip_line_continuations(command, index + 1))
     if command[index] in "?*+@!" and command.startswith("(", index + 1):
         return _balanced_parens_end(command, index + 1)
     if not word_start:
@@ -419,7 +426,8 @@ def _quoted_substitution_close(command: str, index: int) -> int | None:
         return None
     backtick = command[index] == "`"
     try:
-        return _substitution_end(command, index + (1 if backtick else 2), backtick, 0)
+        start = index + 1 if backtick else skip_line_continuations(command, index + 1) + 1
+        return _substitution_end(command, start, backtick, 0)
     except ValueError:
         return None
 
@@ -474,9 +482,11 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
         if quote in {"'", "$'"}:
             if char == "'":
                 quote = ""
-        elif text.startswith("$(", index) or char == "`":
+        elif (opening := joined_prefix_end(text, index, "$(")) is not None or char == "`":
             tick = char == "`"
-            index = _substitution_end(text, index + (1 if tick else 2), tick, depth + 1) + 1
+            start_body = index + 1 if tick else opening
+            assert start_body is not None
+            index = _substitution_end(text, start_body, tick, depth + 1) + 1
             line.append("__gobby_expansion__")
             continue
         elif char in "\"'":
@@ -618,46 +628,6 @@ def extract_heredoc_bodies(command: str) -> list[str]:
     except ValueError:
         return []
     return bodies
-
-
-def _scan_unquoted_shell_operator(command: str, index: int) -> tuple[str, int] | None:
-    char = command[index]
-    if char == "\n":
-        return "\n", 1
-    # Every operator opens with one of these; the scanner probes
-    # each character, so skip the regex and prefix checks for the rest.
-    if char not in ";&|<>":
-        return None
-    fd_dup = _FD_DUP_SCAN_RE.match(command, index)
-    if fd_dup:
-        raw = fd_dup.group(0)
-        return raw.replace("\\\n", ""), len(raw)
-    for operator in (
-        "<<<",
-        "<<-",
-        "&>>",
-        "&&",
-        "||",
-        "<<",
-        ">>",
-        "&>",
-        ";",
-        "|",
-        "&",
-        "<",
-        ">&",
-        ">",
-    ):
-        end = index
-        for expected in operator:
-            while command.startswith("\\\n", end):
-                end += 2
-            if end == len(command) or command[end] != expected:
-                break
-            end += 1
-        else:
-            return operator, end - index
-    return None
 
 
 def shell_token_values(tokens: list[ShellToken]) -> list[str]:
