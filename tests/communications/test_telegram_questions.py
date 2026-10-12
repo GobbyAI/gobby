@@ -179,14 +179,14 @@ async def test_topic_feedback_preserves_thread_without_impersonating_target(
     task = await harness.start()
     assert harness.messages[0].metadata_json["thread_id"] == "117"
     callback = harness.callback(0)
-    callback.metadata_json["message_thread_id"] = 117
+    callback.metadata_json["message_thread_id"] = "117"
     assert await harness.controller.handle("telegram", callback)
     await task
     assert await harness.controller.handle("telegram", callback)
     feedback = harness.messages[-1]
     assert feedback.content == "This question is already resolved."
     assert feedback.session_id is None
-    assert feedback.metadata_json == {"platform_destination": "42", "thread_id": 117}
+    assert feedback.metadata_json == {"platform_destination": "42", "thread_id": "117"}
 
 
 @pytest.mark.asyncio
