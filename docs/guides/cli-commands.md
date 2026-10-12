@@ -370,18 +370,21 @@ Build and activate one coherent set of the three schema-aware Rust binaries from
 a Gobby source checkout:
 
 ```bash
-gobby cutover [--path PATH] [--allow-dirty]
+gobby cutover [--path PATH] [--allow-dirty] [--wait]
 ```
 
 The command runs one locked release build for `gcode`, `gdaemon`, and `ghook`,
-then promotes all three through the shared workspace installer. That
-path signs staged binaries when required, installs through new inodes, writes
+proves the candidate, and stops the running daemon before promoting all three
+through the shared workspace installer. A refused stop leaves the installed
+binaries and identity pin unchanged. The installer signs staged binaries when
+required, installs through new inodes, writes
 version and install sidecars, and writes the installed schema identity pin only
-after all three binaries promote. Before restart, cutover verifies that the exact
-`gdaemon` resolved for daemon startup matches the installed pin; a mismatch
+after all three binaries promote. Before starting the daemon, cutover verifies
+that the exact `gdaemon` resolved for daemon startup matches the installed pin; a mismatch
 fails closed with the three-binary rebuild remedy. Promotion failures name the
 members already promoted and those still unpromoted. Cutover does not claim to
-restore binaries after a partial promotion.
+restore binaries after a partial promotion. A promotion or verification failure
+leaves the daemon stopped; resolve the reported failure, then run `gobby start`.
 
 The command refuses before it builds when the schema inputs carry uncommitted
 changes — `crates/gcore/assets/schema`, `crates/gcore/src/schema`, and

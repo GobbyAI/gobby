@@ -726,3 +726,50 @@ def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
     assert post.call_args.kwargs["params"]["restart_supervisor"] == "true"
     assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths} == before
     started.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["promotion", "directory", "verification"])
+def test_post_stop_failure_reports_stopped_daemon_and_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    events: list[str] = []
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        events.append(stage)
+        if stage == "promotion":
+            raise bin_set_coherence.BinarySetCoherenceError("partial promotion failed")
+        if stage == "directory":
+            raise OSError("cannot create binary directory")
+        raise cutover_module.CutoverError("installed identity mismatch")
+
+    def stop() -> bool:
+        events.append("stop")
+        return True
+
+    target = "_verify_restart_target" if stage == "verification" else "promote_workspace_binary_set"
+    monkeypatch.setattr(cutover_module, target, fail)
+    started = Mock()
+
+    with pytest.raises(cutover_module.CutoverError) as error:
+        cutover_module.run_cutover(
+            tmp_path,
+            tmp_path / "bin",
+            stop_daemon=stop,
+            start_daemon=started,
+            start_refusal=lambda _candidate: None,
+        )
+
+    assert "The daemon is stopped" in str(error.value)
+    assert "After resolving this failure, run `gobby start`" in str(error.value)
+    expected_error = {
+        "promotion": "partial promotion failed",
+        "directory": "cannot create binary directory",
+        "verification": "installed identity mismatch",
+    }[stage]
+    assert expected_error in str(error.value)
+    assert error.value.__cause__ is not None
+    assert events == (
+        ["stop", "promote", "verification"] if stage == "verification" else ["stop", stage]
+    )
+    started.assert_not_called()
