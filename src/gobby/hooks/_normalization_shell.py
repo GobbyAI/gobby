@@ -873,7 +873,7 @@ def _rebase_navigation_shell_paths(paths: list[str], cwd: str | None) -> list[st
 
 
 def _apply_cd(cwd: str | None, target: str) -> str:
-    if target.startswith("/"):
+    if target.startswith(("/", "~")):
         return posixpath.normpath(target)
     if not cwd:
         return posixpath.normpath(target)
