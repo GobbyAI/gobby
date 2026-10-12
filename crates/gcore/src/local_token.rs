@@ -157,9 +157,9 @@ mod tests {
         let home = tempfile::tempdir()?;
         let path = home.path().join("bootstrap.yaml");
         std::fs::write(&path, "api_key: first-key\n")?;
-        assert_eq!(super::read_api_key_at(home.path())?, "first-key");
+        assert!(super::read_api_key_at(home.path())? == "first-key");
         std::fs::write(&path, "api_key: second-key\n")?;
-        assert_eq!(super::read_api_key_at(home.path())?, "second-key");
+        assert!(super::read_api_key_at(home.path())? == "second-key");
         for contents in [
             "api_key: ''\n",
             "api_key: null\n",
@@ -170,7 +170,9 @@ mod tests {
             assert!(super::read_api_key_at(home.path()).is_err(), "{contents}");
         }
         std::fs::remove_file(&path)?;
-        let error = super::read_api_key_at(home.path()).expect_err("missing bootstrap");
+        let error = super::read_api_key_at(home.path())
+            .err()
+            .unwrap_or_else(|| panic!("missing bootstrap"));
         assert!(error.to_string().contains("bootstrap"));
         Ok(())
     }
@@ -185,11 +187,35 @@ mod tests {
         }
     }
 
+    struct ManagedBootstrapGuard(Option<std::ffi::OsString>);
+
+    impl ManagedBootstrapGuard {
+        fn clear() -> Self {
+            let saved = std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
+            // SAFETY: callers hold TEST_ENV_LOCK until after this guard drops.
+            unsafe { std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP") };
+            Self(saved)
+        }
+    }
+
+    impl Drop for ManagedBootstrapGuard {
+        fn drop(&mut self) {
+            // SAFETY: the caller still holds TEST_ENV_LOCK during restoration.
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", value),
+                    None => std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
+                }
+            }
+        }
+    }
+
     #[test]
     fn env_capability_preferred() -> anyhow::Result<()> {
         let _lock = crate::config::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _managed_bootstrap = ManagedBootstrapGuard::clear();
         let home = tempfile::tempdir()?;
         let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
         let saved_home = std::env::var("GOBBY_HOME").ok();
@@ -201,17 +227,19 @@ mod tests {
         // Env capability wins over the bootstrap API key.
         std::fs::write(home.path().join("bootstrap.yaml"), "api_key: file-token\n")?;
         set_env(AGENT_API_TOKEN_ENV, Some(" env-token "));
-        assert_eq!(read_api_key()?, "env-token");
+        assert!(read_api_key()? == "env-token");
 
         // Empty or whitespace-only env falls back to bootstrap.
         set_env(AGENT_API_TOKEN_ENV, Some("   "));
-        assert_eq!(read_api_key()?, "file-token");
+        assert!(read_api_key()? == "file-token");
         set_env(AGENT_API_TOKEN_ENV, None);
-        assert_eq!(read_api_key()?, "file-token");
+        assert!(read_api_key()? == "file-token");
 
         // Both absent: fail with login guidance.
         std::fs::remove_file(home.path().join("bootstrap.yaml"))?;
-        let err = read_api_key().expect_err("no credential available");
+        let err = read_api_key()
+            .err()
+            .unwrap_or_else(|| panic!("no credential available"));
         assert!(err.to_string().contains("missing API key"));
 
         set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
@@ -227,18 +255,21 @@ mod tests {
         let _lock = crate::config::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _managed_bootstrap = ManagedBootstrapGuard::clear();
         let home = tempfile::tempdir()?;
         let saved_token = std::env::var(AGENT_API_TOKEN_ENV).ok();
 
         set_env(AGENT_API_TOKEN_ENV, Some(" env-token "));
-        assert_eq!(read_api_key_for(home.path())?, "env-token");
+        assert!(read_api_key_for(home.path())? == "env-token");
 
         set_env(AGENT_API_TOKEN_ENV, None);
-        let err = read_api_key_for(home.path()).expect_err("no credential available");
+        let err = read_api_key_for(home.path())
+            .err()
+            .unwrap_or_else(|| panic!("no credential available"));
         assert!(err.to_string().contains("missing API key"));
 
         std::fs::write(home.path().join("bootstrap.yaml"), "api_key: file-token\n")?;
-        assert_eq!(read_api_key_for(home.path())?, "file-token");
+        assert!(read_api_key_for(home.path())? == "file-token");
 
         set_env(AGENT_API_TOKEN_ENV, saved_token.as_deref());
         Ok(())
@@ -262,14 +293,14 @@ mod tests {
             Ok(())
         };
         write("first")?;
-        assert_eq!(
-            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?,
-            Some("first".to_owned())
+        assert!(
+            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?
+                == Some("first".to_owned())
         );
         write("renewed")?;
-        assert_eq!(
-            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?,
-            Some("renewed".to_owned())
+        assert!(
+            managed_token_at(&path, Some("run"), Some("seat"), Some("project"))?
+                == Some("renewed".to_owned())
         );
         assert!(managed_token_at(&path, Some("other"), Some("seat"), Some("project")).is_err());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))?;

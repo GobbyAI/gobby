@@ -78,7 +78,6 @@ pub fn daemon_mode_layers_at(
     base_url: &str,
     gobby_home: &Path,
 ) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
-    let token = crate::local_token::read_api_key_for(gobby_home).ok();
     if let Some(path) = std::env::var_os(MANAGED_EXECUTION_BOOTSTRAP_ENV) {
         let grant = crate::grant::load_grant_file(Path::new(&path)).map_err(|error| {
             log::warn!("managed grant file could not be loaded: {error}");
@@ -86,8 +85,8 @@ pub fn daemon_mode_layers_at(
                 reason: "managed grant file could not be loaded",
             }
         })?;
+        let started = Instant::now();
         let settings = (|| {
-            let started = Instant::now();
             let mut request = crate::grant::AcquireRequest::from_process_for_project_id(
                 &grant.principal.project_id,
             );
@@ -95,16 +94,9 @@ pub fn daemon_mode_layers_at(
             request.daemon_url = Some(base_url.to_owned());
             request.deadline = Some(EFFECTIVE_CONFIG_TIMEOUT);
             let acquired = crate::grant::acquire_with(&request)?;
-            let remaining = EFFECTIVE_CONFIG_TIMEOUT
-                .checked_sub(started.elapsed())
-                .filter(|remaining| !remaining.is_zero())
-                .ok_or(crate::grant::GrantError::Timeout)?;
-            crate::config::fetch_machine_config(
-                base_url,
-                &acquired.bundle,
-                token.as_deref(),
-                remaining,
-            )
+            acquired
+                .settings
+                .ok_or(crate::grant::GrantError::DaemonRequired)
         })()
         .map_err(|error| {
             log::warn!("managed runtime config fetch failed: {}", error.cli_code());
@@ -115,6 +107,20 @@ pub fn daemon_mode_layers_at(
                 crate::grant::GrantError::DaemonRequired => EffectiveConfigError::Transport {
                     kind: EffectiveConfigTransportKind::Unreachable,
                 },
+                // Acquisition retains a stale grant's schema error offline. For
+                // config consumers, an unavailable refresh is a transport failure.
+                crate::grant::GrantError::SchemaMismatch { .. }
+                    if !crate::grant::daemon_reachable(
+                        base_url,
+                        EFFECTIVE_CONFIG_TIMEOUT
+                            .saturating_sub(started.elapsed())
+                            .min(Duration::from_millis(150)),
+                    ) =>
+                {
+                    EffectiveConfigError::Transport {
+                        kind: EffectiveConfigTransportKind::Unreachable,
+                    }
+                }
                 _ => EffectiveConfigError::LocalConfiguration {
                     reason: "managed runtime config fetch failed",
                 },

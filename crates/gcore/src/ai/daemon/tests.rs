@@ -120,6 +120,7 @@ struct EnvGuard {
     daemon_url: Option<OsString>,
     port: Option<OsString>,
     agent_api_token: Option<OsString>,
+    managed_bootstrap: Option<OsString>,
 }
 
 impl EnvGuard {
@@ -133,6 +134,7 @@ impl EnvGuard {
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             port: std::env::var_os("GOBBY_PORT"),
             agent_api_token: std::env::var_os(crate::local_token::AGENT_API_TOKEN_ENV),
+            managed_bootstrap: std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
         };
         // SAFETY: these tests serialize env mutation through TEST_ENV_LOCK,
         // and EnvGuard restores the original values while still holding
@@ -144,6 +146,7 @@ impl EnvGuard {
             std::env::remove_var("GOBBY_DAEMON_URL");
             std::env::remove_var("GOBBY_PORT");
             std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
+            std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
         }
         guard
     }
@@ -160,6 +163,7 @@ impl Drop for EnvGuard {
                 ("GOBBY_HOME", &self.gobby_home),
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
+                ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", &self.managed_bootstrap),
                 (
                     crate::local_token::AGENT_API_TOKEN_ENV,
                     &self.agent_api_token,

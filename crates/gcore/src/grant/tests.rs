@@ -26,7 +26,7 @@ fn capability_envelope_preserves_signed_grant_payload() {
     envelope["managed_api_token"] = json!("fixture-capability");
     let parsed = parse_grant_json(&serde_json::to_vec(&envelope).expect("envelope"))
         .expect("known envelope metadata");
-    assert_eq!(parsed, grant);
+    assert!(parsed == grant);
     assert!(
         !String::from_utf8(parsed.model_dump_canonical().expect("canonical"))
             .expect("utf8")
@@ -82,7 +82,7 @@ fn managed_handshake_reads_renewed_file_capability() {
         acquired.bundle.credential_generation(),
         renewed.credential_generation()
     );
-    assert_eq!(fs::read(path).expect("unchanged daemon envelope"), bytes);
+    assert!(fs::read(path).expect("unchanged daemon envelope") == bytes);
 }
 const MACHINE: &str = "machine-test";
 const PROJECT: &str = "project-test";
@@ -493,7 +493,7 @@ fn golden_vectors_match_python() {
         let grant: GrantBundle = serde_json::from_slice(raw.trim_ascii())
             .unwrap_or_else(|error| panic!("{}: {error}", entry.path().display()));
         let canonical = grant.model_dump_canonical().expect("canonical");
-        assert_eq!(canonical, raw, "{}", entry.path().display());
+        assert!(canonical == raw, "{}", entry.path().display());
         verify_payload_checksum(&grant).expect("checksum");
     }
     assert!(files >= 3, "expected the 1.2 golden set");
@@ -509,7 +509,9 @@ fn api_contract_gate() {
     write_grant_file(&path, &grant).expect("write");
     let mut request = harness.request(None);
     request.managed_bootstrap = Some(path.clone());
-    let error = acquire_with(&request).expect_err("contract");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("contract"));
     assert_eq!(
         error,
         GrantError::ApiContractMismatch {
@@ -572,17 +574,18 @@ fn unknown_grant_field_with_matching_contract_is_payload_skew() {
         .expect("object")
         .insert("credential_generation".into(), json!(1));
     let raw = serde_json::to_vec(&value).expect("serialize");
-    let error = parse_grant_json(&raw).expect_err("skew");
+    let error = parse_grant_json(&raw)
+        .err()
+        .unwrap_or_else(|| panic!("skew"));
     assert!(
         matches!(error, GrantError::PayloadSkew { .. }),
-        "expected PayloadSkew, got {error:?}"
+        "expected PayloadSkew"
     );
     assert_eq!(error.cli_code(), "payload_skew");
     assert_eq!(error.exit_status(), 2);
     assert!(
         error.to_string().starts_with("grant payload skew:"),
-        "typed skew must wrap the serde dump, got {}",
-        error
+        "typed skew must wrap the serde dump"
     );
 }
 
@@ -592,7 +595,9 @@ fn wrong_api_contract_parses_to_enriched_mismatch() {
     grant.api_contract = 99;
     grant = grant.with_checksum();
     let raw = serde_json::to_vec(&grant).expect("serialize");
-    let error = parse_grant_json(&raw).expect_err("mismatch");
+    let error = parse_grant_json(&raw)
+        .err()
+        .unwrap_or_else(|| panic!("mismatch"));
     assert_eq!(
         error,
         GrantError::ApiContractMismatch {
@@ -621,7 +626,9 @@ fn absent_api_contract_parses_to_enriched_mismatch() {
         .expect("object")
         .remove("api_contract");
     let raw = serde_json::to_vec(&value).expect("serialize");
-    let error = parse_grant_json(&raw).expect_err("absent");
+    let error = parse_grant_json(&raw)
+        .err()
+        .unwrap_or_else(|| panic!("absent"));
     assert_eq!(
         error,
         GrantError::ApiContractMismatch {
@@ -653,7 +660,9 @@ fn schema_mismatch_refuses_construction() {
     write_grant_file(&path, &grant).expect("write");
     let mut request = harness.request(None);
     request.managed_bootstrap = Some(path.clone());
-    let error = acquire_with(&request).expect_err("schema");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("schema"));
     assert_eq!(
         error,
         GrantError::SchemaMismatch {
@@ -706,8 +715,9 @@ fn stale_cached_schema_stays_mismatch_offline() {
     grant = grant.with_checksum();
     write_cache(&harness, &grant, None);
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("offline");
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .err()
+        .unwrap_or_else(|| panic!("offline"));
     assert_eq!(
         error,
         GrantError::SchemaMismatch {
@@ -730,8 +740,9 @@ fn corrupt_grant_refused_offline() {
     let mut raw = fs::read(&path).expect("read");
     raw[0] ^= 0x01;
     fs::write(&path, raw).expect("corrupt payload");
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("payload");
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .err()
+        .unwrap_or_else(|| panic!("payload"));
     assert_eq!(error, GrantError::DaemonRequired);
     assert!(!path.exists(), "undeserializable cache must be discarded");
 
@@ -739,8 +750,9 @@ fn corrupt_grant_refused_offline() {
     let mut parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     parsed["payload_checksum"] = json!("ff".repeat(32));
     fs::write(&path, serde_json::to_vec(&parsed).unwrap()).unwrap();
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("checksum");
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .err()
+        .unwrap_or_else(|| panic!("checksum"));
     assert_eq!(error, GrantError::DaemonRequired);
     assert!(
         !path.exists(),
@@ -884,8 +896,9 @@ fn outage_window_semantics() {
     expired.expires_at = NOW - 1;
     expired = expired.with_checksum();
     write_cache(&harness, &expired, None);
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("expired");
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .err()
+        .unwrap_or_else(|| panic!("expired"));
     assert_eq!(error, GrantError::DaemonRequired);
 }
 
@@ -913,7 +926,7 @@ fn managed_grant_never_overwrites_interactive_cache() {
     let acquired = acquire_with(&request).expect("managed");
     assert_eq!(acquired.source, GrantSource::ManagedFile);
     assert_eq!(acquired.bundle.principal.kind, PrincipalKind::AgentRun);
-    assert_eq!(fs::read(&cache_path).expect("after"), before);
+    assert!(fs::read(&cache_path).expect("after") == before);
 }
 
 #[test]
@@ -923,7 +936,8 @@ fn remote_endpoint_refused_before_auth() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let error = acquire_with(&harness.request(Some(format!("http://example.com:{port}"))))
-        .expect_err("remote");
+        .err()
+        .unwrap_or_else(|| panic!("remote"));
     assert_eq!(error, GrantError::RemoteEndpoint);
 }
 
@@ -995,7 +1009,9 @@ fn substituted_listener_gets_no_bearer() {
         token: TOKEN.into(),
     }]);
     let url = scripted.url.clone();
-    let error = acquire_with(&harness.request(Some(url))).expect_err("proof");
+    let error = acquire_with(&harness.request(Some(url)))
+        .err()
+        .unwrap_or_else(|| panic!("proof"));
     assert!(matches!(error, GrantError::Malformed(_)));
     let requests = join(scripted);
     assert_eq!(requests.len(), 1);
@@ -1209,10 +1225,11 @@ fn cached_grant_with_foreign_overlay_is_rejected() {
     write_binding_for(&harness, "http://127.0.0.1:1", &grant.deployment.token);
     write_cache(&harness, &grant, None);
     let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
-        .expect_err("overlay grant must not serve the main checkout");
+        .err()
+        .unwrap_or_else(|| panic!("overlay grant must not serve the main checkout"));
     assert!(
         matches!(&error, GrantError::Malformed(reason) if reason.contains("overlay")),
-        "{error:?}"
+        "overlay grant must fail closed"
     );
 }
 
@@ -1331,7 +1348,7 @@ fn handshake_retries_once_on_stale_epoch() {
         },
     ]);
     let acquired = acquire_with(&harness.request(Some(scripted.url.clone()))).expect("retry");
-    assert_eq!(acquired.bundle.deployment.token, grant.deployment.token);
+    assert!(acquired.bundle.deployment.token == grant.deployment.token);
     let requests = join(scripted);
     assert_eq!(
         requests
@@ -1355,7 +1372,9 @@ fn handshake_401_surfaces_the_daemon_rejection_code() {
             body: json!({"error": "Request rejected", "code": "identity_mismatch"}).to_string(),
         },
     ]);
-    let error = acquire_with(&harness.request(Some(scripted.url.clone()))).expect_err("typed 401");
+    let error = acquire_with(&harness.request(Some(scripted.url.clone())))
+        .err()
+        .unwrap_or_else(|| panic!("typed 401"));
     assert_eq!(error, GrantError::Unauthorized("identity_mismatch".into()));
     join(scripted);
 }
@@ -1410,7 +1429,9 @@ fn presentation_http_classifies_typed_daemon_codes() {
 
 #[test]
 fn hmac_sha256_rejects_empty_key() {
-    let error = super::handshake::hmac_sha256(b"", b"nonce").expect_err("empty key");
+    let error = super::handshake::hmac_sha256(b"", b"nonce")
+        .err()
+        .unwrap_or_else(|| panic!("empty key"));
     assert!(matches!(error, GrantError::Malformed(_)));
 }
 
@@ -1513,7 +1534,9 @@ fn bounded_renewal_contention() {
     // the loopback connect misses under load, `reachable()` returns false, and acquire
     // fails with `DaemonRequired` before ever reaching the lock wait asserted below.
     request.deadline = Some(Duration::from_millis(500));
-    let error = acquire_with(&request).expect_err("timeout");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("timeout"));
     assert_eq!(error, GrantError::Timeout);
     drop(listener);
 
@@ -1572,7 +1595,7 @@ fn endpoint_deployment_binding() {
     write_binding_for(&harness, "http://127.0.0.1:1", "0123456789abcdef");
     let acquired =
         acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect("outage binding");
-    assert_eq!(acquired.bundle.deployment.token, "0123456789abcdef");
+    assert!(acquired.bundle.deployment.token == other.deployment.token);
 }
 
 #[test]
@@ -1586,21 +1609,29 @@ fn managed_refresh_envelope_auth() {
 
     let mut request = harness.request(Some("http://127.0.0.1:9".into()));
     request.managed_bootstrap = Some(managed_path.clone());
-    let error = acquire_with(&request).expect_err("no envelope");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("no envelope"));
     assert_eq!(error, GrantError::ManagedCapabilityMissing);
 
     request.managed_envelope = Some(" \n".into());
-    let error = acquire_with(&request).expect_err("blank envelope");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("blank envelope"));
     assert_eq!(error, GrantError::ManagedCapabilityMissing);
 
     let expired = envelope_token(NOW - 10, PROJECT);
     request.managed_envelope = Some(expired.clone());
-    let error = acquire_with(&request).expect_err("expired envelope");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("expired envelope"));
     assert_eq!(error, GrantError::Expired);
 
     let mismatch = envelope_token(NOW + 60, "other-project");
     request.managed_envelope = Some(mismatch.clone());
-    let error = acquire_with(&request).expect_err("mismatch");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("mismatch"));
     assert!(matches!(error, GrantError::Malformed(_)));
 }
 
@@ -1680,8 +1711,9 @@ fn config_revision_second_mismatch_terminal() {
         Step::Config { revision: 4 },
     ]);
     write_binding_for(&harness, &scripted.url, &prior.deployment.token);
-    let error =
-        acquire_with(&harness.request(Some(scripted.url.clone()))).expect_err("second mismatch");
+    let error = acquire_with(&harness.request(Some(scripted.url.clone())))
+        .err()
+        .unwrap_or_else(|| panic!("second mismatch"));
     assert_eq!(error, GrantError::ConfigRevisionMismatch);
     let _ = join(scripted);
     let cached = load_grant_file(&interactive_cache_path(
@@ -1874,12 +1906,12 @@ fn managed_refresh_preserves_daemon_launch_grant_and_interactive_cache() {
             .any(|request| request.contains(&format!("Bearer {TOKEN}")))
     );
     assert_eq!(acquired.source, GrantSource::ManagedFile);
-    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
+    assert!(fs::read(&cache_path).unwrap() == cache_before);
     assert_eq!(
         acquired.bundle.credential_generation(),
         renewed.credential_generation()
     );
-    assert_eq!(load_grant_file(&managed_path).unwrap(), managed);
+    assert!(load_grant_file(&managed_path).unwrap() == managed);
 }
 
 #[test]
@@ -1921,7 +1953,7 @@ fn managed_renewal_never_writes_or_locks_daemon_assets() {
         }
         .expect("renew without client writes to daemon assets");
         assert_eq!(join(scripted).len(), 3);
-        assert_eq!(acquired.bundle, renewed);
+        assert!(acquired.bundle == renewed);
         assert_eq!(
             acquired
                 .settings
@@ -1929,7 +1961,7 @@ fn managed_renewal_never_writes_or_locks_daemon_assets() {
                 .config_revision,
             renewed.config_revision
         );
-        assert_eq!(fs::read(&managed_path).unwrap(), before);
+        assert!(fs::read(&managed_path).unwrap() == before);
         assert!(lock_path.is_dir());
     }
 }
@@ -1970,7 +2002,7 @@ fn stale_managed_schema_refreshes_with_capability_and_preserves_interactive_cach
         load_grant_file(&managed_path).unwrap().schema_identity,
         stale.schema_identity
     );
-    assert_eq!(fs::read(&cache_path).unwrap(), cache_before);
+    assert!(fs::read(&cache_path).unwrap() == cache_before);
     assert!(requests.iter().any(|request| {
         has_header(request, AUTHORIZATION_HEADER) && request.contains(&format!("Bearer {token}"))
     }));
@@ -2020,7 +2052,7 @@ fn managed_effective_config_refreshes_stale_schema() {
         &token,
         fresh.clone(),
         json!({"ai.embeddings.model": "nomic"}),
-        2,
+        1,
     );
     let result = crate::ai::effective_config::daemon_mode_layers_at(&scripted.url, &harness.home);
     let mut layers = result.expect("managed effective config refreshes stale schema");
@@ -2030,11 +2062,8 @@ fn managed_effective_config_refreshes_stale_schema() {
         crate::config::ConfigSource::config_value(&mut layers, "ai.embeddings.model"),
         Some("nomic".into())
     );
-    assert_eq!(
-        fs::read(path).expect("launch envelope remains daemon-owned"),
-        bytes
-    );
-    assert_eq!(requests.len(), 4);
+    assert!(fs::read(path).expect("launch envelope remains daemon-owned") == bytes);
+    assert_eq!(requests.len(), 3);
     let refreshed_header = encode_grant_header(&fresh).expect("refreshed grant header");
     assert!(requests[2..].iter().all(|request| {
         header_value(request, GRANT_HEADER).as_deref() == Some(refreshed_header.as_str())
@@ -2049,6 +2078,73 @@ fn managed_effective_config_refreshes_stale_schema() {
             .iter()
             .all(|request| request.contains(&format!("Bearer {token}")))
     );
+}
+
+#[test]
+#[cfg(feature = "ai")]
+fn managed_effective_config_stale_schema_with_unreachable_daemon() {
+    let harness = Harness::new();
+    let now = unix_now();
+    let mut stale = fixture_grant(PrincipalKind::AgentRun);
+    stale.issued_at = now - 100;
+    stale.expires_at = now + 3500;
+    stale.schema_identity.latest_version -= 1;
+    stale = stale.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &stale).expect("private launch grant");
+    let mut envelope = serde_json::to_value(&stale).expect("launch envelope");
+    envelope["managed_api_token"] = json!(envelope_token(now + 60, PROJECT));
+    let bytes = serde_json::to_vec(&envelope).expect("envelope bytes");
+    fs::write(&path, &bytes).expect("daemon-published envelope");
+    let _env = PoisonedEnv::apply(&path);
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores all changed variables.
+    unsafe {
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "exec-1");
+        std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
+        std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
+        std::env::set_var("GOBBY_SESSION_ID", "cli");
+        std::env::set_var("GOBBY_PROJECT_ID", PROJECT);
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let error = crate::ai::effective_config::daemon_mode_layers_at(&url, &harness.home)
+        .err()
+        .unwrap_or_else(|| panic!("stale grant needs an available daemon"));
+    assert!(matches!(
+        error,
+        crate::ai::effective_config::EffectiveConfigError::Transport {
+            kind: crate::ai::effective_config::EffectiveConfigTransportKind::Unreachable
+        }
+    ));
+    assert!(fs::read(path).expect("launch envelope remains daemon-owned") == bytes);
+}
+
+#[test]
+#[cfg(feature = "ai")]
+fn managed_effective_config_keeps_identity_failure_local_when_daemon_is_unreachable() {
+    let harness = Harness::new();
+    let mut grant = fixture_grant(PrincipalKind::AgentRun);
+    let now = unix_now();
+    grant.issued_at = now - 100;
+    grant.expires_at = now + 3500;
+    grant = grant.with_checksum();
+    let path = harness.home.join("run.json");
+    write_grant_file(&path, &grant).expect("private launch grant");
+    let _env = PoisonedEnv::apply(&path);
+    // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores all changed variables.
+    unsafe {
+        std::env::set_var("GOBBY_AGENT_RUN_ID", "wrong-execution");
+        std::env::remove_var("GOBBY_MANAGED_EXECUTION_ID");
+    }
+    let error =
+        crate::ai::effective_config::daemon_mode_layers_at("http://127.0.0.1:1", &harness.home)
+            .err()
+            .unwrap_or_else(|| panic!("wrong managed identity stays a configuration failure"));
+    assert!(matches!(
+        error,
+        crate::ai::effective_config::EffectiveConfigError::LocalConfiguration { .. }
+    ));
 }
 
 #[test]
@@ -2119,7 +2215,7 @@ fn managed_refresh_rejects_returned_capability_principal_mismatch() {
             request.expected_execution_id = Some("exec-1".into());
             let result = acquire_with(&request);
             let requests = join(scripted);
-            assert!(result.is_err(), "accepted {field}: {result:?}");
+            assert!(result.is_err(), "accepted {field}");
             assert!(
                 !matches!(
                     result,
@@ -2128,7 +2224,7 @@ fn managed_refresh_rejects_returned_capability_principal_mismatch() {
                 "invalid {field} reached config request (retry={config_retry})"
             );
             assert_eq!(requests.len(), if config_retry { 5 } else { 2 });
-            assert_eq!(fs::read(&managed_path).unwrap(), before);
+            assert!(fs::read(&managed_path).unwrap() == before);
         }
     }
 }
@@ -2169,7 +2265,7 @@ fn stale_managed_schema_does_not_refresh_invalid_cached_identity() {
             std::io::ErrorKind::WouldBlock,
             "network access for {field}"
         );
-        assert_eq!(fs::read(&managed_path).unwrap(), before);
+        assert!(fs::read(&managed_path).unwrap() == before);
     }
 }
 
@@ -2209,7 +2305,9 @@ fn stale_managed_schema_fails_closed_without_usable_capability_or_daemon() {
             _ => Some(envelope_token(NOW + 60, PROJECT)),
         };
         request.expected_execution_id = Some("exec-1".into());
-        let error = acquire_with(&request).expect_err(case);
+        let error = acquire_with(&request)
+            .err()
+            .unwrap_or_else(|| panic!("{case}"));
         assert!(
             matches!(
                 error,
@@ -2218,9 +2316,9 @@ fn stale_managed_schema_fails_closed_without_usable_capability_or_daemon() {
                     | GrantError::Malformed(_)
                     | GrantError::SchemaMismatch { .. }
             ),
-            "unexpected {case}: {error:?}"
+            "unexpected {case}"
         );
-        assert_eq!(fs::read(&managed_path).unwrap(), before);
+        assert!(fs::read(&managed_path).unwrap() == before);
     }
 }
 
@@ -2243,7 +2341,7 @@ fn stale_managed_schema_preserves_cache_when_challenge_authentication_fails() {
     let result = acquire_with(&request);
     assert_eq!(join(scripted).len(), 1);
     assert!(result.is_err());
-    assert_eq!(fs::read(&managed_path).unwrap(), before);
+    assert!(fs::read(&managed_path).unwrap() == before);
 }
 
 #[test]
@@ -2281,7 +2379,7 @@ fn stale_managed_schema_rejects_downgrade_without_returning_stale_cache() {
     let result = acquire_with(&request);
     assert_eq!(join(scripted).len(), 2);
     assert!(matches!(result, Err(GrantError::SchemaMismatch { .. })));
-    assert_eq!(fs::read(&managed_path).unwrap(), before);
+    assert!(fs::read(&managed_path).unwrap() == before);
 }
 
 #[test]
@@ -2373,9 +2471,9 @@ fn managed_config_retry_rejects_generation_downgrade_before_config_request() {
     assert_eq!(join(scripted).len(), 5);
     assert!(
         matches!(result, Err(GrantError::Malformed(ref message)) if message.contains("generation downgrade")),
-        "unexpected result: {result:?}"
+        "unexpected renewal result"
     );
-    assert_eq!(fs::read(&managed_path).unwrap(), before);
+    assert!(fs::read(&managed_path).unwrap() == before);
 }
 
 #[test]
@@ -2423,7 +2521,7 @@ fn managed_renewal_revalidates_concurrent_cache_replacement() {
             None,
         );
         assert!(result.is_err(), "accepted replaced {field}");
-        assert_eq!(fs::read(&managed_path).unwrap(), before);
+        assert!(fs::read(&managed_path).unwrap() == before);
     }
 }
 
@@ -2572,7 +2670,8 @@ fn stale_epoch_single_retry() {
         attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Err(GrantError::Malformed("stale_epoch".to_string()))
     })
-    .expect_err("exhausted");
+    .err()
+    .unwrap_or_else(|| panic!("exhausted"));
     assert!(error.is_stale_epoch() || matches!(error, GrantError::Malformed(_)));
     assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
     let requests = join(exhausted);
@@ -2603,7 +2702,7 @@ fn write_coherent_pair_is_single_envelope() {
             assert_eq!(loaded_grant.config_revision, grant.config_revision);
             assert_eq!(loaded_settings.config_revision, grant.config_revision);
         }
-        other => panic!("expected coherent envelope, got {other:?}"),
+        _ => panic!("expected coherent envelope"),
     }
 }
 
@@ -2616,7 +2715,9 @@ fn write_coherent_pair_rejects_revision_mismatch() {
         settings: Default::default(),
     };
     let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
-    let error = write_coherent_pair(&path, &grant, &settings).expect_err("mismatch");
+    let error = write_coherent_pair(&path, &grant, &settings)
+        .err()
+        .unwrap_or_else(|| panic!("mismatch"));
     assert_eq!(error, GrantError::ConfigRevisionMismatch);
     assert!(!path.exists());
 }
@@ -2687,7 +2788,7 @@ fn torn_two_file_cache_rehandshakes_when_reachable() {
             assert_eq!(loaded_grant.config_revision, 2);
             assert_eq!(loaded_settings.config_revision, 2);
         }
-        other => panic!("expected coherent envelope, got {other:?}"),
+        _ => panic!("expected coherent envelope"),
     }
 }
 
@@ -2780,7 +2881,9 @@ fn managed_grant_file_parse_failure_names_source() {
     fs::write(&path, grant_json_without_api_contract(&grant)).expect("write");
     let mut request = harness.request(Some("http://127.0.0.1:1".into()));
     request.managed_bootstrap = Some(path.clone());
-    let error = acquire_with(&request).expect_err("managed parse");
+    let error = acquire_with(&request)
+        .err()
+        .unwrap_or_else(|| panic!("managed parse"));
     let source = format!("managed grant file {}", path.display());
     assert_eq!(
         error,
@@ -2792,7 +2895,7 @@ fn managed_grant_file_parse_failure_names_source() {
     );
     assert!(
         error.to_string().starts_with(&format!("{source}:")),
-        "display must name the managed file, got {error}"
+        "display must name the managed file"
     );
 }
 
@@ -2804,21 +2907,22 @@ fn interactive_cache_parse_failure_names_source() {
     let path = interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
     fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
     fs::write(&path, grant_json_with_unknown_field(&grant)).expect("write");
-    let error =
-        acquire_with(&harness.request(Some("http://127.0.0.1:1".into()))).expect_err("cache parse");
+    let error = acquire_with(&harness.request(Some("http://127.0.0.1:1".into())))
+        .err()
+        .unwrap_or_else(|| panic!("cache parse"));
     let source = format!("interactive grant cache {}", path.display());
     match error {
         GrantError::PayloadSkew { detail } => {
             assert!(
                 detail.starts_with(&format!("{source}:")),
-                "detail must name the cache file, got {detail}"
+                "detail must name the cache file"
             );
             assert!(
                 detail.contains("credential_generation") || detail.contains("unknown field"),
-                "detail must keep the inner serde cause, got {detail}"
+                "detail must keep the inner serde cause"
             );
         }
-        other => panic!("expected PayloadSkew, got {other:?}"),
+        _ => panic!("expected PayloadSkew"),
     }
 }
 
@@ -2834,7 +2938,8 @@ fn handshake_parse_failure_names_source() {
         status: 200,
         body,
     })
-    .expect_err("handshake parse");
+    .err()
+    .unwrap_or_else(|| panic!("handshake parse"));
     assert_eq!(
         error,
         GrantError::ApiContractMismatch {
@@ -2863,17 +2968,18 @@ fn refresh_or_fail_reread_names_cached_grant_source() {
         true,
         None,
     )
-    .expect_err("reread parse");
+    .err()
+    .unwrap_or_else(|| panic!("reread parse"));
     drop(listener);
     let source = format!("cached grant {}", dest.display());
     match error {
         GrantError::PayloadSkew { detail } => {
             assert!(
                 detail.starts_with(&format!("{source}:")),
-                "detail must name the cached grant, got {detail}"
+                "detail must name the cached grant"
             );
         }
-        other => panic!("expected PayloadSkew, got {other:?}"),
+        _ => panic!("expected PayloadSkew"),
     }
 }
 
@@ -2892,20 +2998,22 @@ fn envelope_cache_with_skewed_grant_reports_inner_typed_error() {
     });
     let path = harness.home.join("envelope.json");
     fs::write(&path, serde_json::to_vec(&envelope).expect("serialize")).expect("write");
-    let error = load_grant_file(&path).expect_err("envelope skew");
+    let error = load_grant_file(&path)
+        .err()
+        .unwrap_or_else(|| panic!("envelope skew"));
     match error {
         GrantError::PayloadSkew { detail } => {
             assert!(
                 detail.contains("unknown field") && detail.contains("credential_generation"),
-                "must report the inner grant's unknown field, got {detail}"
+                "must report the inner grant's unknown field"
             );
             assert!(
                 !detail.contains("unknown field `grant`")
                     && !detail.contains("unknown field `settings`"),
-                "must not reparse the envelope as a bare grant, got {detail}"
+                "must not reparse the envelope as a bare grant"
             );
         }
-        other => panic!("expected inner PayloadSkew, got {other:?}"),
+        _ => panic!("expected inner PayloadSkew"),
     }
 }
 
@@ -2928,10 +3036,10 @@ fn inspect_cached_grant_reports_malformed_reason() {
             assert!(!reason.is_empty(), "malformed inspection must explain why");
             assert!(
                 reason.contains("payload skew") || reason.contains("unknown field"),
-                "reason must surface the parse failure, got {reason}"
+                "reason must surface the parse failure"
             );
         }
-        other => panic!("expected Malformed {{ reason }}, got {other:?}"),
+        _ => panic!("expected Malformed {{ reason }}"),
     }
 }
 
@@ -2967,7 +3075,9 @@ fn annotate_source_preserves_io_context() {
 #[test]
 fn load_grant_file_io_error_names_path() {
     let path = Path::new("\0");
-    let error = super::cache::load_grant_file(path).expect_err("invalid path must fail");
+    let error = super::cache::load_grant_file(path)
+        .err()
+        .unwrap_or_else(|| panic!("invalid path must fail"));
     let GrantError::Io(message) = error else {
         panic!("invalid path must produce an IO error");
     };
@@ -3030,10 +3140,12 @@ fn payload_skew_unknown_field_golden_is_payload_skew() {
     let value: Value = serde_json::from_slice(raw.trim_ascii()).expect("json");
     assert_eq!(value["api_contract"], EXPECTED_API_CONTRACT);
     assert_eq!(value["future_capability_probe"], 1);
-    let error = parse_grant_json(&raw).expect_err("skew");
+    let error = parse_grant_json(&raw)
+        .err()
+        .unwrap_or_else(|| panic!("skew"));
     assert!(
         matches!(error, GrantError::PayloadSkew { .. }),
-        "expected PayloadSkew, got {error:?}"
+        "expected PayloadSkew"
     );
     assert_eq!(error.cli_code(), "payload_skew");
 }
