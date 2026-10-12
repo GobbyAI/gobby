@@ -1690,6 +1690,37 @@ Consumers unchanged:
   - The stale M1 block is withdrawn, and the Adversary derives a fresh one
     after consensus.
   - Decisions 2 and 3 still need Josh's explicit approval.
+- 2026-10-11: Consensus on the narrative at `3e5fd1e972`. Seats: Plan Writer
+  gobby#16361, Adversary gobby#16364, Orchestrator gobby#15977.
+  - The Adversary reviewed `743f0ca5cd` and raised two blocking findings
+    against 1.2. Both are resolved at `3e5fd1e972`:
+    - NC-R15: a node derived backend ports, so a valid node port near 65535
+      failed `backend_ports`. `run` now calls `backend_ports` and prints the
+      route-family warnings only for standalone and hub. A node binds
+      through `bind_listeners`, and 1.2.4 covers the boundary.
+    - NC-R16: a node generated a front-door secret it never used. `run` now
+      branches on the mode before generating it. In place of the
+      Adversary's proposed optional secret, the Writer dropped the
+      `Prepared` enum: `NodeServices::prepare` takes the node's PID claim in
+      `state.rs`, and `RuntimeState::prepare` keeps its signature and
+      refuses a node. The Adversary accepted this as fewer mechanisms.
+      Settlement rule (d) is reworded to match.
+  - No blocking or proportionality finding remains, and no disagreement is
+    open. No enhancer edits were received.
+  - Routing:
+    - 1.1 to 1.5 are code leaves: `task_type` feature,
+      `implementation_domain` backend, and `tdd` true.
+    - 1.6 is a test leaf: `task_type` chore, `assigned_agent` developer, and
+      `tdd` false. Lane 2's developer seats write the pair test
+      (Orchestrator, 2026-10-10).
+    - Dependencies follow the headings: 1.1 has none, 1.2 depends on 1.1,
+      1.3 on 1.2, 1.4 on 1.3, 1.5 on 1.4, and 1.6 on 1.3, 1.4, and 1.5.
+      There are no external edges. The Orchestrator manages #24075 as its
+      own edge (Decision 1).
+  - Validation: the project-aware `uv run gobby plans validate` passes on
+    this revision.
+  - Decisions 2 and 3 change key-cutover behavior, so Josh approves them
+    explicitly along with the stamped bytes.
 
 ## V2: Verification
 `kind: verification`
