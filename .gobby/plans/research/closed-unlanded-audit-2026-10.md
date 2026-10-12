@@ -3556,15 +3556,15 @@ nits from batch 1 are corrected in place.
 | #22039 — Dream synthesis report 49640230 | `dea81c11c8`, `f7cac386b2` | missing | Both historical report postimages, 46 and 48 lines, are absent at the pin. Exact paths, SHAs and blobs appear below. No runtime or database loss is inferred. |
 | #21820 — Fair archive-backed summary retries | `eb53e743b4` | delivered | Same-task landed replacement `c3e0e7d33695b9c19a01d5dd4bd996dfbb722f18` is an ancestor of the pin. B8–B10 retain exclusive (created_at,id) pagination, wraparound, cursor advance in finally even on failure, and archive-aware TranscriptReader construction. The failure ceiling also limits deterministic poison-session retries. |
 | #21794 — Handoff rollout and replay qualification | `12abc42f16`, `20308164c0`, `fa12a9de43` | intentionally superseded | These revisions document and test generated structured recovery, full source coverage, combination and replay qualification. Landed #21693 **Structured handoff delivery history**, `22556858ef2752f6a668ce7224f415e91aa6beac`, supplies the authored-content path in B12. Landed #21887 **Incidental handoff history policy**, `8921c88c1fc2dad64f6e1375479f1fdebf14d0d2`, explicitly excludes regenerated/merged handoffs and whole-session replay in B11. Restoring the absent old rollout guide and replay test would contradict that replacement contract. |
-| #21875 — Optional review candidates in recovery | `0acc7cef77` | intentionally superseded | The old fix constrains generated recovery/combination interpretation of optional recommendations and queue flags. B11 replaces that path with authored content and bounded author review; automatic semantic checking is outside its contract. B12 appends repository evidence to an authored payload. This does not claim the old prompt guard survives in archival summaries. |
-| #21881 — Operation qualifiers in recovered facts | `5fa4992e9e` | intentionally superseded | The old revision preserves operation, actor and condition qualifiers through generated recovery and combination. B11 explicitly retires that generation/combination contract; B12 preserves authored Markdown. The old automatic recovery constraints are outside the replacement contract. |
-| #21850 — Reference fidelity and inherited attribution | `9b925f9c27`, `d10d2f7f6f` | intentionally superseded | The revisions add source-verbatim long-hash validation, inherited/current attribution, combination reconciliation and contract fingerprinting. B11 expressly excludes regeneration, merging and automatic semantic verification; B12 builds from delivered authored content. The absent recovery modules have no history on the pin's ancestor chain. Supersession rests on the explicit replacement contract. |
+| #21875 — Optional review candidates in recovery | `0acc7cef77` | missing | The generated recovery/combination mechanism is intentionally superseded by B11–B12, but this revision also adds six fidelity lines to the live archival-summary prompt and its golden fixture. Those lines are absent in B15. The missing half prevents a whole-task superseded verdict. See the exact recovery referral below. |
+| #21881 — Operation qualifiers in recovered facts | `5fa4992e9e` | missing | The generated recovery/combination mechanism is intentionally superseded, but six operation, actor, condition, reference-kind and source-inspection fidelity lines added to the live archival-summary prompt and golden fixture are absent in B15. B11 explicitly leaves archival-summary behavior unchanged. See the exact recovery referral below. |
+| #21850 — Reference fidelity and inherited attribution | `9b925f9c27`, `d10d2f7f6f` | missing | The generated reducer, validation and combination changes are intentionally superseded. The d10d2f7f6f revision also adds two exact-identifier and inherited-attribution lines to the live archival-summary prompt and golden fixture; B15 lacks them. No explicit withdrawal covers those live edits. See the exact recovery referral below. |
 | #21860 — Generated recovery output headroom | `410c950601` | intentionally superseded | The revision targets 6,000 characters beneath a 12,000-character generated-recovery limit. B11 replaces that path with authored handoffs. B13 documents the active 10,000 JSON-escaped hard cap and approximately 5,000-character authoring target. These are different operations and budgets; the old reducer's numeric instructions are not claimed as delivered. |
 | #21867 — Session and example exclusion from task evidence | `103a07c698` | intentionally superseded | The revision filters session identities and displayed examples from generated transcript Source Records evidence. B11 explicitly places that ledger and source-position semantics outside the replacement contract. B12 loads bounded DB-owned task evidence for authored content. The absent transcript-selection/evidence modules should not be replayed into that design. |
 
-Batch totals: **4 delivered, 6 intentionally superseded, 5 missing**.
-Cumulative totals: **11 delivered, 10 intentionally superseded, 9 missing**;
-**59 tasks remain**. B11 is decisive for the six handoff revisions. B14 shows
+Batch totals: **4 delivered, 3 intentionally superseded, 8 missing**.
+Cumulative totals: **11 delivered, 7 intentionally superseded, 12 missing**;
+**59 tasks remain**. B11 supersedes the generated-recovery halves of the handoff revisions. B14 shows
 archival summaries still use a separate Markdown generator; no claim is made
 about installed prompt registry rows or live semantic behavior. No audited task,
 source path, holding ref or foreign worktree was mutated.
@@ -3606,11 +3606,91 @@ Each SHA-256 hashes the raw UTF-8 excerpt, including its final newline.
 | B12 | `src/gobby/sessions/handoff_summary.py` | 46–105 | `c320c4136c65bd38cbe214399abf15a1f2f7ac09bc4dbb2a4d0bf66e8af4e4ff` |
 | B13 | `docs/contracts/session-boundary.md` | 1–75 | `8016b7b0aee098b5eb2bfe0c0491f24b97d960db8f032f7b79319749e42cd8b5` |
 | B14 | `src/gobby/sessions/summary_generation.py` | 104–170 | `4e2bba4db751c3c83d3c0dccc397067ad6c926ba47775996351d7e4db6f3471b` |
+| B15 | `src/gobby/install/shared/prompts/handoff/session_end.md` | 1–104 | `8b747ddb1b4ea714584d2b1d2844aeee269bbb310daf60588379f0ca9368b72b` |
 
 Validation covers the exact 89-task derivation and batch order, revision prefixes,
-14 bound excerpt hashes, three replacement ancestors, seven historical report
+15 bound excerpt hashes, three replacement ancestors, seven historical report
 postimages and absent paths/refs, classification counts, Markdown fences, and
 freshness footer with a focused `uv run python` audit. `git diff --check` checks
 the report edit. No full suite or heavy command ran.
+
+### Batch 2 archival-prompt recovery referrals
+
+The Orchestrator disposed the five historical report losses as **no recovery**:
+those report directories are absent on integration, and synthesis actions live in
+the database. That disposition does not cover these three live prompt losses.
+The generated-recovery halves are superseded; the archival-prompt halves are
+**missing**. B14 loads this prompt, and B11:78–81 expressly leaves archival-summary
+behavior unchanged. B15 proves the full current prompt lacks all 14 added lines.
+No fresh model or live registry execution is claimed.
+
+| Task and title | Unlanded full SHA | Live paths with missing content | Holding branch |
+| --- | --- | --- | --- |
+| #21875 — Optional review candidates | `0acc7cef777035f57136a68d575653a468370b54` | `src/gobby/install/shared/prompts/handoff/session_end.md`; `tests/prompts/fixtures/handoff_session_end_golden.md` | none |
+| #21881 — Operation qualifiers | `5fa4992e9e81d735f548126bb3b9848a65feb2f8` | `src/gobby/install/shared/prompts/handoff/session_end.md`; `tests/prompts/fixtures/handoff_session_end_golden.md` | none |
+| #21850 — Reference fidelity and inherited attribution | `d10d2f7f6fe842675fe937cfed847be3839d895d` | `src/gobby/install/shared/prompts/handoff/session_end.md`; `tests/prompts/fixtures/handoff_session_end_golden.md` | none |
+
+Exact absent lines for #21875 **Optional review candidates**, from `0acc7cef777035f57136a68d575653a468370b54`:
+
+```text
+Search hits, review candidates and optional recommendations do not establish unfinished
+work. A successful review does not require changing every candidate. Aggregate queue
+flags such as pending_reviews_complete=false do not identify required candidate actions
+or their cause. Preserve ambiguous flags as observations when relevant; do not invent a
+corrective step. Retain explicitly pending acceptance and other adopted unfinished work.
+Handoffs from this same session describe earlier epochs, not different sessions.
+```
+
+Exact absent lines for #21881 **Operation qualifiers**, from `5fa4992e9e81d735f548126bb3b9848a65feb2f8`:
+
+```text
+Preserve the operation, actor, conditions and exceptions that limit a claim.
+A restriction in one handler or response path is not a rule for the whole subsystem.
+Keep supported alternatives together and do not broaden the scope of "only".
+Reconcile earlier shorthand with later evidence that supplies a narrower scope.
+Preserve each reference's kind (for example session, handoff, task or commit).
+Source inspection establishes what the inspected code says, not what a running service uses.
+```
+
+Exact absent lines for #21850 **Reference fidelity and inherited attribution**, from `d10d2f7f6fe842675fe937cfed847be3839d895d`:
+
+```text
+Copy identifiers and commit hashes exactly. Attribute work quoted from earlier sessions
+to those earlier sessions, and distinguish it from actions performed in this session.
+```
+
+### Batch 2 touched-path audit
+
+Existence is checked for every changed path of every unproven revision, including
+paths in deliberately retired mechanisms. A surviving path triggers inspection
+of its actual delta; contract retirement alone cannot dispose a live-path edit.
+The prompt and golden fixture survive in all three corrected rows.
+
+| Task and phrase | Revision | Paths present at pin | Paths absent at pin |
+| --- | --- | --- | --- |
+| #22389 — found-work owner handoff must count every successful send_message, not only parent-targeted sends | `486fb22d37` | 1 | 0 |
+| #22326 — Repair B-group test drift: deadline guidance tier, review-evidence code-index fixtures, compile-minimal deferral shape | `624e3623dd` | 4 | 0 |
+| #22319 — Isolated test daemon health wait is too tight and reports nothing | `ae65650a5e` | 9 | 0 |
+| #22071 — Synthesize feedback run 15052df6-3b06-450d-9f4e-aa75b4e03917 | `c06f8df8e4` | 0 | 1 |
+| #22069 — Synthesize dream run c19e1126-cbf4-436e-b956-ada5631bd49c | `8370c53dea` | 0 | 1 |
+| #22040 — Synthesize feedback run e3b255c6-044e-48fc-a49b-297d821d016a | `e9cdbca0c3` | 0 | 1 |
+| #22051 — Synthesize feedback run ef48b0b1-dd58-403a-ac84-52a28675d289 | `26aa30ddb8` | 0 | 1 |
+| #22051 — Synthesize feedback run ef48b0b1-dd58-403a-ac84-52a28675d289 | `dbe7162df6` | 0 | 1 |
+| #22039 — Synthesize dream run 49640230-c32a-4547-957c-f23d36e39109 | `dea81c11c8` | 0 | 1 |
+| #22039 — Synthesize dream run 49640230-c32a-4547-957c-f23d36e39109 | `f7cac386b2` | 0 | 1 |
+| #21820 — Schedule archive-backed summary retries without starving later sessions | `eb53e743b4` | 5 | 1 |
+| #21794 — Validate session handoff rollout and document review handoff | `12abc42f16` | 3 | 1 |
+| #21794 — Validate session handoff rollout and document review handoff | `20308164c0` | 0 | 1 |
+| #21794 — Validate session handoff rollout and document review handoff | `fa12a9de43` | 0 | 1 |
+| #21875 — Keep optional review candidates from inventing unfinished session work | `0acc7cef77` | 2 | 5 |
+| #21881 — Preserve operation-specific qualifiers in recovered session facts | `5fa4992e9e` | 2 | 5 |
+| #21850 — Preserve recovery reference fidelity and inherited work attribution | `9b925f9c27` | 0 | 5 |
+| #21850 — Preserve recovery reference fidelity and inherited work attribution | `d10d2f7f6f` | 2 | 5 |
+| #21860 — Give bounded recovery output a concise target below its hard limit | `410c950601` | 0 | 2 |
+| #21867 — Exclude session objects and displayed examples from handoff task evidence | `103a07c698` | 0 | 4 |
+
+Correction validation additionally reproduces all touched-path counts, verifies
+the 14 exact added lines are absent from both live paths, and checks the three
+new referral SHAs and lack of holding refs.
 
 _Last verified: 2026-10-12_
