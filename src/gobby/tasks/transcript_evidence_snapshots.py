@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from typing import Any
 from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError
 
+from gobby.config.validation_detection import ValidationDetectionConfig
+from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -20,6 +23,34 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def derivation_fingerprint(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
+) -> str:
+    """Invalidate durable snapshots whenever their derivation inputs change."""
+    payload = json.dumps(
+        {
+            "derivation_version": 19,
+            "session": session.id,
+            "source": session.source,
+            "window_start": window_start.isoformat() if window_start is not None else None,
+            "repo_path": repo_path,
+            "task_checkout_paths": sorted(task_checkout_paths)
+            if task_checkout_paths is not None
+            else None,
+            "task_edited_files": sorted(task_edited_files),
+            "detection": detection_config.model_dump(mode="json"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass
