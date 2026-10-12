@@ -29,7 +29,7 @@ rules:
             1. Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed.
             2. Rust front door, Stage 1 (#21543), except #21555, which is Lane 3. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
             3. API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed.
-            4. Rust (#22801). Unstaffed until the operator staffs it.
+            4. Rust (#22801). Staffed by its Lane Manager and one developer.
             5. Hub mode (#21575). Staffed by its Lane Manager, one developer and one code reviewer; implementation waits for the operator's plan approval.
             6. Everything else (#23378): backlog consolidation and triage. The Consolidator proposes and the Orchestrator applies every task edit. Never sweep the #22978 triage subtree or plan-expanded epics.
             7. Stability and restart reliability (#24093).
