@@ -922,3 +922,61 @@ async def test_team_entrypoint_executes_guard_and_selected_seats(
     if pipeline == "team-lane":
         assert all(spawn["lane"] == "3" for spawn in spawns)
     print(json.dumps({"pipeline": pipeline, "catalogue": catalogue, "selected": selected}))
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_null", [False, True], ids=["omitted", "null"])
+async def test_team_entrypoint_omitted_worktree_reaches_guard_as_inference(
+    lane_env: LaneEnv, explicit_null: bool
+) -> None:
+    """Reproduce default admission and rendering without launching a real seat."""
+    sync_bundled_pipelines(lane_env.db)
+    AgentDefinitionManager(lane_env.db).create(
+        name="developer",
+        definition_json={"name": "developer", "version": "1.0"},
+        project_id=lane_env.project,
+    )
+    leases = TerminalLeaseRegistry()
+    window = await leases.attach(lane_env.terminal)
+    leases.set_viewport(window.attachment_id, 59, 205)
+    sessions = SessionManager(lane_env.db)
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=sessions,
+        db=lane_env.db,
+        lease_registry_resolver=lambda: leases,
+    )
+    proxy = TeamEntrypointProxy(registry)
+    loader = PipelineLoader(lane_env.db)
+    executor = PipelineExecutor(
+        db=lane_env.db,
+        execution_manager=LocalPipelineExecutionManager(lane_env.db, lane_env.project),
+        llm_service=MagicMock(),
+        loader=loader,
+        tool_proxy_getter=lambda: proxy,
+        template_engine=TemplateEngine(),
+        session_manager=sessions,
+    )
+    inputs: dict[str, Any] = {"lane": "3", "seats": "developer"}
+    if explicit_null:
+        inputs["worktree"] = None
+    started = await run_pipeline(
+        loader,
+        executor,
+        "team-lane",
+        inputs,
+        lane_env.project,
+        session_id=lane_env.caller,
+    )
+    assert started["success"] is True, started
+    await _background_tasks_by_execution[started["execution_id"]]
+    execution = executor.execution_manager.get_execution(started["execution_id"])
+    assert execution is not None and execution.status == ExecutionStatus.COMPLETED
+    assert [tool for tool, _ in proxy.calls] == ["check_runbook_seats", "spawn_agent"]
+    guard = proxy.calls[0][1]
+    assert all(key not in guard for key in ("worktree", "workspace", "lane_pane", "report_to"))
+    launch = proxy.calls[1][1]
+    assert launch["worktree_id"] == lane_env.worktree
+    assert launch["placement"]["split"]["pane"] == lane_env.pane
+    print(json.dumps({"explicit_null": explicit_null, "guard_arguments": guard}))
