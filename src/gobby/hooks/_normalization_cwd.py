@@ -29,13 +29,15 @@ class _Branch:
     condition_altered: bool = False
     loop: int | None = None
     stack: tuple[str | None, ...] | None = ()
+    pipeline: bool = False
 
 
 @dataclass
 class ShellDirectoryState:
     cwd: str | None
     pipeline_subshell: bool = False
-    compound_pipeline: bool = False
+    compound_pipeline_openers: set[int] = field(default_factory=set)
+    compound_pipeline_groups: list[bool] = field(default_factory=list)
     stack: tuple[str | None, ...] | None = ()
     changed: bool = False
     list_changed: bool = False
@@ -65,6 +67,13 @@ class ShellDirectoryState:
     group_entry: bool = False
     redirection_cwd: str | None = None
     group_closed: bool = False
+
+    @property
+    def compound_pipeline(self) -> bool:
+        """Only directory changes within an active compound stage lose proof."""
+        return any(branch.pipeline for branch in self.branches) or any(
+            self.compound_pipeline_groups
+        )
 
     def redirect_cwd(self) -> str | None:
         return self.redirection_cwd if self.group_closed else self.cwd
@@ -100,18 +109,6 @@ class ShellDirectoryState:
         for index, segment in enumerate(segments):
             tokens = segment.tokens
             before = segment.separator_before
-            if before == "|" and tokens and not tokens[0].quoted:
-                # Compound stage ownership extends through esac/fi/done, beyond a segment.
-                self.compound_pipeline |= tokens[0].value in {
-                    "case",
-                    "if",
-                    "while",
-                    "until",
-                    "for",
-                    "select",
-                    "!",
-                    "time",
-                }
             if spans is not None and command is not None:
                 consuming_pattern = pending
                 start = min(spans[id(token)][0] for token in tokens)
@@ -128,6 +125,16 @@ class ShellDirectoryState:
                     case_depth and (";;" in gap or ";&" in gap)
                 ):
                     before = ";"
+            if before == "|":
+                for position, token in enumerate(segment.tokens):
+                    prefix = segment.tokens[:position]
+                    if token.quoted or not self._brace_command_position(prefix):
+                        break
+                    if token.value in {"case", "if", "while", "until", "for", "select", "{"}:
+                        # Plain brace stages already have precise directory tracking.
+                        if token.value != "{" or prefix:
+                            self.compound_pipeline_openers.add(self._group_key(token))
+                        break
             for position, token in enumerate(tokens):
                 if token.quoted:
                     continue
@@ -293,7 +300,14 @@ class ShellDirectoryState:
             self._close("case")
             self.list_ops.append(None)
         elif not first.quoted and first.value == "case":
-            self.branches.append(_Branch("case", self.cwd, stack=self.stack))
+            self.branches.append(
+                _Branch(
+                    "case",
+                    self.cwd,
+                    stack=self.stack,
+                    pipeline=self._group_key(first) in self.compound_pipeline_openers,
+                )
+            )
             self.list_ops.append(False)
         elif re.search(r";;(?!&)", gap):
             self._restore("case")
@@ -306,7 +320,15 @@ class ShellDirectoryState:
                 continue
             word = tokens[0].value
             if word == "if":
-                self.branches.append(_Branch("if", self.cwd, in_condition=True, stack=self.stack))
+                self.branches.append(
+                    _Branch(
+                        "if",
+                        self.cwd,
+                        in_condition=True,
+                        stack=self.stack,
+                        pipeline=self._group_key(tokens[0]) in self.compound_pipeline_openers,
+                    )
+                )
                 self.list_ops.append(False)
             elif word in {"else", "elif"}:
                 self._restore("if")
@@ -327,7 +349,13 @@ class ShellDirectoryState:
                     branch.in_condition = False
             elif word in {"for", "select", "while", "until"}:
                 self.branches.append(
-                    _Branch("loop", self.cwd, loop=self.loops_opened, stack=self.stack)
+                    _Branch(
+                        "loop",
+                        self.cwd,
+                        loop=self.loops_opened,
+                        stack=self.stack,
+                        pipeline=self._group_key(tokens[0]) in self.compound_pipeline_openers,
+                    )
                 )
                 self.list_ops.append(False)
                 self.loops_opened += 1
@@ -349,6 +377,9 @@ class ShellDirectoryState:
                 continue
             elif word == "{":
                 group = self._group_key(tokens[0])
+                self.compound_pipeline_groups.append(
+                    self.compound_pipeline or group in self.compound_pipeline_openers
+                )
                 isolated = self.group_isolation.get(group, False)
                 function = self.group_functions.get(group)
                 self.pipeline_group_changes.append(
@@ -377,6 +408,7 @@ class ShellDirectoryState:
             elif word == "}":
                 if self.groups:
                     entry = self.groups.pop()
+                    self.compound_pipeline_groups.pop()
                     pipeline_changed = self.pipeline_group_changes.pop()
                     self.redirection_cwd = entry[0]
                     self.group_closed = True
