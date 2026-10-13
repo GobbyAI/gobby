@@ -31,8 +31,10 @@ Endpoint and models:
 - Only `gpt-6-luna` is supported. The model page lists one snapshot, the
   undated default `gpt-6-luna`. The reference's example response reports
   `model` as the bare `gpt-6-luna`. No dated snapshot was found.
-- The model page lists a 1,050,000-token context window and 922,000 maximum
-  input tokens. No Decisions-route limit was found.
+- The model page lists a 1,050,000-token context window and 128,000 maximum
+  output tokens. It documents no maximum input; 922,000 is their difference,
+  an inferred default (Adversary gobby#16491, LM-F3, direct read). No
+  Decisions-route limit was found.
 
 Request:
 - `model`, `input`, and a list of `questions`.
@@ -68,14 +70,18 @@ Response:
 
 Data and price:
 - The data-controls page lists `/v1/decisions` as not used for training,
-  with 30-day abuse-monitoring retention and no application state
-  retention. The guide says the API supports Zero Data Retention and HIPAA
-  use for eligible customers; ZDR needs OpenAI's prior approval. No
-  request-level privacy flag was found.
-- Price: $0.10 per million input tokens for `gpt-6-luna`, input only. Source:
-  the OpenAI Developer Community announcement
-  (https://community.openai.com/t/decisions-api-is-now-available-in-public-beta/1403877),
-  not the pricing page.
+  with abuse-monitoring retention of up to 30 days and no application state
+  retention, except that prompt caching may keep encrypted KV tensors on
+  OpenAI's GPU machines for up to 24 hours (LM-F5). Gobby sends text only,
+  so the image exception does not apply. The guide says the API supports
+  Zero Data Retention and HIPAA use for eligible customers; ZDR needs
+  OpenAI's prior approval. No request-level privacy flag was found.
+- Price: the Decisions guide gives a base rate of $0.10 per million input
+  tokens for `gpt-6-luna`, with no cache or output charges. The model page
+  doubles the input rate above 272K input tokens, and regional processing
+  adds 10% (LM-F4, direct read by gobby#16491). The community announcement
+  (https://community.openai.com/t/decisions-api-is-now-available-in-public-beta/1403877)
+  states the same base rate.
 
 Unverified: error statuses and bodies on this route, rate limits, the
 Decisions-route input limit and truncation behavior, the scope of
@@ -100,9 +106,9 @@ needs `instructions` and `choices`: the OpenAI shape. No new probe was sent.
   description: option text}` in criteria order; Noul is sent as `predicate`.
 - Refusal: `DecisionsUnavailable(reason="refused")` for the whole call, a
   local outcome that never opens the cooldown.
-- `backend_max_state_tokens` default for the wire: 922,000 (the model
-  page's maximum input, whole input), with the route's own limit and
-  truncation unverified.
+- `backend_max_state_tokens` default for the wire: 922,000, inferred from
+  the model page's context window minus its maximum output, with the
+  input limit, its scope and truncation unverified.
 - Identity: `model_card` does not apply; under `response_version` the
   documented response echoes the undated alias, so the alias check and the
   version pin fail. OpenAI is a `shadow` and evaluation backend until OpenAI

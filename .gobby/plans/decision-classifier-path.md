@@ -131,9 +131,9 @@ The plan also sets:
      request-level privacy flag for the Workers AI route, so a `workers-ai`
      endpoint sends consumer text under the operator's Cloudflare account
      terms. OpenAI documents none for `/v1/decisions` either. Its data
-     controls page lists the route as not used for training, with 30-day
-     abuse-monitoring retention, and Zero Data Retention needs OpenAI's
-     approval (Decision 18). An `openai-decisions` endpoint therefore sends
+     controls page lists the route as not used for training, with up to
+     30-day abuse-monitoring retention and up to 24 hours of prompt-cache
+     state, and Zero Data Retention needs OpenAI's approval (Decision 18). An `openai-decisions` endpoint therefore sends
      consumer text under the operator's OpenAI account terms.
    - Every backend, local or hosted, reaches `enforce` only with a Decision
      10 backend identity and the Activation Gate's live capture. Without
@@ -264,12 +264,14 @@ The plan also sets:
        truncated to fit. It documents neither the scope of
        `usage.input_tokens` nor the truncation point, so the live capture
        verifies both.
-     - 922,000 for `openai-decisions`, the maximum input tokens OpenAI
-       documents for `gpt-6-luna`, whose context window is 1,050,000
+     - 922,000 for `openai-decisions`, a provisional default inferred from
+       the `gpt-6-luna` model page: its 1,050,000-token context window minus
+       its 128,000 maximum output tokens
        (`https://developers.openai.com/api/docs/models/gpt-6-luna`,
-       retrieved 2026-10-12). That limit is the model's. The Decisions
-       route documents no limit, scope, or truncation behavior of its own,
-       so the live capture verifies them. The guide's example, one
+       retrieved 2026-10-12). OpenAI documents no maximum input for the
+       model or for the Decisions route, and the route documents no scope or
+       truncation behavior either, so the live capture verifies all three.
+       The guide's example, one
        predicate on a 42-token input reporting `input_tokens: 42`,
        suggests the count covers `input`; its scope stays unverified
        (Decision 18).
@@ -809,13 +811,17 @@ The plan also sets:
       reports a resolved version. Third-party sources disagree on the
       question maximum, so none is cited, and the plan's 64 stays
       (Decision 8). The first live capture settles each item.
-    - Price: $0.10 per million input tokens for `gpt-6-luna`, input only,
-      from OpenAI's
-      [Developer Community announcement](https://community.openai.com/t/decisions-api-is-now-available-in-public-beta/1403877),
-      not the pricing page. 2.1 uses it as an estimate, like the other
-      prices.
+    - Price: the Decisions guide gives a base rate of $0.10 per million
+      input tokens for `gpt-6-luna`, with no cache or output charges. The
+      model page doubles the input rate above 272K input tokens, and
+      regional processing adds 10%. Plan Adversary gobby#16491 read both
+      pages directly on 2026-10-12. 2.1 uses the base rate as an estimate,
+      like the other prices, and excludes both multipliers.
     - Privacy: no request-level flag, so the operator's OpenAI account
-      terms apply (Decision 2).
+      terms apply (Decision 2). The data controls page lists no application
+      state retention for the route, except that prompt caching may keep
+      encrypted KV tensors on OpenAI's GPU machines for up to 24 hours.
+      Gobby sends text only, so the page's image exception does not apply.
     - Identity. `model_card` does not apply, because only a `/v1/systemone`
       server exposes the card. Under `response_version`, OpenAI lists one
       undated snapshot, `gpt-6-luna`, and its reference example answers
@@ -1360,9 +1366,11 @@ before any code, with no live server:
   - the response: `answers` matched by `name`, the predicate, Choice, and
     refusal answer shapes, `model`, and `usage` with `input_tokens`,
     `output_tokens`, and `total_tokens`;
-  - the model page's 1,050,000-token context and 922,000-token input
-    maximum, the data controls entry for the route, and the community
-    price;
+  - the model page's 1,050,000-token context and 128,000-token output
+    maximum, with the 922,000 default recorded as inferred from them and
+    no documented input maximum; the data controls entry for the route,
+    with its prompt-caching exception; and the guide's base price with its
+    regional and long-context multipliers;
   - what stays unverified: error statuses and bodies, rate limits, the
     route's own input limit and truncation, the scope of
     `usage.input_tokens`, the `name` pattern, the question maximum, and
@@ -1516,10 +1524,10 @@ Transport, per Decisions 8 and 9:
     whole prompt once the operator sets `backend_max_state_tokens: 16384`.
     LM Studio documents neither its limit nor `usage.input_tokens`, so it
     stays unverified until the live capture (Decision 17). OpenAI
-    documents `usage.input_tokens` and the model's 922,000-token input
-    maximum, but not the route's own limit, its truncation behavior, or
-    the count's scope, so it also stays unverified until the live capture
-    (Decision 18).
+    documents `usage.input_tokens` but no input maximum for the model or
+    the route, no truncation behavior, and not the count's scope; the
+    922,000 default is inferred (Decision 8). So it also stays unverified
+    until the live capture (Decision 18).
     The Activation Gate's live capture verifies both for the
     configured server, and an unverified or mismatched server keeps every
     consumer in `shadow`;
@@ -1759,7 +1767,9 @@ The steps:
    estimated input tokens per call, and the per-call cost at each pinned
    hosted price per million input tokens: Jev at $0.042 on OpenRouter
    (`jev.md`), Clef at $0.24 and Clef-flash at $0.09 on Workers AI
-   (Decision 15), and `gpt-6-luna` at $0.10 on OpenAI (Decision 18). A local backend bills nothing, so these give
+   (Decision 15), and `gpt-6-luna` at its $0.10 base rate on OpenAI,
+   excluding the long-context and regional multipliers (Decision 18). A
+   local backend bills nothing, so these give
    local-versus-hosted numbers per consumer. Each provider bills its own
    tokenizer's count, so the figures are estimates.
 5. Compute every Decision 12 metric for the consumer:
@@ -2647,3 +2657,17 @@ available with the configured model. With the server stopped, a
   - #22604's dependency on 1.2, which the Graphify parity plan relies on,
     is unchanged.
   - The superseded M1 was retired for re-derivation.
+- 2026-10-12: Consensus with Plan Adversary gobby#16491 on the #24215
+  revision. It read OpenAI's official pages directly, found no blocking
+  finding at 8ab23890f2, and raised three evidence nits, all accepted:
+  - LM-F3: the model page documents a 1,050,000-token context and 128,000
+    maximum output tokens, not a 922,000-token input maximum. Decisions 8
+    and 1.2's contract record now call the 922,000 default inferred, and
+    the live capture still verifies the limit, its scope, and truncation.
+  - LM-F4: Decision 18 cites the Decisions guide's $0.10 base rate, and
+    2.1 excludes the model page's long-context and regional multipliers
+    from its estimate.
+  - LM-F5: Decisions 2 and 18 and 1.2's contract record carry the data
+    controls page's prompt-caching exception of up to 24 hours.
+  - Routing of every deliverable is unchanged, Decision 16 is unchanged,
+    and OpenAI stays a `shadow` and evaluation backend.
