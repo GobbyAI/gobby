@@ -27,7 +27,7 @@ def _word_expansion_end(text: str, start: int, *, depth: int) -> int | None:
     quote = ""
     while index < len(text):
         char = text[index]
-        if char == "\\" and quote != "'":
+        if char == "\\" and (tick or quote != "'"):
             index += 2
             continue
         if char == closing and (tick or not quote):

@@ -28,6 +28,42 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        r"echo `echo \`git push\``",
+        r'echo "`echo \`git push\``"',
+        r"echo `echo \`echo \\\`git push\\\`\``",
+        "echo $(echo $(git push))",
+    ],
+)
+def test_nested_escaped_backticks_match_git_push(command: str, mask_quoted: bool) -> None:
+    assert command_patterns_match(command, pattern=r"^git\s+push\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [r"echo '`echo \`git push\``'", r"echo `echo '\`git push\`'`"],
+)
+def test_nested_escaped_backticks_literal_data(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=r"^git\s+push\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_unresolved_nested_backticks_fail_closed(mask_quoted: bool) -> None:
+    assert command_patterns_match(
+        r"echo `echo \`git push`", pattern=r"^git\s+push\b", mask_quoted=mask_quoted
+    )
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("command", [r"echo `echo '\`'`", r"x=`printf '%s' '\`'`; echo hi"])
+def test_backtick_literal_correlation_stays_data(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=r"^git\s+push\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
         "cat <(g\\\nem push x)",
         "cat >(g\\\nem push x)",
         "cat <\\\n(g\\\nem push x)",
