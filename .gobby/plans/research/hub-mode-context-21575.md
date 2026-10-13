@@ -426,3 +426,104 @@ foreign-machine rows by design.
   session pre-registration by the hub's remote flow; node checkout registration
   through a key-bound route mirroring 2.2), or files/defers to the owning family.
   Ask 15977.
+
+## Revision 2 drafting progress (15977 ruled Reading A, 2026-10-12)
+
+Ruling: three uses only; machine only from the verified key, never a body;
+a node writes only its own rows; every other caller keeps
+require_local_machine_id; name #21585, #21562, #24151 as reusing consumers;
+security review; keep the Cargo/cache mkdir fix; ruling goes to Josh with the
+stamped plan. #24215 is DONE (stamped a4de350, sent to 15977 and 16491).
+
+DONE in hub-mode.md (uncommitted): Overview; Decisions 2, 3, 13, 14, 15, new
+18 (cites 1.4.4 and 2.5.10 as the guard pins; keep those ids); Constraints
+hook bullet (pre-created path: terminal_context.gobby_session_id ->
+handle_pre_created_session, no register; /clear successor and node-own CLI
+refused, #24151 owns); `## Architecture` (component + 3 sequence diagrams;
+base validation PASSED with mermaid); P1 renamed "Hub-node interface"; 1.1
+(3 commands, node bodies without machine_id, report lists max 1,000, exit
+`launched` + reason enum, node duties incl. cancel-during-prepare and
+prepare deadline, acceptance 1.1.1-1.1.5); 1.3 (remote checkout via
+LocalProjectCheckoutManager.get, require_root unchanged, new 1.3.6); new 1.4
+(nodes.py router, hub/node_reports.py inbox, register_routes mount,
+1.4.1-1.4.4).
+
+REMAINING, in order:
+1. 2.5 rewrite. Targets: drop remote_workspaces.py; add
+   `src/gobby/storage/sessions/_crud.py::_SessionCRUDMixin.register`,
+   `src/gobby/agents/session.py::ChildSessionConfig`,
+   `src/gobby/agents/session.py::ChildSessionManager.create_child_session`.
+   Depends 1.3, 2.1, 2.2, 2.4. Mechanism: keyword `routed_machine_id: str |
+   None = None` on register (must equal machine_id else
+   MachineOwnershipMismatchError; replaces require_local_machine_id; then
+   require_registered_machine still runs and raises for an unenrolled
+   machine), on ChildSessionConfig (create_child_session passes it), on
+   prepare_terminal_spawn (must equal machine_id), and on
+   _prepare_run_for_session (passes machine_id=routed_machine_id to
+   _AgentRunLifecycleMixin.create, skips get_terminal_env_vars -> env_vars {}).
+   Local spawns pass nothing, so runs/env are unchanged (drop old "runs now
+   carry the passed machine" consumer notes). Flow: checks, admission, lease;
+   resolve_target_machine (Q2) first, then prepare_terminal_spawn(machine_id=
+   target, routed_machine_id=target, prompt=None, credential_manager=None,
+   workspace_path=RoutedMachine.checkout_root); attach lease; pending terminal
+   row machine=target; send ONE agent.spawn (typed identity fields,
+   source_root=checkout_root, workspace intent: mode none or path/branch
+   embedding run_id chosen by node; branch_name embeds run_id). Reply
+   {accepted} -> return run id pending. stage none -> fail_pending +
+   _roll_back_run (DB only, no cleanup_failed_spawn). Other -> spawn_in_doubt,
+   state kept for 2.6. record_spawn_identity moves to 2.6. Acceptance
+   renumber (11 -> about 10): routes-to-requesting-machine (one agent.spawn,
+   rows carry machine before send, no hub mkdir/env/prompt/credential),
+   explicit machine validated, definite failure DB-only, in-doubt keeps state,
+   origin is calling session, resume/placement refused, local unchanged,
+   remote needs no hub checkout, 2.5.10 = guard pin: register(foreign) and
+   register_session(foreign) without routed id raise; mismatched routed id
+   raises; unenrolled machine raises MachineNotRegisteredError. Granularity
+   block recomputed.
+2. 2.6 rewrite (reconciler, depends 1.3, 1.4, 2.1, 2.5): input
+   node_report_inbox().take() per machine; machines without a new report not
+   visited. Per row of list_reconcilable_by_machine (agent_run_id, not
+   recovery-protected): listed in agents & pending -> insert workspace row
+   (raw INSERT ... ON CONFLICT DO NOTHING; worktrees: id, project_id,
+   machine_id, task_id, branch_name, worktree_path, base_branch,
+   agent_session_id, status active; clones same with clone_path; project from
+   session, task from run) then record_spawn_identity (promote_to_live, then
+   update_runtime pid/terminal_id if run active, else mark_exited);
+   listed & live -> clear absent record; in accepted -> leave; exit with
+   launched false -> fail_pending/mark_exited now, active run ->
+   cleanup_agent("remote spawn failed on <machine>: <reason>"); exit with
+   launched true counts as absent; absent live/orphaned (or host_epoch
+   differs) two consecutive reports -> mark_exited, active run ->
+   _dead_terminal_reason (DB-only, works remote) None -> done else
+   cleanup_agent; absent pending past spawn_in_doubt_seconds for two reports
+   -> agent.cancel KILL close_terminal fence -> stopped/not_found ->
+   fail_pending, active run cleanup_agent("remote spawn did not start"),
+   ended run nothing more. Run sweep (old 2.6.7) unchanged but per machine
+   with a report. Remove removal retry, list_remote_removals, 2.6.6; renumber.
+   Note promotion latency: AgentLifecycleMonitor check_interval_seconds
+   default 30.0 (lifecycle_monitor.py:86, no override) -> mention in 2.6 and
+   3.3 research. Old 2.5.10 test (session end before identity) moves here.
+3. 2.1 research: "because 2.5 writes a node's rows" -> 2.6.
+4. D1 rewrite: hub row is a reported record; merge/remove need node-side
+   design; a removal command returns there; row keeps agent_session_id.
+   D4: add checkout registration via 1.4 and report promotion; reason adds
+   #24148.
+5. V1 dated entry (Josh review 2: one command, reports, Reading A, M1
+   withdrawn); V2 pytest list adds tests/servers/test_node_routes.py.
+6. Withdraw whole `## M1 Task Manifest` block plus its preceding blank line
+   (Edit in chunks; Bash writes blocked).
+7. Sweep: grep workspace.prepare|workspace.remove|node.inventory|
+   remote_workspaces|record_remote_workspace|env map|1.1.6 -> none stale.
+STATUS: steps 1-7 DONE (2.5, 2.6, 2.1, D1, D4, V1, V2, M1 withdrawn, sweep);
+base validation clean. Extra edits: 1.1 null base_branch rule; the four
+`_app_routes.py` consumer lines moved into 1.4's implementation (validator
+conflict); `src/gobby/agents/__init__.py` consumer added. 2.5 passes the real
+prompt (no file written); remote branch `agent/<run_id>`; pending terminal
+backend `native`. 2.6 settles every exited run through dead_reason, except
+`launched: false` exits, which use the node's reason.
+8. Validate base; ocr; commit `[gobby-#21575] docs: revise hub-mode for
+   Josh's second review and withdraw M1`; send SHA to 16491 with readings for
+   15977: (a) use 3 via LocalProjectCheckoutManager.get, require_root
+   unchanged; (b) routes refuse hub's own machine; (c) report lists capped at
+   1,000; (d) inbox in memory, lost exits degrade to absence rules; (e)
+   accepted runs bounded by node prepare deadline, hub leaves them alone.
