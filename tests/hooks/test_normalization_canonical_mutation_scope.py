@@ -10,14 +10,13 @@ from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARA
 from gobby.hooks._normalization_canonical import (
     _classify_shell_command,
     _classify_shell_segment_without_redirection,
-    _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
 from gobby.hooks._normalization_metadata import _merge_shell_segment_metadata
 from gobby.hooks._normalization_operands import _resolve_long_option
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
 from gobby.hooks._normalization_shell import _substitution_end
-from gobby.hooks._normalization_tools import normalize_tool_fields
+from gobby.hooks._normalization_tools import _set_canonical_tool_metadata, normalize_tool_fields
 from gobby.hooks.shell_execution import SCRIPT_READ_BUDGET, read_script_body
 
 pytestmark = pytest.mark.unit

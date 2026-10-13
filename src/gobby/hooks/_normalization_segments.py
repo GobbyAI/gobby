@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -59,7 +60,16 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     segments: list[_ShellSegment] = []
     current: list[ShellToken] = []
     separator_before: str | None = None
-    for token in tokens:
+    for index, token in enumerate(tokens):
+        if token.value == "&" and not token.quoted and 0 < index < len(tokens) - 1:
+            previous, following = tokens[index - 1], tokens[index + 1]
+            if (
+                not previous.quoted
+                and re.fullmatch(r"\d*(?:>>|[<>])", previous.value)
+                and re.fullmatch(r"\d+|-", following.value)
+            ):
+                current.append(token)
+                continue
         if not token.quoted and token.value in _SHELL_CHAIN_TOKENS:
             # Preserve pipeline, conditional and background operators across trailing newlines.
             if not current and token.value == "\n" and separator_before in {"|", "&&", "||", "&"}:

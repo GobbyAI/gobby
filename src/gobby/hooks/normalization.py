@@ -7,9 +7,6 @@ Implementation lives in private focused modules. Import from
 from gobby.hooks._normalization_canonical import (
     _normalize_shell_tool_metadata as _normalize_shell_tool_metadata,
 )
-from gobby.hooks._normalization_canonical import (
-    _set_canonical_tool_metadata as _set_canonical_tool_metadata,
-)
 from gobby.hooks._normalization_mcp import (
     _extract_mcp_content_object as _extract_mcp_content_object,
 )
@@ -61,11 +58,11 @@ from gobby.hooks._normalization_paths import (
 from gobby.hooks._normalization_paths import (
     _setdefault_tool_input_paths as _setdefault_tool_input_paths,
 )
-from gobby.hooks._normalization_shell import (
-    _SHELL_TOOLS as _SHELL_TOOLS,
+from gobby.hooks._normalization_redirects import (
+    _extract_redirection_paths as _extract_redirection_paths,
 )
 from gobby.hooks._normalization_shell import (
-    _extract_redirection_paths as _extract_redirection_paths,
+    _SHELL_TOOLS as _SHELL_TOOLS,
 )
 from gobby.hooks._normalization_shell import (
     _get_command_text as _get_command_text,
@@ -95,6 +92,9 @@ from gobby.hooks._normalization_tool_input import (
 from gobby.hooks._normalization_tool_input import tool_input_error as tool_input_error
 from gobby.hooks._normalization_tools import (
     _detect_tool_error as _detect_tool_error,
+)
+from gobby.hooks._normalization_tools import (
+    _set_canonical_tool_metadata as _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_tools import (
     normalize_tool_fields as normalize_tool_fields,

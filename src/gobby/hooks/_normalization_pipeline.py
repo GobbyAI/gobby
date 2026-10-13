@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
+from gobby.hooks._normalization_redirects import has_mutating_output_redirection
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_shell import (
     ShellToken,
-    has_mutating_output_redirection,
     has_shell_input_redirection,
 )
 from gobby.hooks._python_pipeline_classifier import (
