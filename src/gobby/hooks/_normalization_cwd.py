@@ -466,6 +466,12 @@ class ShellDirectoryState:
     def _changes_directory(self, parts: list[str], depth: int = 0) -> bool:
         if not parts:
             return False
+        if (
+            not parts[0].startswith("((")
+            and not re.match(r"\[\[\s", parts[0])
+            and (_contains_unexpanded_shell_reference(parts[0]) or "`" in parts[0])
+        ):
+            return True
         if self._clears_stack(parts):
             return True
         if parts[0] in self.directory_functions:

@@ -1,5 +1,6 @@
 """Canonical tool metadata inference."""
 
+import re
 from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
@@ -767,12 +768,16 @@ def _classify_shell_segment_without_redirection(
             "write", repo_mutation=True, extra={"_canonical_repo_mutation_scope_unknown": True}
         )
 
-    if depth:
-        unwrapped = _unwrap(parts)
-        if unwrapped and _contains_unexpanded_shell_reference(unwrapped[0]):
-            return _ShellSegmentMetadata(
-                "execute", confidence="low", extra={"canonical_script_execution": True}
-            )
+    unwrapped = _unwrap(parts)
+    if (
+        unwrapped
+        and not unwrapped[0].startswith("((")
+        and not re.match(r"\[\[\s", unwrapped[0])
+        and (_contains_unexpanded_shell_reference(unwrapped[0]) or "`" in unwrapped[0])
+    ):
+        return _ShellSegmentMetadata(
+            "execute", confidence="low", extra={"canonical_script_execution": True}
+        )
 
     execution = path_execution(parts, base_cwd) or shell_execution(parts, stdin=shell_stdin)
     if execution is not None:

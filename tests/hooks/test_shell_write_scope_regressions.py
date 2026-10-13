@@ -682,3 +682,53 @@ async def test_source_refusal_names_execution_route(
     assert response.decision == "block"
     assert "uv run" in (response.reason or "")
     assert "literal script path" in (response.reason or "")
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        "$CMD {repo}",
+        '"${CMD}" {repo}',
+        'E=eval; $E "$X"',
+        'env FLAG=1 "$CMD" {repo}',
+        "$(printf cd) {repo}",
+        "`printf cd` {repo}",
+    ],
+)
+def test_dynamic_program_word_invalidates_followup_scope(tmp_path: Path, invocation: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+
+    command = f"{invocation.replace('{repo}', str(root))}; touch a.py"
+    metadata = _metadata(command, root, cwd=scratch)
+
+    assert metadata["canonical_tool_kind"] == "write"
+    assert metadata["canonical_script_execution"] is True
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_top_level_dynamic_program_requires_script_scope(tmp_path: Path) -> None:
+    metadata = _metadata('"$CMD"', tmp_path, cwd=tmp_path)
+
+    assert metadata["canonical_script_execution"] is True
+    assert metadata["canonical_tool_kind"] == "execute"
+    assert metadata["canonical_tool_confidence"] == "low"
+
+
+@pytest.mark.parametrize("condition", ['[[ -n "$X" ]]', "(( $X > 0 ))"])
+def test_compound_condition_preserves_followup_scope(tmp_path: Path, condition: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+
+    metadata = _metadata(f"{condition}; touch a.py", root, cwd=scratch)
+
+    assert metadata["canonical_tool_kind"] == "write"
+    assert metadata["canonical_write_file_paths"] == ["a.py"]
+    assert not metadata.get("canonical_script_execution")
+    assert not metadata.get("canonical_repo_mutation")
+    assert not metadata.get("canonical_repo_mutation_scope_unknown")
