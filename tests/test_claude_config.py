@@ -238,7 +238,10 @@ def test_symlink_config_or_lock_is_rejected(tmp_path: Path, redirect: str) -> No
 @pytest.mark.parametrize(
     "writer", ["trust", "isolation", "install", "remove", "install_project", "remove_project"]
 )
-def test_host_writers_wait_for_claude_lock_and_reread(tmp_path: Path, writer: str) -> None:
+def test_host_writers_wait_for_claude_lock_and_reread(
+    tmp_path: Path, writer: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     workspace = tmp_path / "worktree"
     workspace.mkdir()
     config_path = tmp_path / ".claude.json"
@@ -271,7 +274,7 @@ def test_host_writers_wait_for_claude_lock_and_reread(tmp_path: Path, writer: st
 
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
-        patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
+        patch.dict(os.environ, {"CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
         ThreadPoolExecutor(max_workers=1) as executor,
     ):
         future = executor.submit(invoke)
