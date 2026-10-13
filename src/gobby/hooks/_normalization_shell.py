@@ -429,6 +429,11 @@ def _substitution_output_redirects(
     return redirects
 
 
+def backtick_body(text: str) -> str:
+    """Remove one backquote escape layer before inspecting its executable body."""
+    return re.sub(r"\\([$`\\\n])", lambda match: "" if match[1] == "\n" else match[1], text)
+
+
 def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     """Find the end of a literal substitution, respecting nested shell quotes.
 
@@ -462,7 +467,7 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             )
             and cases.pattern_paren(text, index, level)
         )
-        if char == "\\" and quote != "'":
+        if char == "\\" and (backtick or quote != "'"):
             line.append(text[index : index + 2])
             index += 2
             continue

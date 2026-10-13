@@ -51,6 +51,7 @@ from gobby.hooks._normalization_shell import (
     _skip_heredocs,
     _strip_shell_wrappers,
     _substitution_end,
+    backtick_body,
     is_fd_duplication_token,
     is_shell_input_redirection_token,
     is_shell_output_redirection_token,
@@ -496,6 +497,12 @@ def _selector_subjects(
     pending: list[tuple[str, int]] = [(subject, 0) for subject in subjects]
     while pending:
         text, depth = pending.pop()
+        if "`" in text:
+            try:
+                scan_shell_command(text)
+            except ValueError:
+                # An unresolved backquote body cannot safely exclude a selector.
+                return None
         pattern_subjects.append(mask_one(text))
         # Quotes and backslashes inside a word vanish before it runs, so a
         # quoted or escaped command name still runs that command. Match each
@@ -796,6 +803,8 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             except ValueError:
                 return [subject]
             body = subject[start:end]
+            if tick:
+                body = backtick_body(body)
             bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
             if not tick and char in "<>":
                 # Keep the process target in its owner: it determines whether a

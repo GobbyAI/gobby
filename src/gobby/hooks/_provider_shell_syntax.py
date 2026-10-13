@@ -6,6 +6,7 @@ from gobby.hooks._normalization_shell import (
     ShellToken,
     _skip_heredocs,
     _substitution_end,
+    backtick_body,
     scan_shell_command,
 )
 
@@ -204,7 +205,8 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
                 if not data or str(error) != "Unclosed shell substitution":
                     raise
                 # Inspect incomplete bodies too: data can still contain a launch.
-                expansions.append(command[start:])
+                substitution = command[start:]
+                expansions.append(backtick_body(substitution) if tick else substitution)
                 output.append("__gobby_expansion__")
                 break
             marker = (
@@ -214,7 +216,8 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
                 if command.startswith(">(", index)
                 else "__gobby_expansion__"
             )
-            expansions.append(command[start:end])
+            substitution = command[start:end]
+            expansions.append(backtick_body(substitution) if tick else substitution)
             output.append(marker)
             index = end + 1
             continue

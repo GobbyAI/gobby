@@ -4,7 +4,12 @@ import re
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._case_syntax import case_pattern_end
-from gobby.hooks._normalization_shell import ShellToken, _substitution_end, scan_shell_command
+from gobby.hooks._normalization_shell import (
+    ShellToken,
+    _substitution_end,
+    backtick_body,
+    scan_shell_command,
+)
 from gobby.hooks._shell_syntax import joined_prefix_end, skip_line_continuations
 
 _FUNCTION_HEADER = re.compile(
@@ -110,7 +115,8 @@ def heredoc_substitution_bodies(text: str, *, depth: int) -> tuple[list[str], bo
                 end = _substitution_end(text, start, char == "`", depth + 1)
             except ValueError:
                 return bodies, True
-            bodies.append(text[start:end])
+            body = text[start:end]
+            bodies.append(backtick_body(body) if char == "`" else body)
             index = end + 1
             continue
         index += 1
@@ -144,7 +150,8 @@ def command_substitution_bodies(
                 start = index + 1 if char == "`" else opening
                 assert start is not None
                 end = _substitution_end(text, start, char == "`", depth + 1)
-                bodies.append((index, text[start:end]))
+                body = text[start:end]
+                bodies.append((index, backtick_body(body) if char == "`" else body))
                 masked[start:end] = " " * (end - start)
                 index = end + 1
                 continue

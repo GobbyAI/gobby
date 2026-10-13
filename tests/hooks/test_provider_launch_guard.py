@@ -22,6 +22,28 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
+    "command",
+    [
+        r"echo `echo \`claude\``",
+        r'echo "`echo \`claude\``"',
+        r"echo `echo \`echo \\\`claude\\\`\``",
+        r"echo `echo \`claude`",
+        "echo $(echo $(claude))",
+    ],
+)
+def test_nested_escaped_backticks_block_provider_launch(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [r"echo '`echo \`claude\``'", r"echo `echo '\`claude\`'`"],
+)
+def test_nested_escaped_backticks_literal_data(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command}) is False
+
+
+@pytest.mark.parametrize(
     ("command", "blocked"),
     [
         (
