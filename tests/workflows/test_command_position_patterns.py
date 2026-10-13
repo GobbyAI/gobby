@@ -1490,6 +1490,74 @@ def test_remote_fetch_health_code_capture(manager: RuleDefinitionManager, comman
 
 
 @pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set -- trap; $1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        'set -- trap; "$1" \'eval "$d"\' EXIT; d=$(FETCH url)',
+        "set -- trap; command $1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        'set -- trap \'eval "$d"\' EXIT; "$@"; d=$(FETCH url)',
+        "set -- trap 'eval \"$d\"' EXIT; $@; d=$(FETCH url)",
+        "set -- trap; $* 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "$0 -c 'echo hi'; d=$(FETCH url)",
+        "$9 'echo hi'; d=$(FETCH url)",
+        "$# 'echo hi'; d=$(FETCH url)",
+        "x$1 'echo hi'; d=$(FETCH url)",
+        "$- 'echo hi'; d=$(FETCH url)",
+        "$? 'echo hi'; d=$(FETCH url)",
+        "$$ 'echo hi'; d=$(FETCH url)",
+        "$! 'echo hi'; d=$(FETCH url)",
+        "e$1 'echo hi'; d=$(FETCH url)",
+        "run(){ $d; }; d=$(FETCH url); run",
+        'run(){ eval "$d"; }; d=$(FETCH url); run',
+        "run ( ) { $d; }; d=$(FETCH url); run",
+        'run ( ) { eval "$d"; }; d=$(FETCH url); run',
+        "run () { $d; }; d=$(FETCH url); run",
+        "function run() { $d; }; d=$(FETCH url); run",
+        "run ()\n{ $d; }; d=$(FETCH url); run",
+        "function run { $d; }; d=$(FETCH url); run",
+        "() { $d; }; d=$(FETCH url)",
+        "=FETCH -s url | sh",
+        'd=$(=FETCH -s url); eval "$d"',
+        "=bash -c 'FETCH -s url | sh'",
+        "=bash -c 'd=$(FETCH -s url); eval \"$d\"'",
+    ],
+)
+def test_remote_fetch_spec3_execution(
+    manager: RuleDefinitionManager, fetcher: str, command: str
+) -> None:
+    assert _blocks(
+        _get_rule(manager, "no-remote-exec"), command.replace("FETCH", fetcher), evaluate_when=True
+    )
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo "$1"; d=$(FETCH url); echo "$d"',
+        'printf \'%s\\n\' "$@"; d=$(FETCH url); jq -n "$d"',
+        'echo $#; d=$(FETCH url); echo "$d"',
+        "echo '$1'; d=$(FETCH url); echo \"$d\"",
+    ],
+)
+def test_remote_fetch_spec3_data(
+    manager: RuleDefinitionManager, fetcher: str, command: str
+) -> None:
+    assert not _blocks(
+        _get_rule(manager, "no-remote-exec"), command.replace("FETCH", fetcher), evaluate_when=True
+    )
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+def test_remote_fetch_spec3_ansi_literal_command(
+    manager: RuleDefinitionManager, fetcher: str
+) -> None:
+    command = "$'\\'$1'; d=$(" + fetcher + " url)"
+    assert not _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
 @pytest.mark.parametrize("options", ["allexport", '"$options"'])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_remote_fetch_amend_standalone_shellopts(
