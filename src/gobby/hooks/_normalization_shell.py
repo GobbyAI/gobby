@@ -4,6 +4,7 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape, opens_ansi_c_quote
@@ -63,6 +64,11 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]|`")
 # `$(cmd)` (but not arithmetic `$((`) or a backtick substitution: commands that run.
 _COMMAND_SUBSTITUTION = re.compile(r"\$(?:\\\n)*\((?!(?:\\\n)*\()|`")
+# Stop before '+' so compound-word handling can recognize a mid-word extglob.
+_PLAIN_WORD_RUN = re.compile(r"[A-Za-z0-9_./:=,%-]+")
+_PLAIN_SPACE_RUN = re.compile(r"[ \t]+")
+_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_./:=,+%{}-]+(?:\(\)[A-Za-z0-9_./:=,+%{}-]*)*|;")
+_PLAIN_COMMAND = re.compile(r"[A-Za-z0-9_./:=,+%{}(); \t-]*")
 _MAX_SUBSTITUTION_DEPTH = 24
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
     r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
@@ -129,12 +135,38 @@ def tokenize_shell_command(
 
 
 def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> ShellScan:
+    """Return an independent view of a bounded, immutable lexical result."""
+    if not 128 <= len(command) <= 32768:
+        return _scan_shell_command(command, dialect=dialect)
+    tokens, spans, heredocs = _cached_shell_scan(command, dialect)
+    return ShellScan(list(tokens), list(spans), list(heredocs))
+
+
+@lru_cache(maxsize=64)
+def _cached_shell_scan(
+    command: str, dialect: ShellDialect
+) -> tuple[tuple[ShellToken, ...], tuple[tuple[int, int], ...], tuple[HeredocBody, ...]]:
+    # Nested wrappers inspect the same bodies repeatedly. Cache only bounded
+    # input and immutable values; callers remain free to mutate their lists.
+    scan = _scan_shell_command(command, dialect=dialect)
+    return tuple(scan.tokens), tuple(scan.spans), tuple(scan.heredocs)
+
+
+def _scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> ShellScan:
     """Tokenize ``command`` and keep each token's source span and heredoc bodies.
 
     Spans index into ``command`` with quotes and escapes included, so a token
     range maps back to its raw text. Raises ``ValueError`` on an unclosed
     quote or a trailing escape. ``dialect`` selects how ``$'...'`` escapes decode.
     """
+    if _PLAIN_COMMAND.fullmatch(command) is not None:
+        words = list(_PLAIN_TOKEN.finditer(command))
+        if "".join(word[0] for word in words) == "".join(command.split()) and not any(
+            word[0] in {"case", "esac"} for word in words
+        ):
+            return ShellScan(
+                [ShellToken(word[0]) for word in words], [word.span() for word in words], []
+            )
     tokens: list[ShellToken] = []
     spans: list[tuple[int, int]] = []
     heredocs: list[HeredocBody] = []
@@ -235,6 +267,13 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             index += 1
             continue
 
+        if char in " \t":
+            flush(index)
+            spaces = _PLAIN_SPACE_RUN.match(command, index)
+            assert spaces is not None
+            index = spaces.end()
+            continue
+
         pattern_end = cases.pattern_ends.get(0)
         pattern_paren = False
         if token_start is None or char in "();&|\n" or index == pattern_end:
@@ -252,6 +291,12 @@ def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shell
             end = command.find("\n", index)
             end = len(command) if end == -1 else end
             index = end
+            continue
+
+        if (plain := _PLAIN_WORD_RUN.match(command, index)) is not None:
+            begin(index)
+            current.extend(plain[0])
+            index = plain.end()
             continue
 
         if char == "`":
@@ -435,12 +480,33 @@ def backtick_body(text: str) -> str:
 
 
 def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
+    if not 128 <= len(text) <= 32768:
+        return _find_substitution_end(text, start, backtick, depth)
+    return _cached_substitution_end(text, start, backtick, depth)
+
+
+@lru_cache(maxsize=64)
+def _cached_substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
+    return _find_substitution_end(text, start, backtick, depth)
+
+
+def _find_substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
     """Find the end of a literal substitution, respecting nested shell quotes.
 
     Heredoc bodies are data, so their quotes and parentheses never close it.
     """
     if depth > _MAX_SUBSTITUTION_DEPTH:
         raise ValueError("Shell nesting limit")
+    if not backtick and (plain := _PLAIN_COMMAND.match(text, start)) is not None:
+        prefix = plain[0]
+        if re.search(r"\b(?:case|esac)\b", prefix) is None:
+            # Without quotes, expansions, comments or case patterns, only the
+            # parenthesis balance can close this body. Scan it in token runs.
+            balance = 1
+            for paren in re.finditer(r"[()]", prefix):
+                balance += 1 if paren[0] == "(" else -1
+                if balance == 0:
+                    return start + paren.start()
     quote = ""
     parameter_quotes: list[str] = []
     level = 1
@@ -467,6 +533,10 @@ def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
             )
             and cases.pattern_paren(text, index, level)
         )
+        if (plain := _PLAIN_WORD_RUN.match(text, index)) is not None:
+            line.append(plain[0])
+            index = plain.end()
+            continue
         if char == "\\" and (backtick or quote != "'"):
             line.append(text[index : index + 2])
             index += 2
