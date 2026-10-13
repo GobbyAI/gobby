@@ -145,7 +145,7 @@ def _unwrap(words: list[str]) -> list[str]:
             name in {"for", "select"}
             and len(words) >= 3
             and words[1].isidentifier()
-            and words[2] == "do"
+            and (words[2] == "do" or (name == "for" and words[2] == "__gobby_loop_list__"))
         ) or (
             name == "foreach"
             and len(words) >= 3

@@ -24,6 +24,44 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "((claude -p hi) )",
+        "((claude -p hi); (echo x))",
+        "echo $((claude -p hi) )",
+        "x=$((claude -p hi) )",
+        "if ((claude -p hi) ); then :; fi",
+        "while ((claude -p hi) ); do :; done",
+        "(( x )) ; ((claude -p hi) )",
+        "echo $((1)) $((claude -p hi) )",
+        "sed '1e ((claude -p hi) )' f",
+        "for i (1) claude -p hi",
+        "for i ( 1 ) claude -p hi",
+        "for i (1) { claude -p hi }",
+        "zsh -c 'for i (1) claude -p hi'",
+    ],
+)
+def test_nested_subshell_and_zsh_for_launches_are_blocked(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(( (a)+(b) ))",
+        "echo $(( (1)+(2) ))",
+        "echo $(((1)+(2)))",
+        "((claude))",
+        "echo $((claude+1))",
+        "for i (1) echo claude",
+        "for i (a b) echo $i",
+    ],
+)
+def test_arithmetic_and_zsh_for_data_stays_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "set -- a; for i do claude -p hi; done",
         "set -- a; for i do command claude -p hi; done",
         "noglob claude -p hi",

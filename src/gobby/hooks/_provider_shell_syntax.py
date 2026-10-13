@@ -224,11 +224,15 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             # substitutions inside the expression still execute.
             start = index + (2 if char == "$" else 1)
             end = _substitution_end(command, start, False, depth)
-            _, substitutions = _prepare(command[start + 1 : end - 1], depth + 1, data=True)
-            expansions.extend(substitutions)
-            output.append("__gobby_arithmetic__")
-            index = end + 1
-            continue
+            inner_end = _substitution_end(command, start + 1, False, depth)
+            # Otherwise the shell falls back to nested subshells, even when
+            # another inner group happens to leave adjacent final parentheses.
+            if inner_end == end - 1:
+                _, substitutions = _prepare(command[start + 1 : inner_end], depth + 1, data=True)
+                expansions.extend(substitutions)
+                output.append("__gobby_arithmetic__")
+                index = end + 1
+                continue
         if quote not in {"'", "$"} and (
             command.startswith("$(", index)
             or char == "`"
