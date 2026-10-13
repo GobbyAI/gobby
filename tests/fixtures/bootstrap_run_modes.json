@@ -1,6 +1,36 @@
 {
     "cases": [
         {
+            "name": "node_trailing_file_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001c"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_group_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001d"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_record_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001e"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_unit_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001f"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_mixed_surrounding_whitespace",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "\u001c https://HOST:443/ \u001f\u2003"},
+            "mode": "node",
+            "hub_daemon_url": "https://host:443"
+        },
+        {
             "name": "node_unbracketed_percent_host_case",
             "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://HO%41ST:443"},
             "mode": "node",

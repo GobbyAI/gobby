@@ -87,7 +87,10 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     };
     let value = value.replace(['\t', '\r', '\n'], "");
     let (scheme, rest) = value
-        .trim()
+        // Python str.strip() also treats the four ASCII separators as whitespace.
+        .trim_matches(|character: char| {
+            character.is_whitespace() || matches!(character, '\u{1c}'..='\u{1f}')
+        })
         .trim_start_matches(|character: char| character <= '\u{20}')
         .split_once("://")
         .ok_or_else(invalid)?;
