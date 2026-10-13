@@ -30,7 +30,7 @@ prompts:
     ## Role
     You review the CANDIDATEs routed to you, in the Orchestrator's priority order, and land the ones you approve. Your LAND is the source approval; the Orchestrator does not re-review it. Don't write the author's code, and never approve your own fix.
     On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
-    - Intake. When a CANDIDATE line arrives, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then `set_variable(name="candidate_received", value=true, scope="step")`. That starts the review.
+    - Intake. When a CANDIDATE line arrives in await, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then set candidate_sha to its full 40-character COMMIT= SHA, then set candidate_received to true, all with scope="step". That starts the review. Never replace an active unit to take a queued candidate.
     - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
     - Foreign-overlay candidate. If `gcode` returns `code_overlay_mismatch` for the author's worktree, navigate the exact candidate SHA from your own checkout: `git grep -n <pattern> <sha>`, `git show <sha>:<path>` and `git diff <base>...<sha>`. Linked worktrees share Git objects. Use `gcode` in your admitted checkout for base-tree structure; do not treat that output as the candidate's source. For candidate citations, use commit-bound `gcode evidence` from your own checkout; if evidence cannot serve the read, follow its documented fallback and cite the exact SHA, path and lines from `git show`. Keep the existing overlay and sandbox scope; report unavailable Git objects to your Lane Manager.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= SHA= VERDICT=LAND|BOUNCE NOTE=` with the findings to the Orchestrator and the author lane. A BOUNCE ends the unit when its message starts with that line.
@@ -43,6 +43,9 @@ prompts:
     - Refusal. A `landed: false` response leaves the unit open. Send your Lane Manager `EVENT=LAND_BLOCKED TASK=#NNNNN TASK_TITLE= SHA= NOTE=` with the refusal, `missing_approvals` and `overlaps`. Send the author lane any refusal that needs an author action (`base_update_required`, `merge_conflict`, `candidate_not_linked`). Wait with `gobby-agents:wait_for_coordination` on the Lane Manager, or on the author lane for an author action, and call `land_commit` again once the blocker clears. Review a new SHA for the same task with `gcode` and `git diff` through `Bash`, then record a fresh `independent_review_approval` receipt for it before calling `land_commit` on it.
     - Withdrawal and reassignment. Only the Orchestrator or Lane Manager can withdraw or reassign your current candidate. On their EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN line, or an explicit reassignment of that task, acknowledge with a message whose first line is EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN NOTE= to that coordinator. The TASK must equal candidate_task. A successful acknowledgment clears the unit from review or verdict and returns to await without a verdict, approval or landing receipt. Leave other-task withdrawals unchanged. A failed send keeps the unit open for retry.
     - Review-only LAND. When the Orchestrator or Lane Manager explicitly marks a mapping or planning candidate as review-only with nothing to land, finish its review and send the usual LAND verdict and independent approval. Then send EVENT=REVIEW_COMPLETE TASK=#NNNNN SHA=<full candidate SHA> VERDICT=LAND LANDING=NOT_REQUIRED NOTE= to the Lane Manager. This matching completion ends the unit without land_commit or a fabricated landing receipt. A normal LAND still waits for a landing or already-landed notice.
+    - Unmarked no-change LAND. If review finds nothing to land but the candidate has no explicit review-only marking, send EVENT=REVIEW_ONLY_REQUIRED TASK=#NNNNN SHA=<candidate_sha> NOTE= to the coordinator requesting confirmation. Park with REASON=review_only while that confirmation is pending; resume the same unit when it arrives, then follow Review-only LAND. Never infer a waiver or fabricate a landing.
+    - Park. A LAND blocked on approval, a base update, or review-only confirmation may send EVENT=CANDIDATE_PARKED TASK=#NNNNN SHA=<candidate_sha> REASON=approval|base_update|review_only NOTE= to its coordinator. Success saves the task/SHA in parked_candidates and clears the active unit to await, where another routed candidate can enter review and record its reviewing link. A failed send, wrong task/SHA, or other reason leaves the unit active. Keep the full blocker, coordinator and approval receipt in the message/handoff. Parking never withdraws approval or records a landing.
+    - Resume. Once the coordinator clears the blocker, finish or park any active unit first. In await, send EVENT=CANDIDATE_RESUMED TASK=#NNNNN SHA=<parked SHA> NOTE= to that coordinator. Success restores the exact parked task/SHA with verdict_ready=true and enters verdict, retaining any prior approval. Call land_commit on that SHA when landing is required; after review-only confirmation follow Review-only LAND instead. Review a changed SHA afresh instead of resuming its old approval. Failed or mismatched sends preserve the parked unit. A coordinator withdrawal of a parked unit removes only its matching task/SHA from parked_candidates through top-level set_variable, without a verdict or receipt.
     - CodeRabbit findings gate landings. Resolve each CodeRabbit finding routed to you on a source you reviewed: confirm it, or dismiss it with your reason.
 
     ## Bounded correction loop
@@ -82,6 +85,11 @@ step_workflow:
     candidate_received: false
     verdict_ready: false
     candidate_task: null
+    candidate_sha: null
+    parked_candidates: []
+    _unit_parked: false
+    _unit_done: false
+    _resuming_candidate: []
 
   steps:
     - name: load_skills
@@ -137,8 +145,13 @@ step_workflow:
         in your launch prompt using send_message(target="session", target_id=<report target>).
         Wait for a CANDIDATE with gobby-agents:wait_for_coordination. When one
         arrives, call the top-level set_variable with scope="step": first
-        name="candidate_task" with its TASK= value, then
+        name="candidate_task" with its TASK= value, then candidate_sha with
+        its full 40-character COMMIT= SHA, then
         name="candidate_received" with true.
+        When a parked unit's coordinator clears its blocker, send
+        EVENT=CANDIDATE_RESUMED TASK=<parked task> SHA=<parked SHA> NOTE=.
+        A successful matching send restores that approved unit directly to
+        verdict; failed or mismatched sends preserve the parked records.
       allowed_tools:
         - Bash
         - Read
@@ -152,7 +165,60 @@ step_workflow:
         - "gobby-agents:wait_for_coordination"
         - "gobby-sessions:get_session"
         - "gobby-sessions:set_title"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: set_variable
+          variable: _resuming_candidate
+          value: >-
+            [record for record in vars.get('parked_candidates', [])
+              for fields in [str(tool_input.get('content')).partition('\n')[0]
+                .split(' ', 3) + ['', '', '']]
+              if not vars.get('candidate_received')
+              and fields[0] == 'EVENT=CANDIDATE_RESUMED'
+              and fields[1] == 'TASK=' + str(record.get('task'))
+              and fields[2] == 'SHA=' + str(record.get('sha'))]
+        - server: gobby-agents
+          tool: send_message
+          when: &resuming "vars.get('_resuming_candidate')"
+          action: set_variable
+          variable: candidate_task
+          value: "vars.get('_resuming_candidate')[0].get('task')"
+        - server: gobby-agents
+          tool: send_message
+          when: *resuming
+          action: set_variable
+          variable: candidate_sha
+          value: "vars.get('_resuming_candidate')[0].get('sha')"
+        - server: gobby-agents
+          tool: send_message
+          when: *resuming
+          action: set_variable
+          variable: verdict_ready
+          value: true
+        - server: gobby-agents
+          tool: send_message
+          when: *resuming
+          action: set_variable
+          variable: parked_candidates
+          value: >-
+            [record for record in vars.get('parked_candidates', [])
+              if record != vars.get('_resuming_candidate')[0]]
+        - server: gobby-agents
+          tool: send_message
+          when: *resuming
+          action: set_variable
+          variable: candidate_received
+          value: true
+        - server: gobby-agents
+          tool: send_message
+          when: *resuming
+          action: set_variable
+          variable: _resuming_candidate
+          value: []
       transitions:
+        - to: verdict
+          when: "vars.candidate_received and vars.verdict_ready"
         - to: review
           when: "vars.candidate_received"
 
@@ -208,6 +274,12 @@ step_workflow:
           tool: send_message
           when: *withdrawn
           action: set_variable
+          variable: candidate_sha
+          value: null
+        - server: gobby-agents
+          tool: send_message
+          when: *withdrawn
+          action: set_variable
           variable: candidate_task
           value: null
       transitions:
@@ -240,6 +312,11 @@ step_workflow:
         send EVENT=REVIEW_COMPLETE TASK=<candidate_task> SHA=<candidate SHA>
         VERDICT=LAND LANDING=NOT_REQUIRED NOTE= after the verdict and approval;
         skip land_commit and never invent a landing receipt.
+        For an unmarked no-change LAND, request EVENT=REVIEW_ONLY_REQUIRED
+        and park with REASON=review_only pending coordinator confirmation.
+        To park a blocked LAND, send EVENT=CANDIDATE_PARKED TASK=<candidate_task>
+        SHA=<candidate_sha> REASON=approval|base_update|review_only NOTE=.
+        Success saves the exact unit and returns to await for queued intake.
       allowed_tools:
         - Bash
         - mcp__gobby__call_tool
@@ -262,8 +339,32 @@ step_workflow:
       # contains ' SHA='.
       # A matching withdrawal acknowledgment also ends review or verdict.
       # Review-only completion requires its explicit LANDING=NOT_REQUIRED field.
-      # candidate_task clears last because every condition reads it.
+      # Latch the matching action before clearing task/SHA, because handler
+      # conditions and values observe each preceding handler's updates.
       on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: >-
+            [fields for fields in [str(tool_input.get('content'))
+              .partition('\n')[0].split(' ', 3) + ['', '', '']]
+              if fields[0] == 'EVENT=CANDIDATE_PARKED'
+              and fields[1] == 'TASK=' + str(vars.get('candidate_task'))
+              and fields[2] == 'SHA=' + str(vars.get('candidate_sha'))
+              and len(str(vars.get('candidate_sha'))) == 40
+              and all(c in '0123456789abcdef' for c in str(vars.get('candidate_sha')))
+              and fields[3].split(' ', 1)[0] in
+                ('REASON=approval', 'REASON=base_update', 'REASON=review_only')]
+          action: set_variable
+          variable: _unit_parked
+          value: true
+        - server: gobby-agents
+          tool: send_message
+          when: "vars.get('_unit_parked')"
+          action: set_variable
+          variable: parked_candidates
+          value: >-
+            vars.get('parked_candidates', []) +
+              [{'task': vars.get('candidate_task'), 'sha': vars.get('candidate_sha')}]
         - server: gobby-agents
           tool: send_message
           when: &unit_done >-
@@ -273,27 +374,53 @@ step_workflow:
               and (fields[0] in ('EVENT=LANDED', 'EVENT=ALREADY_LANDED',
                   'EVENT=CANDIDATE_WITHDRAWN')
                 or (fields[0] == 'EVENT=REVIEW_COMPLETE'
-                  and fields[2].startswith('SHA=')
+                  and fields[2].split(' ', 1)[0] == 'SHA=' + str(vars.get('candidate_sha'))
+                  and len(str(vars.get('candidate_sha'))) == 40
+                  and all(c in '0123456789abcdef' for c in str(vars.get('candidate_sha')))
                   and (fields[2].split(' ', 3) + ['', '', ''])[1] == 'VERDICT=LAND'
                   and (fields[2].split(' ', 3) + ['', '', ''])[2] == 'LANDING=NOT_REQUIRED')
                 or (fields[0] == 'EVENT=CANDIDATE_VERDICT'
                   and ((' ' + fields[2]).partition(' SHA=')[2]
                     .split(' ', 2) + ['', ''])[1] == 'VERDICT=BOUNCE'))]
           action: set_variable
+          variable: _unit_done
+          value: true
+        - server: gobby-agents
+          tool: send_message
+          when: &reset_unit "vars.get('_unit_done') or vars.get('_unit_parked')"
+          action: set_variable
           variable: candidate_received
           value: false
         - server: gobby-agents
           tool: send_message
-          when: *unit_done
+          when: *reset_unit
           action: set_variable
           variable: verdict_ready
           value: false
         - server: gobby-agents
           tool: send_message
-          when: *unit_done
+          when: *reset_unit
           action: set_variable
           variable: candidate_task
           value: null
+        - server: gobby-agents
+          tool: send_message
+          when: *reset_unit
+          action: set_variable
+          variable: candidate_sha
+          value: null
+        - server: gobby-agents
+          tool: send_message
+          when: "vars.get('_unit_done')"
+          action: set_variable
+          variable: _unit_done
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: "vars.get('_unit_parked')"
+          action: set_variable
+          variable: _unit_parked
+          value: false
       transitions:
         - to: await
           when: "not vars.candidate_received"

@@ -468,3 +468,99 @@ async def test_code_reviewer_failed_verdict_send_keeps_unit(
     await run._evaluate(adapter.translate_to_hook_event(native_event))
     assert run.step == "await"
     assert run.vars["candidate_task"] is None
+
+
+@pytest.mark.parametrize("reason", ["approval", "base_update", "review_only"])
+async def test_code_reviewer_parks_blocked_land_reviews_next_and_resumes(
+    temp_db: HubDatabase, reason: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    first_sha, second_sha = "a" * 40, "b" * 40
+    await run.set_flag("candidate_task", "#24224")
+    await run.set_flag("candidate_sha", first_sha)
+    await run.set_flag("candidate_received", True)
+    await run.call(
+        "gobby-tasks", "link_task_to_session", {"task_id": "#24224", "action": "reviewing"}
+    )
+    await run.set_flag("verdict_ready", True)
+    assert run.step == "verdict"
+    assert not await run.admits("gobby-tasks", "link_task_to_session")
+
+    park = f"EVENT=CANDIDATE_PARKED TASK=#24224 SHA={first_sha} REASON={reason} NOTE=blocked"
+    await run.call(*SEND, {"content": park}, {"success": False})
+    assert run.step == "verdict"
+    active = run.vars
+    for invalid in (
+        park.replace("TASK=#24224", "TASK=#999"),
+        park.replace(first_sha, second_sha),
+        park.replace(f"REASON={reason}", "REASON=merge_conflict"),
+        "Prose " + park,
+    ):
+        await run.call(*SEND, {"content": invalid})
+        assert run.step == "verdict"
+        assert run.vars == active
+    await run.call(*SEND, {"content": park})
+    assert run.step == "await"
+    assert run.vars["parked_candidates"] == [{"task": "#24224", "sha": first_sha}]
+    assert run.vars["candidate_task"] is None
+    assert run.vars["candidate_sha"] is None
+
+    await run.set_flag("candidate_task", "#24234")
+    await run.set_flag("candidate_sha", second_sha)
+    await run.set_flag("candidate_received", True)
+    assert run.step == "review"
+    await run.call(
+        "gobby-tasks", "link_task_to_session", {"task_id": "#24234", "action": "reviewing"}
+    )
+    await run.set_flag("verdict_ready", True)
+    await run.call(
+        *SEND, {"content": f"EVENT=CANDIDATE_VERDICT TASK=#24234 SHA={second_sha} VERDICT=BOUNCE"}
+    )
+    assert run.step == "await"
+    assert run.vars["parked_candidates"] == [{"task": "#24224", "sha": first_sha}]
+
+    resume = f"EVENT=CANDIDATE_RESUMED TASK=#24224 SHA={first_sha} NOTE=approval arrived"
+    parked = run.vars
+    for invalid in (
+        resume.replace("TASK=#24224", "TASK=#999"),
+        resume.replace(first_sha, second_sha),
+        "Prose " + resume,
+    ):
+        await run.call(*SEND, {"content": invalid})
+        assert run.step == "await"
+        assert run.vars == parked
+    await run.call(*SEND, {"content": resume}, {"success": False})
+    assert run.step == "await"
+    await run.call(*SEND, {"content": resume})
+    assert run.step == "verdict"
+    assert run.vars["candidate_task"] == "#24224"
+    assert run.vars["candidate_sha"] == first_sha
+    assert run.vars["parked_candidates"] == []
+    assert run.vars["verdict_ready"] is True
+    assert not await run.admits("gobby-tasks", "link_task_to_session")
+    if reason == "review_only":
+        for wrong_sha in ("", second_sha):
+            await run.call(
+                *SEND,
+                {
+                    "content": f"EVENT=REVIEW_COMPLETE TASK=#24224 SHA={wrong_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+                },
+            )
+            assert run.step == "verdict"
+            assert run.vars["candidate_sha"] == first_sha
+        await run.call(
+            *SEND,
+            {
+                "content": f"EVENT=REVIEW_COMPLETE TASK=#24224 SHA={first_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+            },
+        )
+    else:
+        await run.call(
+            "gobby-tasks-ops", "land_commit", {"task_id": "#24224", "commit_sha": first_sha}
+        )
+        await run.call(*SEND, {"content": f"EVENT=LANDED TASK=#24224 SHA={first_sha} RECEIPT=real"})
+    assert run.step == "await"
+    assert run.vars["candidate_sha"] is None
+    assert run.vars["_unit_done"] is False
+    assert run.vars["_unit_parked"] is False
