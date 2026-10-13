@@ -45,8 +45,8 @@ def _agy_hooks_file() -> Path:
 
 def _agy_mcp_file() -> Path:
     if override := os.environ.get("GOBBY_AGY_MCP_FILE"):
-        return Path(override).expanduser().resolve()
-    return (_agy_config_dir() / "mcp_config.json").resolve()
+        return Path(override).expanduser()
+    return _agy_config_dir() / "mcp_config.json"
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
@@ -281,6 +281,7 @@ def install_agy(
         mcp_result = configure_mcp_server_json(
             _agy_mcp_file(),
             extra_server_fields={"type": "stdio"},
+            follow_provider_symlink=True,
         )
     except OSError as exc:
         result["error"] = f"Failed to configure Antigravity MCP server: {exc}"
@@ -347,7 +348,7 @@ def uninstall_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
                 result["error"] = f"Failed to write Antigravity hooks: {exc}"
                 return result
 
-    mcp_result = remove_mcp_server_json(_agy_mcp_file())
+    mcp_result = remove_mcp_server_json(_agy_mcp_file(), follow_provider_symlink=True)
     if mcp_result["success"]:
         result["mcp_removed"] = mcp_result.get("removed", False)
     else:

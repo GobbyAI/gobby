@@ -182,13 +182,61 @@ def test_agy_mcp_symlink_survives_install_and_uninstall(
     target = agy_env / "shared-mcp.json"
     target.write_text(json.dumps({"mcpServers": {"alpha": {"command": "node"}}}))
     mcp_file.symlink_to(target)
+    original = target.read_bytes()
 
     assert install_agy(project_path, mode="global")["success"] is True
     assert mcp_file.is_symlink()
     assert set(_load_json(target)["mcpServers"]) == {"alpha", "gobby"}
+    backups = list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    assert any(backup.read_bytes() == original for backup in backups)
+    assert not list(target.parent.glob(f"{target.name}.*.backup"))
+    installed = target.read_bytes()
     assert uninstall_agy(project_path, mode="global")["success"] is True
     assert mcp_file.is_symlink()
     assert _load_json(target)["mcpServers"] == {"alpha": {"command": "node"}}
+    backups = list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    assert any(backup.read_bytes() == installed for backup in backups)
+    assert not list(target.parent.glob(f"{target.name}.*.backup"))
+
+
+@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize("target_parent_exists", [False, True])
+def test_agy_dangling_mcp_symlink_respects_existing_target_parent(
+    project_path: Path,
+    agy_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: bool,
+    target_parent_exists: bool,
+) -> None:
+    mcp_file = agy_env / ".gemini" / "config" / "mcp_config.json"
+    if override:
+        mcp_file = agy_env / "custom" / "mcp.json"
+        monkeypatch.setenv("GOBBY_AGY_MCP_FILE", str(mcp_file))
+    mcp_file.parent.mkdir(parents=True)
+    target = agy_env / "external" / "mcp.json"
+    if target_parent_exists:
+        target.parent.mkdir()
+    mcp_file.symlink_to(target)
+
+    assert uninstall_agy(project_path, mode="global")["success"] is True
+    assert not target.exists()
+    assert target.parent.exists() is target_parent_exists
+    result = install_agy(project_path, mode="global")
+    assert result["mcp_configured"] is target_parent_exists
+    assert result["success"] is target_parent_exists
+    assert mcp_file.is_symlink()
+    assert target.parent.exists() is target_parent_exists
+    assert not list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    if target_parent_exists:
+        assert set(_load_json(target)["mcpServers"]) == {"gobby"}
+    else:
+        assert not target.exists()
+    assert uninstall_agy(project_path, mode="global")["success"] is True
+    assert mcp_file.is_symlink()
+    if target_parent_exists:
+        assert _load_json(target) == {}
+    else:
+        assert not target.parent.exists()
 
 
 def test_install_agy_preserves_existing_mcp_servers(

@@ -42,6 +42,8 @@ def _configure(
     server_name: str,
     project_key: str | None = None,
     extra_server_fields: dict[str, Any] | None = None,
+    *,
+    follow_provider_symlink: bool = False,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": False,
@@ -90,7 +92,14 @@ def _configure(
         return True
 
     try:
-        update_claude_config(settings_path, configure)
+        writer_path = settings_path
+        if follow_provider_symlink and settings_path.is_symlink():
+            writer_path = settings_path.resolve()
+            if not writer_path.parent.is_dir():
+                raise FileNotFoundError(
+                    f"MCP target parent is not a directory: {writer_path.parent}"
+                )
+        update_claude_config(writer_path, configure)
     except (OSError, ValueError) as exc:
         result["error"] = str(exc)
         return result
@@ -100,7 +109,11 @@ def _configure(
 
 
 def _remove(
-    settings_path: Path, server_name: str, project_key: str | None = None
+    settings_path: Path,
+    server_name: str,
+    project_key: str | None = None,
+    *,
+    follow_provider_symlink: bool = False,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": False,
@@ -108,7 +121,7 @@ def _remove(
         "backup_path": None,
         "error": None,
     }
-    if not settings_path.exists() and not settings_path.is_symlink():
+    if not settings_path.exists() and (follow_provider_symlink or not settings_path.is_symlink()):
         result["success"] = True
         return result
 
@@ -126,7 +139,12 @@ def _remove(
         return True
 
     try:
-        changed = update_claude_config(settings_path, remove)
+        writer_path = (
+            settings_path.resolve()
+            if follow_provider_symlink and settings_path.is_symlink()
+            else settings_path
+        )
+        changed = update_claude_config(writer_path, remove)
     except (OSError, ValueError) as exc:
         result["error"] = str(exc)
         return result
@@ -150,11 +168,22 @@ def configure_mcp_server_json(
     server_name: str = "gobby",
     *,
     extra_server_fields: dict[str, Any] | None = None,
+    follow_provider_symlink: bool = False,
 ) -> dict[str, Any]:
     """Configure an MCP server, backing up and preserving unrelated settings."""
-    return _configure(settings_path, server_name, extra_server_fields=extra_server_fields)
+    return _configure(
+        settings_path,
+        server_name,
+        extra_server_fields=extra_server_fields,
+        follow_provider_symlink=follow_provider_symlink,
+    )
 
 
-def remove_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> dict[str, Any]:
+def remove_mcp_server_json(
+    settings_path: Path,
+    server_name: str = "gobby",
+    *,
+    follow_provider_symlink: bool = False,
+) -> dict[str, Any]:
     """Remove an MCP server, backing up and preserving unrelated settings."""
-    return _remove(settings_path, server_name)
+    return _remove(settings_path, server_name, follow_provider_symlink=follow_provider_symlink)
