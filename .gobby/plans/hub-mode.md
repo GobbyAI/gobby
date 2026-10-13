@@ -814,13 +814,22 @@ Targets:
 - `src/gobby/hub/node_reports.py`:
   - `NodeReportInbox` mints `hub_epoch` once, at construction, as a fresh
     random UUID, so each hub process has its own and never reuses one. It
-    holds, per machine, the revision high-water, the snapshot with the
-    highest revision, and the exits gathered since the last `take`.
-    - `put` replaces the snapshot only with a higher revision, so an older
-      accepted report that finishes last cannot replace a newer one. It
-      merges exits by `(run_id, terminal_id)`.
-    - `take()` returns every machine's snapshot and exits and empties them.
-      High-waters survive `take`.
+    holds, per machine, the admission high-water, the published revision
+    (the revision of the last snapshot `put` installed), the snapshot
+    installed since the last `take`, and the exits gathered since the last
+    `take`.
+    - `put` installs the report's snapshot only when its revision is above
+      the published revision, and then raises the published revision to it.
+      So an older admitted report that finishes later, before or after a
+      `take`, never installs its snapshot. Every `put` merges exits by
+      `(run_id, terminal_id)`. An exit stays true once it happens, so a late
+      merge is safe; a late snapshot would present absence that newer
+      reports already contradict.
+    - `take()` returns, for each machine with a snapshot installed since the
+      last `take`, that snapshot and the gathered exits, and empties both. A
+      machine with gathered exits and no new snapshot keeps them until its
+      next installed snapshot, so every entry 2.6 reads is a complete
+      report. High-waters and published revisions survive `take`.
     - One lock guards `admit`, `put`, and `take`.
   - A module-level `node_report_inbox()` caches one instance.
   - `record_remote_workspaces(db, machine_id, report)` reads each
@@ -854,7 +863,7 @@ Verification planned:
 - 1.4.2 - An unknown project answers 404, a soft-deleted project 409 `project_deleted`, a different root for the same project 409 `checkout_conflict`, and a relative root 422, and none writes a row. test: `tests/servers/test_node_routes.py::test_checkout_registration_refusals`.
 - 1.4.3 - A key-authenticated report with the inbox's epoch lands in the inbox under the key's machine. A higher-revision report replaces the first's snapshot, the exits of both stay until `take` returns them, a report of 1,000 exits and a later report of 1 both reach `take`, and the inbox is empty after `take`. test: `tests/servers/test_node_routes.py::test_report_inbox_replaces_snapshot_and_merges_exits`.
 - 1.4.4 - Each route answers 403 `node_identity_required` without a verified identity, 403 `machine_is_local` for a key bound to the hub's machine, 422 for a body naming `machine_id`, and 422 `unsupported_version` for an unknown `v`, and none writes a row or an inbox entry. test: `tests/servers/test_node_routes.py::test_node_routes_refuse_unverified_and_local_identity`.
-- 1.4.5 - A report with a null epoch, or with the epoch of a replaced inbox standing in for a hub restart, answers 409 `stale_report` with the current epoch. So does a report whose revision is at or below the machine's high-water, whether it is a duplicate or arrives out of order. None of them writes a workspace row or touches the snapshot. When two admitted reports finish out of order, the higher revision's snapshot stays. test: `tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier`.
+- 1.4.5 - A report with a null epoch, or with the epoch of a replaced inbox standing in for a hub restart, answers 409 `stale_report` with the current epoch. So does a report whose revision is at or below the machine's high-water, whether it is a duplicate or arrives out of order. None of them writes a workspace row or touches the snapshot. When two admitted reports finish out of order, the higher revision's snapshot stays. In the intervening-take schedule, revisions r1 and r2 both pass `admit`, r2 commits and `put`s, `take` returns r2's snapshot, and r1 then commits and `put`s: r1's snapshot is never installed, its exits merge, the next `take` returns nothing for that machine, and after a report above r2 is `put` the next `take` returns that report's snapshot with r1's exits. test: `tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier`.
 - 1.4.6 - Before the route answers 200, a live agent entry with a workspace and a `launched: true` exit with a workspace each insert one `worktrees` row, or a `clones` row in clone mode. Each row carries the key's machine, the path, the branch, the base branch, the run's task, and the child session. A repeated entry inserts nothing more. An entry whose terminal is on another machine or names another run inserts none. The row survives a replaced inbox, the task gains no artifact, and the hub's `list_worktrees()` does not return the row. test: `tests/servers/test_node_routes.py::test_reported_workspace_is_durable_before_200`.
 
 ## P2: Machine-correct hub loops and remote callers
@@ -1358,12 +1367,15 @@ it is already its own section, 2.6.
   `crates/gcore/assets/config/runtime_config_contract.json`).
   `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
   pins the default and the minimum.
-- The validator lists every `DaemonConfig` consumer for this target. In
-  `src/`, only `configured_max_active_agents` reads
-  `DaemonConfig.max_active_agents` (gcode, 2026-10-12); the build flow's
-  `max_active_agents` is `BuildConfig`'s own field
-  (`src/gobby/config/build.py`). Every other consumer reads a validated
-  config, so `le=1000` changes none of them; the live value is 100.
+- No indexed symbol narrower than `DaemonConfig` covers the field, so
+  Consumers unchanged lists each of its 244 consumers that the validator
+  reports. In `src/`, only `configured_max_active_agents` reads
+  `DaemonConfig.max_active_agents` (`gcode grep -w max_active_agents`,
+  2026-10-12); the build flow's `max_active_agents` is `BuildConfig`'s own
+  field (`src/gobby/config/build.py`). No test sets it above 20. The
+  registry reads each field's annotation, default, and description, which
+  `le=1000` leaves unchanged, so neither config contract changes. The live
+  value is 100.
 - A node runs only gdaemon and reads no config store (#24075), so only the hub
   can enforce the configured ceiling per node. `TerminalManager.list_reconcilable_by_machine`
   returns a machine's pending, live, and orphaned terminal rows. A remote
@@ -1514,6 +1526,250 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py` — no-edit-reason: the remote flow calls `configured_max_active_agents()` as is, and `agent_slot_cap_refusal`, `reserve_agent_slot`, and `_SLOT_LOCKS` keep the per-project cap.
 - `tests/contracts/http/config_schema.json` — no-edit-reason: it carries the key's default and description but no bounds, and both stay.
 - `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py` — no-edit-reason: its caps are at most the default 20, all within `le=1000`.
+- `src/gobby/config/registry.py` — no-edit-reason: it reads each `DaemonConfig` field's annotation, default, and description, and `le=1000` changes none of them.
+- `src/gobby/agents/spawn_models.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/_text_generation_adapters.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/_text_generation_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/_tool_chat_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/_tool_chat_codex.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/_tool_chat_spawn.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/audio.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/embedding_switch_service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/endpoint_activation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/registry.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/registry_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/ai/vision.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/memory/__init__.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/runtime.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/ui.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/ui_mode.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/utils.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/cli/utils_ui.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/__init__.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/_loading.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/documents.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/runtime.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/runtime_activation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/runtime_contracts.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/runtime_models.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/values.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/config/voice_secrets.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/feedback/agent.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/hooks/broadcaster.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/hooks/factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/llm/claude.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/llm/factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/llm/service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/importer.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/registries.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/services/server_mgmt.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/agents_context.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/agents_registry.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/sessions/_factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/tasks/_context.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/tasks/_factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/mcp_proxy/tools/tasks/_ops_factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/providers/capabilities/local_context_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner_init/servers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner_init/services.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner_init/storage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/runner_init/terminal_wiring.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/http.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/routes/configuration_generation_endpoints.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/routes/dependencies.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/routes/embeddings.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/routes/llm.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/websocket/chat/_messaging.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/websocket/chat/runtime_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/websocket/server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/servers/websocket/session_control.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/sessions/lifecycle.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/sessions/transcript_processing.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/storage/config_repository.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/storage/sessions/_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/system_automation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`; its own `max_active_agents` arguments carry the build cap, so `le=1000` changes nothing it uses.
+- `src/gobby/tasks/expansion_service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `src/gobby/workflows/engine/core.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_agent_command_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_local_context_setup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_resume_executor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_resume_sandbox_gate.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_sandbox.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_sandbox_network.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_tmux.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_agy_probe.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_capability_registry.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_embedding_switch_runner.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_endpoint_activation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_endpoints.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_text_generation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_tool_chat_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_tool_chat_protocols.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_tool_chat_service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_tool_chat_spawn.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/ai/test_vision_extraction.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/build/test_dispatcher_stage_wake.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/hub_backup/test_cli_hub_backup_cli.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/installers/test_qdrant_installer.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/installers/test_router_carriers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_backend_restart.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_cli_mcp_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_cli_runtime.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_cli_runtime_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_cli_skills_coverage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_daemon_preflight.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_daemon_remote_mode.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_embeddings_doctor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_memory_coverage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_operational_config_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_projects_refresh_verification.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_status_health_agent_role.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_tasks_cli.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_ui_coverage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_ui_mode.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/cli/test_validation_cli.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_app_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_communications.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_consolidation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_export_protection.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_registry.py` — no-edit-reason: it walks `DaemonConfig` field paths by annotation, and `le=1000` leaves the field's path and `int` annotation unchanged.
+- `tests/config/test_config_runtime.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_config_sessions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_daemon_sandbox.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_feature_base.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_files_home.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_indexing_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_logging_settings.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_memory_feature_configs.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_remote_ui_auth.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_removed_config_fields.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`; its `max_active_agents` is `BuildConfig`'s, so `le=1000` changes nothing it uses.
+- `tests/config/test_restart_config_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_runtime_loop_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_skills.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_stateful_config_subscribers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_terminal_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_terminal_host.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config/test_tool_result_offload_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/config_runtime_helpers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/conftest.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/dispatch/test_daemon_resume.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/dispatch/test_services_daemon_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/e2e/test_build_dispatcher_autonomy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/feedback/test_feedback_agent.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_broadcaster.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_config_hook_extensions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_hook_manager_factory_injection.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_hooks_context.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_hooks_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/hooks/test_staged_effects_receipt_route.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/install/test_hook_timeout_staging.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_claude.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_claude_provider.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_context_window.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_llm_claude.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_llm_local.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/llm/test_llm_service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/test_gobby_daemon_tools.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/test_mcp_proxy_importer.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/test_mcp_proxy_runtime_config_resolution.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/test_proxy_server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/spawn_agent/test_local_endpoint.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/test_config_values.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/test_review_learning.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/mcp_proxy/tools/test_voice.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/providers/capabilities/test_local_context_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/providers/test_version_gate.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/runner_helpers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/runner_init/test_config_runtime_startup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/runner_init/test_runner_init_storage.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/runtime_grants/support.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/scheduler/test_cron_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/scheduler/test_system_automation_loop.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/conftest.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/mcp_endpoints/test_bridge.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_agent_spawn_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_agents_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_api_key_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_auth_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_config_values_api.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_config_yaml_replace.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_configuration_effective_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_configuration_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_embeddings_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_hooks_agy_dispatch.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_hub_files_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_llm_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_rules_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_runtime_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_runtime_handshake.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_servers_routes_chat_attachments.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_servers_routes_communications.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_servers_routes_pipeline_definitions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_servers_routes_providers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_session_variables.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_skills_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_tasks_create.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_tasks_list_response_shape.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_tasks_owner_ref.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_tasks_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_traces.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_variable_definitions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/routes/test_voice_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_app_factory_ui_modes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_app_factory_vite_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_chat_session.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_http_broadcaster.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_http_endpoints.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_http_init.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_http_middleware.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_local_context_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_local_llm.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_local_provider_models.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_managed_clear_identity.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_mcp_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_agy_backend.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_launch_contracts.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_launch_contracts_codex.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_runtime_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_servers_websocket_chat_provider_routing.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/chat/test_session_launch.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/test_server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/test_servers_websocket_auth.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/servers/websocket/test_servers_websocket_chat_attachments.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/skills/reference_library_helpers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/storage/test_schema_divergence.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/telemetry/test_flow_instrumentation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/terminals/test_backend_selection.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/terminals/test_host_shutdown_preservation.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_approval_timeout.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_bin_freshness.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_init.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_lifecycle_ui_mode.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_maintenance_startup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_resource_monitor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_skill_maintenance.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/voice/test_tts_chatterbox.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/voice/test_voice_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/workflows/test_rule_engine.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/workflows/test_rule_engine_aggregate_blocks.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/workflows/test_session_feedback_rules.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/workflows/test_workflow_hooks.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 
 Verification planned:
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_spawn.py tests/mcp_proxy/tools/spawn_agent/ tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_backend_ingress.py tests/agents/test_spawn.py tests/agents/test_spawn_resume.py tests/agents/test_agents_session.py tests/sessions/test_sessions_manager.py tests/agents/test_runbook_seat_titles.py tests/integration/test_terminal_mode_worktrees.py tests/storage/agents/test_active_run_scope.py tests/storage/test_machine_scope_writers.py tests/config/test_runtime_config_contract.py -v`.
@@ -1597,8 +1853,10 @@ exits the terminal whose run the sweep settles after a hub restart.
     another machine's row also names.
   - `release_session_worktrees` releases only this machine's rows, so a
     remote row keeps its `agent_session_id` after the session ends.
-- `node_report_inbox().take()` (1.4) returns each reporting machine's latest
-  report and the exits gathered since the last `take`.
+- `node_report_inbox().take()` (1.4) returns, for each machine with a
+  snapshot installed since the last `take`, that snapshot and the exits
+  gathered since the last `take`. A late older report never installs a
+  snapshot, so every entry is the newest complete report.
   `AgentLifecycleMonitor` runs the health pass every 30 s
   (`check_interval_seconds`, `src/gobby/agents/lifecycle_monitor.py`, with no
   override), and a node reports right after each change. So a remote run
@@ -2056,7 +2314,10 @@ deferral:
   - HM-F15: each hub process mints a fresh random `hub_epoch` that is never
     reused, and the node sends one fresh report at a time with a durable
     revision. A stale epoch or a revision at or below the high-water gets 409
-    `stale_report` before any write. No migration.
+    `stale_report` before any write. The inbox keeps each machine's published
+    snapshot revision across `take`, so an older admitted report that
+    finishes after a `take` merges its exits and never installs its snapshot
+    (1.4.5 pins that schedule). No migration.
   - HM-F16: Josh's ruling sets the ceiling to the existing
     `max_active_agents`, applied per remote machine in 2.5, with `le=1000`
     so a full node fits one complete report (Decision 19). The writer found

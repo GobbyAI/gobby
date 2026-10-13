@@ -66,6 +66,18 @@ above 1,000 or lowered below the live count.
   admitted under an earlier value of at most 1,000, so a report never exceeds
   1,000.
 
+## Verification follow-ups on 4966332528 (16491)
+
+- HM-F15 cross-take: r1 and r2 pass `admit`, r2 commits and `put`s, `take`
+  empties r2, then r1 `put`s. Comparing only the stored snapshot would
+  install r1. Fix in 1.4: the inbox keeps each machine's published revision
+  across `take`; `put` installs only above it and otherwise merges exits.
+  `take` returns a machine only with a newly installed snapshot, so 2.6
+  always reads a complete report. 1.4.5 pins the schedule.
+- Consumer coverage: no indexed symbol narrower than `DaemonConfig` covers
+  the field, so 2.5's Consumers unchanged lists all 244 consumers with a
+  bounded reason. Validation is warning-free.
+
 ## Original edit list (1.1, 1.4 and 2.6 items are done)
 
 - 1.1:
