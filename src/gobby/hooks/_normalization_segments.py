@@ -24,6 +24,7 @@ from gobby.hooks.code_navigation import (
 class _ShellSegment:
     tokens: list[ShellToken]
     separator_before: str | None = None
+    stderr_pipe: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,7 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     segments: list[_ShellSegment] = []
     current: list[ShellToken] = []
     separator_before: str | None = None
+    stderr_pipe = False
     for index, token in enumerate(tokens):
         if token.value == "&" and not token.quoted and 0 < index < len(tokens) - 1:
             previous, following = tokens[index - 1], tokens[index + 1]
@@ -75,13 +77,16 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
             if not current and token.value == "\n" and separator_before in {"|", "&&", "||", "&"}:
                 continue
             if current:
-                segments.append(_ShellSegment(current, separator_before))
+                segments.append(_ShellSegment(current, separator_before, stderr_pipe))
                 current = []
-            separator_before = token.value
+            # Pipeline bookkeeping treats both forms alike. Keep the stderr
+            # distinction for consumers that prove the literal stdin program.
+            stderr_pipe = token.value == "|&"
+            separator_before = "|" if stderr_pipe else token.value
             continue
         current.append(token)
     if current:
-        segments.append(_ShellSegment(current, separator_before))
+        segments.append(_ShellSegment(current, separator_before, stderr_pipe))
     return segments
 
 
