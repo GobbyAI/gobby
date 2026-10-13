@@ -1,8 +1,12 @@
 """Repeated shell inspection preserves independent parser results."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.hooks._normalization_shell import scan_shell_command
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.workflows.engine.command_matching import executable_command_subjects
 
 pytestmark = pytest.mark.unit
 
@@ -49,3 +53,35 @@ def test_repeated_scan_keeps_shell_dialects_separate() -> None:
     assert scan_shell_command(command, dialect="bash").tokens[-1].value == "\n"
     assert scan_shell_command(command, dialect="zsh").tokens[-1].value == "cJ"
     assert scan_shell_command(command, dialect="bash").tokens[-1].value == "\n"
+
+
+@pytest.mark.parametrize(
+    ("command", "kind"),
+    [
+        ("touch +(owned|foreign)", "write"),
+        ("echo +(one|two)", "execute"),
+        ("touch pre+(owned|foreign)", "write"),
+    ],
+)
+def test_plus_extglob_preserves_word_and_scope(tmp_path: Path, command: str, kind: str) -> None:
+    head, pattern = command.split(" ", 1)
+    scan = scan_shell_command(command)
+    assert [(token.value, token.quoted) for token in scan.tokens] == [
+        (head, False),
+        (pattern, False),
+    ]
+    assert scan.spans == [(0, len(head)), (len(head) + 1, len(command))]
+    assert executable_command_subjects(command) == [command]
+
+    data: dict[str, object] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command, "cwd": str(tmp_path)},
+        "project_path": str(tmp_path),
+    }
+    normalize_tool_fields(data)
+    assert data["canonical_tool_kind"] == kind
+    if kind == "write":
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+    else:
+        assert "canonical_repo_mutation" not in data

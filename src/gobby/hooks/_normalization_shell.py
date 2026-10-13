@@ -64,7 +64,8 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]|`")
 # `$(cmd)` (but not arithmetic `$((`) or a backtick substitution: commands that run.
 _COMMAND_SUBSTITUTION = re.compile(r"\$(?:\\\n)*\((?!(?:\\\n)*\()|`")
-_PLAIN_WORD_RUN = re.compile(r"[A-Za-z0-9_./:=,+%-]+")
+# Stop before '+' so compound-word handling can recognize a mid-word extglob.
+_PLAIN_WORD_RUN = re.compile(r"[A-Za-z0-9_./:=,%-]+")
 _PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_./:=,+%{}-]+(?:\(\)[A-Za-z0-9_./:=,+%{}-]*)*|;;|;")
 _PLAIN_COMMAND = re.compile(r"[A-Za-z0-9_./:=,+%{}(); \t-]*")
 _MAX_SUBSTITUTION_DEPTH = 24
