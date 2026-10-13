@@ -172,6 +172,13 @@ where
 
 impl AcquireCtx {
     pub(super) fn from_request(request: &AcquireRequest<'_>) -> Result<Self, GrantError> {
+        // A managed caller requires its own launch grant. Never let incomplete
+        // managed identity fall through to the operator's shared cache or key.
+        if request.managed_bootstrap.is_none()
+            && (request.expected_execution_id.is_some() || request.managed_envelope.is_some())
+        {
+            return Err(GrantError::ManagedCapabilityMissing);
+        }
         let home = resolve_home(request.home)?;
         let (project_id, code_overlay_project_id) = match request.project_id.as_deref() {
             Some(project_id) => (project_id.to_owned(), None),
