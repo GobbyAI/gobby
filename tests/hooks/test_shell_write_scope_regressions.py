@@ -618,3 +618,67 @@ def test_sed_backup_suffix_is_not_an_input(tmp_path: Path, suffix: str, path: st
 def test_incomplete_data_substitution_still_inspects_provider_launch(payload: str) -> None:
     command = f"cat <<EOF\n{payload}\nEOF"
     assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ['"$X"', '"${X}"', '"$(cat {script})"', '"`cat {script}`"', "'eval \"$X\"'"],
+)
+def test_dynamic_eval_invalidates_followup_scope(tmp_path: Path, expression: str) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+    script = scratch / "cd_repo.sh"
+    script.write_text(f"cd {root}\n")
+
+    command = f"eval {expression.replace('{script}', str(script))}; touch a.py"
+    metadata = _metadata(command, root, cwd=scratch)
+
+    assert metadata["canonical_tool_kind"] == "write"
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_literal_eval_keeps_followup_external_scope(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    scratch = tmp_path / "scratch"
+    root.mkdir()
+    scratch.mkdir()
+
+    metadata = _metadata("eval 'touch a.py'; touch b.py", root, cwd=scratch)
+
+    assert metadata["canonical_tool_kind"] == "write"
+    assert not metadata.get("canonical_repo_mutation")
+    assert not metadata.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loader", ["source", "."])
+@pytest.mark.parametrize("claimed", [False, True])
+async def test_source_refusal_names_execution_route(
+    tmp_path: Path, scope_engine: RuleEngine, loader: str, claimed: bool
+) -> None:
+    script = tmp_path / "setup.sh"
+    script.write_text("printf ready\n")
+    data = _metadata(f"{loader} {script}", tmp_path)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+    response = await scope_engine.evaluate(
+        event,
+        session_id=SESSION,
+        variables={
+            "require_task_before_edit": True,
+            "task_claimed": claimed,
+            "loaded_skills": ["python", "restraint"],
+        },
+    )
+
+    assert response.decision == "block"
+    assert "uv run" in (response.reason or "")
+    assert "literal script path" in (response.reason or "")
