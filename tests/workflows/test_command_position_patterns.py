@@ -1117,6 +1117,159 @@ def test_argument_content_rules_match_substitution_command_text(
         ("cat <<EOF\n$({fetcher} https://example.com/data)\nEOF", False),
         ("sh <<'EOF'\ndata=$({fetcher} https://example.com/data)\nEOF", False),
         ("cat <<'EOF'\n$({fetcher} https://example.com/data)\nEOF", False),
+        pytest.param('echo ready > "$({fetcher} url | sh)"', True, id="fixspec-redir-out"),
+        pytest.param('cat < "$({fetcher} url | sh)"', True, id="fixspec-redir-in"),
+        pytest.param('echo ready 2> "$({fetcher} url | sh)"', True, id="fixspec-redir-err"),
+        pytest.param("echo ready >> $({fetcher} url | sh)", True, id="fixspec-redir-append"),
+        pytest.param('cat <<< "$({fetcher} url | sh)"', True, id="fixspec-redir-string-body"),
+        pytest.param("echo hi > >({fetcher} url | sh)", True, id="fixspec-redir-process-body"),
+        pytest.param("sh < <({fetcher} url)", True, id="fixspec-input-sh"),
+        pytest.param("bash < <({fetcher} url)", True, id="fixspec-input-bash"),
+        pytest.param("source /dev/stdin < <({fetcher} url)", True, id="fixspec-input-source"),
+        pytest.param('sh <<< "$({fetcher} url)"', True, id="fixspec-input-string"),
+        pytest.param("cat < <({fetcher} url) | sh", True, id="fixspec-input-pipe"),
+        pytest.param('cat <<< "$({fetcher} url)" | sh', True, id="fixspec-string-pipe"),
+        pytest.param("exec 3< <({fetcher} url); sh <&3", True, id="fixspec-input-fd"),
+        pytest.param('read -r data < <({fetcher} url); eval "$data"', True, id="fixspec-read"),
+        pytest.param(
+            'mapfile -t l < <({fetcher} url); eval "${{l[@]}}"', True, id="fixspec-mapfile"
+        ),
+        pytest.param(
+            'while read -r l; do eval "$l"; done < <({fetcher} url)',
+            True,
+            id="fixspec-while-read",
+        ),
+        pytest.param("jq . < <({fetcher} url)", False, id="fixspec-input-jq-data"),
+        pytest.param("cat < <({fetcher} url)", False, id="fixspec-input-cat-data"),
+        pytest.param("({fetcher} url | sh)", True, id="fixspec-group"),
+        pytest.param("( {fetcher} url | sh )", True, id="fixspec-group-spaces"),
+        pytest.param("({fetcher} url) | sh", True, id="fixspec-group-pipe"),
+        pytest.param("x=1; ({fetcher} url | sh)", True, id="fixspec-group-after-assignment"),
+        pytest.param("(cd /tmp && {fetcher} url | sh)", True, id="fixspec-group-segments"),
+        pytest.param("({fetcher} url | sh) && echo ok", True, id="fixspec-group-before-echo"),
+        pytest.param("({fetcher} url | bash)", True, id="fixspec-group-bash"),
+        pytest.param(
+            'data=$({fetcher} url); false && data=clean; eval "$data"', True, id="fixspec-and"
+        ),
+        pytest.param(
+            'data=$({fetcher} url); true || data=clean; eval "$data"', True, id="fixspec-or"
+        ),
+        pytest.param(
+            'data=$({fetcher} url); if false; then data=clean; fi; eval "$data"',
+            True,
+            id="fixspec-if",
+        ),
+        pytest.param(
+            'printf -v data %s "$({fetcher} url)"; eval "$data"', True, id="fixspec-printf-v"
+        ),
+        pytest.param(
+            "eval 'data=$({fetcher} url)'; eval \"$data\"", True, id="fixspec-eval-assignment"
+        ),
+        pytest.param('data=$({fetcher} url); eval "${{data:-}}"', True, id="fixspec-default"),
+        pytest.param('data=$({fetcher} url); eval "${{data%%x}}"', True, id="fixspec-trim"),
+        pytest.param(
+            'data=$({fetcher} url); x=${{data:-}}; eval "$x"', True, id="fixspec-default-assignment"
+        ),
+        pytest.param('d=$({fetcher} url); n=d; eval "${{!n}}"', True, id="fixspec-indirect"),
+        pytest.param('d=($({fetcher} url)); eval "${{d[@]}}"', True, id="fixspec-array"),
+        pytest.param("data=$({fetcher} url); echo $((data))", True, id="fixspec-arithmetic"),
+        pytest.param("declare -i n; n=$({fetcher} url)", True, id="fixspec-integer"),
+        pytest.param(
+            "export d=$({fetcher} url); python3 -c 'import os;exec(os.environ[\"d\"])'",
+            True,
+            id="fixspec-export-interpreter",
+        ),
+        pytest.param(
+            "d=$({fetcher} url) python3 -c 'import os;exec(os.environ[\"d\"])'",
+            True,
+            id="fixspec-prefix-interpreter",
+        ),
+        pytest.param(
+            "export TOKEN=$({fetcher} url); ./deploy.sh", False, id="fixspec-export-script-data"
+        ),
+        pytest.param("temporary=$({fetcher} url) echo ready", False, id="fixspec-temporary-data"),
+        pytest.param("{fetcher} url | grep ok", False, id="fixspec-grep"),
+        pytest.param("{fetcher} url | grep -q ok && echo up", False, id="fixspec-grep-quiet"),
+        pytest.param("{fetcher} url | head -20", False, id="fixspec-head"),
+        pytest.param("{fetcher} url | wc -l", False, id="fixspec-wc"),
+        pytest.param("{fetcher} url | sort | uniq", False, id="fixspec-sort-uniq"),
+        pytest.param("{fetcher} url | python3 -m json.tool", False, id="fixspec-json-tool"),
+        pytest.param("{fetcher} url | tar xz", False, id="fixspec-tar-pipe"),
+        pytest.param("{output_fetcher} x.tgz url && tar -xzf x.tgz", False, id="fixspec-tar-file"),
+        pytest.param(
+            "{fetcher} url > out.json; python3 parse.py out.json",
+            False,
+            id="fixspec-script-data-file",
+        ),
+        pytest.param("{fetcher} url | python3", True, id="fixspec-python-stdin"),
+        pytest.param("{fetcher} url | awk '{{system($0)}}'", True, id="fixspec-awk"),
+        pytest.param("{fetcher} url | sed e", True, id="fixspec-sed"),
+        pytest.param("{output_fetcher} f url; python3 f", True, id="fixspec-python-script-file"),
+        pytest.param("f() {{ {fetcher} url | sh; }}; f", True, id="fixspec-function"),
+        pytest.param(
+            "function f {{ {fetcher} url | sh; }}; f", True, id="fixspec-function-keyword"
+        ),
+        pytest.param("{fetcher} url | tee >(sh)", True, id="fixspec-tee-process"),
+        pytest.param("{fetcher} url > >(sh)", True, id="fixspec-output-process"),
+        pytest.param("{fetcher} url | tee downloaded; sh downloaded", True, id="fixspec-tee-file"),
+        pytest.param(
+            "{combined_output_fetcher} downloaded url; sh downloaded",
+            True,
+            id="fixspec-combined-output",
+        ),
+        pytest.param(
+            "{fetcher} url > e.sh; BASH_ENV=e.sh bash -c true", True, id="fixspec-bash-env"
+        ),
+        pytest.param(
+            "export d; d=$({fetcher} url); python3 -c pass", True, id="fixspec-export-before-fetch"
+        ),
+        pytest.param(
+            "declare -x d; d=$({fetcher} url); node -e pass", True, id="fixspec-declare-export"
+        ),
+        pytest.param("data=$({fetcher} url); ((data))", True, id="fixspec-bare-arithmetic"),
+        pytest.param("data=$({fetcher} url); let n=data", True, id="fixspec-let"),
+        pytest.param("data=$({fetcher} url); [[ data -eq 0 ]]", True, id="fixspec-numeric-test"),
+        pytest.param("data=$({fetcher} url); echo array[data]", True, id="fixspec-subscript"),
+        pytest.param("n=$({fetcher} url); typeset -i n", True, id="fixspec-later-integer"),
+        pytest.param("{fetcher} url | tar -xz --to-command=sh", True, id="fixspec-tar-command"),
+        pytest.param(
+            "{fetcher} url | tar -x --checkpoint-action=exec=sh", True, id="fixspec-tar-checkpoint"
+        ),
+        pytest.param("{fetcher} url | tar -x -I sh", True, id="fixspec-tar-compressor"),
+        pytest.param("{fetcher} url | tar -xIsh", True, id="fixspec-tar-combined-compressor"),
+        pytest.param(
+            "{fetcher} url | tar -x --use-compress-program=sh",
+            True,
+            id="fixspec-tar-long-compressor",
+        ),
+        pytest.param("{output_fetcher} x.zip url; unzip x.zip", False, id="fixspec-unzip"),
+        pytest.param("{fetcher} url > >(cat)", False, id="fixspec-output-process-data"),
+        pytest.param("{fetcher} url | tee >(cat)", False, id="fixspec-tee-process-data"),
+        pytest.param(
+            'echo "${{clean:-$({fetcher} url | sh)}}"',
+            True,
+            id="fixspec-parameter-nested-command",
+        ),
+        pytest.param(
+            'echo "${{clean:-`{fetcher} url | sh`}}"',
+            True,
+            id="fixspec-parameter-nested-backtick",
+        ),
+        pytest.param(
+            'echo "${{clean:-$({fetcher} url | sh}}"',
+            True,
+            id="fixspec-parameter-nested-malformed",
+        ),
+        pytest.param(
+            'echo "${{clean:-$({fetcher} url)}}"',
+            False,
+            id="fixspec-parameter-nested-data",
+        ),
+        pytest.param(
+            'eval "${{clean:-$({fetcher} url)}}"',
+            True,
+            id="fixspec-parameter-nested-executed-data",
+        ),
     ],
 )
 async def test_remote_fetch_capture_and_execution(
@@ -1127,7 +1280,11 @@ async def test_remote_fetch_capture_and_execution(
     blocked: bool,
 ) -> None:
     """Evaluate inert command strings through the installed bundled rule and engine."""
-    command = template.format(fetcher=fetcher)
+    command = template.format(
+        fetcher=fetcher,
+        output_fetcher="curl -s -o" if fetcher.startswith("curl") else "wget -q -O",
+        combined_output_fetcher="curl -sSLo" if fetcher.startswith("curl") else "wget -qO",
+    )
     body = _get_rule(manager, "no-remote-exec")
     assert _blocks(body, command, evaluate_when=True) is blocked
     db.execute("DELETE FROM rule_definitions WHERE name != %s", ("no-remote-exec",))
