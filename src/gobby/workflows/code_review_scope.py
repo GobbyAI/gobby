@@ -30,7 +30,7 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.workflows.commit_guard import GitCommitInvocation, resolve_commit_inspect_cwd
+from gobby.workflows.commit_guard_shell import GitCommitInvocation, resolve_commit_inspect_cwd
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.observer_utils import _extract_shell_command

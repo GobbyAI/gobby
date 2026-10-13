@@ -25,6 +25,19 @@ from gobby.hooks.code_navigation import search_navigation_metadata, shell_comman
 
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
 
+GIT_SELECTOR_ENV_VARS = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_ICASE_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_LITERAL_PATHSPECS",
+    }
+)
+
 
 def classify_search_segment(
     cmd: str, parts: list[str], cwd: str | None, base_cwd: Path | None, *, shell_stdin: bool = False
@@ -58,6 +71,12 @@ def classify_search_segment(
 
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
     """Fail closed after shell-level selector assignments or declarations."""
+    if parts[:1] == ["set"]:
+        return any(
+            word == "allexport"
+            or (word.startswith("-") and not word.startswith("--") and "a" in word[1:])
+            for word in parts[1:]
+        )
     if parts[:1] == ["eval"]:
         try:
             tokens = scan_shell_command(" ".join(parts[1:])).tokens
@@ -65,7 +84,7 @@ def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
             return True
         return any(
             any(
-                word.split("=", 1)[0].removesuffix("+") in {"GIT_DIR", "GIT_WORK_TREE"}
+                word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS
                 for word in (token.value for token in segment.tokens)
             )
             for segment in _split_shell_segments(tokens)
@@ -76,9 +95,7 @@ def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
         words = parts[1:]
     else:
         return False
-    return any(
-        word.split("=", 1)[0].removesuffix("+") in {"GIT_DIR", "GIT_WORK_TREE"} for word in words
-    )
+    return any(word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS for word in words)
 
 
 def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
