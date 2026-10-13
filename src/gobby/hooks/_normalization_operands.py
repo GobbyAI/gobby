@@ -52,40 +52,62 @@ _SORT_VALUE_OPTIONS = frozenset(
         "--parallel",
     }
 )
-_TAR_SCOPE_OPTIONS = frozenset(
+_TAR_VALUE_OPTIONS = frozenset(
+    {
+        "--directory",
+        "--cd",
+        "--file",
+        "--files-from",
+        "--exclude",
+        "--exclude-from",
+        "--strip-components",
+        "--group",
+        "--exclude-tag",
+        "--exclude-tag-all",
+        "--exclude-tag-under",
+        "--exclude-ignore",
+        "--exclude-ignore-recursive",
+        "--to-command",
+    }
+)
+_TAR_FLAG_OPTIONS = frozenset(
     {
         "--extract",
         "--get",
-        "--directory",
-        "--cd",
         "--absolute-names",
         "--absolute-paths",
-        "--file",
-        "--files-from",
-        "--strip-components",
+        "--insecure",
         "--to-stdout",
-        "--to-command",
         "--diff",
         "--delete",
         "--dereference",
-        "--group",
         "--gzip",
         "--gunzip",
-        "--exclude",
-        "--exclude-from",
         "--exclude-backups",
         "--exclude-caches",
         "--exclude-caches-all",
         "--exclude-caches-under",
-        "--exclude-tag",
-        "--exclude-tag-all",
-        "--exclude-tag-under",
         "--exclude-vcs",
         "--exclude-vcs-ignores",
-        "--exclude-ignore",
-        "--exclude-ignore-recursive",
+        "--verbose",
+        "--keep-old-files",
+        "--keep-newer-files",
+        "--preserve-permissions",
+        "--same-permissions",
+        "--no-same-owner",
+        "--no-same-permissions",
+        "--numeric-owner",
+        "--touch",
+        "--unlink-first",
+        "--bzip2",
+        "--xz",
+        "--zstd",
+        "--lzma",
+        "--compress",
+        "--uncompress",
     }
 )
+_TAR_SCOPE_OPTIONS = _TAR_FLAG_OPTIONS | _TAR_VALUE_OPTIONS
 
 
 def _sort_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
@@ -129,33 +151,29 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
     extracts = False
     to_stdout = False
     absolute_names = False
+    unmodelled = False
     directories: list[str] = []
     directory = cwd
     index = 1
     while index < len(parts):
         word = parts[index]
-        option = _resolve_long_option(word.split("=", 1)[0], _TAR_SCOPE_OPTIONS)
         if word == "--":
             if extracts and index + 1 < len(parts):
                 directories.extend(_rebase_shell_paths(["."], directory))
             break
+        option = _resolve_long_option(word.split("=", 1)[0], _TAR_SCOPE_OPTIONS)
+        if word.startswith("--") and (option is None or option == "--to-command"):
+            unmodelled = True
         if option in {"--extract", "--get"}:
             extracts = True
-        elif option in {"--absolute-names", "--absolute-paths"}:
+        elif option in {"--absolute-names", "--absolute-paths", "--insecure"}:
             absolute_names = True
         elif option == "--to-stdout":
             to_stdout = True
         elif option in {"--directory", "--cd"} and "=" in word:
             directory = _rebase_shell_paths([word.split("=", 1)[1]], directory)[0]
             directories.append(directory)
-        elif option in {
-            "--directory",
-            "--cd",
-            "--file",
-            "--files-from",
-            "--exclude",
-            "--strip-components",
-        }:
+        elif option in _TAR_VALUE_OPTIONS:
             if "=" in word:
                 index += 1
                 continue
@@ -175,7 +193,7 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
                     to_stdout = True
                 elif option == "P":
                     absolute_names = True
-                elif option in "fCT":
+                elif option in "fCTXIb":
                     value = "" if old_style else options[offset:]
                     if not value:
                         index += 1
@@ -185,16 +203,17 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
                         directories.append(directory)
                     if not old_style:
                         break
+                elif option not in "xvzjJZpkmUoOPB":
+                    unmodelled = True
         elif not word.startswith("-") and extracts:
             # A member named before a later -C extracts in the earlier directory.
             directories.extend(_rebase_shell_paths(["."], directory))
         index += 1
+    unknown = absolute_names or unmodelled
     return (
-        extracts and not to_stdout,
-        []
-        if absolute_names
-        else list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd))),
-        absolute_names,
+        extracts and (unknown or not to_stdout),
+        [] if unknown else list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd))),
+        unknown,
     )
 
 

@@ -131,6 +131,8 @@ def _metadata(command: str, root: Path, cwd: Path | None = None) -> dict[str, An
         ("tar -xf x.tar --cd dir", "dir"),
         ("tar -xf x.tar --cd=dir", "dir"),
         ("tar --extract -f x.tar --dir dir", "dir"),
+        ("tar -xvzf x.tar -C dir", "dir"),
+        ("tar --extract --verbose --file=x.tar --directory=dir", "dir"),
         ("tar -xf x.tar", "."),
     ],
 )
@@ -221,12 +223,47 @@ def test_tar_directory_alias_from_external_cwd(tmp_path: Path, option: str) -> N
         "tar xPf x.tar",
         "tar -x --absolute-names -f x.tar",
         "tar -x --absolute-paths -f x.tar",
+        "tar -x --ab -f x.tar",
+        "tar -x --abs -f x.tar",
+        "tar -x --absolute- -f x.tar",
+        "tar -x --insecure -f x.tar",
+        "tar -x --insec -f x.tar",
     ],
 )
 def test_tar_absolute_members_fail_closed(tmp_path: Path, command: str) -> None:
     data = _metadata(f"cd /tmp && {command}", tmp_path)
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("external_cwd", [False, True])
+@pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        ("tar -xf x.tar --exclude-from -O -C ROOT", "."),
+        ("tar -xf x.tar -X -O -C ROOT", "."),
+        ("tar -x -X -O -f x.tar -C ROOT", "."),
+        ("tar -x -I -O -f x.tar -C ROOT/sub", "sub"),
+        ("tar -xf x.tar --gname -O", None),
+        ("tar -xf x.tar --uname -O", None),
+        ("tar -xf x.tar --passphrase -O", None),
+        ("tar -xf x.tar --gname -C /tmp member.txt", None),
+        ("tar -xf x.tar --to-command=cat", None),
+        ("tar -x -H -f x.tar", None),
+    ],
+)
+def test_tar_option_values_and_unmodelled_options_preserve_write_guard(
+    tmp_path: Path, external_cwd: bool, command: str, target: str | None
+) -> None:
+    cwd = "/tmp" if external_cwd else str(tmp_path)
+    command = command.replace("ROOT", f"'{tmp_path}'")
+    data = _metadata(f"cd '{cwd}' && {command}", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    if target is None:
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+    else:
+        assert str(tmp_path / target) in data["canonical_file_paths"]
+        assert not data.get("canonical_repo_mutation_scope_unknown", False)
 
 
 @pytest.mark.parametrize(
