@@ -15,6 +15,7 @@ from gobby.hooks._normalization_operands import (
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
 from gobby.hooks._normalization_shell import (
+    _SCRIPT_LIKE_CHARS,
     _contains_unexpanded_shell_reference,
     _looks_path_target,
     _rebase_navigation_shell_paths,
@@ -108,6 +109,8 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
     for word in raw_parts[:prefix_length]:
         name, separator, value = word.partition("=")
+        if separator and name == "GIT_ICASE_PATHSPECS":
+            selectors.append("--icase-pathspecs")
         if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
             option = "--git-dir" if name == "GIT_DIR" else "--work-tree"
             selectors.append(f"{option}={value}")
@@ -121,6 +124,7 @@ def git_command_parts(
     index = 1
     git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
     unknown = bool(git_cwd and git_cwd.startswith(UNRESOLVED_DIRECTORY))
+    icase_pathspecs = False
     while index < len(parts):
         word = parts[index]
         if word in {"-C", "-c"}:
@@ -135,6 +139,9 @@ def git_command_parts(
             elif value.split("=", 1)[0].lower() == "core.worktree":
                 unknown = True
             index += 2
+        elif word == "--icase-pathspecs":
+            icase_pathspecs = True
+            index += 1
         elif word in {
             "--no-pager",
             "--paginate",
@@ -142,7 +149,6 @@ def git_command_parts(
             "--literal-pathspecs",
             "--glob-pathspecs",
             "--noglob-pathspecs",
-            "--icase-pathspecs",
             "--no-optional-locks",
             "--no-replace-objects",
         }:
@@ -153,6 +159,11 @@ def git_command_parts(
             index += 2 if word in {"--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
         else:
             break
+    unknown = unknown or (
+        icase_pathspecs
+        and index < len(parts)
+        and parts[index] in {"checkout", "restore", "rm", "mv"}
+    )
     return [parts[0], *parts[index:]], git_cwd, unknown
 
 
@@ -168,6 +179,11 @@ def classify_git_mutation(
         operands = _shell_positional_args_after(
             parts, index + 1, option_args={"-b", "-B", "--orphan"}
         )
+        if operation == "checkout" and any(
+            operand.startswith("~") or any(character in operand for character in _SCRIPT_LIKE_CHARS)
+            for operand in operands
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation == "checkout" and any(
             argument in {"-p", "--patch", "--pathspec-from-file"}
             or argument.startswith("--pathspec-from-file=")

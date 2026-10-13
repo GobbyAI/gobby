@@ -619,6 +619,53 @@ async def test_nonforce_head_checkout_allows_unverified_cwd(guard_harness: Guard
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git --icase-pathspecs checkout FOREIGN.TXT",
+        "git -C {repo} --icase-pathspecs checkout HEAD FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS=1 git checkout FOREIGN.TXT",
+        "env GIT_ICASE_PATHSPECS=1 git checkout FOREIGN.TXT",
+        "git checkout {foreign,owned}.txt",
+        "git checkout ~+/foreign.txt",
+        "git --icase-pathspecs checkout -- FOREIGN.TXT",
+        "git --icase-pathspecs restore FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS=1 git restore FOREIGN.TXT",
+    ],
+)
+async def test_checkout_opaque_operands_block_foreign_restore(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    event = harness.event(command.replace("{repo}", str(harness.repo)), workdir=harness.repo)
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "block", response.reason
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["checkout owned.txt", "checkout HEAD~0", "checkout -"])
+async def test_checkout_literal_operand_controls_allow(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await harness.handler._evaluate_rules(
+        harness.event(f"git {operation}", workdir=harness.repo)
+    )
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
 async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
 

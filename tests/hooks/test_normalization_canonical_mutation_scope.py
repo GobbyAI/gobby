@@ -1385,6 +1385,32 @@ def test_git_checkout_opaque_pathspec_fails_closed(tmp_path: Path, operand: str)
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout {a,b}.py",
+        "git checkout ~+/a.py",
+        "git checkout ~/a.py",
+        "git checkout @{-1}",
+        "git --icase-pathspecs checkout A.py",
+        "GIT_ICASE_PATHSPECS=1 git checkout A.py",
+        "env GIT_ICASE_PATHSPECS=1 git checkout A.py",
+        "git --icase-pathspecs checkout -- A.py",
+        "git --icase-pathspecs restore A.py",
+        "GIT_ICASE_PATHSPECS=1 git restore A.py",
+        "git --icase-pathspecs rm A.py",
+        "GIT_ICASE_PATHSPECS=1 git rm A.py",
+        "git --icase-pathspecs mv A.py b.py",
+        "GIT_ICASE_PATHSPECS=1 git mv A.py b.py",
+    ],
+)
+def test_git_checkout_script_and_icase_scope_fails_closed(tmp_path: Path, command: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(command, tool_cwd=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
 @pytest.mark.parametrize("operation", ["checkout -f feature", "switch --discard-changes feature"])
 @pytest.mark.parametrize("directory_form", ["git_option", "cd"])
 def test_git_branch_checkout_unproven_root_fails_closed(
