@@ -126,13 +126,17 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     selectors: list[str] = ["--git-dir=$GIT_DIR"] if exported_git_selector.get() else []
     prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
     for word in raw_parts[:prefix_length]:
+        if not git_selector_name(word):
+            continue
         name, separator, value = word.partition("=")
         name = name.removesuffix("+")
         if separator and name == "GIT_ICASE_PATHSPECS":
             selectors.append("--icase-pathspecs")
-        if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
+        elif separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
             option = "--git-dir" if name == "GIT_DIR" else "--work-tree"
             selectors.append(f"{option}={value}")
+        else:
+            selectors.append("--git-dir=$GIT_DIR")
     return [parts[0], *selectors, *parts[1:]]
 
 
