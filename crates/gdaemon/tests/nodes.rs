@@ -1060,6 +1060,129 @@ async fn machines_api_unsupported_methods_use_error_contract() -> Result<()> {
 }
 
 #[tokio::test]
+async fn machines_api_fallbacks_reject_invalid_keys() -> Result<()> {
+    channel_database(async |db| {
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(
+            db,
+            channel_timing(),
+            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+        )
+        .await?;
+        for addr in [hub.addr, standalone.addr] {
+            let (status, body) = send(addr, get("/api/machines")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body, serde_json::json!({"machines": []}));
+        }
+        let forged = "gobby_00000000000000000000000000000000000000000002CZclj";
+        let malformed = "gobby_003aUlTJC7tjlCTQj2uNU3MFagCXG9LRKRcwGkBIDlf1Yo7hQ";
+        assert!(gobby_core::api_key_format::parse(forged).is_some());
+        assert!(gobby_core::api_key_format::parse(malformed).is_none());
+        assert_ne!(forged, KEY);
+        for (key_case, key) in [
+            ("forged", forged),
+            ("malformed", malformed),
+            ("revoked", KEY),
+        ] {
+            if key_case == "revoked" {
+                db.revoke().await?;
+            }
+            for (mode, addr) in [("hub", hub.addr), ("standalone", standalone.addr)] {
+                for path in [
+                    "/api/machines/".to_string(),
+                    "/api/machines/unknown/deeper".to_string(),
+                    "/api/machines".to_string(),
+                    format!("/api/machines/{}", db.machine),
+                ] {
+                    let methods: &[&str] = if path.ends_with('/') || path.ends_with("/deeper") {
+                        &["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+                    } else {
+                        &["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+                    };
+                    for method in methods {
+                        let mut request = get(&path);
+                        *request.method_mut() = method.parse()?;
+                        request
+                            .headers_mut()
+                            .insert("authorization", format!("Bearer {key}").parse()?);
+                        request
+                            .headers_mut()
+                            .insert("x-gobby-user-id", Uuid::new_v4().to_string().parse()?);
+                        let (status, headers, body) = send_response(addr, request).await;
+                        let context = format!("{mode} {key_case} {method} {path}");
+                        assert_eq!(status, StatusCode::UNAUTHORIZED, "{context}");
+                        assert_eq!(headers["content-type"], "application/json", "{context}");
+                        let body: serde_json::Value = serde_json::from_slice(&body)?;
+                        assert_eq!(
+                            body,
+                            serde_json::json!({
+                                "code": "missing_auth",
+                                "error": "Authentication required",
+                            }),
+                            "{context}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn machines_api_item_head_preserves_owner_scope() -> Result<()> {
+    channel_database(async |db| {
+        db.admin
+            .execute(
+                &format!(
+                    "UPDATE {}.machines SET owner_user_id=(\
+                     SELECT user_id FROM {}.api_keys WHERE id=$1) WHERE id=$2",
+                    db.schema, db.schema
+                ),
+                &[&db.key_id, &db.machine],
+            )
+            .await?;
+        let foreign = Uuid::new_v4();
+        db.admin
+            .execute(
+                &format!(
+                    "INSERT INTO {}.machines(id,owner_user_id) VALUES ($1,$2)",
+                    db.schema
+                ),
+                &[&foreign, &Uuid::new_v4()],
+            )
+            .await?;
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(
+            db,
+            channel_timing(),
+            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+        )
+        .await?;
+        for (mode, addr) in [("hub", hub.addr), ("standalone", standalone.addr)] {
+            for (owner, id, expected) in [
+                ("owned", db.machine, StatusCode::OK),
+                ("foreign", foreign, StatusCode::NOT_FOUND),
+            ] {
+                let path = format!("/api/machines/{id}");
+                let mut request = get(&path);
+                *request.method_mut() = hyper::Method::HEAD;
+                let (status, headers, body) = send_response(addr, request).await;
+                assert_eq!(status, expected, "{mode} {owner} HEAD {path}");
+                assert_eq!(
+                    headers["content-type"], "application/json",
+                    "{mode} {owner} HEAD {path}"
+                );
+                assert!(body.is_empty(), "{mode} {owner} HEAD {path}: {body:?}");
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn machines_api_unavailable_advertises_retry() -> Result<()> {
     channel_database(async |db| {
         let hub = channel_hub(db, channel_timing()).await?;
