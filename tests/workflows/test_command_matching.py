@@ -12,6 +12,7 @@ import shlex
 
 import pytest
 
+from gobby.hooks import _normalization_compound
 from gobby.hooks._ansi_c import ShellDialect
 from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
 from gobby.hooks._shell_execution_words import _unwrap
@@ -51,6 +52,25 @@ def test_append_assignment_preserves_command_matching(mask_quoted: bool) -> None
 )
 def test_nested_escaped_backticks_match_git_push(command: str, mask_quoted: bool) -> None:
     assert command_patterns_match(command, pattern=r"^git\s+push\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("command", ["x=`#'`; gem push x", "x=`#'`; f() { gem push x; }; f"])
+def test_backtick_comment_quote_preserves_following_commands(
+    command: str, mask_quoted: bool
+) -> None:
+    assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+
+
+def test_function_header_continuation_reuses_heredoc_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    command = "f\\\n() { gem push x; }; f\ncat <<'EOF'\n'\\\ntext\nEOF"
+
+    def reject_rescan(subject: str) -> ShellScan:
+        assert subject != command, "function header detection rescanned the caller's command"
+        return scan_shell_command(subject)
+
+    monkeypatch.setattr(_normalization_compound, "scan_shell_command", reject_rescan)
+    assert command_patterns_match(command, pattern=GEM_PUSH)
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
@@ -486,7 +506,7 @@ def test_nested_wrappers_with_many_functions_match_blocks(
         nonlocal scanned_chars
         scanned_chars += len(subject)
         # Bound cumulative input at this scanner entry point, independently of host load.
-        # Healthy 300-function cases peak at 78.63x input; 96x leaves 22% headroom.
+        # Measured at e440595: 78.63x input; 96x leaves 22% headroom over that baseline.
         assert scanned_chars <= 96 * len(command), "nested wrapper scan work exceeded linear budget"
         return scan_shell_command(subject, dialect=dialect)
 
