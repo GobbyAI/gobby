@@ -24,9 +24,19 @@ Primary, local LM Studio server at `127.0.0.1:1234` (Josh's machine):
   - complete noul, no model: `noModelsLoaded` ("No models loaded. Please
     load a model in the developer page or use the 'lms load' command.").
   - `POST /v1/decisions {}`: `model` Required, `input` Invalid,
-    `questions` Required. Questions must be an array, and each item requires
-    `instructions` and `choices`. This is a different shape from the plan's
-    `{model, state, questions{}}` wire.
+    `questions` Required.
+  - `POST /v1/decisions` with
+    `{"model":"probe","input":"probe","questions":{"q1":{"type":"choice"}}}`:
+    rejected because `questions` must be an array.
+  - `POST /v1/decisions` with
+    `{"model":"probe","input":"probe","questions":[{"type":"choice"}]}`:
+    the item was rejected for missing `instructions` and `choices`. This
+    covers the Choice branch only; LM Studio's docs also show a predicate
+    question with `type`, `name` and `instructions` and no `choices`
+    (Adversary gobby#16491, LM-F2). The array shape alone differs from the
+    plan's keyed `{model, state, questions{}}` wire.
+  - The `/v1/decisions` probes named the placeholder model `probe`, which
+    does not exist; no real model was named.
 - A later unauthenticated `GET /v1/models` and `GET /api/v1/models` both
   returned 200, so server authentication was off. An earlier plan recorded
   a 401 without a token on `/api/v1/models`
@@ -39,6 +49,12 @@ Primary, local LM Studio server at `127.0.0.1:1234` (Josh's machine):
 
 Doc snippets, from WebSearch restricted to lmstudio.ai. WebFetch is
 egress-blocked, so these are cited as search snippets, retrieved 2026-10-12:
+- Adversary gobby#16491 read the official pages directly on 2026-10-12
+  (LM-F1): the 0.4.26 changelog lists both endpoints under Build 4, after
+  Builds 1 to 3. LM Studio's `/v1/systemone` page links to llama.cpp's
+  server README section `post-v1systemone-typesafe-compatible-system-one-api`,
+  which describes `usage.input_tokens` as prompt tokens across all
+  questions; that is an upstream reference, not LM Studio runtime evidence.
 - LM Studio 0.4.26 (changelog dated 2026-10-08) adds `/v1/systemone`
   ("Jev (TypeSafe AI) compatible") and `/v1/decisions` ("OpenAI compatible").
   Bionic 1.1.8 requires LM Studio 0.4.26 or newer.

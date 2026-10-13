@@ -33,7 +33,7 @@ typed answers per question key out. Three endpoints serve it, and all are
 first-class choices through one config shape, as local and hosted embedding
 endpoints are:
 - `POST /v1/systemone`, served by TypeSafe's direct API, Kev, the other
-  open clones, a local Clef server, and LM Studio 0.4.26 or newer;
+  open clones, a local Clef server, and LM Studio 0.4.26 Build 4 or newer;
 - OpenRouter's `POST /api/alpha/decisions`, which serves Jev and is the
   external test target;
 - Cloudflare Workers AI's `POST /ai/run/@cf/cloudflare/<model>`, which
@@ -60,7 +60,7 @@ The plan also sets:
    - `systemone` (default): the service posts to `{api_base}/v1/systemone`.
      TypeSafe's direct endpoint, Kev (Apache-2.0, MLX on Apple Silicon, whose
      server takes TypeSafe's SDK unchanged), jeff and reflex serve it. So
-     does LM Studio 0.4.26 or newer (Decision 17).
+     does LM Studio 0.4.26 Build 4 or newer (Decision 17).
    - `openrouter-decisions`: the service posts to `{api_base}/alpha/decisions`,
      with `api_base` `https://openrouter.ai/api`. OpenRouter documents the
      same request and answer schemas in its API reference
@@ -84,10 +84,10 @@ The plan also sets:
    code path.
 
    LM Studio's `POST /v1/decisions`, documented as "OpenAI compatible", is
-   not a wire here. It requires `model`, `input`, and `questions`, where
-   `questions` is an array whose items need `instructions` and `choices`.
-   This wire keys questions by ID and puts Choice options in `criteria`
-   (observed 2026-10-12, Decision 17). The same LM Studio server serves
+   not a wire here. It requires `model`, `input`, and a `questions` array,
+   where this wire keys questions by ID (observed 2026-10-12, Decision 17).
+   Its probed Choice item needs `choices`, where this wire puts Choice
+   options in `criteria`. The same LM Studio server serves
    `/v1/systemone`, so a second shape would add a wire and serve nothing
    new.
 2. **Local and hosted endpoints are equal choices, as in embeddings.** On
@@ -118,9 +118,9 @@ The plan also sets:
      Studio and Ollama roles (its lines 56-65). Gobby must not load, unload,
      download, delete, or otherwise manage LM Studio models (memory
      c0ba0b7c), so a decision role there would break this decision. Since
-     LM Studio 0.4.26, LM Studio itself serves `/v1/systemone`, so it is a
-     decision server under this decision, and Gobby only points `api_base`
-     at it (Decision 17).
+     LM Studio 0.4.26 Build 4, LM Studio itself serves `/v1/systemone`,
+     so it is a decision server under this decision, and Gobby only
+     points `api_base` at it (Decision 17).
    - Memory a5ad8b5c, the one-model-instance rule this bullet once cited,
      no longer exists, and no memory restates it. The live rules are
      memory 606b6838 (Gobby does not manage local-generation model
@@ -593,27 +593,40 @@ The plan also sets:
     code and can be revisited after a live capture, so it was not sent to
     Josh separately; the Orchestrator presents it with the stamped
     amendment.
-    - What LM Studio added. LM Studio 0.4.26 adds `POST /v1/systemone`,
-      described as a "Jev (TypeSafe AI) compatible" endpoint, and `POST
-      /v1/decisions`, described as "OpenAI compatible". Bionic 1.1.8
-      requires LM Studio 0.4.26 or newer. The 0.4.26 changelog is dated
-      2026-10-08. LM Studio's docs say:
+    - What LM Studio added. LM Studio 0.4.26 Build 4 adds `POST
+      /v1/systemone`, described as a "Jev (TypeSafe AI) compatible"
+      endpoint, and `POST /v1/decisions`, described as "OpenAI
+      compatible". The changelog lists both under Build 4, after Builds 1
+      to 3, so an earlier 0.4.26 build lacks them. Bionic 1.1.8 requires
+      LM Studio 0.4.26 or newer. The 0.4.26 changelog is dated 2026-10-08.
+      LM Studio's docs say:
       - `/v1/systemone` takes `state` and `questions` keyed by ID, supports
         noul, choice, and score, returns `answers` keyed by question ID,
         and takes a loaded decision model's identifier;
       - `/v1/decisions` also needs a loaded decision model;
       - `POST /api/v1/models/load` accepts the `decision` model type.
 
-      These are WebSearch snippets retrieved 2026-10-12, because WebFetch
-      of lmstudio.ai was egress-blocked:
+      The Writer read these as WebSearch snippets on 2026-10-12, because
+      WebFetch of lmstudio.ai was egress-blocked for that seat. The Plan
+      Adversary gobby#16491 read the pages directly on 2026-10-12, which
+      gave the Build 4 placement:
       [0.4.26 changelog](https://lmstudio.ai/changelog/lmstudio/lmstudio-v0.4.26),
       [Bionic 1.1.8 changelog](https://lmstudio.ai/changelog/bionic-v1.1.8),
       [`/v1/systemone`](https://lmstudio.ai/docs/developer/jev-compat/systemone),
       [`/v1/decisions`](https://lmstudio.ai/docs/developer/openai-compat/decisions),
       and [model load](https://lmstudio.ai/docs/developer/rest/load).
+    - Upstream reference, not runtime evidence. LM Studio's
+      `/v1/systemone` page links to llama.cpp's server documentation
+      ([`POST /v1/systemone`](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1systemone-typesafe-compatible-system-one-api)),
+      which describes the full answer fields and `usage.input_tokens` as
+      the prompt tokens across all questions, and LM Studio's load docs
+      expose a `context_length`. Neither proves the installed LM Studio's
+      behavior, its engine, the scope of its limit, or its truncation, so
+      the surfaces below stay unverified until the live capture.
     - Observed on Josh's LM Studio server at `127.0.0.1:1234` on
       2026-10-12 (`.gobby/plans/research/decision-classifier-lmstudio-24215.md`).
-      The probes named no model, and no model was downloaded or loaded.
+      The probes named no real model (the `/v1/decisions` probes sent
+      `model: "probe"`), and no model was downloaded or loaded.
       - `/v1/systemone` validates the request this wire sends. It requires
         `state` and `questions`, raises no error for a missing `model`,
         and requires `instructions` on a Noul and `criteria` on a Choice.
@@ -621,9 +634,13 @@ The plan also sets:
         embedding model below was loaded, answered `noModelsLoaded`. The
         route did not treat that embedding instance as a loaded model.
         The existing `systemone` wire therefore needs no change.
-      - `/v1/decisions` requires `model`, `input`, and `questions`, an
-        array whose items need `instructions` and `choices`. Decision 1
-        rejects it.
+      - `/v1/decisions` requires `model`, `input`, and `questions`. A
+        keyed question map was rejected because `questions` must be an
+        array, and the array item `{"type": "choice"}` was rejected for
+        missing `instructions` and `choices`. That covers the probed
+        Choice branch only: LM Studio's docs also show a predicate
+        question with `type`, `name`, and `instructions` and no `choices`.
+        Decision 1 rejects the route on its array shape.
       - `GET /v1/models` cards carry only `id`, `object`, and `owned_by`.
         `GET /api/v1/models` listed no decision-type model, and the only
         loaded instance was `text-embedding-nomic-embed-text-v1.5@f16`.
@@ -819,7 +836,8 @@ when every one of these holds:
 2. A decision endpoint is reachable, and `ai.decisions.wire_api`,
    `ai.decisions.api_base` and `ai.decisions.model` name it: a
    `/v1/systemone` server, such as Kev from the post-0.6 installer option,
-   a local `clef_mlx.py serve`, or LM Studio 0.4.26 or newer (Decision 17);
+   a local `clef_mlx.py serve`, or LM Studio 0.4.26 Build 4 or newer
+   (Decision 17);
    OpenRouter's `/api/alpha/decisions`; or Workers AI's
    `/ai/run/@cf/cloudflare/<model>`.
 3. `GET /api/llm/status` reports `decide` available with that model.
@@ -1179,13 +1197,16 @@ before any code, with no live server:
     echoed `model`, the `/v1/models` body, the request lock, the missing
     authentication, and the remote image fetching.
 - It records the LM Studio facts (Decision 17):
-  - the 0.4.26 `/v1/systemone` and `/v1/decisions` routes, cited as the
-    doc snippets retrieved 2026-10-12;
+  - the `/v1/systemone` and `/v1/decisions` routes and their 0.4.26
+    Build 4 minimum, cited from the pages read on 2026-10-12;
+  - llama.cpp's `POST /v1/systemone` documentation and LM Studio's
+    `context_length` load field, as upstream references only;
   - the observed `/v1/systemone` request validation, including
     `noModelsLoaded` for a complete Noul with no `model` field while only
     an embedding model was loaded, and the `/v1/models` card fields;
-  - why `/v1/decisions` is not a wire: its array `questions` with
-    `choices` (Decision 1);
+  - why `/v1/decisions` is not a wire: its `questions` array, with the
+    exact probed requests and the Choice-branch scope of the `choices`
+    rejection (Decision 1);
   - what stays unverified: the response shape, `usage.input_tokens`, the
     `model` echo, the input limit and truncation, bearer handling on this
     route, just-in-time loading, and the served decision models.
@@ -1420,8 +1441,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `clef_mlx.py serve`. behavior: "/ai/run/@cf/cloudflare/" in
   `docs/evidence/decisions/systemone-wire.md`.
 - 1.2.15 - The pinned contract record holds the LM Studio `/v1/systemone`
-  facts with their unverified items, and the reason `/v1/decisions` is not
-  a wire. behavior: "noModelsLoaded" in
+  facts with the 0.4.26 Build 4 minimum and their unverified items, and
+  the reason `/v1/decisions` is not a wire. behavior: "noModelsLoaded" in
   `docs/evidence/decisions/systemone-wire.md`.
 
 ## P2: Evaluation
@@ -2129,7 +2150,8 @@ Edits:
   the three `wire_api` choices, with a local Kev example, a local Clef
   example (`clef_mlx.py serve` on `127.0.0.1` with
   `backend_max_state_tokens: 16384`), an LM Studio example (Decision 17:
-  `api_base` at the server root, the decision model the operator loads,
+  LM Studio 0.4.26 Build 4 or newer, `api_base` at the server root, the
+  decision model the operator loads,
   `backend_max_state_tokens` from the live capture, and a `$secret:`
   `api_key` when LM Studio's authentication is on), an OpenRouter example,
   and a Workers AI Clef example; the OpenRouter privacy flags; the request
@@ -2159,8 +2181,9 @@ Edits:
   `backend_max_state_tokens`, the latency figures, and the Decision 16
   identity consequence. behavior: "workers-ai" in
   `docs/guides/configuration.md`.
-- 4.1.5 - The configuration guide documents LM Studio as a local
-  `/v1/systemone` server: `api_base` at the server root, `model` as the
+- 4.1.5 - The configuration guide documents LM Studio 0.4.26 Build 4 or
+  newer as a local `/v1/systemone` server: `api_base` at the server root,
+  `model` as the
   identifier of a decision model the operator loads with `lms load`,
   `backend_max_state_tokens` from the live capture, a `$secret:` `api_key`
   when LM Studio's authentication is on, and the Decision 17 identity
@@ -2355,3 +2378,11 @@ available with the configured model. With the server stopped, a
   - The Graphify parity plan is unaffected. It references only #22604's
     held Jev choice gate and chooses no backend.
   - The superseded M1 was retired for re-derivation.
+  - Plan Adversary gobby#16491 reviewed 2df6214 with no blocking finding
+    and returned two nits, both applied. LM-F1: the changelog lists both
+    endpoints under 0.4.26 Build 4, so every prerequisite now names
+    Build 4. LM-F2: the `choices` rejection covers the probed Choice item
+    only, so Decisions 1 and 17 scope it and keep the array shape as the
+    reason, and the research note records the exact requests. The
+    llama.cpp `/v1/systemone` documentation is cited as an upstream
+    reference, and every runtime surface stays unverified.
