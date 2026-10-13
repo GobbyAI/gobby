@@ -135,7 +135,7 @@ impl HostFixture {
         HostOptions {
             socket_dir: self.dir.path().to_owned(),
             binary_path: self.dir.path().join("gterm"),
-            machine_id: "M1".into(),
+            machine_id: "10000000-0000-4000-8000-000000000001".into(),
             health_interval: Duration::from_secs(60),
             ..HostOptions::default()
         }
@@ -177,7 +177,10 @@ async fn same_epoch_adopts_singleflight() {
     let socket = std::fs::metadata(host.dir.path().join("gterm-control.sock")).unwrap();
     let supervisor = HostSupervisor::new(
         host.options(),
-        Arc::new(Rows(vec![binding("M1", "epoch-E")])),
+        Arc::new(Rows(vec![binding(
+            "10000000-0000-4000-8000-000000000001",
+            "epoch-E",
+        )])),
     );
     let (first, second) = tokio::join!(supervisor.start(), supervisor.start());
     let first = first.unwrap();
@@ -312,7 +315,7 @@ async fn adoption_result_subtypes_are_exhaustive() {
     let options = HostOptions {
         socket_dir: absent.path().to_owned(),
         binary_path: absent.path().join("missing-gterm"),
-        machine_id: "M1".into(),
+        machine_id: "10000000-0000-4000-8000-000000000001".into(),
         ..HostOptions::default()
     };
     let supervisor = HostSupervisor::new(options, Arc::new(Rows(vec![])));
@@ -401,11 +404,13 @@ impl OwnedHubSchema {
                  GRANT SELECT ON {schema}.terminals TO gobby_daemon_runtime;
                  GRANT SELECT ON {schema}.config_store TO gobby_daemon_runtime;
                  INSERT INTO {schema}.terminals VALUES
-                     ('M1', '00000000-0000-0000-0000-000000000001', 'epoch-E', 'live', 'native'),
-                     ('M1', '00000000-0000-0000-0000-000000000002', 'epoch-E', 'orphaned', 'native'),
+                 ('10000000-0000-4000-8000-000000000001', '00000000-0000-0000-0000-000000000001', 'epoch-E', 'live', 'native'),
+                 ('10000000-0000-4000-8000-000000000001', '00000000-0000-0000-0000-000000000002', 'epoch-E', 'orphaned', 'native'),
                      ('M2', '00000000-0000-0000-0000-000000000001', 'other-epoch', 'live', 'native'),
                      ('M2', '00000000-0000-0000-0000-000000000001', NULL, 'live', 'tmux');"
             ))?;
+            let epochs = include_str!("../../gcore/assets/schema/migrations/468_terminal_host_epochs.sql");
+            admin.batch_execute(&epochs.replace("public.", &format!("{schema}.")))?;
             anyhow::Ok(())
         })
         .await??;
@@ -498,7 +503,11 @@ async fn postgres_epoch_bindings_drive_adoption_and_refusal() -> anyhow::Result<
     let authority = Arc::new(PostgresEpochAuthority::new(fixture.pool()?));
     let bindings = authority.bindings("epoch-E").await?;
     assert_eq!(bindings.len(), 2);
-    assert!(bindings.iter().all(|row| row.machine_id == "M1"));
+    assert!(
+        bindings
+            .iter()
+            .all(|row| row.machine_id == "10000000-0000-4000-8000-000000000001")
+    );
     assert!(
         bindings
             .iter()
@@ -924,9 +933,13 @@ async fn spawned_identity_survives_health_and_stop_disarms_retry() -> anyhow::Re
     let hub = OwnedHubSchema::new().await?;
     let daemon = isolated_daemon(&hub).await?;
     let pool = hub.pool()?;
-    let options = HostOptions::from_pool(&pool, daemon.home.path(), "M1".into())
-        .await?
-        .expect("enabled test host");
+    let options = HostOptions::from_pool(
+        &pool,
+        daemon.home.path(),
+        "10000000-0000-4000-8000-000000000001".into(),
+    )
+    .await?
+    .expect("enabled test host");
     let supervisor = HostSupervisor::new(options, Arc::new(Rows(vec![])));
     let mut status = supervisor.subscribe();
     let original = supervisor.start().await?;
@@ -1005,9 +1018,13 @@ async fn shutdown_cancels_inflight_start_callers() {
 async fn drain_unadoptable_live_host(token_mismatch: bool) -> anyhow::Result<bool> {
     let hub = OwnedHubSchema::new().await?;
     let daemon = isolated_daemon(&hub).await?;
-    let options = HostOptions::from_pool(&hub.pool()?, daemon.home.path(), "M1".into())
-        .await?
-        .expect("enabled test host");
+    let options = HostOptions::from_pool(
+        &hub.pool()?,
+        daemon.home.path(),
+        "10000000-0000-4000-8000-000000000001".into(),
+    )
+    .await?
+    .expect("enabled test host");
     let owner = HostSupervisor::new(options.clone(), Arc::new(Rows(vec![])));
     let original = owner.start().await?;
     owner.stop().await;

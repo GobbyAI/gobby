@@ -334,6 +334,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/467_assignment_derived_review_code_scope.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 468,
+        filename: "468_terminal_host_epochs.sql",
+        checksum: "1b951a76d7d0ca3d54e686562b29c0d31a193b08d155b3fb8f5e4788eefa6665",
+        sql: include_str!("../../assets/schema/migrations/468_terminal_host_epochs.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

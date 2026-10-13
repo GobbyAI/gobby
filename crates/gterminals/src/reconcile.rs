@@ -355,10 +355,7 @@ pub async fn reconcile(
                     after.state = State::Exited;
                 }
                 State::Live if current.host_epoch.as_deref() == Some(&inventory.epoch) => {
-                    match timeout(RUNTIME_DEADLINE, effects.process_status(&current))
-                        .await
-                        .map_err(|_| ReconcileError::RuntimeTimeout)??
-                    {
+                    match absent_process_status(effects, &current).await? {
                         ProcessStatus::Alive => return Ok(()),
                         ProcessStatus::Dead => after.state = State::Exited,
                         ProcessStatus::Unknown => after.state = State::Orphaned,
@@ -369,11 +366,7 @@ pub async fn reconcile(
                 }
                 State::Live if dead_epoch => after.state = State::Orphaned,
                 State::Orphaned if dead_epoch => {
-                    if timeout(RUNTIME_DEADLINE, effects.process_status(&current))
-                        .await
-                        .map_err(|_| ReconcileError::RuntimeTimeout)??
-                        != ProcessStatus::Dead
-                    {
+                    if absent_process_status(effects, &current).await? != ProcessStatus::Dead {
                         return Ok(());
                     }
                     after.state = State::Exited;
@@ -387,4 +380,22 @@ pub async fn reconcile(
         .await?;
     }
     Ok(())
+}
+
+async fn absent_process_status(
+    effects: &impl Effects,
+    terminal: &Terminal,
+) -> Result<ProcessStatus, ReconcileError> {
+    if terminal
+        .process
+        .as_ref()
+        .and_then(|process| process.get("pgid"))
+        .is_none_or(Value::is_null)
+    {
+        return Ok(ProcessStatus::Dead);
+    }
+    timeout(RUNTIME_DEADLINE, effects.process_status(terminal))
+        .await
+        .map_err(|_| ReconcileError::RuntimeTimeout)?
+        .map_err(Into::into)
 }
