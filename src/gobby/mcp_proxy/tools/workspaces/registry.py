@@ -3,7 +3,8 @@
 Every tool executes through the WebSocket server's shared ``WorkspaceOps``, so changes
 publish to subscribed clients and pane writes carry the ``send_keys`` policy. The actor
 comes from the request, never from arguments: a session context acts as that session,
-the operator's local token acts as the operator, and every other caller is refused.
+the operator's local token acts as the operator. Managed callers may only read
+workspace inventories through their authenticated session; pane I/O and writes are refused.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from gobby.terminals.actor_scope import OPERATOR_ACTOR, SESSION_ACTOR_PREFIX
 from gobby.terminals.workspace_contract import WorkspaceOpError, storage_errors
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
+from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.session_context import get_request_principal, get_session_context
 
 type OpsResolver = Callable[[], WorkspaceOps | None]
@@ -36,21 +38,28 @@ type OpsResolver = Callable[[], WorkspaceOps | None]
 _NODE = "Optional `node` (ref, hostname, label, or id) resolves refs on that machine."
 
 
-async def current_actor() -> str:
+async def current_actor(*, allow_managed_read: bool = False) -> str:
     """Return ``session:<id>`` or ``operator`` for this request, refusing any other caller.
 
-    The principal decides first: an agent API token is refused whatever session header
-    it carries, and an unseeded var (no request in scope) is refused the same way.
+    Managed tokens need a matching session and an inventory-only operation. Writes,
+    pane I/O, and an unseeded principal (no request in scope) remain refused.
     """
     try:
         principal = await get_request_principal()
     except LookupError:
         principal = False
+    context = get_session_context()
+    if (
+        allow_managed_read
+        and isinstance(principal, AgentApiTokenClaims)
+        and context is not None
+        and context.session_id == principal.session_id
+    ):
+        return f"{SESSION_ACTOR_PREFIX}{context.session_id}"
     if principal is not None:
         raise WorkspaceOpError(
             "forbidden", "Workspace tools act only for a session or the operator's local token"
         )
-    context = get_session_context()
     if context is not None:
         return f"{SESSION_ACTOR_PREFIX}{context.session_id}"
     return OPERATOR_ACTOR
@@ -74,9 +83,11 @@ def _payload(value: object) -> dict[str, Any]:
     return dict(_json(value))
 
 
-async def _run(work: Callable[[str], Awaitable[object]]) -> dict[str, Any]:
+async def _run(
+    work: Callable[[str], Awaitable[object]], *, allow_managed_read: bool = False
+) -> dict[str, Any]:
     try:
-        result = await work(await current_actor())
+        result = await work(await current_actor(allow_managed_read=allow_managed_read))
     except WorkspaceOpError as exc:
         return {"success": False, "error": str(exc), "code": exc.code}
     return {"success": True, **_payload(result)}
@@ -119,7 +130,7 @@ def create_workspaces_registry(
                 ]
             }
 
-        return await _run(work)
+        return await _run(work, allow_managed_read=True)
 
     @registry.tool(
         description=f"List a node's workspaces (this node by default). {_NODE}", read_only=True
@@ -131,19 +142,22 @@ def create_workspaces_registry(
                 rows = workspace_manager.list_for_node(machine.id)
             return {"node_ref": machine.ref, "workspaces": _json(rows)}
 
-        return await _run(work)
+        return await _run(work, allow_managed_read=True)
 
     @registry.tool(description=f"Read a workspace with its tabs and panes. {_NODE}", read_only=True)
     async def get_workspace(workspace: str, node: str | None = None) -> dict[str, Any]:
         async def work(actor: str) -> dict[str, Any]:
-            snapshot = await ops().workspace_snapshot(actor, workspace, node=node)
+            snapshot = await ops().workspace_snapshot(
+                actor, workspace, node=node, sweep_dead_panes=False
+            )
             return {
                 "workspace": {**_json(snapshot.workspace), "node_ref": snapshot.node.ref},
                 "tabs": _json(snapshot.tabs),
                 "panes": _json(snapshot.panes),
             }
 
-        return await _run(work)
+        # Inventory reads neither create a workspace nor prune dead panes.
+        return await _run(work, allow_managed_read=True)
 
     @registry.tool(description=f"Return the workspace named `name`, creating it. {_NODE}")
     async def create_workspace(

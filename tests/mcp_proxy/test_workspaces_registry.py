@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -133,8 +134,8 @@ async def stack(temp_db: HubDatabase, sample_project: dict[str, Any]) -> AsyncIt
 
 
 @contextmanager
-def _principal(principal: AgentApiTokenClaims | None) -> Iterator[None]:
-    async def resolve() -> AgentApiTokenClaims | None:
+def _principal(principal: AgentApiTokenClaims | None | Literal[False]) -> Iterator[None]:
+    async def resolve() -> AgentApiTokenClaims | None | Literal[False]:
         return principal
 
     token = set_request_principal(resolve)
@@ -426,6 +427,28 @@ async def test_actor_is_derived_from_session_context_and_principal(
             assert (refused["success"], refused.get("code")) == (False, "forbidden"), refused
             assert create.await_count == 2
 
+            inventory_headers = agent | {
+                "X-Gobby-Session-Id": agent_session.id,
+                "X-Gobby-Agent-Run-Id": run.id,
+                MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
+            }
+            listed = await client.post(
+                "/api/mcp/gobby-workspaces/tools/list_workspaces",
+                json={},
+                headers=inventory_headers,
+            )
+            assert listed.status_code == 200, listed.text
+            assert listed.json()["success"] is True, listed.text
+            assert len(listed.json()["result"]["workspaces"]) == 2
+            snapshot = await client.post(
+                "/api/mcp/gobby-workspaces/tools/get_workspace",
+                json={"workspace": as_operator["result"]["workspace"]["id"]},
+                headers=inventory_headers,
+            )
+            assert snapshot.status_code == 200, snapshot.text
+            assert snapshot.json()["success"] is True, snapshot.text
+            assert snapshot.json()["result"]["workspace"]["name"] == "from-operator"
+
         internal = server._internal_manager
         assert internal is not None
         registry = internal.get_registry("gobby-workspaces")
@@ -444,8 +467,8 @@ async def test_actor_is_derived_from_session_context_and_principal(
         assert create.await_count == 3
 
 
-async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) -> None:
-    """An agent API token never acts: a session header does not launder it (2.3.5)."""
+async def test_agent_token_reads_inventory_but_cannot_write_or_read_pane_io(stack: _Stack) -> None:
+    """Inventory admission does not grant managed callers terminal control."""
     registry = _registry(stack)
     session = stack.sessions.register(
         external_id="workspaces-agent-token",
@@ -465,23 +488,110 @@ async def test_agent_token_is_refused_even_with_a_session_header(stack: _Stack) 
         "create_workspace": {"name": "agent-owned"},
         "rename_workspace_item": {"ref": "0", "name": "agent-owned"},
         "close_workspace": {"workspace": "0"},
-        "list_workspaces": {},
-        "list_nodes": {},
+        "create_tab": {"workspace": "0", "project_id": stack.project_id},
+        "close_tab": {"tab": "0:0"},
+        "split_pane": {"pane": "0:0:0", "axis": "horizontal"},
+        "close_pane": {"pane": "0:0:0"},
         "read_pane": {"pane": "0:0:0:0"},
+        "wait_for_pane_output": {"pane": "0:0:0:0", "pattern": "ready"},
     }
+    with _principal(None):
+        workspace = await _ok(registry, "create_workspace", name="roster")
     with (
         patch.object(stack.ops, "workspace_create", wraps=stack.ops.workspace_create) as create,
         _principal(claims),
     ):
         tokenless = await _code(registry, "create_workspace", name="agent-owned")
         with session_context_for_test(session.id):
+            nodes = await _ok(registry, "list_nodes")
+            workspaces = await _ok(registry, "list_workspaces")
+            snapshot = await _ok(registry, "get_workspace", workspace=workspace["workspace"]["id"])
             refused = {
                 tool: await _code(registry, tool, **arguments) for tool, arguments in calls.items()
             }
 
     assert tokenless == "forbidden"
+    assert nodes["nodes"][0]["id"] == LOCAL_MACHINE_ID
+    assert workspaces["workspaces"][0]["name"] == "roster"
+    assert snapshot["workspace"]["name"] == "roster"
+    assert snapshot["tabs"] == []
+    assert snapshot["panes"] == []
     assert refused == dict.fromkeys(calls, "forbidden")
     assert create.await_count == 0
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("list_nodes", {}),
+        ("list_workspaces", {}),
+        ("get_workspace", {"workspace": "0"}),
+    ],
+)
+async def test_managed_inventory_requires_an_authenticated_matching_session(
+    stack: _Stack, tool: str, arguments: dict[str, str]
+) -> None:
+    registry = _registry(stack)
+    claims = AgentApiTokenClaims(
+        session_id="managed-session",
+        project_id=stack.project_id,
+        machine_id=LOCAL_MACHINE_ID,
+        iat=0,
+        exp=0,
+    )
+    with _principal(claims):
+        assert await _code(registry, tool, **arguments) == "forbidden"
+        with session_context_for_test("another-session"):
+            assert await _code(registry, tool, **arguments) == "forbidden"
+    with _principal(False), session_context_for_test(claims.session_id):
+        assert await _code(registry, tool, **arguments) == "forbidden"
+    with session_context_for_test(claims.session_id):
+        assert await _code(registry, tool, **arguments) == "forbidden"
+
+
+@pytest.mark.parametrize("managed", [False, True])
+async def test_workspace_inventory_preserves_unbound_panes_without_publication(
+    stack: _Stack, managed: bool
+) -> None:
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="read-only-inventory",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    workspace, _ = stack.workspaces.create(LOCAL_MACHINE_ID, "read-only")
+    layout = stack.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid4()), project_id=stack.project_id
+    )
+    claims = (
+        AgentApiTokenClaims(
+            session_id=session.id,
+            project_id=stack.project_id,
+            machine_id=LOCAL_MACHINE_ID,
+            iat=0,
+            exp=0,
+        )
+        if managed
+        else None
+    )
+    with (
+        _principal(claims),
+        session_context_for_test(session.id),
+        patch.object(stack.ops, "_publish", wraps=stack.ops._publish) as publish,
+    ):
+        snapshot = await _ok(registry, "get_workspace", workspace=workspace.id)
+        assert await _code(registry, "get_workspace", workspace=None) == "invalid_op"
+    assert [pane["id"] for pane in snapshot["panes"]] == [layout.panes[0].id]
+    assert stack.workspaces.list_panes(workspace.id) == list(layout.panes)
+    assert stack.workspaces.list_tabs(workspace.id) == list(layout.tabs)
+    publish.assert_not_called()
+    assert [row.id for row in stack.workspaces.list_for_node(LOCAL_MACHINE_ID)] == [workspace.id]
+    maintenance = await stack.ops.workspace_snapshot(f"session:{session.id}", workspace.id)
+    assert maintenance.panes == ()
+    assert maintenance.tabs == ()
+    assert stack.workspaces.list_panes(workspace.id) == []
+    assert stack.workspaces.list_tabs(workspace.id) == []
 
 
 def _managed_bootstrap(bootstrap: Path, api_key: str) -> Path:

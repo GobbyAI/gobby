@@ -373,6 +373,7 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
 
 
 def test_reporter_roster_covers_ordered_tabs_empty_panes_and_unclaimed_seats() -> None:
+    assert "Worktrees versus developers; Workspace seat roster;" in _prompt("reporter")
     roster = (
         _prompt("reporter").split("## Workspace seat roster", 1)[1].split("## Full report", 1)[0]
     )

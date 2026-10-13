@@ -238,6 +238,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         *,
         node: str | None = None,
         project_id: str | None = None,
+        sweep_dead_panes: bool = True,
     ) -> WorkspaceSnapshot:
         """Sweep and read a whole workspace; absent, the node's default, created on first use.
 
@@ -246,8 +247,14 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         are read on the same thread as the sweep. Sweep removals are published
         before the fence opens, and ``lifecycle_seq`` is that last removal so a
         workspace publish waiting on the fence stays above the watermark.
+        With ``sweep_dead_panes=False``, read an explicit existing workspace without
+        pruning panes, publishing removals, or creating a default workspace.
         """
         started = time.monotonic()
+        if not sweep_dead_panes and workspace is None:
+            raise WorkspaceOpError(
+                "invalid_op", "Read-only snapshots require an explicit workspace"
+            )
         query_seconds = pool_seconds = 0.0
         query_count = pool_acquires = 0
 
@@ -282,10 +289,18 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             async with self._publish_fence:
                 fence_acquired = time.monotonic()
                 snapshot, change = await self._db(
-                    self._snapshot_storage, workspace, node, storage_timing
+                    self._snapshot_storage,
+                    workspace,
+                    node,
+                    storage_timing,
+                    sweep_dead_panes=sweep_dead_panes,
                 )
                 storage_done = time.monotonic()
-                seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+                seq = (
+                    await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+                    if sweep_dead_panes
+                    else None
+                )
                 published = time.monotonic()
         if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
             worker_started = storage_timing["worker_started"]
@@ -635,14 +650,21 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             return self._workspaces.sweep_dead_panes(workspace_id)
 
     def _snapshot_storage(
-        self, reference: str, node: str | None, timing: dict[str, float]
+        self,
+        reference: str,
+        node: str | None,
+        timing: dict[str, float],
+        *,
+        sweep_dead_panes: bool = True,
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
-        """Reuse one connection and hold sweep locks through the snapshot reads."""
+        """Reuse one connection, holding any requested sweep locks through the reads."""
         started = time.monotonic()
         with storage_errors(), self._workspaces.db.transaction():
             target = self._resolve(reference, node)
             resolved = time.monotonic()
-            change = self._sweep_storage(target.workspace.id)
+            change = (
+                self._sweep_storage(target.workspace.id) if sweep_dead_panes else LayoutChange()
+            )
             swept = time.monotonic()
             if change.removed_panes:
                 target = self._resolve(reference, node)
