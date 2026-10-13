@@ -13,7 +13,7 @@ rules:
         event.data.get('canonical_script_execution')
         or (
           event.data.get('canonical_repo_mutation')
-          and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data)
+          and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data, variables.get('_agent_type'))
         )
       )
     effects:
@@ -35,7 +35,9 @@ rules:
           or past the eight script bodies one command may read),
           runs a program unknown before it runs, or may write its own file, or
           when another part of the same command writes files. Programs read from
-          stdin or by source/. always require a claim.
+          stdin always require a claim. source/. commands are blocked as unresolved
+          scope even with an active claim; use uv run or run the script directly by
+          a literal script path under an active claim.
 
           Scratchpad and temp paths are exempt, but only when the command names
           them literally. A shell variable or substitution in the operand

@@ -111,8 +111,10 @@ def is_plan_scratch_path(
 def is_project_plan_artifact_path(
     path: str,
     project_root: str | Path | None,
+    *,
+    include_coverage: bool = False,
 ) -> bool:
-    """Return whether *path* is a Markdown plan beneath ``.gobby/plans``."""
+    """Recognize project Markdown plans and optionally their coverage artifacts."""
     if not isinstance(path, str) or not path.strip() or project_root is None:
         return False
 
@@ -135,5 +137,8 @@ def is_project_plan_artifact_path(
     return (
         len(relative.parts) >= 3
         and relative.parts[:2] == (".gobby", "plans")
-        and relative.suffix == ".md"
+        and (
+            relative.suffix == ".md"
+            or (include_coverage and len(relative.parts) >= 4 and relative.parts[2] == "coverage")
+        )
     )

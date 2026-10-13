@@ -1008,6 +1008,61 @@ fn remote_endpoint_refused_before_auth() {
 }
 
 #[test]
+fn managed_without_bootstrap_rejects_interactive_cache_hit() {
+    for coherent in [false, true] {
+        for (execution_id, envelope) in [(true, false), (false, true), (true, true)] {
+            let harness = Harness::new();
+            let grant = fixture_grant(PrincipalKind::Interactive);
+            write_binding_for(&harness, UNREACHABLE_DAEMON_URL, &grant.deployment.token);
+            let settings = CachedSettings {
+                config_revision: grant.config_revision,
+                settings: Default::default(),
+            };
+            write_cache(&harness, &grant, coherent.then_some(&settings));
+            let path =
+                interactive_cache_path(&harness.home, &grant.deployment.token, PROJECT, None);
+            let before = fs::read(&path).expect("cache bytes");
+            let mut request = harness.request(None);
+            let interactive = acquire_with(&request).expect("interactive cache control");
+            assert_eq!(interactive.source, GrantSource::Cache);
+            request.expected_execution_id = execution_id.then(|| "exec-1".into());
+            request.managed_envelope = envelope.then(|| envelope_token(NOW + 60, PROJECT));
+
+            let acquired = acquire_with(&request);
+            assert!(
+                matches!(acquired, Err(GrantError::ManagedCapabilityMissing)),
+                "managed request must not consume interactive cache"
+            );
+            assert_eq!(fs::read(&path).expect("unchanged cache"), before);
+            assert!(!harness.home.join("grants/.acquire.lock").exists());
+        }
+    }
+}
+
+#[test]
+fn managed_without_bootstrap_rehandshake_fails_before_shared_cache_access() {
+    let harness = Harness::new();
+    // A file where the shared-cache directory belongs makes any lock/persist
+    // attempt fail, independently of filesystem permission semantics.
+    fs::write(harness.home.join("grants"), b"unavailable shared cache").expect("cache blocker");
+    let mut request = harness.request(None);
+    request.expected_execution_id = Some("exec-1".into());
+    request.managed_envelope = Some(envelope_token(NOW + 60, PROJECT));
+    assert!(matches!(
+        acquire_with(&request),
+        Err(GrantError::ManagedCapabilityMissing)
+    ));
+    assert!(matches!(
+        rehandshake(&request),
+        Err(GrantError::ManagedCapabilityMissing)
+    ));
+    assert_eq!(
+        fs::read(harness.home.join("grants")).expect("cache blocker preserved"),
+        b"unavailable shared cache"
+    );
+}
+
+#[test]
 fn concurrent_acquires_share_one_slow_handshake() {
     let harness = std::sync::Arc::new(Harness::new());
     let mut grant = fixture_grant(PrincipalKind::Interactive);

@@ -1066,8 +1066,12 @@ async def test_partial_reply_resumes_only_unconfirmed_chunks(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     recovery: str,
     retry_clock: Callable[[float], datetime],
+    temp_db: HubDatabase,
 ) -> None:
     manager, session_id, _ = attached
+    session = SessionManager(temp_db).get(session_id)
+    assert session is not None
+    label_prefix = f"<b>Claude ({session.ref}):</b>\n"
     adapter = TelegramAdapter()
     payloads: list[str] = []
 
@@ -1105,7 +1109,8 @@ async def test_partial_reply_resumes_only_unconfirmed_chunks(
     assert messages[0].status == "sent"
     assert messages[0].metadata_json["platform_message_ids"] == ["1", "3", "4"]
     assert payloads[1] == payloads[2]
-    delivered = [payload.removeprefix("<b>Claude:</b>\n") for payload in payloads]
+    assert all(payload.startswith(label_prefix) for payload in payloads)
+    delivered = [payload.removeprefix(label_prefix) for payload in payloads]
     assert delivered[0] + "".join(delivered[2:]) == reply
 
 

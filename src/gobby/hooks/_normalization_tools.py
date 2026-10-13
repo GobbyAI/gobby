@@ -91,6 +91,8 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     if (
         metadata.get("canonical_tool_kind") == "read"
         and "canonical_code_navigation_broad" not in metadata
+        and not metadata.get("canonical_code_navigation_segments")
+        and not metadata.get("_canonical_pending_source_reads")
     ):
         line_count = line_count_from_tool_input(tool_input)
         read_scope = "line_range" if line_count is not None else "full_file"
@@ -113,6 +115,10 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     for record in metadata.pop("_canonical_pending_source_reads", ()):
         metadata.setdefault("canonical_code_navigation_segments", []).append(
             {**record["scope"], "canonical_file_paths": list(record["paths"])}
+        )
+    if segments := metadata.get("canonical_code_navigation_segments"):
+        metadata["canonical_code_navigation_broad"] = any(
+            segment.get("canonical_code_navigation_broad") for segment in segments
         )
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
     annotate_navigation(data, metadata)

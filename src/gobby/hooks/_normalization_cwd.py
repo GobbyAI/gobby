@@ -11,6 +11,7 @@ from gobby.hooks._normalization_segments import _ShellSegment, _split_shell_segm
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _apply_cd,
+    _contains_unexpanded_shell_reference,
     _literal_cd_target,
     _quoted_tilde_word,
     _strip_shell_wrappers,
@@ -471,6 +472,8 @@ class ShellDirectoryState:
             return True
         if parts[0] != "eval":
             return False
+        if any(_contains_unexpanded_shell_reference(word) or "`" in word for word in parts[1:]):
+            return True
         if depth >= SHELL_WRAPPER_DEPTH:
             return True
         try:

@@ -29,8 +29,9 @@ from gobby.hooks._normalization_shell import (
     _contains_unexpanded_shell_reference,
     scan_shell_command,
 )
+from gobby.providers.path_policy import is_project_plan_artifact_path
 from gobby.utils.daemon_git import GitOk, daemon_git
-from gobby.workflows.commit_guard import GitCommitInvocation, resolve_commit_inspect_cwd
+from gobby.workflows.commit_guard_shell import GitCommitInvocation, resolve_commit_inspect_cwd
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.observer_utils import _extract_shell_command
@@ -438,16 +439,24 @@ async def inspect_commit_review_scope(
     if not paths:
         return CommitReviewScope(True, () if variables is not None else None)
 
+    checkout_root = (
+        await resolve_git_worktree_root_async(inspect_cwd, project_path)
+        if variables is not None
+        else None
+    )
+    writer = variables is not None and variables.get("_agent_type") == "plan-writer"
     reviewable = {
         path
         for path in paths
         if PurePosixPath(path).suffix.lower() not in NON_REVIEWABLE_EXTENSIONS
+        and not (
+            writer and is_project_plan_artifact_path(path, checkout_root, include_coverage=True)
+        )
     }
     records_only_plan_paths = all(path.startswith(".gobby/plans/") for path in paths)
     if variables is None:
         return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
 
-    checkout_root = await resolve_git_worktree_root_async(inspect_cwd, project_path)
     if checkout_root is None:
         return CommitReviewScope(bool(reviewable), None, records_only_plan_paths)
     owned = session_dirty_file_set_for_checkout(variables, checkout_root)

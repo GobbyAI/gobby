@@ -195,7 +195,7 @@ def source_read_navigation_metadata(
     defer_unresolved: bool = False,
 ) -> dict[str, Any]:
     has_source_path = any(_is_source_file_path(path) for path in paths)
-    deferred = defer_unresolved and any("$" in path for path in paths)
+    deferred = defer_unresolved and any("$" in path or "`" in path for path in paths)
     if not has_source_path and not deferred:
         return {}
     narrow = (line_count is not None and line_count <= MAX_NARROW_SOURCE_LINES) or (
