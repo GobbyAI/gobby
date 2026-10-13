@@ -7,9 +7,10 @@ Plan artifact: `.gobby/plans/node-halves.md`
 ## Overview
 `kind: framing`
 
-This plan covers two Stage 2 node halves under #21579. P1 is #24150 (S2.11 node
-half: a gdaemon node-local envelope ledger that forwards hooks to the hub). P2 is
-#24148 (S2.7 node half: node-local agent spawn and worktrees in gdaemon).
+This plan covers two Stage 2 node halves. P1 is #24150 (S2.11 node half: a
+gdaemon node-local envelope ledger that forwards hooks to the hub), and its
+leaves expand under #24150. P2 is #24148 (S2.7 node half: node-local agent
+spawn and worktrees in gdaemon), and its leaves expand under #24148.
 
 A node is `gdaemon` in node mode (ROADMAP decision 17). It holds no datastore
 credential, runs no Python daemon, and today relays every HTTP request to its hub
@@ -28,7 +29,11 @@ and the Python spawn path until the hub halves, #24151 and #24149.
 Orchestrator rulings (gobby#15977, 2026-10-13), operator-approved planning
 (`stage2-plan:now`):
 
-1. **Root and order.** Expansion root is #21579. P1 is #24150; P2 is #24148.
+1. **Roots and order.** P1's leaves (1.1 to 1.6) expand under #24150 and P2's
+   leaves (2.1 to 2.9) under #24148. Neither epic is a child of #21579, which
+   both block, so leaves under #21579 could never become ready. Cross-epic
+   order is expressed as leaf dependencies: 2.1 depends on 1.6, and 2.9 on
+   1.5. (Amended by gobby#15977 on its 2026-10-13 return.)
 2. **Receipt route.** This plan owns the hub route `POST /api/nodes/receipts`,
    key-bound in the style of hub-mode 1.4.
 3. **Providers.** Node v1 launches claude, codex and grok. Droid and agy are
@@ -38,7 +43,7 @@ Orchestrator rulings (gobby#15977, 2026-10-13), operator-approved planning
 5. **Placement.** Node duties live in `crates/gdaemon/src/nodes/`, following the
    node-channel plan's Decision 8. Family crates (ROADMAP decision 16) are for
    route families.
-6. **Seats.** No Plan Enhancer. The adversary is Grok seat gobby#16768.
+6. **Seats.** No Plan Enhancer. The adversary is Grok seat gobby#16791.
 7. **Replay decisions.** This plan owns the hub route
    `POST /api/nodes/hooks/replay`. It shares one decision function with the
    local drain.
@@ -142,7 +147,6 @@ Design decisions (writer, from the code):
 - **S2.8 overlap.** The open S2.8 leaves #23211 (`crates/gterminals/src/write.rs`),
   #23213 (Python spawn executor) and #23214 (`crates/gterminals/src/family.rs`,
   `tmux_runtime.rs`) share no Target with this plan.
-- **Stage gate.** Implementation waits for Stage 1 (#21543) to close.
 
 ## P1: Node hook ingress (#24150)
 `kind: framing`
@@ -1458,6 +1462,11 @@ deferral:
 - 2026-10-13: Consensus with Plan Adversary gobby#16791 after NH-9 (the Grok
   check runs only at or above the response-capability floor, 1.3) and NH-10
   (1.5.2 pins the lease renewal write).
+- 2026-10-13: Coordinator return from gobby#15977: P1 expands under #24150
+  and P2 under #24148, with cross-epic order as leaf dependencies (Decision
+  1); the adversary is gobby#16791; the Stage 1 gate prose is dropped because
+  the #21555 edge on both epics enforces it. Consensus with gobby#16791
+  renewed on these bytes.
 
 ## V2: Verification
 `kind: verification`
