@@ -54,6 +54,13 @@ pub struct Options {
     pub now: DateTime<Utc>,
     pub spawn_in_doubt: Duration,
     pub settle_indeterminate: bool,
+    /// Proven-dead native host epochs on this machine; use an empty set without evidence.
+    /// Epochs are opaque, unique identities and death must be monotonic. A producer
+    /// may snapshot this machine's native row epochs, then confirm the observed
+    /// epoch is still live by ping, and supply the snapshot minus that epoch.
+    /// Reversing that order could include a newly live epoch; a stale snapshot
+    /// cannot authorize settlement of epochs absent from the snapshot.
+    pub dead_host_epochs: std::collections::BTreeSet<String>,
 }
 
 /// Runtime truth and run-family settlement share the row transaction.
@@ -331,6 +338,9 @@ pub async fn reconcile(
                 return Ok(());
             }
             let mut after = current.clone();
+            let dead_epoch = current.host_epoch.as_deref().is_some_and(|epoch| {
+                epoch != inventory.epoch && options.dead_host_epochs.contains(epoch)
+            });
             match current.state {
                 State::Pending => {
                     let age = options
@@ -355,6 +365,17 @@ pub async fn reconcile(
                     }
                 }
                 State::Orphaned if current.host_epoch.as_deref() == Some(&inventory.epoch) => {
+                    after.state = State::Exited;
+                }
+                State::Live if dead_epoch => after.state = State::Orphaned,
+                State::Orphaned if dead_epoch => {
+                    if timeout(RUNTIME_DEADLINE, effects.process_status(&current))
+                        .await
+                        .map_err(|_| ReconcileError::RuntimeTimeout)??
+                        != ProcessStatus::Dead
+                    {
+                        return Ok(());
+                    }
                     after.state = State::Exited;
                 }
                 _ => return Ok(()),

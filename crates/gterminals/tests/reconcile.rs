@@ -284,7 +284,293 @@ fn options() -> Options {
         now: "2026-10-01T12:02:00Z".parse().expect("observation time"),
         spawn_in_doubt: Duration::from_secs(30),
         settle_indeterminate: false,
+        dead_host_epochs: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn dead_epoch_live_rows_interrupt_runs_and_replay_without_writes() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = live(terminal(), "epoch-DEAD");
+    hub.insert(&row).await?;
+    seed_run(&hub, &row).await?;
+    let host = gobby_terminals::control::Inventory {
+        epoch: "epoch-E".into(),
+        ..Default::default()
+    };
+    let mut settings = options();
+    settings.dead_host_epochs.insert("epoch-DEAD".into());
+    let runtime = Runtime {
+        process: ProcessStatus::Alive,
+        ..Default::default()
+    };
+    reconcile::reconcile(
+        &hub.pool,
+        row.machine_id,
+        Observation::Accepted(&host),
+        &settings,
+        &runtime,
+    )
+    .await?;
+    let after = hub.get(row.id).await?;
+    assert_eq!(after.state, State::Orphaned);
+    assert_eq!(after.process, row.process);
+    assert_eq!(run_status(&hub, &row).await?, "cancelled");
+    hub.fault(Some("terminal_write")).await?;
+    reconcile::reconcile(
+        &hub.pool,
+        row.machine_id,
+        Observation::Accepted(&host),
+        &settings,
+        &runtime,
+    )
+    .await?;
+    assert_eq!(hub.get(row.id).await?, after);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_epoch_orphans_require_proven_process_death() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    for status in [
+        ProcessStatus::Dead,
+        ProcessStatus::Alive,
+        ProcessStatus::Unknown,
+    ] {
+        let mut row = live(terminal(), "epoch-DEAD");
+        row.state = State::Orphaned;
+        hub.insert(&row).await?;
+        seed_run(&hub, &row).await?;
+        let host = gobby_terminals::control::Inventory {
+            epoch: "epoch-E".into(),
+            ..Default::default()
+        };
+        let mut settings = options();
+        settings.dead_host_epochs.insert("epoch-DEAD".into());
+        let runtime = Runtime {
+            process: status,
+            ..Default::default()
+        };
+        reconcile::reconcile(
+            &hub.pool,
+            row.machine_id,
+            Observation::Accepted(&host),
+            &settings,
+            &runtime,
+        )
+        .await?;
+        if status == ProcessStatus::Dead {
+            let after = hub.get(row.id).await?;
+            assert_eq!(after.state, State::Exited);
+            assert_eq!(run_status(&hub, &row).await?, "cancelled");
+            hub.fault(Some("terminal_write")).await?;
+            reconcile::reconcile(
+                &hub.pool,
+                row.machine_id,
+                Observation::Accepted(&host),
+                &settings,
+                &runtime,
+            )
+            .await?;
+            assert_eq!(hub.get(row.id).await?, after);
+            hub.fault(None).await?;
+        } else {
+            assert_eq!(hub.get(row.id).await?, row);
+            assert_eq!(run_status(&hub, &row).await?, "pending");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_epoch_evidence_preserves_unproven_listed_and_held_rows() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = live(terminal(), "epoch-DEAD");
+    let same = live(
+        Terminal {
+            machine_id: row.machine_id,
+            ..terminal()
+        },
+        "epoch-E",
+    );
+    let newer = live(
+        Terminal {
+            machine_id: row.machine_id,
+            ..terminal()
+        },
+        "epoch-NEW",
+    );
+    let foreign = live(terminal(), "epoch-DEAD");
+    let held = live(
+        Terminal {
+            machine_id: row.machine_id,
+            ..terminal()
+        },
+        "epoch-DEAD",
+    );
+    let listed = live(
+        Terminal {
+            machine_id: row.machine_id,
+            ..terminal()
+        },
+        "epoch-DEAD",
+    );
+    for candidate in [&row, &same, &newer, &foreign, &held, &listed] {
+        hub.insert(candidate).await?;
+        seed_run(&hub, candidate).await?;
+    }
+    let host = inventory(&listed, "committed");
+    let runtime = Runtime {
+        process: ProcessStatus::Alive,
+        held: Some(held.id),
+        ..Default::default()
+    };
+    // Empty evidence introduces no dead-epoch settlements.
+    reconcile::reconcile(
+        &hub.pool,
+        row.machine_id,
+        Observation::Accepted(&host),
+        &options(),
+        &runtime,
+    )
+    .await?;
+    assert_eq!(hub.get(row.id).await?, row);
+    let mut settings = options();
+    settings
+        .dead_host_epochs
+        .extend(["epoch-DEAD".into(), "epoch-E".into()]);
+    reconcile::reconcile(
+        &hub.pool,
+        row.machine_id,
+        Observation::Accepted(&host),
+        &settings,
+        &runtime,
+    )
+    .await?;
+    assert_eq!(hub.get(row.id).await?.state, State::Orphaned);
+    for candidate in [&same, &newer, &foreign, &held, &listed] {
+        assert_eq!(hub.get(candidate.id).await?, *candidate);
+        assert_eq!(run_status(&hub, candidate).await?, "pending");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_epoch_settlement_rolls_back_terminal_and_run_together() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    for state in [State::Live, State::Orphaned] {
+        for boundary in [
+            "terminal_write",
+            "before_run_write",
+            "after_run_write",
+            "commit",
+        ] {
+            let mut row = live(terminal(), "epoch-DEAD");
+            row.state = state;
+            hub.insert(&row).await?;
+            seed_run(&hub, &row).await?;
+            let host = gobby_terminals::control::Inventory {
+                epoch: "epoch-E".into(),
+                ..Default::default()
+            };
+            let mut settings = options();
+            settings.dead_host_epochs.insert("epoch-DEAD".into());
+            hub.fault(Some(boundary)).await?;
+            let runtime = Runtime {
+                failure: Some(boundary),
+                ..Default::default()
+            };
+            assert!(
+                reconcile::reconcile(
+                    &hub.pool,
+                    row.machine_id,
+                    Observation::Accepted(&host),
+                    &settings,
+                    &runtime
+                )
+                .await
+                .is_err(),
+                "{state:?}/{boundary}"
+            );
+            assert_eq!(hub.get(row.id).await?, row);
+            assert_eq!(run_status(&hub, &row).await?, "pending");
+            hub.fault(None).await?;
+            reconcile::reconcile(
+                &hub.pool,
+                row.machine_id,
+                Observation::Accepted(&host),
+                &settings,
+                &Runtime::default(),
+            )
+            .await?;
+            assert_eq!(
+                hub.get(row.id).await?.state,
+                if state == State::Live {
+                    State::Orphaned
+                } else {
+                    State::Exited
+                }
+            );
+            assert_eq!(run_status(&hub, &row).await?, "cancelled");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_epoch_row_lock_rechecks_rebound_identity() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    for change in ["epoch", "attempt", "machine", "run"] {
+        let row = live(terminal(), "epoch-DEAD");
+        hub.insert(&row).await?;
+        seed_run(&hub, &row).await?;
+        let host = gobby_terminals::control::Inventory {
+            epoch: "epoch-E".into(),
+            ..Default::default()
+        };
+        let mut settings = options();
+        settings.dead_host_epochs.insert("epoch-DEAD".into());
+        let locked = tokio::sync::Notify::new();
+        let captured = std::sync::Arc::new(tokio::sync::Notify::new());
+        let runtime = Runtime {
+            snapshot_signal: Some(captured.clone()),
+            ..Default::default()
+        };
+        let rebind = hub.pool.transaction(None, async |tx| {
+            repository::get_for_update(tx, row.id).await?.expect("locked row");
+            locked.notify_one();
+            tokio::time::timeout(Duration::from_secs(5), captured.notified()).await?;
+            let sql = match change {
+                "epoch" => "UPDATE terminals SET host_epoch='epoch-NEW' WHERE id=$1::text::uuid",
+                "attempt" => "UPDATE terminals SET attempt_generation=attempt_generation+1 WHERE id=$1::text::uuid",
+                "machine" => "UPDATE terminals SET machine_id=$2::text::uuid WHERE id=$1::text::uuid",
+                "run" => "UPDATE terminals SET agent_run_id=$2::text::uuid WHERE id=$1::text::uuid",
+                _ => unreachable!("fixture change"),
+            };
+            if matches!(change, "machine" | "run") {
+                tx.execute(sql, &[&row.id.to_string(), &Uuid::new_v4().to_string()]).await?;
+            } else {
+                tx.execute(sql, &[&row.id.to_string()]).await?;
+            }
+            anyhow::Ok(repository::get(tx, row.id).await?.expect("rebound row"))
+        });
+        let observe = async {
+            locked.notified().await;
+            reconcile::reconcile(
+                &hub.pool,
+                row.machine_id,
+                Observation::Accepted(&host),
+                &settings,
+                &runtime,
+            )
+            .await
+        };
+        let (expected, outcome) = tokio::join!(rebind, observe);
+        outcome?;
+        assert_eq!(hub.get(row.id).await?, expected?, "stale {change} snapshot");
+        assert_eq!(run_status(&hub, &row).await?, "pending");
+    }
+    Ok(())
 }
 
 fn inventory(row: &Terminal, commit: &str) -> gobby_terminals::control::Inventory {
