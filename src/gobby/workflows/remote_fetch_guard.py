@@ -83,6 +83,15 @@ _VARIABLE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([^}]*)\})")
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _REDIRECTION = re.compile(r"^(\d*)(<<<|<<-|<<|<>|<|>>|>|>\||&>)$")
 _INPUT_LIMIT = 64 * 1024
+_DUP_OPERAND = re.compile(r"(?:'[^']*'|\"(?:\\.|[^\"\\])*\"|\\.|[^\s;|&()\"'\\])+")
+
+
+@dataclass
+class _Preflight:
+    fetch: bool = False
+    deferred: bool = False
+    descriptor: bool = False
+    seen: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -92,7 +101,6 @@ class _State:
     exported: set[str] = field(default_factory=set)
     restricted: set[str] = field(default_factory=set)
     fds: set[str] = field(default_factory=set)
-    allexport: bool = False
 
     def fork(self) -> _State:
         return _State(
@@ -101,7 +109,6 @@ class _State:
             self.exported.copy(),
             self.restricted.copy(),
             self.fds.copy(),
-            self.allexport,
         )
 
 
@@ -122,10 +129,16 @@ class _Result:
 def _possible_fetch(command: str) -> bool:
     # On malformed input the quote/escape context cannot establish an exemption.
     decoded = re.sub(r"[\\\"']", "", command)
+    try:
+        decoded += " " + " ".join(token.value for token in scan_shell_command(command).tokens)
+    except (ValueError, RecursionError):
+        pass  # Unknown quotes or bounds retain the conservative raw-text check.
     return bool(re.search(r"\b(?:curl|wget)\b", decoded))
 
 
-def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
+def _capture_words(
+    command: str, preflight: _Preflight | None = None
+) -> tuple[str, dict[str, _Capture]]:
     """Replace expansions by opaque words while preserving each owning argument."""
     scan = scan_shell_command(command)
     heredocs = {body.start: body.end for body in scan.heredocs}
@@ -143,11 +156,6 @@ def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
             index = end
             continue
         char = command[index]
-        # Keep fd duplication in one input redirection before the scanner splits '&'.
-        if not quote and (duplicate := re.match(r"<&\s*(\d+)-?(?=$|[\s;|&])", command[index:])):
-            out.append(f"< /dev/fd/{duplicate[1]}")
-            index += duplicate.end()
-            continue
         if char == "\\" and quote != "'":
             out.append(command[index : index + 2])
             index += 2
@@ -163,13 +171,35 @@ def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
             out.append(command[index:end])
             index = end
             continue
+        if not quote:
+            if preflight and (index == 0 or command[index - 1] in " \t\n;|&()"):
+                opened = re.match(r"(\d+|\{[A-Za-z_]\w*\})[<>]", command[index:])
+                if opened and (opened[1].startswith("{") or int(opened[1]) > 2):
+                    preflight.descriptor = True
+            if command[index : index + 2] in {"<&", ">&"}:
+                start = index + 2
+                while start < len(command) and command[start].isspace():
+                    start += 1
+                operand = _DUP_OPERAND.match(command, start)
+                if operand is None:
+                    raise ValueError("Unknown descriptor duplication")
+                scanned = scan_shell_command(operand[0]).tokens
+                value = scanned[0].value if len(scanned) == 1 else ""
+                descriptor = value.removesuffix("-")
+                literal = descriptor.isascii() and descriptor.isdigit()
+                if preflight and value != "-" and (not literal or int(descriptor) > 2):
+                    preflight.descriptor = True
+                if literal:
+                    explicit = re.search(r"(?:^|[\s;|&()])\d+$", command[:index])
+                    destination = "1" if char == ">" and explicit is None else ""
+                    out.append(f"{destination}< /dev/fd/{descriptor}")
+                    index = operand.end()
+                    continue
         opening = command.startswith("$(", index) or (
             not quote and command[index : index + 2] in {"<(", ">("}
         )
         if quote not in {"'", "$"} and command.startswith("$[", index):
-            end = command.find("]", index + 2)
-            if end < 0:
-                raise ValueError("Unclosed shell arithmetic")
+            end = _arithmetic_end(command, index + 2)
             marker = f"{prefix}{len(captures)}__"
             captures[marker] = _Capture(command[index + 2 : end], arithmetic=True)
             out.append(marker)
@@ -205,6 +235,36 @@ def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
     if quote:
         raise ValueError("Unbalanced shell quote")
     return "".join(out), captures
+
+
+def _arithmetic_end(command: str, index: int) -> int:
+    """Find the outer legacy arithmetic bracket without swallowing nested programs."""
+    level = 1
+    quote = ""
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if not quote and opens_ansi_c_quote(command, index):
+            quote = "$'"
+            index += 2
+            continue
+        if quote not in {"'", "$'"} and (command.startswith("$(", index) or char == "`"):
+            tick = char == "`"
+            index = _substitution_end(command, index + (1 if tick else 2), tick, 1) + 1
+            continue
+        if char in "\"'":
+            if not quote:
+                quote = char
+            elif quote == char or (quote == "$'" and char == "'"):
+                quote = ""
+        elif not quote and char in "[]":
+            level += 1 if char == "[" else -1
+            if level == 0:
+                return index
+        index += 1
+    raise ValueError("Unclosed shell arithmetic")
 
 
 def _standard_word(word: str) -> bool:
@@ -305,7 +365,12 @@ def _data_argument(words: list[str], index: int) -> bool:
 
 
 def _file_key(word: str) -> str:
-    return posixpath.normpath(word)
+    path = posixpath.normpath(word)
+    if path.startswith("//"):
+        path = path[1:]
+    if descriptor := re.fullmatch(r"/proc/[^/]+/fd/(\d+)", path):
+        return f"/dev/fd/{descriptor[1]}"
+    return path
 
 
 def _output_files(tokens: list[ShellToken], words: list[str]) -> set[str]:
@@ -337,19 +402,29 @@ def _output_files(tokens: list[ShellToken], words: list[str]) -> set[str]:
     return paths - {"-", "/dev/null"}
 
 
+def _function_definition(tokens: list[ShellToken]) -> bool:
+    return bool(
+        tokens
+        and not tokens[0].quoted
+        and (
+            tokens[0].value == "function"
+            or re.fullmatch(r"[A-Za-z_]\w*\(\)", tokens[0].value)
+            or (
+                len(tokens) > 1
+                and _NAME.fullmatch(tokens[0].value)
+                and not tokens[1].quoted
+                and tokens[1].value == "()"
+            )
+        )
+    )
+
+
 def _stage_words(
     tokens: list[ShellToken], raw: dict[int, str]
 ) -> tuple[list[ShellToken], list[str], list[str]]:
     head = _command_tokens(strip_output_redirections(strip_input_redirections(tokens)))
     # Function definitions expose their body command without changing scanner tokens.
-    if (
-        head
-        and not head[0].quoted
-        and (
-            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\(\)", head[0].value)
-            or head[0].value == "function"
-        )
-    ):
+    if _function_definition(head):
         brace = next((index for index, token in enumerate(head[:4]) if token.value == "{"), None)
         if brace is not None:
             head = head[brace + 1 :]
@@ -433,28 +508,6 @@ def _stage(
     offset = len(values) - len(words)
     name = shell_command_name(words[0]) if words else ""
     remote = name in _FETCHERS
-    if name == "set":
-        for index, word in enumerate(words[1:], 1):
-            if word in {"-o", "+o"}:
-                if words[index + 1 : index + 2] == ["allexport"]:
-                    state.allexport = word == "-o"
-            elif re.fullmatch(r"[-+][a-zA-Z]+", word) and "a" in word:
-                state.allexport = word.startswith("-")
-            elif word == "--":
-                break
-    if (
-        state.variables
-        and any(word in {"eval", "source", "."} for word in protected[: max(offset + 1, 1)])
-        and any(r"\$" in raw[id(token)] for token in head)
-    ):
-        return _Result(blocked=True)
-    if name in {"declare", "typeset", "local"} and any(
-        re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", word) for word in words[1:]
-    ):
-        for word in words[1:]:
-            alias, separator, target = word.partition("=")
-            if separator and _NAME.fullmatch(alias) and target in state.variables:
-                state.variables.add(alias)
     if name == "export" or (
         name in _DECLARATIONS and any(word.startswith("-") and "x" in word for word in words[1:])
     ):
@@ -579,9 +632,6 @@ def _stage(
             )
             if token_remote:
                 variables.add(assignment[1])
-                if state.allexport:
-                    state.exported.add(assignment[1])
-                    command_exported.add(assignment[1])
                 if index < offset:
                     command_exported.add(assignment[1])
                 elif name == "export" or (
@@ -702,11 +752,219 @@ def _analyze(command: str, state: _State, depth: int, *, stdin_remote: bool = Fa
     return _Result(remote_output)
 
 
+def _allexport_toggle(words: list[str], captures: dict[str, _Capture]) -> bool:
+    def option(word: str) -> bool:
+        if any(marker in word for marker in captures):
+            raise ValueError("Unknown allexport option")
+        return word.lower().replace("_", "").removeprefix("no") == "allexport"
+
+    if words[0] in {"setopt", "unsetopt"}:
+        return any(option(word) for word in words[1:])
+    if words[0] != "set":
+        return False
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word == "--":
+            break
+        if any(marker in word for marker in captures):
+            raise ValueError("Unknown set option")
+        if not re.fullmatch(r"[-+][a-zA-Z]+", word):
+            break
+        if "a" in word:
+            return True
+        if word.endswith("o") and index + 1 < len(words):
+            if option(words[index + 1]):
+                return True
+            index += 1
+        index += 1
+    return False
+
+
+def _shell_c_wrapper(words: list[str], captures: dict[str, _Capture]) -> bool:
+    execution = shell_execution(words)
+    if execution is None:
+        raise ValueError("Unknown shell wrapper")
+    if execution.command is not None:
+        return True
+    end = (
+        words.index(execution.script_word)
+        if execution.script_word is not None and execution.script_word in words
+        else len(words)
+    )
+    if any(marker in word for word in words[1 : end + 1] for marker in captures):
+        raise ValueError("Unknown shell options")
+    if any(re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", word) for word in words[1:end]):
+        raise ValueError("Unknown shell command body")
+    return False
+
+
+def _descriptor_path(word: str, captures: dict[str, _Capture]) -> bool:
+    path = _file_key(word)
+    if not path.startswith("/"):
+        return False
+    path = "/" + path.lstrip("/")
+    match = re.match(r"^/(?:dev/fd|proc/[^/]+/fd)/(.*)$", path)
+    return bool(
+        match
+        and (
+            (match[1].isascii() and match[1].isdigit() and int(match[1]) > 2)
+            or any(marker in match[1] for marker in captures)
+            or "$" in match[1]
+            or "`" in match[1]
+        )
+    )
+
+
+def _preflight_capture(capture: _Capture, features: _Preflight, depth: int) -> None:
+    if depth > SHELL_WRAPPER_DEPTH:
+        raise ValueError("Unknown nested command")
+    if capture.variable or capture.arithmetic:
+        # Parameter/arithmetic text is data; its executable substitutions are commands.
+        _, children = _capture_words(capture.body)
+        for child in children.values():
+            _preflight_capture(child, features, depth + 1)
+    else:
+        _command_preflight(capture.body, features, depth + 1)
+
+
+def _preflight_segments(tokens: list[ShellToken]) -> list[list[ShellToken]]:
+    """Expose case branch bodies without interpreting their pattern words as commands."""
+    cases: list[bool] = []
+    bodies: list[list[ShellToken]] = []
+    for segment in _split_segments(tokens):
+        head = tokens[segment.first : segment.last + 1]
+        while head:
+            head = _command_tokens(head)
+            if not head:
+                break
+            if not head[0].quoted and head[0].value == "case":
+                marker = next(
+                    (
+                        i
+                        for i, token in enumerate(head[1:], 1)
+                        if not token.quoted and token.value == "in"
+                    ),
+                    None,
+                )
+                if marker is None:
+                    raise ValueError("Unknown case header")
+                cases.append(True)
+                head = head[marker + 1 :]
+            elif not head[0].quoted and head[0].value == "esac":
+                if not cases:
+                    raise ValueError("Unknown case boundary")
+                cases.pop()
+                head = head[1:]
+            elif cases and cases[-1]:
+                closing = next(
+                    (
+                        i
+                        for i, token in enumerate(head)
+                        if not token.quoted and token.value.endswith(")")
+                    ),
+                    None,
+                )
+                if closing is None:
+                    head = []
+                else:
+                    head = head[closing + 1 :]
+                    cases[-1] = False
+            else:
+                break
+        if head:
+            bodies.append(head)
+        separators = [token.value for token in tokens[segment.last + 1 : segment.last + 4]]
+        if cases and len(separators) > 1 and separators[0] == ";" and separators[1] in {";", "&"}:
+            cases[-1] = True
+    if cases:
+        raise ValueError("Unclosed case statement")
+    return bodies
+
+
+def _command_preflight(command: str, features: _Preflight, depth: int) -> None:
+    """Discover complete-input fetches and hazards before deciding any exemption."""
+    if depth > SHELL_WRAPPER_DEPTH or len(command) > _INPUT_LIMIT:
+        raise ValueError("Unknown command bounds")
+    if command in features.seen:
+        return
+    features.seen.add(command)
+    rendered, captures = _capture_words(command, features)
+    for capture in captures.values():
+        _preflight_capture(capture, features, depth)
+    scan = scan_shell_command(rendered)
+    raw = {
+        id(token): rendered[start:end]
+        for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
+    }
+    scripts = set(_shell_input_scripts(rendered))
+    for body in _preflight_segments(scan.tokens):
+        for stage in _pipeline_stages(body):
+            original = _command_tokens(strip_output_redirections(strip_input_redirections(stage)))
+            if _function_definition(original):
+                features.deferred = True
+            _, values, protected = _stage_words(stage, raw)
+            words = _execution_words(protected)
+            offset = len(values) - len(words)
+            name = shell_command_name(words[0]) if words else ""
+            for index, value in enumerate(values):
+                if value.startswith("SHELLOPTS=") and (index < offset or name in _DECLARATIONS):
+                    if any(marker in value for marker in captures):
+                        raise ValueError("Unknown SHELLOPTS assignment")
+                    features.deferred |= any(
+                        item.lower().replace("_", "") == "allexport"
+                        for item in value.partition("=")[2].split(":")
+                    )
+            if words:
+                features.fetch |= name in _FETCHERS
+                features.deferred |= (
+                    any(
+                        word in {"trap", "eval", "source", ".", "alias"}
+                        for word in protected[: offset + 1]
+                    )
+                    or any(marker in words[0] for marker in captures)
+                    or (
+                        name in {"declare", "typeset", "local"}
+                        and any(re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", word) for word in words[1:])
+                    )
+                    or _allexport_toggle(words, captures)
+                    or (
+                        name in {"sh", "bash", "zsh", "dash", "ksh"}
+                        and _shell_c_wrapper(words, captures)
+                    )
+                )
+                scripts.update(_wrapper_scripts([protected]))
+                for heredoc in scan.heredocs:
+                    if not any(token is scan.tokens[heredoc.opener] for token in stage):
+                        continue
+                    if not _data_consumer(words):
+                        scripts.add(heredoc.text)
+                    elif not heredoc.quoted:
+                        _, children = _capture_words(heredoc.text)
+                        for child in children.values():
+                            _preflight_capture(child, features, depth)
+            features.descriptor |= any(_descriptor_path(token.value, captures) for token in stage)
+            scripts.update(
+                token.value[1:-1]
+                for token in stage
+                if not token.quoted
+                and token.value.startswith("(")
+                and token.value.endswith(")")
+                and not token.value.startswith("((")
+            )
+    for script in scripts:
+        _command_preflight(script, features, depth + 1)
+
+
 def remote_fetch_execution(command: object) -> bool:
     """Whether remote output reaches an executable use in this shell command."""
     if not isinstance(command, str) or not command:
         return False
+    preflight = _Preflight()
     try:
+        _command_preflight(command, preflight, 0)
+        if preflight.fetch and (preflight.deferred or preflight.descriptor):
+            return True
         return _analyze(command, _State(), 0).blocked
     except (ValueError, RecursionError):
-        return _possible_fetch(command)
+        return preflight.fetch or _possible_fetch(command)

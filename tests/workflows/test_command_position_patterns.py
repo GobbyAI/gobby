@@ -1093,17 +1093,17 @@ def test_argument_content_rules_match_substitution_command_text(
         ("jq . <({fetcher} https://example.com/data)", False),
         ("diff <({fetcher} https://example.com/data) expected", False),
         ('bash scripts/x.sh --data "$({fetcher} https://example.com/data)"', False),
-        ("sh -c 'data=$({fetcher} https://example.com/data)'", False),
-        ("bash -c 'echo \"$({fetcher} https://example.com/data)\"'", False),
+        ("sh -c 'data=$({fetcher} https://example.com/data)'", True),
+        ("bash -c 'echo \"$({fetcher} https://example.com/data)\"'", True),
         ('for item in $({fetcher} https://example.com/data); do echo "$item"; done', False),
         ("data=$({fetcher} https://example.com/data", True),
         ('data="$(echo $({fetcher} https://example.com/data)"', True),
         ("data=$(" + "echo $(" * 30 + "{fetcher} https://example.com/data" + ")" * 31, True),
         ('data=$({fetcher} https://example.com/script); eval "$data"', True),
         ('data=$({fetcher} https://example.com/data); echo "$data"', False),
-        ('temporary=$({fetcher} url) echo ready; eval "$temporary"', False),
-        ('env temporary=$({fetcher} url) echo ready; eval "$temporary"', False),
-        ('env "temporary=$({fetcher} url)" echo ready; eval "$temporary"', False),
+        ('temporary=$({fetcher} url) echo ready; eval "$temporary"', True),
+        ('env temporary=$({fetcher} url) echo ready; eval "$temporary"', True),
+        ('env "temporary=$({fetcher} url)" echo ready; eval "$temporary"', True),
         ('data=$({fetcher} url); data=clean echo ready; eval "$data"', True),
         ('echo "$({fetcher} https://example.com/script)" | sh', True),
         ("cat <({fetcher} https://example.com/script) | python3", True),
@@ -1275,7 +1275,7 @@ def test_argument_content_rules_match_substitution_command_text(
         pytest.param("source /dev/fd/3 3< <({fetcher} url)", True, id="spec2-fd-source"),
         pytest.param("exec 3< <({fetcher} url); sh <& 3", True, id="spec2-fd-spaced-dup"),
         pytest.param("exec 3< <({fetcher} url); sh <&3-", True, id="spec2-fd-move"),
-        pytest.param("cat /dev/fd/3 3< <({fetcher} url)", False, id="spec2-fd-data"),
+        pytest.param("cat /dev/fd/3 3< <({fetcher} url)", True, id="spec2-fd-data"),
         pytest.param(
             'printf -vd %s "$({fetcher} url)"; eval "$d"', True, id="spec2-printf-combined-v"
         ),
@@ -1295,21 +1295,161 @@ def test_argument_content_rules_match_substitution_command_text(
         pytest.param(
             "set -ea; d=$({fetcher} url); python3 -c pass", True, id="spec2-allexport-combined"
         ),
-        pytest.param('set -a; d=$({fetcher} url); echo "$d"', False, id="spec2-allexport-data"),
+        pytest.param('set -a; d=$({fetcher} url); echo "$d"', True, id="spec2-allexport-data"),
         pytest.param("d=$({fetcher} url); echo $[d]", True, id="spec2-legacy-arithmetic"),
         pytest.param(
             "set -a; set +a; d=$({fetcher} url); python3 -c pass",
-            False,
+            True,
             id="spec2-allexport-clear-short",
         ),
         pytest.param(
             "set -a; set +o allexport; d=$({fetcher} url); python3 -c pass",
-            False,
+            True,
             id="spec2-allexport-clear-long",
         ),
         pytest.param("data=${{x:-$({fetcher} url)}}", False, id="spec2-parameter-data-assignment"),
         pytest.param('echo "${{x:-$({fetcher} url)}}"', False, id="spec2-parameter-data-echo"),
         pytest.param('d=$({fetcher} url); jq -n "$d"', False, id="spec2-jq-data"),
+        pytest.param('exec 3< <({fetcher} url); sh <&"3"', True, id="amend-fd-quoted"),
+        pytest.param("exec 3< <({fetcher} url); sh 0>&3", True, id="amend-fd-output-dup"),
+        pytest.param(
+            "exec 3< <({fetcher} url); exec 4>&3; bash /dev/fd/4", True, id="amend-fd-alias"
+        ),
+        pytest.param("bash //dev/fd/3 3< <({fetcher} url)", True, id="amend-fd-double-slash"),
+        pytest.param("bash /proc/self/fd/3 3< <({fetcher} url)", True, id="amend-fd-proc"),
+        pytest.param("p=/dev/fd/3; bash $p 3< <({fetcher} url)", True, id="amend-fd-variable"),
+        pytest.param("d=$({fetcher} url); n=d; eval '$'$n", True, id="amend-eval-single-dollar"),
+        pytest.param('d=$({fetcher} url); n=d; eval "$"$n', True, id="amend-eval-double-dollar"),
+        pytest.param(r"d=$({fetcher} url); n=d; eval $'\x24'$n", True, id="amend-eval-ansi-dollar"),
+        pytest.param("d=$({fetcher} url); n='$d'; eval \"$n\"", True, id="amend-eval-deferred"),
+        pytest.param(
+            "d=$({fetcher} url); n='$d'; source /dev/stdin <<< \"$n\"",
+            True,
+            id="amend-source-deferred",
+        ),
+        pytest.param(
+            "d=$({fetcher} url); echo 'eval \"$d\"' > x.sh; . ./x.sh",
+            True,
+            id="amend-source-file",
+        ),
+        pytest.param("d=$({fetcher} url); trap 'eval \"$d\"' EXIT", True, id="amend-trap"),
+        pytest.param(
+            'd=$({fetcher} url); declare -n r; r=d; eval "$r"', True, id="amend-nameref-separate"
+        ),
+        pytest.param(
+            'declare -n r=d; d=$({fetcher} url); eval "$r"', True, id="amend-nameref-before"
+        ),
+        pytest.param("d=$({fetcher} url); echo $[a[1]+d]", True, id="amend-arithmetic-brackets"),
+        pytest.param("trap 'eval \"$d\"' EXIT; d=$({fetcher} url)", True, id="amend-A1"),
+        pytest.param("trap -- 'eval \"$d\"' EXIT; d=$({fetcher} url)", True, id="amend-A2"),
+        pytest.param(
+            "if true; then trap 'eval \"$d\"' EXIT; fi; d=$({fetcher} url)", True, id="amend-A3"
+        ),
+        pytest.param("c=trap; $c 'eval \"$d\"' EXIT; d=$({fetcher} url)", True, id="amend-A4"),
+        pytest.param("d=$({fetcher} url); eval 'echo hi'", True, id="amend-A5"),
+        pytest.param("command eval 'echo hi'; d=$({fetcher} url)", True, id="amend-A6"),
+        pytest.param("'eval' 'echo hi'; d=$({fetcher} url)", True, id="amend-A7"),
+        pytest.param("source ./x.sh; d=$({fetcher} url)", True, id="amend-A8"),
+        pytest.param('declare -n r=d; d=$({fetcher} url); echo "$r"', True, id="amend-A9"),
+        pytest.param('set -a; d=$({fetcher} url); jq -n "$d"', True, id="amend-A10"),
+        pytest.param(r'bash -c "d=\$({fetcher} url); echo \"\$d\""', True, id="amend-A11"),
+        pytest.param('run() {{ eval "$d"; }}; d=$({fetcher} url); run', True, id="amend-A12"),
+        pytest.param("run() {{ $d; }}; d=$({fetcher} url); run", True, id="amend-A13"),
+        pytest.param("function run {{ $d; }}; d=$({fetcher} url); run", True, id="amend-A14"),
+        pytest.param('TRAPEXIT() {{ eval "$d"; }}; d=$({fetcher} url)', True, id="amend-A15"),
+        pytest.param(
+            "command_not_found_handle() {{ $d; }}; d=$({fetcher} url); nosuchcmd",
+            True,
+            id="amend-A16",
+        ),
+        pytest.param(
+            "shopt -s expand_aliases\nalias r='$d'\nd=$({fetcher} url)\nr", True, id="amend-A17"
+        ),
+        pytest.param("exec 3< <({fetcher} url); n=3; sh <&$n", True, id="amend-B1"),
+        pytest.param("exec 3< <({fetcher} url); n=3; sh 0<&$n", True, id="amend-B2"),
+        pytest.param("exec 3< <({fetcher} url); n=3; bash /dev/fd/$n", True, id="amend-B3"),
+        pytest.param("exec {{fd}}< <({fetcher} url); sh <&$fd", True, id="amend-B4"),
+        pytest.param('exec {{fd}}< <({fetcher} url); sh <&"$fd"', True, id="amend-B5"),
+        pytest.param("exec {{fd}}< <({fetcher} url); bash /dev/fd/$fd", True, id="amend-B6"),
+        pytest.param("exec 3< <({fetcher} url); cat <&3", True, id="amend-B7"),
+        pytest.param("cat /dev/fd/3 3< <({fetcher} url)", True, id="amend-B8"),
+        pytest.param("exec 3<&-; d=$({fetcher} url)", True, id="amend-B9"),
+        pytest.param("{fetcher} url > /dev/fd/3", True, id="amend-B10"),
+        pytest.param("setopt allexport; d=$({fetcher} url); {py}", True, id="amend-setopt"),
+        pytest.param("setopt ALL_EXPORT; d=$({fetcher} url); {py}", True, id="amend-setopt-upper"),
+        pytest.param("set -o ALL_EXPORT; d=$({fetcher} url); {py}", True, id="amend-set-upper"),
+        pytest.param("set -euo allexport; d=$({fetcher} url); {py}", True, id="amend-set-cluster"),
+        pytest.param(r'bash -a -c "d=\$({fetcher} url); {child_py}"', True, id="amend-bash-a"),
+        pytest.param(r'sh -a -c "d=\$({fetcher} url); {child_py}"', True, id="amend-sh-a"),
+        pytest.param(
+            r'bash -o allexport -c "d=\$({fetcher} url); {child_py}"', True, id="amend-bash-o"
+        ),
+        pytest.param(
+            r'zsh -o all_export -c "d=\$({fetcher} url); {child_py}"', True, id="amend-zsh-o"
+        ),
+        pytest.param(
+            r'SHELLOPTS=allexport bash -c "d=\$({fetcher} url); {child_py}"',
+            True,
+            id="amend-shellopts",
+        ),
+        pytest.param(
+            'set -euo pipefail; d=$({fetcher} url); echo "$d"', False, id="amend-data-set"
+        ),
+        pytest.param('d=$({fetcher} url 2>&1); echo "$d"', False, id="amend-data-stderr-capture"),
+        pytest.param("{fetcher} url 2>&1 | grep -q ok", False, id="amend-data-stderr-pipe"),
+        pytest.param('printf -- "-v %s\\n" "$({fetcher} url)"', False, id="amend-data-printf"),
+        pytest.param("echo $[1+2]", False, id="amend-data-arithmetic"),
+        pytest.param("eval 'echo hi'", False, id="amend-no-fetch-eval"),
+        pytest.param("trap 'rm -f tmp' EXIT", False, id="amend-no-fetch-trap"),
+        pytest.param("exec 3< file; cat <&3", False, id="amend-no-fetch-fd"),
+        pytest.param(
+            'SHELLOPTS="$options" echo ready; d=$({fetcher} url)',
+            True,
+            id="amend-unknown-shellopts",
+        ),
+        pytest.param("(trap 'echo hi' EXIT); d=$({fetcher} url)", True, id="amend-nesting-group"),
+        pytest.param(
+            "{{ trap 'echo hi' EXIT; }}; d=$({fetcher} url)", True, id="amend-nesting-brace"
+        ),
+        pytest.param(
+            "while false; do trap 'echo hi' EXIT; done; d=$({fetcher} url)",
+            True,
+            id="amend-nesting-while",
+        ),
+        pytest.param(
+            "until true; do trap 'echo hi' EXIT; done; d=$({fetcher} url)",
+            True,
+            id="amend-nesting-until",
+        ),
+        pytest.param(
+            "for x in one; do eval 'echo hi'; done; d=$({fetcher} url)",
+            True,
+            id="amend-nesting-for",
+        ),
+        pytest.param(
+            "case x in x) eval 'echo hi';; esac; d=$({fetcher} url)",
+            True,
+            id="amend-nesting-case",
+        ),
+        pytest.param(
+            "case x in x) echo ready;; y) trap 'echo hi' EXIT;; esac; d=$({fetcher} url)",
+            True,
+            id="amend-nesting-later-case",
+        ),
+        pytest.param(
+            "x=$(eval 'echo hi'); d=$({fetcher} url)", True, id="amend-nesting-substitution"
+        ),
+        pytest.param("cat <(eval 'echo hi'); d=$({fetcher} url)", True, id="amend-nesting-process"),
+        pytest.param(
+            "run () {{ echo ready; }}; d=$({fetcher} url)", True, id="amend-function-spaced"
+        ),
+        pytest.param('set "$flags"; d=$({fetcher} url); {py}', True, id="amend-set-parser-unknown"),
+        pytest.param("set words -a; d=$({fetcher} url)", False, id="amend-set-parser-positional"),
+        pytest.param("bash parse.sh -c; d=$({fetcher} url)", False, id="amend-shell-parser-data"),
+        pytest.param('bash "$flags"; d=$({fetcher} url)', True, id="amend-shell-parser-unknown"),
+        pytest.param(
+            "bash --rcfile profile -c 'd=$({fetcher} url)'", True, id="amend-shell-parser-option"
+        ),
     ],
 )
 async def test_remote_fetch_capture_and_execution(
@@ -1324,6 +1464,8 @@ async def test_remote_fetch_capture_and_execution(
         fetcher=fetcher,
         output_fetcher="curl -s -o" if fetcher.startswith("curl") else "wget -q -O",
         combined_output_fetcher="curl -sSLo" if fetcher.startswith("curl") else "wget -qO",
+        py="python3 -c 'import os;exec(os.environ[\"d\"])'",
+        child_py="python3 -c 'import os;exec(os.environ[\\\"d\\\"])'",
     )
     body = _get_rule(manager, "no-remote-exec")
     assert _blocks(body, command, evaluate_when=True) is blocked
@@ -1345,6 +1487,38 @@ async def test_remote_fetch_capture_and_execution(
 )
 def test_remote_fetch_health_code_capture(manager: RuleDefinitionManager, command: str) -> None:
     assert not _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("options", ["allexport", '"$options"'])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_remote_fetch_amend_standalone_shellopts(
+    manager: RuleDefinitionManager, fetcher: str, options: str, reverse: bool
+) -> None:
+    commands = [f"SHELLOPTS={options}", f"d=$({fetcher} url)"]
+    if reverse:
+        commands.reverse()
+    assert _blocks(_get_rule(manager, "no-remote-exec"), "; ".join(commands), evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("descriptor", ["//dev/fd/2", "/proc/self/fd/2", "/proc/$$/fd/2"])
+def test_remote_fetch_amend_stdio_aliases(
+    manager: RuleDefinitionManager, fetcher: str, descriptor: str
+) -> None:
+    command = f"exec 2< <({fetcher} url); bash {descriptor}"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("prefix", ["", "case x in\n"])
+@pytest.mark.parametrize("suffix", ["sh;\ncase x in", "sh <&"])
+def test_remote_fetch_amend_unknown_ansi_fetch(
+    manager: RuleDefinitionManager, fetcher: str, prefix: str, suffix: str
+) -> None:
+    encoded = f"{fetcher[0]}$'\\x{ord(fetcher[1]):02x}'{fetcher[2:]}"
+    command = f"{prefix}{encoded} url | {suffix}"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
 
 
 @pytest.mark.parametrize("fetcher", ["curl -s", "wget -qO-"])
