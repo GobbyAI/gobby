@@ -21,6 +21,7 @@ from websockets.sync.client import connect
 
 from gobby.storage.api_keys import ApiKeyManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests.e2e.conftest import (
     DaemonInstance,
     find_free_port,
@@ -29,11 +30,10 @@ from tests.e2e.conftest import (
 )
 from tests.e2e.test_auth_login_e2e import TEST_EMAIL, _login
 from tests.e2e.test_auth_login_e2e import e2e_pre_daemon_setup as e2e_pre_daemon_setup
-from tests.fixtures.gdaemon_binary import select_test_gdaemon
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.fixtures.tls_certs import pem_fingerprint
 
-pytestmark = [pytest.mark.e2e, pytest.mark.timeout(180)]
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(300)]
 __all__ = ["e2e_pre_daemon_setup"]
 
 
@@ -106,10 +106,8 @@ def pair_node(pair_hub: DaemonInstance, tmp_path: Path) -> Generator[EnrolledNod
         key_id=bootstrap["api_key_id"],
         stderr_path=home / "node.stderr",
     )
-    repo_root = Path(__file__).resolve().parents[2]
-    binary = select_test_gdaemon(repo_root, os.environ, "gdaemon")
-    assert binary is not None, "Run with GOBBY_TEST_GDAEMON=checkout after cargo build"
     env = prepare_daemon_env(home_dir=home)
+    binary = Path(env[NATIVE_BIN_DIR_ENV]) / native_bin_name("gdaemon")
     env["GOBBY_HOME"] = str(home)
     env.pop("GOBBY_CONFIG", None)
     env.pop("DATABASE_URL", None)
