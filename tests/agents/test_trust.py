@@ -117,12 +117,15 @@ class TestPreApproveClaude:
         }
         assert json.loads(config_path.read_text()) == expected
 
-    def test_install_trust_seeds_persisted_gobby_home_acceptance(self, tmp_path: Path) -> None:
+    def test_install_trust_seeds_persisted_gobby_home_acceptance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         gobby_home = tmp_path / ".gobby"
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
         with (
             patch("gobby.agents.trust.Path.home", return_value=tmp_path),
-            patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
+            patch.dict(os.environ, {"CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
         ):
             result = seed_gobby_home_trust("claude", gobby_home=gobby_home)
 
@@ -133,7 +136,9 @@ class TestPreApproveClaude:
         assert str(config_path) in result["files_written"]
 
     @pytest.mark.parametrize("invalid", ["json", "root", "projects", "entry", "symlink"])
-    def test_invalid_config_is_preserved(self, tmp_path: Path, invalid: str) -> None:
+    def test_invalid_config_is_preserved(
+        self, tmp_path: Path, invalid: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         workspace = tmp_path / "workspace"
         config_path = tmp_path / ".claude.json"
         content = {
@@ -147,10 +152,11 @@ class TestPreApproveClaude:
         source.write_text(content)
         if invalid == "symlink":
             config_path.symlink_to(source)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
         with (
             patch("gobby.agents.trust.Path.home", return_value=tmp_path),
-            patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
+            patch.dict(os.environ, {"CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
         ):
             result = seed_gobby_home_trust("claude", gobby_home=workspace)
 
