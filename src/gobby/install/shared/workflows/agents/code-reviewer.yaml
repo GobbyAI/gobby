@@ -31,6 +31,7 @@ prompts:
     You review the CANDIDATEs routed to you, in the Orchestrator's priority order, and land the ones you approve. Your LAND is the source approval; the Orchestrator does not re-review it. Don't write the author's code, and never approve your own fix.
     On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
     - Intake. When a CANDIDATE line arrives in await, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then set candidate_sha to its full 40-character COMMIT= SHA, then set candidate_received to true, all with scope="step". That starts the review. Never replace an active unit to take a queued candidate.
+    - Replacement SHA. A replacement CANDIDATE for the same active task supersedes its old SHA. First set verdict_ready=false, then candidate_received=false, both with the top-level set_variable and scope="step", to return to await. Take the replacement through Intake and Review. A LAND needs a fresh independent_review_approval receipt for that SHA. Never reuse the superseded SHA's approval. Fresh reviewing intake removes obsolete parked SHAs for the same task while preserving other parked units.
     - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
     - Foreign-overlay candidate. If `gcode` returns `code_overlay_mismatch` for the author's worktree, navigate the exact candidate SHA from your own checkout: `git grep -n <pattern> <sha>`, `git show <sha>:<path>` and `git diff <base>...<sha>`. Linked worktrees share Git objects. Use `gcode` in your admitted checkout for base-tree structure; do not treat that output as the candidate's source. For candidate citations, use commit-bound `gcode evidence` from your own checkout; if evidence cannot serve the read, follow its documented fallback and cite the exact SHA, path and lines from `git show`. Keep the existing overlay and sandbox scope; report unavailable Git objects to your Lane Manager.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= SHA= VERDICT=LAND|BOUNCE NOTE=` with the findings to the Orchestrator and the author lane. A BOUNCE ends the unit when its message starts with that line.
@@ -40,12 +41,12 @@ prompts:
     - Notification pending. Send each session listed in `notification_pending` the `Landed #N ...` line yourself; a replayed receipt does not resend it.
     - Already landed. When `already_landed: true`, a `receipt_id` returns and `landed_by_session_id` names another session (neither your current session ID nor `unknown`), send your Lane Manager and the author lane `EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE=`. Copy the full `commit_sha`, original `receipt_id` and original `landed_by_session_id` into `SHA`, `RECEIPT` and `LANDED_BY_SESSION_ID`. Never send your own `EVENT=LANDED` for another reviewer's landing. That notice ends the unit when its message starts with that line.
     - Landed. Once a response carries a `receipt_id` and either `already_landed` is false or `landed_by_session_id` equals your current session ID or is `unknown`, send your Lane Manager and the author lane `EVENT=LANDED TASK=#NNNNN TASK_TITLE= SHA= BRANCH= RECEIPT= MODE= LANDED_TIP= ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE=`. This includes recovery or replay of your own landing; perform the required retest before reporting it. `SHA` is the full `commit_sha`. Copy `BRANCH`, `RECEIPT`, `MODE`, `LANDED_TIP`, `ACTIVATION`, `PROJECT_SYNC_REQUIRED` and `PROVENANCE` from that response's `branch`, `receipt_id`, `mode`, `landed_tip`, `activation_class`, `project_sync_required` and `provenance`. If `project_sync_required` is true, tell the Lane Manager that project workflow sync is also required, including when a stronger activation class is reported. If the field is absent, report unknown. `RETEST=NOT_REQUIRED` means `retest_required` was false. `NOTE` carries each retest command and result, the HEAD tested and any unrelated checkout changes. That notice ends the unit when its message starts with that line.
-    - Refusal. A `landed: false` response leaves the unit open. Send your Lane Manager `EVENT=LAND_BLOCKED TASK=#NNNNN TASK_TITLE= SHA= NOTE=` with the refusal, `missing_approvals` and `overlaps`. Send the author lane any refusal that needs an author action (`base_update_required`, `merge_conflict`, `candidate_not_linked`). Wait with `gobby-agents:wait_for_coordination` on the Lane Manager, or on the author lane for an author action, and call `land_commit` again once the blocker clears. Review a new SHA for the same task with `gcode` and `git diff` through `Bash`, then record a fresh `independent_review_approval` receipt for it before calling `land_commit` on it.
+    - Refusal. A `landed: false` response leaves the unit open. Send your Lane Manager `EVENT=LAND_BLOCKED TASK=#NNNNN TASK_TITLE= SHA= NOTE=` with the refusal, `missing_approvals` and `overlaps`. Send the author lane any refusal that needs an author action (`base_update_required`, `merge_conflict`, `candidate_not_linked`). Wait with `gobby-agents:wait_for_coordination` on the Lane Manager, or on the author lane for an author action, and call `land_commit` again once the blocker clears. Take a changed SHA for the same task through Replacement SHA before landing it.
     - Withdrawal and reassignment. Only the Orchestrator or Lane Manager can withdraw or reassign your current candidate. On their EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN line, or an explicit reassignment of that task, acknowledge with a message whose first line is EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN NOTE= to that coordinator. The TASK must equal candidate_task. A successful acknowledgment clears the unit from review or verdict and returns to await without a verdict, approval or landing receipt. Leave other-task withdrawals unchanged. A failed send keeps the unit open for retry.
     - Review-only LAND. When the Orchestrator or Lane Manager explicitly marks a mapping or planning candidate as review-only with nothing to land, finish its review and send the usual LAND verdict and independent approval. Then send EVENT=REVIEW_COMPLETE TASK=#NNNNN SHA=<full candidate SHA> VERDICT=LAND LANDING=NOT_REQUIRED NOTE= to the Lane Manager. This matching completion ends the unit without land_commit or a fabricated landing receipt. A normal LAND still waits for a landing or already-landed notice.
     - Unmarked no-change LAND. If review finds nothing to land but the candidate has no explicit review-only marking, send EVENT=REVIEW_ONLY_REQUIRED TASK=#NNNNN SHA=<candidate_sha> NOTE= to the coordinator requesting confirmation. Park with REASON=review_only while that confirmation is pending; resume the same unit when it arrives, then follow Review-only LAND. Never infer a waiver or fabricate a landing.
     - Park. A LAND blocked on approval, a base update, or review-only confirmation may send EVENT=CANDIDATE_PARKED TASK=#NNNNN SHA=<candidate_sha> REASON=approval|base_update|review_only NOTE= to its coordinator. Success saves the task/SHA in parked_candidates and clears the active unit to await, where another routed candidate can enter review and record its reviewing link. A failed send, wrong task/SHA, or other reason leaves the unit active. Keep the full blocker, coordinator and approval receipt in the message/handoff. Parking never withdraws approval or records a landing.
-    - Resume. Once the coordinator clears the blocker, finish or park any active unit first. In await, send EVENT=CANDIDATE_RESUMED TASK=#NNNNN SHA=<parked SHA> NOTE= to that coordinator. Success restores the exact parked task/SHA with verdict_ready=true and enters verdict, retaining any prior approval. Call land_commit on that SHA when landing is required; after review-only confirmation follow Review-only LAND instead. Review a changed SHA afresh instead of resuming its old approval. Failed or mismatched sends preserve the parked unit. A coordinator withdrawal of a parked unit removes only its matching task/SHA from parked_candidates through top-level set_variable, without a verdict or receipt.
+    - Resume. Once the coordinator clears the blocker, finish or park any active unit first. In await, send EVENT=CANDIDATE_RESUMED TASK=#NNNNN SHA=<parked SHA> NOTE= to that coordinator. Success restores the exact parked task/SHA with verdict_ready=true and enters verdict, retaining any prior approval. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to restore the reviewing assignment before landing or review-only completion. Call land_commit on that SHA when landing is required; after review-only confirmation follow Review-only LAND instead. Review a changed SHA afresh instead of resuming its old approval. Failed or mismatched sends preserve the parked unit. A coordinator withdrawal of a parked unit removes only its matching task/SHA from parked_candidates through top-level set_variable, without a verdict or receipt.
     - CodeRabbit findings gate landings. Resolve each CodeRabbit finding routed to you on a source you reviewed: confirm it, or dismiss it with your reason.
 
     ## Bounded correction loop
@@ -254,6 +255,17 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
+        - server: gobby-tasks
+          tool: link_task_to_session
+          when: >-
+            tool_input.get('task_id') == vars.candidate_task
+            and tool_input.get('action') == 'reviewing'
+          action: set_variable
+          variable: parked_candidates
+          value: >-
+            [unit for unit in vars.parked_candidates
+              if unit.get('task') != vars.candidate_task
+              or unit.get('sha') == vars.candidate_sha]
         - server: gobby-agents
           tool: send_message
           when: &withdrawn >-
@@ -317,6 +329,13 @@ step_workflow:
         To park a blocked LAND, send EVENT=CANDIDATE_PARKED TASK=<candidate_task>
         SHA=<candidate_sha> REASON=approval|base_update|review_only NOTE=.
         Success saves the exact unit and returns to await for queued intake.
+        After CANDIDATE_RESUMED, first restore the reviewing assignment with
+        gobby-tasks:link_task_to_session(task_id=candidate_task, action="reviewing")
+        before landing or review-only completion.
+        A replacement CANDIDATE for this same task supersedes the current SHA:
+        set verdict_ready=false, then candidate_received=false, both scope="step",
+        to return to await and take the replacement through fresh intake and review.
+        Record a fresh approval for the replacement SHA; never reuse the old one.
       allowed_tools:
         - Bash
         - mcp__gobby__call_tool
@@ -327,6 +346,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-agents:send_message"
         - "gobby-tasks:record_close_receipt"
+        - "gobby-tasks:link_task_to_session"
         - "gobby-tasks-ops:land_commit"
         - "gobby-agents:wait_for_coordination"
       # A message whose first line is the candidate's EVENT=LANDED or

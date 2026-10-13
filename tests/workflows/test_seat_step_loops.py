@@ -485,7 +485,7 @@ async def test_code_reviewer_parks_blocked_land_reviews_next_and_resumes(
     )
     await run.set_flag("verdict_ready", True)
     assert run.step == "verdict"
-    assert not await run.admits("gobby-tasks", "link_task_to_session")
+    assert await run.admits("gobby-tasks", "link_task_to_session")
 
     park = f"EVENT=CANDIDATE_PARKED TASK=#24224 SHA={first_sha} REASON={reason} NOTE=blocked"
     await run.call(*SEND, {"content": park}, {"success": False})
@@ -538,7 +538,13 @@ async def test_code_reviewer_parks_blocked_land_reviews_next_and_resumes(
     assert run.vars["candidate_sha"] == first_sha
     assert run.vars["parked_candidates"] == []
     assert run.vars["verdict_ready"] is True
-    assert not await run.admits("gobby-tasks", "link_task_to_session")
+    assert await run.admits("gobby-tasks", "link_task_to_session")
+    await run.call(
+        "gobby-tasks", "link_task_to_session", {"task_id": "#24224", "action": "reviewing"}
+    )
+    assert run.step == "verdict"
+    assert run.vars["candidate_sha"] == first_sha
+    assert run.vars["verdict_ready"] is True
     if reason == "review_only":
         for wrong_sha in ("", second_sha):
             await run.call(
@@ -564,3 +570,81 @@ async def test_code_reviewer_parks_blocked_land_reviews_next_and_resumes(
     assert run.vars["candidate_sha"] is None
     assert run.vars["_unit_done"] is False
     assert run.vars["_unit_parked"] is False
+
+
+async def test_code_reviewer_replacement_sha_reenters_fresh_review(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    old_sha, new_sha = "a" * 40, "b" * 40
+    await run.set_flag("candidate_task", "#24224")
+    await run.set_flag("candidate_sha", old_sha)
+    await run.set_flag("candidate_received", True)
+    await run.set_flag("verdict_ready", True)
+    assert run.step == "verdict"
+
+    # Follow the replacement intake protocol instead of editing the approved SHA in verdict.
+    await run.set_flag("verdict_ready", False)
+    await run.set_flag("candidate_received", False)
+    assert run.step == "await"
+    await run.set_flag("candidate_task", "#24224")
+    await run.set_flag("candidate_sha", new_sha)
+    await run.set_flag("candidate_received", True)
+    assert run.step == "review"
+    assert run.vars["candidate_sha"] == new_sha
+    assert run.vars["verdict_ready"] is False
+    assert not await run.admits("gobby-tasks-ops", "land_commit")
+    assert not await run.admits("gobby-tasks", "record_close_receipt")
+    await run.call(
+        "gobby-tasks", "link_task_to_session", {"task_id": "#24224", "action": "reviewing"}
+    )
+    await run.set_flag("verdict_ready", True)
+    assert run.step == "verdict"
+    await run.call(
+        "gobby-tasks",
+        "record_close_receipt",
+        {"task_id": "#24224", "kind": "independent_review_approval", "commit_sha": new_sha},
+    )
+    assert run.vars["candidate_sha"] == new_sha
+
+
+async def test_code_reviewer_fresh_intake_supersedes_only_same_task_parked_sha(
+    temp_db: HubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    old_sha, other_sha, new_sha = "a" * 40, "b" * 40, "c" * 40
+    for task, sha in (("#24224", old_sha), ("#24234", other_sha)):
+        await run.set_flag("candidate_task", task)
+        await run.set_flag("candidate_sha", sha)
+        await run.set_flag("candidate_received", True)
+        await run.set_flag("verdict_ready", True)
+        await run.call(
+            *SEND,
+            {"content": f"EVENT=CANDIDATE_PARKED TASK={task} SHA={sha} REASON=base_update"},
+        )
+        assert run.step == "await"
+    parked = run.vars["parked_candidates"]
+    assert len(parked) == 2
+    await run.set_flag("candidate_task", "#24224")
+    await run.set_flag("candidate_sha", new_sha)
+    await run.set_flag("candidate_received", True)
+    assert run.step == "review"
+    link = {"task_id": "#24224", "action": "reviewing"}
+    await run.call("gobby-tasks", "link_task_to_session", link, {"success": False})
+    assert run.vars["parked_candidates"] == parked
+    await run.call(
+        "gobby-tasks", "link_task_to_session", {"task_id": "#24234", "action": "reviewing"}
+    )
+    assert run.vars["parked_candidates"] == parked
+    await run.call("gobby-tasks", "link_task_to_session", link)
+    assert run.vars["parked_candidates"] == [{"task": "#24234", "sha": other_sha}]
+    await run.set_flag("verdict_ready", True)
+    await run.call(
+        *SEND, {"content": f"EVENT=CANDIDATE_VERDICT TASK=#24224 SHA={new_sha} VERDICT=BOUNCE"}
+    )
+    await run.call(
+        *SEND, {"content": f"EVENT=CANDIDATE_RESUMED TASK=#24224 SHA={old_sha} NOTE=obsolete"}
+    )
+    assert run.step == "await"
+    assert run.vars["candidate_received"] is False
+    assert run.vars["parked_candidates"] == [{"task": "#24234", "sha": other_sha}]
