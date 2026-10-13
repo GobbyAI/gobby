@@ -1,6 +1,30 @@
 {
     "cases": [
         {
+            "name": "local_separator_only_hub_url_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_daemon_url": "\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null
+        },
+        {
+            "name": "remote_separator_only_hub_url_absent",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "\u001f"},
+            "error": "hub_daemon_url is required for datastore_mode: remote"
+        },
+        {
+            "name": "remote_separator_only_files_home_absent",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host", "files_home": "\u001f"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "local_trailing_files_home_separators",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files\u001c\u001d\u001e\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "files_home": "/tmp/gobby-vector-files"
+        },
+        {
             "name": "node_trailing_file_separator",
             "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001c"},
             "mode": "node",
