@@ -13,7 +13,7 @@ rules:
         event.data.get('canonical_script_execution')
         or (
           event.data.get('canonical_repo_mutation')
-          and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data)
+          and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'), event.data, variables.get('_agent_type'))
         )
       )
     effects:

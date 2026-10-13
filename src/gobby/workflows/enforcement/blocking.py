@@ -620,6 +620,7 @@ def requires_task_for_any_touched_file(
     source: str | None = None,
     plan_mode: bool = False,
     event_data: Any = None,
+    agent_type: str | None = None,
 ) -> bool:
     """Return True when any touched file should be task-gated.
 
@@ -635,6 +636,14 @@ def requires_task_for_any_touched_file(
         return True
 
     for path in touched_paths:
+        if (
+            agent_type == "plan-writer"
+            and isinstance(event_data, dict)
+            and is_project_plan_artifact_path(
+                path, event_data.get("project_path"), include_coverage=True
+            )
+        ):
+            continue
         if is_plan_file(path, source):
             continue
         if plan_mode and path.endswith(".md"):
