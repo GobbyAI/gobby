@@ -605,7 +605,7 @@ def _subjects(
     if heredoc_source == "language":
         return [command]
     try:
-        if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
+        if function_program := shell_function_bodies(command, scan):
             program, _ = function_program
             scan = scan_function_program(command, program, scan) or scan_shell_command(program)
             command = program

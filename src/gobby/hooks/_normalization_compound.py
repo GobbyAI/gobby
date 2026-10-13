@@ -20,10 +20,9 @@ _FUNCTION_HEADER = re.compile(
 _FUNCTION_BODY = re.compile(r"(?:[({]|(?:if|while|until|case|for|select)\b)")
 
 
-def shell_function_bodies(
-    command: str, tokens: list[ShellToken], spans: list[tuple[int, int]]
-) -> tuple[str, dict[int, str]] | None:
+def shell_function_bodies(command: str, scan: ShellScan) -> tuple[str, dict[int, str]] | None:
     """Blank every header in place; map each body's opening position to its function name."""
+    tokens, spans = scan.tokens, scan.spans
     view: list[str] = []
     offsets: list[int] = []
     positions: dict[int, int] = {}
@@ -36,9 +35,7 @@ def shell_function_bodies(
     # already index the normalized text, including comments and heredocs.
     joins_lines = "\\\n" in command
     heredoc_ends = (
-        {body.start: body.end for body in scan_shell_command(command).heredocs}
-        if joins_lines and "<<" in command
-        else {}
+        {body.start: body.end for body in scan.heredocs} if joins_lines and "<<" in command else {}
     )
     index = 0 if joins_lines else len(command)
     while index < len(command):
