@@ -196,6 +196,22 @@ def test_source_output_channel_routing(repo: Path, command: str, blocked: bool) 
     assert broad_read_blocked(repo, command) is blocked
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $(touch /tmp/x); cat src/long.py; echo hi | head -n 10",
+        "echo $(touch /tmp/x); cat src/long.py; { echo; } | head -n 10",
+        "cat src/long.py | /usr/bin/tee /dev/stderr | head -n 10",
+        "bash -c 'cat src/long.py | /usr/bin/tee /dev/stderr' > /tmp/x",
+        "cat src/long.py | tee /dev/fd/02 | head -n 10",
+    ],
+)
+def test_pipeline_attribution_and_tee_aliases_preserve_broad_reads(
+    repo: Path, command: str
+) -> None:
+    assert broad_read_blocked(repo, command)
+
+
 def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None:
     variables = turn(
         repo,

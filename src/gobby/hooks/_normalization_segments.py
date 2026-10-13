@@ -141,6 +141,7 @@ def _pipeline_read_indices(segments: list[_ShellSegment], index: int) -> list[in
 def _bound_pipeline_reads(
     metadata: list[_ShellSegmentMetadata],
     segments: list[_ShellSegment],
+    segment_metadata_positions: list[int],
     filter_index: int,
     bound: int | None,
 ) -> None:
@@ -152,6 +153,7 @@ def _bound_pipeline_reads(
     if bound is None or bound > MAX_NARROW_SOURCE_LINES:
         return
     for prior in _pipeline_read_indices(segments, filter_index):
+        prior = segment_metadata_positions[prior]
         item = metadata[prior]
         if not item.extra:
             continue
@@ -208,11 +210,13 @@ def _bound_pipeline_reads(
 def _mark_pipeline_read_escape(
     metadata: list[_ShellSegmentMetadata],
     segments: list[_ShellSegment],
+    segment_metadata_positions: list[int],
     index: int,
     channels: set[str],
 ) -> None:
     """A tee copy can expose source independently of the pipeline's stdout."""
     for prior in _pipeline_read_indices(segments, index):
+        prior = segment_metadata_positions[prior]
         item = metadata[prior]
         if not item.extra:
             continue

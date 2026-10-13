@@ -67,7 +67,7 @@ from gobby.hooks._normalization_redirects import (
     extract_redirection_paths,
     has_mutating_output_redirection,
     redirect_source_read_metadata,
-    source_output_destinations,
+    tee_output_channels,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import (
@@ -235,6 +235,7 @@ def _classify_shell_command(
     pending_case_pattern = False
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
+    segment_metadata_positions: list[int] = []
     segments = _split_shell_segments(tokens)
     try:
         directory.prepare_groups(segments, spans_by_token, command)
@@ -364,6 +365,8 @@ def _classify_shell_command(
                 metadata.append(body_metadata)
         if parts[:1] != ["for"] and not preserves_directory(parts):
             directory.mark_unproven()
+        # Substitution and heredoc metadata precede the owning segment's entry.
+        segment_metadata_positions.append(len(metadata))
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
@@ -415,16 +418,12 @@ def _classify_shell_command(
             )
             continue
 
-        if segment.separator_before == "|" and parts[:1] == ["tee"]:
-            channels = {
-                "tty"
-                if word == "/dev/tty"
-                else source_output_destinations(segment.tokens)["stderr"]
-                for word in parts[1:]
-                if word in {"/dev/tty", "/dev/stderr", "/dev/fd/2", "/proc/self/fd/2"}
-            } - {"file", "closed"}
+        if segment.separator_before == "|" and parts[0].rsplit("/", 1)[-1] == "tee":
+            channels = tee_output_channels(parts[1:], segment.tokens)
             if channels:
-                _mark_pipeline_read_escape(metadata, segments, index, channels)
+                _mark_pipeline_read_escape(
+                    metadata, segments, segment_metadata_positions, index, channels
+                )
 
         if segment.separator_before == "|" and _is_read_only_pipeline_stage(
             segment.tokens,
@@ -443,7 +442,11 @@ def _classify_shell_command(
             )
             if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
                 _bound_pipeline_reads(
-                    metadata, segments, index, _pipeline_filter_output_line_bound(parts)
+                    metadata,
+                    segments,
+                    segment_metadata_positions,
+                    index,
+                    _pipeline_filter_output_line_bound(parts),
                 )
             continue
 

@@ -99,6 +99,21 @@ def source_output_destinations(tokens: list[ShellToken]) -> dict[str, str]:
     return {"stdout": descriptors["1"], "stderr": descriptors["2"]}
 
 
+def tee_output_channels(paths: list[str], tokens: list[ShellToken]) -> set[str]:
+    """Recognize terminal and stderr copies, including equivalent descriptor names."""
+    destinations = source_output_destinations(tokens)
+    channels: set[str] = set()
+    for path in paths:
+        if path == "/dev/tty":
+            channels.add("tty")
+        elif path == "/dev/stderr":
+            channels.add(destinations["stderr"])
+        elif match := re.fullmatch(r"(?:/dev/fd/|/proc/self/fd/)(\d+)", path):
+            if (match[1].lstrip("0") or "0") == "2":
+                channels.add(destinations["stderr"])
+    return channels - {"file", "closed"}
+
+
 def redirect_source_read_metadata(
     extra: Mapping[str, Any] | None, tokens: list[ShellToken]
 ) -> dict[str, Any] | None:
