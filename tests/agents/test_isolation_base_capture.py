@@ -6,7 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -201,11 +201,10 @@ async def _prepare_worktree_with_merge_base(
     ):
         ctx = await handler.prepare_environment(config)
 
-    handler._git_manager.run_git_command.assert_called_once_with(
-        ["merge-base", "origin/main", "HEAD"],
-        cwd=Path(expected_git_cwd),
-        timeout=30,
-    )
+    assert handler._git_manager.run_git_command.await_args_list == [
+        call(["show-ref", "--verify", "--hash", "refs/remotes/origin/main"], cwd=None, timeout=30),
+        call(["merge-base", "base123", "HEAD"], cwd=Path(expected_git_cwd), timeout=30),
+    ]
     return ctx
 
 
