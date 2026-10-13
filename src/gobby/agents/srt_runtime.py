@@ -847,7 +847,11 @@ async def prepare_sandbox_launch(
 
         try:
             run_environment["GOBBY_SRT_MONITOR_SOCKET"] = await asyncio.to_thread(
-                ensure_srt_monitor, node=installation.node, runner=installation.runner, env=env
+                ensure_srt_monitor,
+                node=installation.node,
+                runner=installation.runner,
+                env=env,
+                run_key=run_paths.root.name,
             )
             run_environment["GOBBY_SRT_RUN_KEY"] = run_paths.root.name
         except (OSError, ValueError, RuntimeError) as exc:

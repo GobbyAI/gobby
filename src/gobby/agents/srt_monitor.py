@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import socket
 import stat
 import subprocess
@@ -31,7 +32,9 @@ def _connect(path: Path) -> None:
             raise RuntimeError("Shared SRT monitor identity mismatch; coordinate monitor cutover")
 
 
-def ensure_srt_monitor(*, node: Path, runner: Path, env: Mapping[str, str]) -> str:
+def ensure_srt_monitor(
+    *, node: Path, runner: Path, env: Mapping[str, str], run_key: str | None = None
+) -> str:
     """Serialize startup across processes and prove monitor identity/readiness.
 
     The private socket is outside managed execution grants. A live incompatible
@@ -44,6 +47,46 @@ def ensure_srt_monitor(*, node: Path, runner: Path, env: Mapping[str, str]) -> s
     with _lock, (directory / "violations.lock").open("a+b") as lock_file:
         os.chmod(lock_file.name, 0o600)
         fcntl.flock(lock_file, fcntl.LOCK_EX)
+        if run_key is not None:
+            if re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", run_key) is None:
+                raise ValueError("Invalid shared SRT monitor run key")
+            prior = [
+                directory / f"{run_key}.srt-backlog.jsonl{suffix}" for suffix in ("", ".active")
+            ]
+            if any(path.exists() or path.is_symlink() for path in prior):
+                descriptor = os.open(
+                    directory / "violations-monitor.log",
+                    os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW,
+                    0o600,
+                )
+                with os.fdopen(descriptor, "ab") as log:
+                    try:
+                        result = subprocess.run(
+                            [
+                                str(node),
+                                str(runner),
+                                "--recover",
+                                str(directory),
+                                str(get_gobby_home() / "logs" / "sandbox-violations"),
+                                run_key,
+                            ],
+                            env={"PATH": env.get("PATH", os.defpath)},
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=log,
+                            timeout=30,
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        raise RuntimeError(
+                            f"SRT backlog recovery timed out for run {run_key}"
+                        ) from exc
+                if result.returncode == 2:
+                    raise RuntimeError(f"Run {run_key} has a backlog owned by a live SRT monitor")
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"SRT backlog recovery failed for run {run_key}; inspect {directory / 'violations-monitor.log'}"
+                    )
         try:
             _connect(path)
             return str(path)

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { appendFileSync, chmodSync, readFileSync, unlinkSync, writeSync, closeSync, openSync, fchmodSync, fstatSync, renameSync, constants } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
 import { EventEmitter } from 'node:events'
@@ -158,15 +158,18 @@ class Backlog {
   }
 }
 
-async function recoverBacklogs(directory, retentionDirectory) {
+async function recoverBacklogs(directory, retentionDirectory, requestedKey) {
+  if (requestedKey !== undefined && !validRunKey(requestedKey)) throw new Error('invalid recovery run key')
   const pattern = /^([a-zA-Z0-9_-]{1,128})\.srt-backlog\.jsonl(?:\.active)?$/
-  const names = (await readdir(directory)).filter(name => pattern.test(name))
-  if (!names.length) return
+  const names = (await readdir(directory)).filter(name => pattern.test(name) && (requestedKey === undefined || name.match(pattern)[1] === requestedKey))
+  if (!names.length) return false
   const processes = await readProcessTable()
+  let blocked = false
   for (const name of names) {
     const path = join(directory, name)
-    const source = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    let source
     try {
+      source = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
       const info = await source.stat()
       if (!info.isFile() || info.uid !== process.getuid()) throw new Error('unsafe monitor backlog')
       const buffer = Buffer.alloc(16384)
@@ -174,11 +177,14 @@ async function recoverBacklogs(directory, retentionDirectory) {
       const header = JSON.parse(buffer.subarray(0, bytesRead).toString().split('\n')[0]).monitorBacklog
       const runKey = name.match(pattern)[1]
       if (header?.runKey !== runKey) throw new Error('monitor backlog run key mismatch')
-      if (name.endsWith('.active') && header.brokerStarted && processes.get(header.brokerPid)?.started === header.brokerStarted) continue
-      if (header.runnerStarted && processes.get(header.runnerPid)?.started === header.runnerStarted) continue
+      if (name.endsWith('.active') && header.brokerStarted && processes.get(header.brokerPid)?.started === header.brokerStarted) {
+        blocked = true
+        continue
+      }
+      if (requestedKey === undefined && header.runnerStarted && processes.get(header.runnerPid)?.started === header.runnerStarted) continue
       await mkdir(retentionDirectory, { recursive: true, mode: 0o700 })
       const destination = join(retentionDirectory, runKey + '.monitor-backlog.jsonl')
-      const retained = await open(destination, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+      const retained = await open(destination, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600)
       try {
         const retainedInfo = await retained.stat()
         if (!retainedInfo.isFile() || retainedInfo.uid !== process.getuid()) throw new Error('unsafe monitor backlog retention')
@@ -194,8 +200,22 @@ async function recoverBacklogs(directory, retentionDirectory) {
       await unlink(path)
       await unlink(path + '.compact').catch(error => { if (error.code !== 'ENOENT') throw error })
       console.error(`gobby-srt monitor: recovered backlog for ${runKey} at ${destination}`)
-    } finally { await source.close() }
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      // Preserve raw evidence outside both recovery and subscription patterns.
+      // A torn header, unsafe entry or retention failure must not wedge launch.
+      const quarantine = path + '.quarantine-' + randomUUID()
+      let disposition = `quarantined ${name} at ${quarantine}`
+      try {
+        await rename(path, quarantine)
+        await rename(path + '.compact', quarantine + '.compact').catch(failure => { if (failure.code !== 'ENOENT') throw failure })
+      } catch (failure) {
+        disposition = `could not quarantine ${name}; raw evidence preserved: ${failure.message}`
+      }
+      console.error(`gobby-srt monitor: ${disposition}: ${error.message}`)
+    } finally { await source?.close() }
   }
+  return blocked
 }
 
 async function monitor(socketPath, readyFd, retentionDirectory) {
@@ -342,7 +362,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
       lines.close()
       // This also stops a provider whose runner was killed or SIGSTOPped and
       // therefore cannot process its own disconnected-transport callback.
-      const cleanup = finishConsumer(state)
+      const cleanup = state.queue.catch(() => {}).then(() => finishConsumer(state))
       cleanups.add(cleanup)
       cleanup.finally(() => cleanups.delete(cleanup))
       armIdle()
@@ -765,7 +785,10 @@ async function main() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) try {
-  if (process.argv[2] === '--monitor') {
+  if (process.argv[2] === '--recover') {
+    setPriority(0, 19)
+    process.exitCode = await recoverBacklogs(process.argv[3], process.argv[4], process.argv[5]) ? 2 : 0
+  } else if (process.argv[2] === '--monitor') {
     await monitor(process.argv[3], process.argv[4] === undefined ? undefined : Number(process.argv[4]), process.argv[5])
   }
   else process.exitCode = await main()

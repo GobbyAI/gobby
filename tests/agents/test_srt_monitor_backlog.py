@@ -9,6 +9,7 @@ import selectors
 import shlex
 import signal
 import socket
+import stat
 from dataclasses import replace
 from pathlib import Path
 
@@ -198,21 +199,52 @@ def test_slow_process_snapshot_leaves_probe_responsive(
         assert json.loads(slow.recv(4096))["ready"] is True
 
 
-@pytest.mark.parametrize("extension", ["", ".active"])
-def test_existing_evidence_refuses_registration_without_deleting_it(
-    monitor_harness: MonitorHarness, extension: str
+@pytest.mark.parametrize("kind", ["published", "dead-active", "live-active"])
+def test_relaunch_retains_prior_evidence_and_refuses_only_a_live_owner(
+    monitor_harness: MonitorHarness, kind: str
 ) -> None:
     harness = monitor_harness
-    prior = Path(harness.socket_path).parent / f"existing.srt-backlog.jsonl{extension}"
-    content = '{"monitorBacklog":{"runKey":"existing"}}\n{"id":7,"message":"earlier"}\n'
+    key = "existing_SBX"
+    extension = "" if kind == "published" else ".active"
+    prior = Path(harness.socket_path).parent / f"{key}.srt-backlog.jsonl{extension}"
+    content = (
+        json.dumps(
+            {
+                "monitorBacklog": {
+                    "runKey": key,
+                    "runnerPid": 99999999,
+                    "runnerStarted": "dead",
+                    "brokerPid": os.getpid(),
+                    "brokerStarted": "observer-start" if kind == "live-active" else "dead",
+                }
+            }
+        )
+        + '\n{"id":7,"message":"earlier"}\n'
+    )
     prior.write_text(content)
     prior.chmod(0o600)
-    with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(15)
-        client.connect(harness.socket_path)
-        client.sendall(b'{"suffix":"_existing_SBX","runKey":"existing"}\n')
-        assert client.recv(4096) == b""
-    assert prior.read_text() == content
+    (harness.root / "observer.pid").write_text(f"{os.getpid()} {os.getppid()} 123 observer-start\n")
+    if kind == "live-active":
+        with pytest.raises(RuntimeError, match="owned by a live SRT monitor"):
+            srt_monitor.ensure_srt_monitor(
+                node=harness.node, runner=harness.runner, env=os.environ, run_key=key
+            )
+        assert prior.read_text() == content
+        return
+    assert (
+        srt_monitor.ensure_srt_monitor(
+            node=harness.node, runner=harness.runner, env=os.environ, run_key=key
+        )
+        == harness.socket_path
+    )
+    retained = harness.root / f"logs/sandbox-violations/{key}.monitor-backlog.jsonl"
+    assert retained.read_text() == content
+    assert not prior.exists()
+    client, records = _subscribe(harness.socket_path, "_existing_SBX")
+    with client, records:
+        message = "Sandbox: provider deny file-read-data /relaunch _existing_SBX"
+        harness.event(message)
+        assert json.loads(records.readline())["message"] == message
 
 
 @pytest.mark.parametrize("broker_started", [None, "observer-start", "reused-start"])
@@ -262,6 +294,111 @@ def test_new_monitor_recovers_only_backlogs_without_a_live_owner(
     finally:
         next_monitor.terminate()
         next_monitor.wait(timeout=15)
+
+
+def test_malformed_startup_backlogs_are_quarantined_and_keys_can_relaunch(
+    monitor_harness: MonitorHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = monitor_harness
+    directory = Path(harness.socket_path).parent
+    cases = [("empty_SBX", ".active", ""), ("torn_SBX", "", '{"monitorBacklog":')]
+    for key, extension, content in cases:
+        backlog_path = directory / f"{key}.srt-backlog.jsonl{extension}"
+        backlog_path.write_text(content)
+        backlog_path.chmod(0o600)
+    unsafe = directory / "unsafe_SBX.srt-backlog.jsonl"
+    target = harness.root / "outside-evidence"
+    target.write_text("do not follow")
+    unsafe.symlink_to(target)
+    mismatch = directory / "mismatch_SBX.srt-backlog.jsonl"
+    mismatch.write_text('{"monitorBacklog":{"runKey":"different"}}\n')
+    fifo = directory / "fifo_SBX.srt-backlog.jsonl"
+    os.mkfifo(fifo, 0o600)
+    runner = harness.root / "quarantine-runner.mjs"
+    runner.write_text(harness.runner.read_text() + "\n// quarantine startup identity\n")
+    monkeypatch.setattr(
+        srt_monitor,
+        "SRT_RELEASE",
+        replace(SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest()),
+    )
+    socket_path = srt_monitor.ensure_srt_monitor(node=harness.node, runner=runner, env=os.environ)
+    monitor = srt_monitor._children[-1]
+    try:
+        diagnostic = (directory / "violations-monitor.log").read_text()
+        for key, extension, content in cases:
+            original = directory / f"{key}.srt-backlog.jsonl{extension}"
+            preserved = list(directory.glob(original.name + ".quarantine-*"))
+            assert len(preserved) == 1
+            assert preserved[0].read_text() == content
+            assert not original.exists()
+            assert diagnostic.count(f"quarantined {original.name} at") == 1
+        assert len(list(directory.glob(unsafe.name + ".quarantine-*"))) == 1
+        assert target.read_text() == "do not follow"
+        assert not unsafe.is_symlink()
+        assert len(list(directory.glob(mismatch.name + ".quarantine-*"))) == 1
+        assert not mismatch.exists()
+        assert diagnostic.count(f"quarantined {unsafe.name} at") == 1
+        assert diagnostic.count(f"quarantined {mismatch.name} at") == 1
+        preserved_fifo = list(directory.glob(fifo.name + ".quarantine-*"))
+        assert len(preserved_fifo) == 1
+        assert stat.S_ISFIFO(preserved_fifo[0].stat().st_mode)
+        assert not fifo.exists()
+        assert diagnostic.count(f"quarantined {fifo.name} at") == 1
+        for key in ("empty_SBX", "torn_SBX", "unsafe_SBX", "mismatch_SBX", "fifo_SBX"):
+            client, records = _subscribe(socket_path, f"_{key}")
+            with client, records:
+                message = f"Sandbox: provider deny file-read-data /relaunch _{key}"
+                harness.event(message)
+                assert json.loads(records.readline())["message"] == message
+    finally:
+        monitor.terminate()
+        monitor.wait(timeout=15)
+
+
+def test_done_queued_behind_ack_finishes_before_close_cleanup(
+    monitor_harness: MonitorHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = monitor_harness
+    entered = harness.root / "ack-entered"
+    release = harness.root / "ack-release"
+    runner = harness.root / "done-runner.mjs"
+    delay = (
+        f"appendFileSync({json.dumps(str(entered))}, 'entered');\n"
+        "await new Promise(resolve => { const timer = setInterval(() => {"
+        f" if (existsSync({json.dumps(str(release))})) {{ clearInterval(timer); resolve(); }}"
+        " }, 5); });\nawait state.backlog.ack(request.ack)"
+    )
+    runner.write_text(
+        "import { existsSync } from 'node:fs';\n"
+        + harness.runner.read_text()
+        .removeprefix("#!/usr/bin/env node\n")
+        .replace("await state.backlog.ack(request.ack)", delay)
+    )
+    monkeypatch.setattr(
+        srt_monitor,
+        "SRT_RELEASE",
+        replace(SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest()),
+    )
+    path = srt_monitor.ensure_srt_monitor(node=harness.node, runner=runner, env=os.environ)
+    monitor = srt_monitor._children[-1]
+    client, records = _subscribe(path, "_cleandone_SBX")
+    active = Path(path).parent / "cleandone_SBX.srt-backlog.jsonl.active"
+    try:
+        harness.event("Sandbox: provider deny file-read-data /pending _cleandone_SBX")
+        record = json.loads(records.readline())
+        client.sendall(json.dumps({"ack": record["id"]}).encode() + b'\n{"done":true}\n')
+        client.shutdown(socket.SHUT_WR)
+        _wait_path(entered)
+        release.touch()
+        _wait_path(active, absent=True)
+        assert not active.with_suffix("").exists()
+        assert monitor.poll() is None
+    finally:
+        release.touch()
+        records.close()
+        client.close()
+        monitor.terminate()
+        monitor.wait(timeout=15)
 
 
 def test_provider_gate_closing_before_go_uses_normal_failure_path(

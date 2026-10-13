@@ -414,6 +414,10 @@ parser and execution-log append. A paused or slow runner can replay its backlog
 without pausing ingestion for other subscribers. Catch-up and normal completion
 delete the backlog. Subscriber loss retains unacknowledged records; run teardown
 or a later monitor startup moves them into `logs/sandbox-violations/`.
+Before a run key is reused, the launch wrapper retains published evidence and
+queues whose broker has died under the same recovery lock. A live broker's
+active queue blocks that relaunch. Recovery quarantines malformed or unsafe
+files individually, preserves their raw entries, and logs their paths.
 The limit is 32 MiB of queued or unacknowledged records, plus the triggering
 record, header, and up to 1 MiB of acknowledged prefix before compaction.
 Compaction temporarily holds a second copy of the remaining records.

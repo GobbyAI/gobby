@@ -182,7 +182,7 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
         runner = root / "runner.mjs"
         runner.write_text(
             "Object.defineProperty(process, 'platform', { value: 'darwin' });\n"
-            + f"if (process.argv[2] !== '--monitor') appendFileSync({json.dumps(str(root))} + '/' + process.pid + '.pid', process.pid+' '+process.ppid+' 123 '+process.pid+'-start\\n');\n"
+            + f"appendFileSync({json.dumps(str(root))} + '/' + process.pid + '.pid', process.pid+' '+process.ppid+' 123 '+process.pid+'-start\\n');\n"
             + _RUNNER.read_text()
             .removeprefix("#!/usr/bin/env node\n")
             .replace("spawn('/usr/bin/log', [", f"spawn({json.dumps(str(fake_log))}, [")
