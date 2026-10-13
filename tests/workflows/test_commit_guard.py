@@ -454,6 +454,264 @@ async def test_normalized_bash_dirty_foreign_edit_blocks(guard_harness: GuardHar
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["checkout -f HEAD", "switch -f --detach HEAD", "switch --discard-changes --detach HEAD"],
+)
+@pytest.mark.parametrize("directory_form", ["git_option", "cd"])
+@pytest.mark.parametrize("location", ["foreign.txt", "sibling/foreign.txt", "sub/foreign.txt"])
+@pytest.mark.parametrize("state", ["dirty", "untracked", "clean"])
+async def test_forced_branch_change_checks_target_worktree_owners(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    operation: str,
+    directory_form: str,
+    location: str,
+    state: str,
+) -> None:
+    harness = guard_harness
+    target = tmp_path / "other"
+    _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
+    (target / "sub").mkdir()
+    if state == "untracked":
+        location = str(Path(location).with_name("untracked.txt"))
+    path = target / location
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if state != "untracked":
+        path.write_text("base\n", encoding="utf-8")
+        _git(target, "add", location)
+        _git(target, "commit", "-q", "-m", "foreign base")
+    if state != "clean":
+        path.write_text("foreign change\n", encoding="utf-8")
+    SessionVariableManager(harness.db).merge_variables(
+        harness.foreign_session.id,
+        {
+            "task_edited_files": {harness.foreign_task.id: [location]},
+            "task_edited_file_checkouts": {harness.foreign_task.id: {str(target): [location]}},
+        },
+    )
+    directory = target / "sub"
+    prefix = f"git -C {directory}" if directory_form == "git_option" else f"cd {directory} && git"
+    event = harness.event(f"{prefix} {operation}")
+    response = await harness.handler._evaluate_rules(event)
+    assert event.data["canonical_file_paths"] == [str(target)]
+    assert response.decision == ("allow" if state == "clean" else "block")
+    if state != "clean":
+        assert response.reason is not None
+        assert location in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["checkout HEAD", "switch --detach HEAD", "switch -c new"])
+async def test_nonforce_branch_change_keeps_git_conflict_handling(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(f"git {operation}"))
+    assert response.decision == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("directory_form", ["workdir", "git_option"])
+@pytest.mark.parametrize("foreign_worktree", [False, True])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "checkout foreign.txt",
+        "checkout HEAD foreign.txt",
+        "checkout .",
+        "checkout HEAD .",
+        "checkout --ours foreign.txt",
+    ],
+)
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_checkout_positional_paths_check_foreign_ownership(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    directory_form: str,
+    operation: str,
+    deleted: bool,
+    foreign_worktree: bool,
+) -> None:
+    harness = guard_harness
+    target = harness.repo
+    if foreign_worktree:
+        target = tmp_path / "other"
+        _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
+        SessionVariableManager(harness.db).merge_variables(
+            harness.foreign_session.id,
+            {
+                "task_edited_file_checkouts": {
+                    harness.foreign_task.id: {str(target): ["foreign.txt"]}
+                }
+            },
+        )
+    path = target / "foreign.txt"
+    if deleted:
+        path.unlink()
+    else:
+        path.write_text("foreign change\n", encoding="utf-8")
+    prefix = f"git -C {target}" if directory_form == "git_option" else "git"
+    event = harness.event(f"{prefix} {operation}", workdir=target)
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "block", response.reason
+    assert response.reason is not None
+    assert "foreign.txt" in response.reason
+    assert event.data["canonical_edit_file_paths"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "checkout -m HEAD",
+        "checkout --merge HEAD",
+        "checkout -qm HEAD",
+        "switch -m --detach HEAD",
+        "switch --merge --detach HEAD",
+        "switch -qm --detach HEAD",
+    ],
+)
+@pytest.mark.parametrize("dirty", [False, True])
+async def test_merge_branch_change_checks_foreign_ownership(
+    guard_harness: GuardHarness, operation: str, dirty: bool
+) -> None:
+    harness = guard_harness
+    if dirty:
+        (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await harness.handler._evaluate_rules(
+        harness.event(f"git {operation}", workdir=harness.repo)
+    )
+    assert response.decision == ("block" if dirty else "allow"), response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation", ["checkout -f HEAD", "checkout foreign.txt", "checkout -m HEAD"]
+)
+async def test_checkout_unverified_cwd_fails_closed(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    event = harness.event(f"git {operation}")
+    response = await harness.handler._evaluate_rules(event)
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+    assert response.decision == "block", response.reason
+    assert response.reason is not None
+    assert "cannot resolve its target scope" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_nonforce_head_checkout_allows_unverified_cwd(guard_harness: GuardHarness) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await harness.handler._evaluate_rules(harness.event("git checkout HEAD"))
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git --icase-pathspecs checkout FOREIGN.TXT",
+        "git -C {repo} --icase-pathspecs checkout HEAD FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS=1 git checkout FOREIGN.TXT",
+        "env GIT_ICASE_PATHSPECS=1 git checkout FOREIGN.TXT",
+        "git checkout {foreign,owned}.txt",
+        "git checkout ~+/foreign.txt",
+        "git --icase-pathspecs checkout -- FOREIGN.TXT",
+        "git --icase-pathspecs restore FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS=1 git restore FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS+=1 git checkout FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS+=1 git restore FOREIGN.TXT",
+        "git checkout -- 'f*.txt'",
+        "git checkout HEAD -- 'f*'",
+        "git restore 'f*.txt'",
+        "git restore '[f]oreign.txt'",
+        "git restore -- 'f?reign.txt'",
+        "git rm -f 'f*.txt'",
+    ],
+)
+async def test_checkout_opaque_operands_block_foreign_restore(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    event = harness.event(command.replace("{repo}", str(harness.repo)), workdir=harness.repo)
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "block", response.reason
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "checkout owned.txt",
+        "checkout HEAD~0",
+        "checkout -",
+        "checkout -- owned.txt",
+        "restore owned.txt",
+        "restore --source=HEAD owned.txt",
+        "--icase-pathspecs add owned.txt",
+    ],
+)
+async def test_checkout_literal_operand_controls_allow(
+    guard_harness: GuardHarness, operation: str
+) -> None:
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await harness.handler._evaluate_rules(
+        harness.event(f"git {operation}", workdir=harness.repo)
+    )
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+async def test_append_icase_prefix_blocks_foreign_restore(
+    guard_harness: GuardHarness, shell: str
+) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    result = subprocess.run(
+        [shell, "-c", "GIT_ICASE_PATHSPECS+=1 git ls-files FOREIGN.TXT"],
+        cwd=harness.repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.split() == ["foreign.txt"]
+    event = harness.event("GIT_ICASE_PATHSPECS+=1 git checkout FOREIGN.TXT", workdir=harness.repo)
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "block", response.reason
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.asyncio
 async def test_clean_foreign_edit_is_allowed(guard_harness: GuardHarness) -> None:
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event("foreign.txt"))
 
