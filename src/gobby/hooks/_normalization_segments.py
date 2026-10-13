@@ -63,6 +63,18 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     separator_before: str | None = None
     stderr_pipe = False
     for index, token in enumerate(tokens):
+        if (
+            token.value == "&"
+            and not token.quoted
+            and index > 0
+            and not tokens[index - 1].quoted
+            and tokens[index - 1].value == "|"
+            and not current
+        ):
+            # Preserve the scanner's |, & stream for its other consumers.
+            # Normalization treats the pair as one pipe carrying stderr too.
+            stderr_pipe = True
+            continue
         if token.value == "&" and not token.quoted and 0 < index < len(tokens) - 1:
             previous, following = tokens[index - 1], tokens[index + 1]
             if (
@@ -79,10 +91,8 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
             if current:
                 segments.append(_ShellSegment(current, separator_before, stderr_pipe))
                 current = []
-            # Pipeline bookkeeping treats both forms alike. Keep the stderr
-            # distinction for consumers that prove the literal stdin program.
-            stderr_pipe = token.value == "|&"
-            separator_before = "|" if stderr_pipe else token.value
+            stderr_pipe = False
+            separator_before = token.value
             continue
         current.append(token)
     if current:

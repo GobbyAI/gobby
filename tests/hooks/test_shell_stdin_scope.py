@@ -200,7 +200,8 @@ def test_other_shell_script_operand_preserves_stdin_as_data(tmp_path: Path, shel
 
 def test_xargs_inline_shell_body_still_classifies(tmp_path: Path) -> None:
     data = metadata("echo ignored | xargs bash -c 'touch a.py'", tmp_path)
-    assert data["canonical_write_file_paths"] == ["a.py"]
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def test_xargs_producer_does_not_prove_literal_stdout(tmp_path: Path) -> None:
@@ -210,3 +211,38 @@ def test_xargs_producer_does_not_prove_literal_stdout(tmp_path: Path) -> None:
 
 def test_quoted_stderr_pipe_is_data(tmp_path: Path) -> None:
     assert not metadata("echo '|& bash'", tmp_path).get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '%s\\n' '-c' 'touch a.py' | xargs -d '\\n' bash",
+        "printf '%s\\n' '-c \"touch a.py\"' | xargs bash",
+        "printf '%s\\n' '-c \"touch Dockerfile\"' | xargs bash",
+        "echo touch a.py | xargs bash",
+        "echo ignored | xargs -I {} bash -c '{}'",
+    ],
+)
+def test_xargs_runtime_shell_argv_fails_closed(tmp_path: Path, command: str) -> None:
+    data = metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert "a.py" not in data.get("canonical_write_file_paths", [])
+
+
+def test_xargs_shell_unknown_program_retains_output_scope(tmp_path: Path) -> None:
+    data = metadata("echo touch a.py | xargs bash > result.txt", tmp_path)
+    assert data["canonical_write_file_paths"] == ["result.txt"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("option", ["-O", "+O"])
+@pytest.mark.parametrize("script", ["evil.sh", "extglob"])
+@pytest.mark.parametrize("stdin", ["", " <<'EOF'\ntouch a.py\nEOF"])
+def test_zsh_correct_all_keeps_script_operand(
+    tmp_path: Path, option: str, script: str, stdin: str
+) -> None:
+    (tmp_path / script).write_text("touch b.py\n")
+    data = metadata(f"zsh {option} {script}{stdin}", tmp_path)
+    assert data["canonical_write_file_paths"] == ["b.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")

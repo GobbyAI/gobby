@@ -37,6 +37,10 @@ def shell_stdin_arguments(
     # xargs consumes stdin to build argv; it does not forward that stream as
     # the shell's program. Other execution wrappers preserve stdin.
     parts = _unwrap(shell_token_values(plain), stop_at_xargs=True)
+    if parts and shell_command_name(parts[0]) == "xargs" and shell_execution(parts) is not None:
+        # Runtime argv may add -c/program text or replace an existing -c word.
+        # Stopping the stdin proof must not turn that program into plain execution.
+        return _replace_stdin_program(tokens, [ShellToken(UNRESOLVED_WRAPPER)], raw)
     inputs = [
         index for index, token in enumerate(tokens) if is_shell_input_redirection_token(token)
     ]
@@ -80,12 +84,18 @@ def shell_stdin_arguments(
 
     # Startup/configuration options and positional parameters need their own
     # proof. Simple shell flags do not change how literal program text is read.
-    if not _safe_stdin_options(parts[1:]):
+    if not _safe_stdin_options(parts[1:], shell_command_name(parts[0])):
         source = None
     if source is None or len(source) > SCRIPT_BODY_LIMIT:
         replacement = [ShellToken(UNRESOLVED_WRAPPER)]
     else:
         replacement = [ShellToken(parts[0]), ShellToken("-c"), ShellToken(source, quoted=True)]
+    return _replace_stdin_program(tokens, replacement, raw)
+
+
+def _replace_stdin_program(
+    tokens: list[ShellToken], replacement: list[ShellToken], raw: dict[int, str]
+) -> tuple[list[ShellToken], list[str], dict[int, str]]:
     # Retain output redirections so the body and its output destinations both
     # participate in the mutation scope. Input data is never a file operand.
     raw = {**raw, **{id(token): shlex.quote(token.value) for token in replacement}}
@@ -97,7 +107,7 @@ def shell_stdin_arguments(
     return replacement, shell_token_values(replacement), raw
 
 
-def _safe_stdin_options(options: list[str]) -> bool:
+def _safe_stdin_options(options: list[str], shell: str) -> bool:
     """Consume simple flags and safe option operands without treating them as files."""
     index = 0
     while index < len(options):
@@ -109,6 +119,8 @@ def _safe_stdin_options(options: list[str]) -> bool:
             return False
         flags = option[1:]
         if not flags or not set(flags) <= set("seuxvoO"):
+            return False
+        if "O" in flags and shell not in {"bash", "sh"}:
             return False
         if "o" in flags or "O" in flags:
             # Value-taking flags must end the cluster. Startup and grammar

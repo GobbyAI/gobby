@@ -158,6 +158,7 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
         return ShellExecution(script_file=len(words) > 1)
     if not words or shell_command_name(words[0]) not in _SHELLS:
         return None
+    bash_options = shell_command_name(words[0]) in {"bash", "sh"}
     pipeline_subshell = (
         shell_command_name(words[0]) in {"bash", "sh"} and not shell_startup_unproven.get()
     )
@@ -172,14 +173,14 @@ def shell_execution(words: list[str], *, stdin: bool = False) -> ShellExecution 
             return ShellExecution(script_file=True)
         if not arg.startswith(("-", "+")):
             break
-        if arg in {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}:
+        if arg in {"-o", "+o", "--rcfile", "--init-file"} or (bash_options and arg in {"-O", "+O"}):
             if arg == "-O" and words[index + 1 : index + 2] == ["lastpipe"]:
                 pipeline_subshell = False
             index += 2
             continue
         if arg.startswith("-") and not arg.startswith("--"):
             stdin_program = stdin_program or "s" in arg
-        if not arg.startswith(("--", "++")) and ("o" in arg or "O" in arg):
+        if not arg.startswith(("--", "++")) and ("o" in arg or (bash_options and "O" in arg)):
             if arg.startswith("-") and "O" in arg and words[index + 1 : index + 2] == ["lastpipe"]:
                 pipeline_subshell = False
             index += 2

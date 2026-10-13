@@ -79,7 +79,6 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> tuple[str, int] |
         "&>>",
         "&&",
         "||",
-        "|&",
         "<<",
         ">>",
         "&>",

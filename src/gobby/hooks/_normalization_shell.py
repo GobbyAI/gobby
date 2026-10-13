@@ -34,7 +34,7 @@ _SHELL_TOOLS = frozenset(
     }
 )
 
-_SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|", "|&", "&", "\n"})
+_SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|", "&", "\n"})
 # Chain tokens that sequence a *separate* command, unlike ``|`` which only pipes
 # the leading command's output into a filter. A gcode navigation piped to a
 # read-only filter (``gcode symbol <id> | jq``) is still navigation; one joined to
