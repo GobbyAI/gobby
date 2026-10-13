@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import click
+from mcp.server.mcpserver import MCPServer
 from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
 
 from gobby.app_context import ServiceContainer
@@ -24,6 +25,7 @@ from gobby.cli import cli
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.mcp_proxy.stdio_tools import register_proxy_tools
 from gobby.servers.app_factory import _register_mcp_http_route
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.server import WebSocketServer
@@ -125,7 +127,10 @@ def collect_surfaces() -> set[str]:
     surfaces = http_surfaces(server.app.routes)
     surfaces.update(f"WS message {name}" for name in websocket_messages())
     surfaces.update(f"CLI {name}" for name in cli_verbs(cli))
-    surfaces.update(f"MCP gobby:{tool.name}" for tool in asyncio.run(mcp.list_tools()))
+    surfaces.update(f"MCP HTTP gobby:{tool.name}" for tool in asyncio.run(mcp.list_tools()))
+    stdio: MCPServer[None] = MCPServer("gobby")
+    register_proxy_tools(stdio, service)
+    surfaces.update(f"MCP stdio gobby:{tool.name}" for tool in asyncio.run(stdio.list_tools()))
     for registry in manager.get_all_registries():
         surfaces.update(f"MCP {registry.name}:{tool['name']}" for tool in registry.list_tools())
     surfaces.add("Gate native terminal default flip #21357")
@@ -170,7 +175,8 @@ def render_ledger(surfaces: set[str], statuses: Mapping[str, str]) -> bytes:
         "Plan native runtime completion. A closed planning task alone does not prove the flip.",
         "",
         "Sources: registered FastAPI/ASGI routes (including MCP and WS transports), inbound",
-        "WebSocket dispatch messages, built-in MCP registries plus top-level MCP tools, and",
+        "WebSocket dispatch messages, built-in MCP registries, daemon HTTP /mcp tools,",
+        "the agent-facing stdio MCP bridge (`gobby mcp-server`), and",
         "registered Click verbs (groups and aliases included). Registration uses inert services;",
         "no daemon, database connection or handler runs. Deployment-specific external MCP",
         "servers and UI asset/dev-server mounts are outside this backend inventory.",

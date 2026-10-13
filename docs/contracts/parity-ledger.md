@@ -10,7 +10,8 @@ The native terminal default flip has its own evidence row referencing #21357
 Plan native runtime completion. A closed planning task alone does not prove the flip.
 
 Sources: registered FastAPI/ASGI routes (including MCP and WS transports), inbound
-WebSocket dispatch messages, built-in MCP registries plus top-level MCP tools, and
+WebSocket dispatch messages, built-in MCP registries, daemon HTTP /mcp tools,
+the agent-facing stdio MCP bridge (`gobby mcp-server`), and
 registered Click verbs (groups and aliases included). Registration uses inert services;
 no daemon, database connection or handler runs. Deployment-specific external MCP
 servers and UI asset/dev-server mounts are outside this backend inventory.
@@ -18,7 +19,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1085. Unclassified: 1082.
+Public surfaces and evidence gates: 1097. Unclassified: 1094.
 
 | Public surface | Rust status |
 | --- | --- |
@@ -693,6 +694,19 @@ Public surfaces and evidence gates: 1085. Unclassified: 1082.
 | `HTTP PUT /api/task-types/{task_type}/default-stages` | **unclassified** |
 | `HTTP PUT /api/variables/{ref}` | **unclassified** |
 | `HTTP PUT /api/variables/{ref}/toggle` | **unclassified** |
+| `MCP HTTP gobby:add_mcp_server` | **unclassified** |
+| `MCP HTTP gobby:call_tool` | **unclassified** |
+| `MCP HTTP gobby:get_tool_schema` | **unclassified** |
+| `MCP HTTP gobby:get_variable` | **unclassified** |
+| `MCP HTTP gobby:import_mcp_server` | **unclassified** |
+| `MCP HTTP gobby:list_mcp_servers` | **unclassified** |
+| `MCP HTTP gobby:list_tools` | **unclassified** |
+| `MCP HTTP gobby:read_mcp_resource` | **unclassified** |
+| `MCP HTTP gobby:recommend_tools` | **unclassified** |
+| `MCP HTTP gobby:remove_mcp_server` | **unclassified** |
+| `MCP HTTP gobby:search_tools` | **unclassified** |
+| `MCP HTTP gobby:set_variable` | **unclassified** |
+| `MCP HTTP gobby:status` | **unclassified** |
 | `MCP gobby-agents:apply_agent_definition` | **unclassified** |
 | `MCP gobby-agents:apply_persona` | **unclassified** |
 | `MCP gobby-agents:can_spawn_agent` | **unclassified** |
@@ -1049,19 +1063,18 @@ Public surfaces and evidence gates: 1085. Unclassified: 1082.
 | `MCP gobby-worktrees:reactivate_worktree` | **unclassified** |
 | `MCP gobby-worktrees:release_worktree` | **unclassified** |
 | `MCP gobby-worktrees:sync_worktree` | **unclassified** |
-| `MCP gobby:add_mcp_server` | **unclassified** |
-| `MCP gobby:call_tool` | **unclassified** |
-| `MCP gobby:get_tool_schema` | **unclassified** |
-| `MCP gobby:get_variable` | **unclassified** |
-| `MCP gobby:import_mcp_server` | **unclassified** |
-| `MCP gobby:list_mcp_servers` | **unclassified** |
-| `MCP gobby:list_tools` | **unclassified** |
-| `MCP gobby:read_mcp_resource` | **unclassified** |
-| `MCP gobby:recommend_tools` | **unclassified** |
-| `MCP gobby:remove_mcp_server` | **unclassified** |
-| `MCP gobby:search_tools` | **unclassified** |
-| `MCP gobby:set_variable` | **unclassified** |
-| `MCP gobby:status` | **unclassified** |
+| `MCP stdio gobby:add_mcp_server` | **unclassified** |
+| `MCP stdio gobby:call_tool` | **unclassified** |
+| `MCP stdio gobby:get_tool_schema` | **unclassified** |
+| `MCP stdio gobby:get_variable` | **unclassified** |
+| `MCP stdio gobby:import_mcp_server` | **unclassified** |
+| `MCP stdio gobby:init_project` | **unclassified** |
+| `MCP stdio gobby:list_mcp_servers` | **unclassified** |
+| `MCP stdio gobby:list_tools` | **unclassified** |
+| `MCP stdio gobby:recommend_tools` | **unclassified** |
+| `MCP stdio gobby:remove_mcp_server` | **unclassified** |
+| `MCP stdio gobby:search_tools` | **unclassified** |
+| `MCP stdio gobby:set_variable` | **unclassified** |
 | `WS message ask_user_response` | **unclassified** |
 | `WS message attach_to_session` | **unclassified** |
 | `WS message chat_message` | **unclassified** |

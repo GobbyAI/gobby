@@ -39,7 +39,8 @@ def test_inventory_contains_all_four_protocols_and_terminal_flip(surfaces: set[s
         "WS transport /ws",
         "WS message chat_message",
         "WS message terminal_create",
-        "MCP gobby:call_tool",
+        "MCP HTTP gobby:call_tool",
+        "MCP stdio gobby:init_project",
         "MCP gobby-tasks:get_task",
         "MCP gobby-workspaces:read_pane",
         "CLI gobby status",
@@ -82,13 +83,15 @@ def test_rendering_orders_rows_and_exposes_unclassified_and_recorded_drops() -> 
     statuses = {
         "CLI gobby ready": "delegated",
         "HTTP GET /old": "dropped by decision #123",
-        "MCP gobby:call_tool": "proxied",
+        "MCP HTTP gobby:call_tool": "proxied",
     }
-    rendered = render_ledger({"WS message new", "CLI gobby ready", "MCP gobby:call_tool"}, statuses)
+    rendered = render_ledger(
+        {"WS message new", "CLI gobby ready", "MCP HTTP gobby:call_tool"}, statuses
+    )
     assert rendered.endswith(
         b"| `CLI gobby ready` | delegated |\n"
         b"| `HTTP GET /old` | dropped by decision #123 |\n"
-        b"| `MCP gobby:call_tool` | proxied |\n"
+        b"| `MCP HTTP gobby:call_tool` | proxied |\n"
         b"| `WS message new` | **unclassified** |\n"
     )
     assert b"Unclassified: 1." in rendered
