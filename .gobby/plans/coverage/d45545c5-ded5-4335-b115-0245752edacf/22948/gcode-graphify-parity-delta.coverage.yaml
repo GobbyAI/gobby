@@ -1,0 +1,119 @@
+header:
+  plan_id: gcode-graphify-parity-delta
+  plan_hash: 9f4a3dd3fc5ee19e8c1249c97d98b585dfd0cab7587765173c49eb6eb6720e0d
+  root_task_ref: '22948'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-13T00:20:31Z'
+  task_tree_source: db
+  task_tree_source_hash: 6e5d13b21f30a58abadbe9ea4e1f95910f029e9f11352e6455ef71f314ce107e
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: cb4a84aa43d6f218767532303666aff715983c6339b3afb4b49786c10c1745ff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-10/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 9f42efd56027b9d2cb77ec3f9d462bfbf62687b90e371db47509c24976d73768
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-10/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: b77207cb33663c9b576cd480dde608b766c0bae4d5286c59749e8df4dbdb07b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-10/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: d6446c90eea90cf959170b32d1ec0e15d0d55ce2181584f07994c5b3fecf1ada
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-10/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: d1910b3beab15ba32008dfd21d55144aa4b914b31a686cd5f2d65fc8406eaddc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: 'Decision input for #22604'
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 9eb694398ec3dd661cc0468f11673d822cf0973154e8208734a7dde6d92f3f29
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24222'
+    validation_criteria_snippet: '1.1.1: The report records the fresh runtime root
+      and its ownership receipt, the dated script copies'' SHA-256 values, both tools''
+      identities (gcode version, con...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-10/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 684cc51324391bf6c7fbacfb71eae844a79c13d56a84e236dada655555c8c914
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24223'
+    validation_criteria_snippet: '1.2.1: `build_view_payload` lists two communities
+      of equal size with ids 10 and 2 as `community:2` then `community:10`, after
+      any larger community. test: `crat...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/render_tests.rs::view_orders_size_ties_by_numeric_community_id
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 1238338419fc8dab62e02e2cb623eaf03fc5c8ecab628ee2fa8df454bec35cda
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24223'
+    validation_criteria_snippet: '1.2.1: `build_view_payload` lists two communities
+      of equal size with ids 10 and 2 as `community:2` then `community:10`, after
+      any larger community. test: `crat...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/communities/tests.rs::list_orders_communities_by_size_then_community_id
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: d30b0588756ba64b26fc9b60c3ddbbbd91d58bc82a97a2bff58d3157da712910
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24223'
+    validation_criteria_snippet: '1.2.1: `build_view_payload` lists two communities
+      of equal size with ids 10 and 2 as `community:2` then `community:10`, after
+      any larger community. test: `crat...'
+    matched_artifact_ref: crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id
+  deferral_target: null
+  detail: ''
