@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from gobby.paths import get_gobby_home
 
@@ -456,7 +456,7 @@ def _parse_files_home_value(value: object) -> str:
 def _parse_hub_daemon_url(value: object) -> str:
     text = _parse_str(value, "hub_daemon_url").strip()
     try:
-        parsed = urlparse(text)
+        parsed = urlsplit(text)
     except ValueError as exc:
         raise BootstrapConfigError("hub_daemon_url must be an http(s) origin with a host") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
