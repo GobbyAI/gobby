@@ -104,6 +104,25 @@ def test_install_droid_project_mode_writes_project_hooks(
     )
 
 
+@pytest.mark.parametrize("mode", ["global", "project"])
+def test_droid_mcp_symlink_survives_install_and_uninstall(
+    project_path: Path, droid_env: Path, mode: str
+) -> None:
+    config_dir = droid_env if mode == "global" else project_path
+    mcp_file = config_dir / ".factory" / "mcp.json"
+    mcp_file.parent.mkdir(parents=True)
+    target = droid_env / "shared-mcp.json"
+    target.write_text(json.dumps({"mcpServers": {"alpha": {"command": "node"}}}))
+    mcp_file.symlink_to(target)
+
+    assert install_droid(project_path, mode=mode)["success"] is True
+    assert mcp_file.is_symlink()
+    assert set(_load_json(target)["mcpServers"]) == {"alpha", "gobby"}
+    assert uninstall_droid(project_path, mode=mode)["success"] is True
+    assert mcp_file.is_symlink()
+    assert _load_json(target)["mcpServers"] == {"alpha": {"command": "node"}}
+
+
 def test_install_droid_preserves_existing_mcp_servers(
     project_path: Path,
     droid_env: Path,

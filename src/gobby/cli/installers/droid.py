@@ -77,7 +77,7 @@ def _droid_hooks_file(project_path: Path, mode: str) -> Path:
 
 def _droid_mcp_file(project_path: Path, mode: str) -> Path:
     """Return Droid's MCP config path."""
-    return _factory_dir(project_path, mode) / "mcp.json"
+    return (_factory_dir(project_path, mode) / "mcp.json").resolve()
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:

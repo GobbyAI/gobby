@@ -170,6 +170,27 @@ def test_install_agy_rejects_project_mode(
     assert not (project_path / ".gemini" / "config" / "hooks.json").exists()
 
 
+@pytest.mark.parametrize("override", [False, True])
+def test_agy_mcp_symlink_survives_install_and_uninstall(
+    project_path: Path, agy_env: Path, monkeypatch: pytest.MonkeyPatch, override: bool
+) -> None:
+    mcp_file = agy_env / ".gemini" / "config" / "mcp_config.json"
+    if override:
+        mcp_file = agy_env / "custom" / "mcp.json"
+        monkeypatch.setenv("GOBBY_AGY_MCP_FILE", str(mcp_file))
+    mcp_file.parent.mkdir(parents=True)
+    target = agy_env / "shared-mcp.json"
+    target.write_text(json.dumps({"mcpServers": {"alpha": {"command": "node"}}}))
+    mcp_file.symlink_to(target)
+
+    assert install_agy(project_path, mode="global")["success"] is True
+    assert mcp_file.is_symlink()
+    assert set(_load_json(target)["mcpServers"]) == {"alpha", "gobby"}
+    assert uninstall_agy(project_path, mode="global")["success"] is True
+    assert mcp_file.is_symlink()
+    assert _load_json(target)["mcpServers"] == {"alpha": {"command": "node"}}
+
+
 def test_install_agy_preserves_existing_mcp_servers(
     project_path: Path,
     agy_env: Path,

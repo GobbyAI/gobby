@@ -45,8 +45,8 @@ def _agy_hooks_file() -> Path:
 
 def _agy_mcp_file() -> Path:
     if override := os.environ.get("GOBBY_AGY_MCP_FILE"):
-        return Path(override).expanduser()
-    return _agy_config_dir() / "mcp_config.json"
+        return Path(override).expanduser().resolve()
+    return (_agy_config_dir() / "mcp_config.json").resolve()
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
