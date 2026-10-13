@@ -289,6 +289,10 @@ def test_lane_manager_routes_parked_candidates_without_releasing_close() -> None
     assert "exact TASK, SHA, REASON, blocker, coordinator and prior approval receipt" in parked
     assert "relay them through the Inbox Manager" in parked
     assert "responsible seat" in parked
+    assert "EVENT=REVIEW_ONLY_REQUIRED or REASON=review_only" in parked
+    assert "explicit Orchestrator or Lane Manager marking" in parked
+    assert "exact task/SHA is review-only with nothing to land" in parked
+    assert "waiting alone never clears this blocker" in parked
     assert "available for other routed candidates" in parked
     assert "EVENT=CANDIDATE_RESUMED" in parked
     assert "restore its reviewing link" in parked

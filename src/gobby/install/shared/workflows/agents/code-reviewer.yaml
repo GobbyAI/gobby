@@ -32,7 +32,7 @@ prompts:
     On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness, blockers and unassigned waits.
     - Intake. When a CANDIDATE line arrives in await, record it with the top-level `set_variable(name="candidate_task", value=<its TASK= value>, scope="step")`, then set candidate_sha to its full 40-character COMMIT= SHA, then set candidate_received to true, all with scope="step". That starts the review. Never replace an active unit to take a queued candidate.
     - Replacement SHA. A replacement CANDIDATE for the same active task supersedes its old SHA. First set verdict_ready=false, then candidate_received=false, both with the top-level set_variable and scope="step", to return to await. Take the replacement through Intake and Review. A LAND needs a fresh independent_review_approval receipt for that SHA. Never reuse the superseded SHA's approval. Fresh reviewing intake removes obsolete parked SHAs for the same task while preserving other parked units.
-    - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
+    - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Then call `gobby-tasks:get_task(task_id=<candidate task>)`; its canonical task result removes obsolete parked SHAs for the same task, regardless of the reference alias used to link it. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
     - Foreign-overlay candidate. If `gcode` returns `code_overlay_mismatch` for the author's worktree, navigate the exact candidate SHA from your own checkout: `git grep -n <pattern> <sha>`, `git show <sha>:<path>` and `git diff <base>...<sha>`. Linked worktrees share Git objects. Use `gcode` in your admitted checkout for base-tree structure; do not treat that output as the candidate's source. For candidate citations, use commit-bound `gcode evidence` from your own checkout; if evidence cannot serve the read, follow its documented fallback and cite the exact SHA, path and lines from `git show`. Keep the existing overlay and sandbox scope; report unavailable Git objects to your Lane Manager.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= SHA= VERDICT=LAND|BOUNCE NOTE=` with the findings to the Orchestrator and the author lane. A BOUNCE ends the unit when its message starts with that line.
     - Land. For candidates with changes to land, on LAND first record the approval with `gobby-tasks:record_close_receipt(task_id, kind="independent_review_approval", commit_sha=<full candidate SHA>)`, then send the LAND verdict, then call `gobby-tasks-ops:land_commit(task_id, commit_sha)` on the same SHA.
@@ -229,7 +229,10 @@ step_workflow:
       status_message: |
         First call gobby-tasks:link_task_to_session(task_id=candidate_task,
         action="reviewing") to record the assignment and admit read-only gcode
-        access to the claimant's worktree. Review against the current 0.5.0 head with
+        access to the claimant's worktree. Then call gobby-tasks:get_task on the
+        candidate; its canonical task result removes obsolete parked SHAs for
+        this task regardless of the reviewing link's reference alias.
+        Review against the current 0.5.0 head with
         gcode and git diff, citing code claims through gcode evidence. When the
         verdict is ready, call the top-level set_variable(name="verdict_ready",
         value=true, scope="step").
@@ -256,10 +259,10 @@ step_workflow:
         - "gobby-agents:wait_for_coordination"
       on_mcp_success:
         - server: gobby-tasks
-          tool: link_task_to_session
+          tool: get_task
           when: >-
-            tool_input.get('task_id') == vars.candidate_task
-            and tool_input.get('action') == 'reviewing'
+            '#' + str(tool_output.get('result', tool_output).get('seq_num'))
+            == vars.candidate_task
           action: set_variable
           variable: parked_candidates
           value: >-

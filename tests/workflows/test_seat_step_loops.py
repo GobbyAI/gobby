@@ -607,8 +607,10 @@ async def test_code_reviewer_replacement_sha_reenters_fresh_review(temp_db: HubD
     assert run.vars["candidate_sha"] == new_sha
 
 
+@pytest.mark.parametrize("task_ref", ["#24224", "24224", "995ca55f-5c84-4821-90e4-9feb3eb67c33"])
 async def test_code_reviewer_fresh_intake_supersedes_only_same_task_parked_sha(
     temp_db: HubDatabase,
+    task_ref: str,
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
@@ -629,7 +631,7 @@ async def test_code_reviewer_fresh_intake_supersedes_only_same_task_parked_sha(
     await run.set_flag("candidate_sha", new_sha)
     await run.set_flag("candidate_received", True)
     assert run.step == "review"
-    link = {"task_id": "#24224", "action": "reviewing"}
+    link = {"task_id": task_ref, "action": "reviewing"}
     await run.call("gobby-tasks", "link_task_to_session", link, {"success": False})
     assert run.vars["parked_candidates"] == parked
     await run.call(
@@ -637,6 +639,17 @@ async def test_code_reviewer_fresh_intake_supersedes_only_same_task_parked_sha(
     )
     assert run.vars["parked_candidates"] == parked
     await run.call("gobby-tasks", "link_task_to_session", link)
+    assert run.vars["parked_candidates"] == parked
+    await run.call("gobby-tasks", "get_task", {"task_id": task_ref}, {"success": False})
+    assert run.vars["parked_candidates"] == parked
+    await run.call("gobby-tasks", "get_task", {"task_id": "#24234"}, {"seq_num": 24234})
+    assert run.vars["parked_candidates"] == parked
+    await run.call(
+        "gobby-tasks",
+        "get_task",
+        {"task_id": task_ref},
+        {"success": True, "result": {"seq_num": 24224}},
+    )
     assert run.vars["parked_candidates"] == [{"task": "#24234", "sha": other_sha}]
     await run.set_flag("verdict_ready", True)
     await run.call(
