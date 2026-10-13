@@ -355,6 +355,55 @@ def test_malformed_startup_backlogs_are_quarantined_and_keys_can_relaunch(
         monitor.wait(timeout=15)
 
 
+def test_quarantine_retention_keeps_newest_32_entries_without_following_symlinks(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    directory = Path(harness.socket_path).parent
+    target = harness.root / "outside-quarantine"
+    target.write_text("preserve target")
+    entries = []
+    for index in range(1, 41):
+        entry = directory / (
+            f"old.srt-backlog.jsonl.quarantine-00000000-0000-0000-0000-{index:012x}"
+        )
+        if index == 1:
+            entry.symlink_to(target)
+        else:
+            entry.write_text(f"evidence {index}")
+        os.utime(entry, (index, index), follow_symlinks=False)
+        entries.append(entry)
+    companion = Path(str(entries[-1]) + ".compact")
+    companion.write_text("compaction evidence")
+    os.utime(companion, (40, 40))
+    unrelated = directory / "old.srt-backlog.jsonl.quarantine-user"
+    unrelated.write_text("unrelated")
+    malformed = directory / "new_SBX.srt-backlog.jsonl"
+    malformed.write_text("")
+    assert (
+        srt_monitor.ensure_srt_monitor(
+            node=harness.node, runner=harness.runner, env=os.environ, run_key="new_SBX"
+        )
+        == harness.socket_path
+    )
+    assert all(not entry.exists() and not entry.is_symlink() for entry in entries[:10])
+    assert all(
+        entry.read_text() == f"evidence {index}" for index, entry in enumerate(entries[10:], 11)
+    )
+    assert companion.read_text() == "compaction evidence"
+    preserved = list(directory.glob(malformed.name + ".quarantine-*"))
+    assert len(preserved) == 1
+    assert preserved[0].read_text() == ""
+    assert len(list(directory.glob("*.quarantine-*"))) == 33  # 32 managed plus unrelated.
+    assert target.read_text() == "preserve target"
+    assert unrelated.read_text() == "unrelated"
+    client, records = _subscribe(harness.socket_path, "_new_SBX")
+    with client, records:
+        message = "Sandbox: provider deny file-read-data /after-prune _new_SBX"
+        harness.event(message)
+        assert json.loads(records.readline())["message"] == message
+
+
 def test_done_queued_behind_ack_finishes_before_close_cleanup(
     monitor_harness: MonitorHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -389,10 +438,27 @@ def test_done_queued_behind_ack_finishes_before_close_cleanup(
         client.sendall(json.dumps({"ack": record["id"]}).encode() + b'\n{"done":true}\n')
         client.shutdown(socket.SHUT_WR)
         _wait_path(entered)
+        # Live ownership protects the queue until the final ACK/done settles.
+        with pytest.raises(RuntimeError, match="owned by a live SRT monitor"):
+            srt_monitor.ensure_srt_monitor(
+                node=harness.node, runner=runner, env=os.environ, run_key="cleandone_SBX"
+            )
+        assert active.exists()
         release.touch()
         _wait_path(active, absent=True)
         assert not active.with_suffix("").exists()
         assert monitor.poll() is None
+        assert (
+            srt_monitor.ensure_srt_monitor(
+                node=harness.node, runner=runner, env=os.environ, run_key="cleandone_SBX"
+            )
+            == path
+        )
+        relaunched, replay = _subscribe(path, "_cleandone_SBX")
+        with relaunched, replay:
+            message = "Sandbox: provider deny file-read-data /retry _cleandone_SBX"
+            harness.event(message)
+            assert json.loads(replay.readline())["message"] == message
     finally:
         release.touch()
         records.close()

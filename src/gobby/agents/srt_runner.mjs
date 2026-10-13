@@ -158,8 +158,33 @@ class Backlog {
   }
 }
 
+async function pruneQuarantine(directory) {
+  const pattern = /^[a-zA-Z0-9_-]{1,128}\.srt-backlog\.jsonl(?:\.active)?\.quarantine-[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?:\.compact)?$/
+  const entries = []
+  for (const name of await readdir(directory)) {
+    if (!pattern.test(name)) continue
+    try {
+      const info = await lstat(join(directory, name))
+      entries.push({ name, modified: info.mtimeMs })
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.error(`gobby-srt monitor quarantine inspection failed for ${name}: ${error.message}`)
+    }
+  }
+  entries.sort((a, b) => b.modified - a.modified || b.name.localeCompare(a.name))
+  for (const { name } of entries.slice(32)) {
+    try {
+      // unlink never follows quarantined symlinks or removes a directory tree.
+      await unlink(join(directory, name))
+      console.error(`gobby-srt monitor: pruned old quarantine entry ${name}`)
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.error(`gobby-srt monitor quarantine pruning failed for ${name}: ${error.message}`)
+    }
+  }
+}
+
 async function recoverBacklogs(directory, retentionDirectory, requestedKey) {
   if (requestedKey !== undefined && !validRunKey(requestedKey)) throw new Error('invalid recovery run key')
+  await pruneQuarantine(directory)
   const pattern = /^([a-zA-Z0-9_-]{1,128})\.srt-backlog\.jsonl(?:\.active)?$/
   const names = (await readdir(directory)).filter(name => pattern.test(name) && (requestedKey === undefined || name.match(pattern)[1] === requestedKey))
   if (!names.length) return false
@@ -215,6 +240,7 @@ async function recoverBacklogs(directory, retentionDirectory, requestedKey) {
       console.error(`gobby-srt monitor: ${disposition}: ${error.message}`)
     } finally { await source?.close() }
   }
+  await pruneQuarantine(directory)
   return blocked
 }
 
