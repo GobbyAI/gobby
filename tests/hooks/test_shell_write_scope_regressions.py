@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks import _normalization_canonical
+from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
@@ -276,13 +278,29 @@ def test_function_directory_scope_amendment_reports_write(tmp_path: Path, comman
     assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(120)
 @pytest.mark.parametrize("wrapper", ["echo $({body})", "cat <({body})", "( {body} )"])
-def test_nested_wrappers_with_many_functions_report_write(tmp_path: Path, wrapper: str) -> None:
+def test_nested_wrappers_with_many_functions_report_write(
+    tmp_path: Path, wrapper: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     command = "; ".join([*(f"p{j}() {{ echo {j}; }}" for j in range(1000)), "touch a.py"])
     for i in range(8):
         command = f"f{i}() {{ :; }}; " + wrapper.format(body=command)
+    scanned_chars = 0
+
+    def bounded_scan(subject: str) -> ShellScan:
+        nonlocal scanned_chars
+        scanned_chars += len(subject)
+        # Bound real parser work, including recursive scans, independently of host load.
+        # Allow generous rescanning at eight levels; reject repeated function-body expansion.
+        assert scanned_chars <= 256 * len(command), (
+            "nested wrapper scan work exceeded linear budget"
+        )
+        return scan_shell_command(subject)
+
+    monkeypatch.setattr(_normalization_canonical, "scan_shell_command", bounded_scan)
     assert _metadata(command, tmp_path)["canonical_repo_mutation"] is True
+    assert scanned_chars >= len(command), "nested wrapper scan work was not observed"
 
 
 def test_nine_nested_function_definitions_report_write(tmp_path: Path) -> None:
