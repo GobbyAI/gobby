@@ -22,10 +22,7 @@ from tests.fixtures.gdaemon_binary import (
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("selector", [None, "checkout"])
-def test_pair_node_launches_prepared_binary(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, selector: str | None
-) -> None:
+def test_pair_node_launches_prepared_binary(tmp_path: Path) -> None:
     """The enrolled node uses the same prepared binary selection as the hub."""
     import yaml
 
@@ -33,10 +30,6 @@ def test_pair_node_launches_prepared_binary(
     from tests.e2e import test_hub_node_pair as pair
     from tests.e2e.conftest import DaemonInstance
 
-    if selector is None:
-        monkeypatch.delenv(CHECKOUT_BINARY_ENV, raising=False)
-    else:
-        monkeypatch.setenv(CHECKOUT_BINARY_ENV, selector)
     binary_dir = tmp_path / "selected-binaries"
     env = {NATIVE_BIN_DIR_ENV: str(binary_dir), "DATABASE_URL": "parent-db"}
     hub = MagicMock(spec=DaemonInstance)

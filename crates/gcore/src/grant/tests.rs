@@ -244,12 +244,12 @@ fn acquire_with_ignores_process_environment() {
 fn from_process_treats_blank_agent_token_as_absent() {
     let harness = Harness::new();
     let _env = PoisonedEnv::apply(&harness.home.join("unused-bootstrap.json"));
-    for token in [
-        None,
-        Some(""),
-        Some(" \t\n"),
-        Some("token"),
-        Some(" token "),
+    for (token, expected) in [
+        (None, None),
+        (Some(""), None),
+        (Some(" \t\n"), None),
+        (Some("token"), Some("token")),
+        (Some(" token "), Some(" token ")),
     ] {
         // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores the token on drop.
         unsafe {
@@ -261,7 +261,7 @@ fn from_process_treats_blank_agent_token_as_absent() {
         let request = AcquireRequest::from_process(&harness.project_root);
         assert_eq!(
             request.managed_envelope.as_deref(),
-            token.filter(|value| !value.trim().is_empty()),
+            expected,
             "blank tokens must be absent and nonblank tokens preserved"
         );
     }
