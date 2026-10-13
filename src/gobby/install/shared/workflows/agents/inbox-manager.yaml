@@ -41,7 +41,7 @@ prompts:
       - a landing relay that needs the Orchestrator: `EVENT=ALREADY_LANDED`, `EVENT=LAND_PENDING`, `EVENT=LAND_BLOCKED`, `ACTIVATION=unknown`, `RETEST=FAIL`, `RETEST=UNAVAILABLE`, or a `PROJECT_SYNC_REQUIRED` that isn't `false`
       - found work that blocks a lane task or its landing
       - a HOLD or RESUME ACK
-      - a close backlog above 10
+      - a close backlog above the cap in the live project operating policy
       - anything from the operator
 
       Everything else waits for the digest, with its details intact: other found work with its failing command, diagnostics, paths and impact, and each task edit request as asked.
