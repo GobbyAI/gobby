@@ -456,7 +456,12 @@ async def test_seat_write_scope_is_path_aware(
 
     digest = f"{digest_dir}/gobby-digest-2026-09-27.md"
     assert await decision(ARCHIVIST, _write(project, digest)) == "allow"
+    assert (
+        await decision(ARCHIVIST, _write(project, ".gobby/reports/gobby-digest-2026-09-27.md"))
+        == "allow"
+    )
     for path in (
+        ".gobby/reports/notes.md",
         f"{digest_dir}/notes.md",
         f"{digest_dir}/gobby-digest.md",
         f"{digest_dir}/gobby-digest-2026-09-27-v2.md",
@@ -465,7 +470,7 @@ async def test_seat_write_scope_is_path_aware(
     ):
         blocked = await _decide(engine, _write(project, path), ARCHIVIST)
         assert blocked.decision == "block", path
-        assert "The Archivist writes only the dated desktop digest" in (blocked.reason or "")
+        assert "The Archivist writes only the dated digest" in (blocked.reason or "")
 
     for seat in (ASSISTANT, ARCHIVIST):
         assert await decision(seat, opaque) == "block"

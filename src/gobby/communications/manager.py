@@ -463,23 +463,14 @@ class CommunicationsManager:
             return None
         session = self._session_store.get(session_id) if session_id is not None else None
         seat_label = None
-        if (
-            session_id is not None
-            and session is not None
-            and session.source
-            not in {
-                "comms",
-                "web-chat",
-                "web_chat",
-                "system",
-            }
-        ):
+        if session is not None:
+            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
             from gobby.workflows.state_manager import SessionVariableManager
 
             variables = SessionVariableManager(self._store.db).get_variable_subset(
-                session_id, ("_definition_title", "_agent_type")
+                session.id, (DEFINITION_TITLE_VARIABLE, "_agent_type")
             )
-            definition_title = variables.get("_definition_title")
+            definition_title = variables.get(DEFINITION_TITLE_VARIABLE)
             agent_type = variables.get("_agent_type")
             if isinstance(definition_title, str) and definition_title.strip():
                 seat_label = definition_title.strip()

@@ -97,18 +97,24 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
 @pytest.mark.parametrize(
     ("permitted", "delivery_status"), [(True, "sent"), (False, "sent"), (True, "failed")]
 )
+@pytest.mark.parametrize("tool_name", ["send_operator_message", "send_operator_attachment"])
 async def test_send_operator_message_requires_installed_channel_grant(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     mock_manager: MagicMock,
     permitted: bool,
     delivery_status: str,
+    tool_name: str,
+    tmp_path: Path,
 ) -> None:
     """An enrolled DM is targeted explicitly; unlisted agents cannot send to it."""
+    agent_type = "archivist" if tool_name == "send_operator_attachment" else "reporter"
+    if not permitted:
+        agent_type = "unlisted-worker"
     AgentDefinitionManager(temp_db).create(
-        name="reporter" if permitted else "unlisted-worker",
+        name=agent_type,
         definition_json={
-            "name": "reporter" if permitted else "unlisted-worker",
+            "name": agent_type,
             "prompts": {"agent": "Report status."},
             "workflows": {"rule_selectors": {"include": []}},
             "operator_message_channels": ["gobby-telegram"] if permitted else [],
@@ -122,9 +128,7 @@ async def test_send_operator_message_requires_installed_channel_grant(
         project_id=str(sample_project["id"]),
         agent_depth=1,
     )
-    SessionVariableManager(temp_db).set_variable(
-        caller.id, "_agent_type", "reporter" if permitted else "unlisted-worker"
-    )
+    SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", agent_type)
     mock_manager.resolve_operator_conversation.return_value = {
         "conversation_id": "dm:42",
         "session_id": None,
@@ -133,15 +137,38 @@ async def test_send_operator_message_requires_installed_channel_grant(
     mock_manager.send_message.return_value = MagicMock(
         status=delivery_status, id="delivered", error=delivery_error
     )
-    tools = create_communications_registry(mock_manager, db=temp_db)
-    handler = tools.get_tool("send_operator_message")
+    report = tmp_path / "gobby-digest-2026-09-27.md"
+    report.write_text("# Systems nominal\n")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status=delivery_status, id="delivered", error=delivery_error),
+        MagicMock(),
+    )
+    tools = create_communications_registry(mock_manager, db=temp_db, workspace_root=tmp_path)
+    handler = tools.get_tool(tool_name)
     assert handler is not None
     with patch(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
     ):
-        result = await handler(channel="gobby-telegram", content="**Systems nominal**")
+        if tool_name == "send_operator_attachment":
+            result = await handler(channel="gobby-telegram", file_path=str(report))
+        else:
+            result = await handler(channel="gobby-telegram", content="**Systems nominal**")
 
     if permitted:
+        if tool_name == "send_operator_attachment":
+            assert result["success"] is (delivery_status == "sent")
+            mock_manager.resolve_operator_conversation.assert_called_once_with("gobby-telegram")
+            mock_manager.send_attachment.assert_awaited_once_with(
+                channel_name="gobby-telegram",
+                file_path=report.resolve(),
+                filename=None,
+                content_type="text/markdown",
+                content="",
+                session_id=caller.id,
+                metadata={"platform_destination": "42", "thread_id": None},
+            )
+            mock_manager.send_message.assert_not_awaited()
+            return
         assert result == {
             "success": delivery_status == "sent",
             "message_id": "delivered",
@@ -163,6 +190,7 @@ async def test_send_operator_message_requires_installed_channel_grant(
         assert "not permitted" in result["error"]
         mock_manager.resolve_operator_conversation.assert_not_called()
         mock_manager.send_message.assert_not_awaited()
+        mock_manager.send_attachment.assert_not_awaited()
 
 
 @pytest.fixture
