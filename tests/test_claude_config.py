@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.agents.isolation_repair import _patch_mcp_config_for_isolation
+from gobby.agents.isolation_repair import _patch_mcp_config_for_isolation, provider_mcp_config_error
 from gobby.agents.trust import pre_approve_directory
 from gobby.claude_config import ClaudeConfigError, update_claude_config
 from gobby.cli.installers.mcp_config import (
@@ -23,6 +23,68 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_project_mcp_server,
 )
+
+
+@pytest.mark.parametrize("selector", ["custom", "legacy", "oauth"])
+@pytest.mark.asyncio
+async def test_isolation_preflight_reads_selected_host_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selector: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", raising=False)
+    if selector == "custom":
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "custom"))
+    elif selector == "legacy":
+        legacy = tmp_path / ".claude" / ".config.json"
+        legacy.parent.mkdir()
+        legacy.write_text("{}")
+    else:
+        monkeypatch.setenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", "https://example.invalid")
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        await _patch_mcp_config_for_isolation("/main", str(workspace), "claude")
+        assert provider_mcp_config_error(str(workspace), "claude") is None
+
+
+def test_remove_missing_config_does_not_create_parent(tmp_path: Path) -> None:
+    settings = tmp_path / "missing" / "mcp.json"
+    result = remove_mcp_server_json(settings)
+    assert result["success"] is True
+    assert result["removed"] is False
+    assert not settings.parent.exists()
+
+
+def test_native_lock_under_symlinked_config_home_blocks_writer(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    config_path = alias / ".claude.json"
+    config_path.write_text('{"original": true}')
+    lock_path = alias / ".claude.json.lock"
+    lock_path.mkdir()
+    started = threading.Event()
+
+    def update(data: dict[str, Any]) -> bool:
+        data["updated"] = True
+        return True
+
+    def invoke() -> bool:
+        started.set()
+        return update_claude_config(config_path, update)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(invoke)
+        try:
+            assert started.wait(timeout=2)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.2)
+            config_path.write_text('{"concurrent": true}')
+        finally:
+            lock_path.rmdir()
+        assert future.result(timeout=5) is True
+    assert json.loads(config_path.read_text()) == {"concurrent": True, "updated": True}
 
 
 def test_lock_is_released_if_heartbeat_cannot_start(tmp_path: Path) -> None:

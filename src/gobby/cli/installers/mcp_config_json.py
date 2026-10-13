@@ -108,6 +108,9 @@ def _remove(
         "backup_path": None,
         "error": None,
     }
+    if not settings_path.exists() and not settings_path.is_symlink():
+        result["success"] = True
+        return result
 
     def remove(settings: dict[str, Any]) -> bool:
         scope = _mcp_scope(settings, project_key)

@@ -130,9 +130,11 @@ def update_claude_config(path: Path, update: Callable[[dict[str, Any]], bool]) -
     """
     if path.is_symlink():
         raise ClaudeConfigError(f"Failed to read {path}: config must not be a symlink")
+    # Claude supplies an explicit lockfilePath from the selected path spelling.
+    selected_path = path
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _config_lock(path) as check_owned:
+    with _config_lock(selected_path) as check_owned:
         try:
             if path.exists():
                 with open(path, encoding="utf-8") as handle:

@@ -313,7 +313,7 @@ def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:
     if provider != "claude":
         return None
 
-    claude_json_path = Path.home() / ".claude.json"
+    claude_json_path = claude_config_path()
     if not claude_json_path.exists():
         return f"provider_mcp_config_missing:{claude_json_path}"
     try:

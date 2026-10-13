@@ -480,7 +480,7 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
-    pre_approve_directory(provider, cwd)
+    await asyncio.to_thread(pre_approve_directory, provider, cwd)
     from gobby.agents.spawn_executor import _runtime_spawn
     from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
     from gobby.agents.spawn_models import SpawnRequest

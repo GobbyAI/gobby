@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,33 @@ from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from tests.terminals.fakes import bind_spawn_runtime
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
+
+
+@pytest.mark.asyncio
+async def test_resume_seeds_trust_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    runner = _runner()
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    loop_thread = threading.get_ident()
+    trust_threads: list[int] = []
+
+    def seed(provider: str, cwd: str) -> None:
+        assert provider == "claude"
+        assert cwd == metadata["cwd"]
+        trust_threads.append(threading.get_ident())
+
+    monkeypatch.setattr(resume_executor, "pre_approve_directory", seed)
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+    assert result.success is True
+    assert len(trust_threads) == 1
+    assert trust_threads[0] != loop_thread
+
 
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
