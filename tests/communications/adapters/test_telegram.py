@@ -17,6 +17,31 @@ from gobby.communications.attachments import AttachmentManager
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 
 pytestmark = pytest.mark.unit
+_SENDER_LABEL = "Lane 4 (gobby#16004)"
+_SENDER_PREFIX = f"<b>{_SENDER_LABEL}:</b>\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sender_label", [None, "", "   ", 42])
+async def test_direct_chunked_send_refuses_missing_sender_label(
+    adapter: TelegramAdapter, sender_label: object
+) -> None:
+    adapter._client = MagicMock()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    post_json = AsyncMock(return_value={"ok": True, "result": {"message_id": 1}})
+    message = CommsMessage(
+        id="msg-unlabeled",
+        channel_id="channel-1",
+        direction="outbound",
+        content="word " * 2000,
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": sender_label},
+        created_at=datetime.now(UTC),
+    )
+    with patch.object(adapter, "_post_json", post_json):
+        with pytest.raises(ValueError, match="sender label"):
+            await adapter.send_message(message)
+    post_json.assert_not_awaited()
+    assert "platform_message_ids" not in message.metadata_json
 
 
 @pytest.fixture
@@ -379,6 +404,7 @@ async def test_send_message_chunking(
             metadata_json={
                 "platform_destination": "chat999",
                 "callback_action": "session_action",
+                "telegram_sender_label": _SENDER_LABEL,
                 "inline_keyboard": [[{"text": "Continue", "value": "Continue"}]],
             },
             created_at=datetime.now(UTC),
@@ -387,13 +413,18 @@ async def test_send_message_chunking(
         await adapter.send_message(message)
 
         assert mock_post.call_count == 2
-        # First call with 4096 chars
         first_call_args = mock_post.call_args_list[0][1]
-        assert len(first_call_args["json"]["text"]) == 4096
+        first_text = first_call_args["json"]["text"]
+        assert first_text.startswith(_SENDER_PREFIX)
+        assert len(first_text.removeprefix(_SENDER_PREFIX)) == 4096 - len(_SENDER_LABEL) - 2
         assert "reply_markup" not in first_call_args["json"]
-        # Second call with 904 chars
         second_call_args = mock_post.call_args_list[1][1]
-        assert len(second_call_args["json"]["text"]) == 904
+        second_text = second_call_args["json"]["text"]
+        assert second_text.startswith(_SENDER_PREFIX)
+        assert (
+            first_text.removeprefix(_SENDER_PREFIX) + second_text.removeprefix(_SENDER_PREFIX)
+            == long_content
+        )
         assert second_call_args["json"]["reply_markup"]["inline_keyboard"][0][0]["text"] == (
             "Continue"
         )
@@ -418,7 +449,7 @@ async def test_send_message_stops_after_first_failed_chunk(
         channel_id="channel-1",
         direction="outbound",
         content="A" * 9000,
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": _SENDER_LABEL},
         created_at=datetime.now(UTC),
     )
 
@@ -499,7 +530,7 @@ async def test_read_error_retries_only_failed_outbound_request(
         channel_id="channel1",
         direction="outbound",
         content="a" * (1100 if attachment else 4200),
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": _SENDER_LABEL},
         created_at=datetime.now(UTC),
     )
     with patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock):
@@ -582,7 +613,7 @@ async def test_send_message_balances_html_across_4096_character_chunks(
         channel_id="channel1",
         direction="outbound",
         content=f"**{'A' * 5000}**",
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": _SENDER_LABEL},
         created_at=datetime.now(UTC),
     )
 
@@ -590,14 +621,16 @@ async def test_send_message_balances_html_across_4096_character_chunks(
 
     payloads = [call.kwargs["json"] for call in mock_client.post.await_args_list]
     assert root_message_id == "1"
-    assert [
-        len(payload["text"].removeprefix("<b>").removesuffix("</b>")) for payload in payloads
-    ] == [
-        4096,
-        904,
-    ]
-    assert all(payload["text"].startswith("<b>") for payload in payloads)
+    assert len(payloads) == 2
+    assert all(payload["text"].startswith(_SENDER_PREFIX + "<b>") for payload in payloads)
     assert all(payload["text"].endswith("</b>") for payload in payloads)
+    assert (
+        "".join(
+            payload["text"].removeprefix(_SENDER_PREFIX + "<b>").removesuffix("</b>")
+            for payload in payloads
+        )
+        == "A" * 5000
+    )
     assert adapter._edit_overflow_ids == {("chat999", "1"): ["2"]}
 
 
@@ -938,7 +971,7 @@ async def test_send_attachment_sends_remaining_caption_chunks(
         channel_id="channel1",
         direction="outbound",
         content=long_caption,
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": _SENDER_LABEL},
         created_at=datetime.now(UTC),
     )
     attachment = CommsAttachment(
@@ -963,7 +996,12 @@ async def test_send_attachment_sends_remaining_caption_chunks(
     assert follow["chat_id"] == "chat999"
     assert follow["parse_mode"] == "HTML"
     assert follow["text"]
-    assert caption + follow["text"] == long_caption
+    assert caption.startswith(_SENDER_PREFIX)
+    assert follow["text"].startswith(_SENDER_PREFIX)
+    assert (
+        caption.removeprefix(_SENDER_PREFIX) + follow["text"].removeprefix(_SENDER_PREFIX)
+        == long_caption
+    )
 
 
 @pytest.mark.asyncio
@@ -991,7 +1029,7 @@ async def test_send_attachment_reports_partial_caption_when_follow_up_fails(
         channel_id="channel1",
         direction="outbound",
         content="a" * 1500,
-        metadata_json={"platform_destination": "chat999"},
+        metadata_json={"platform_destination": "chat999", "telegram_sender_label": _SENDER_LABEL},
         created_at=datetime.now(UTC),
     )
     attachment = CommsAttachment(

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, cast
 from weakref import WeakValueDictionary
 
 from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEditNotApplied
-from gobby.communications.models import CommsMessage
+from gobby.communications.models import ChannelNotFoundError, CommsMessage
 
 if TYPE_CHECKING:
     from gobby.communications.adapters.base import BaseChannelAdapter
@@ -89,8 +89,15 @@ async def _publish(
         await asyncio.to_thread(manager._store.record_platform_message_ids, source.id, chunk_ids)
 
     channel = next(
-        channel for channel in manager._channel_by_name.values() if channel.id == source.channel_id
+        (
+            channel
+            for channel in manager._channel_by_name.values()
+            if channel.id == source.channel_id
+        ),
+        None,
     )
+    if channel is None:
+        raise ChannelNotFoundError(source.channel_id)
     label = await asyncio.to_thread(manager.telegram_sender_label, channel, source.session_id)
     await adapter.edit_stored_message(
         source,
@@ -407,7 +414,7 @@ async def edit_keyboard_message(
                 inline_keyboard,
                 generation + 1,
             )
-        except TelegramEditNotApplied:
+        except (TelegramEditNotApplied, ChannelNotFoundError):
             if not await asyncio.to_thread(store.restore_callback_edit, current, generation + 1):
                 logger.error("Could not restore decision %s after a refused edit", message_id)
             raise
