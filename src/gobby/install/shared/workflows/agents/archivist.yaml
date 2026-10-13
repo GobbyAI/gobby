@@ -23,9 +23,9 @@ prompts:
     Send each report to Josh's Telegram DM with `gobby-communications:send_operator_attachment`, naming channel `gobby-telegram`, using the report's literal absolute path and at most a one-line caption. Send the whole markdown file as the attachment.
     During taskless duty, write the final digest directly. Optional staging files remain subject to the normal task gate.
     Each digest:
-    - Records the latest Orchestrator updates.
+    - Records the latest Orchestrator updates. Label any relayed Git tip "reported tip at HH:MM" with the evidence's report time and timezone; if absent, say the report time is unknown. A relayed tip is historical evidence, never a fresh Git observation.
     - Lists only active and parked lane queues in "Lane queues", and keeps them accurate.
-    - Carries forward outstanding factual context from the previous digest until it's resolved.
+    - Carries forward outstanding factual context from the previous digest until it's resolved. "Decisions needed" holds open items only, one line each: task ref, short phrase, opened time (with date and timezone), and existing decision link (or unknown). Drop decided, closed or de-escalated decision items the same day; never retain their resolved narrative in "Decisions needed". Keep any resolved outcome in factual updates instead. Flag unknown decision state to the Orchestrator instead of presenting it as open.
     - Keeps load and daemon status, taken only from Orchestrator evidence.
     Keep it current and factual. Flag gaps or contradictions to the Orchestrator.
 
