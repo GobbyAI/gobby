@@ -20,6 +20,7 @@ from gobby.hooks._normalization_compound import (
     command_substitution_bodies,
     heredoc_substitution_bodies,
     process_substitution_bodies,
+    scan_function_program,
     shell_function_bodies,
 )
 from gobby.hooks._normalization_cwd import ShellDirectoryState
@@ -79,6 +80,7 @@ from gobby.hooks._normalization_segments import (
     _split_shell_segments,
 )
 from gobby.hooks._normalization_shell import (
+    ShellScan,
     ShellToken,
     _contains_unexpanded_shell_reference,
     _input_redirection_paths,
@@ -153,15 +155,19 @@ def _normalize_shell_tool_metadata(
     try:
         bodies: dict[int, str] = {}
         unknown = False
+        initial_scan: ShellScan | None = None
         try:
             scan = scan_shell_command(command)
         except ValueError:
             pass
         else:
+            initial_scan = scan
             if any(token.value.startswith(("BASHOPTS=", "BASH_ENV=")) for token in scan.tokens):
                 shell_startup_unproven.set(True)
             if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
-                command, bodies = function_program
+                program, bodies = function_program
+                initial_scan = scan_function_program(command, program, scan)
+                command = program
                 first = min(bodies)
                 unknown = deferred_functions or any(
                     token.value in {"cd", "pushd", "popd", "eval"}
@@ -181,7 +187,11 @@ def _normalize_shell_tool_metadata(
                 pipeline_subshell=pipeline_subshell and not shell_startup_unproven.get(),
             )
             result = _classify_shell_command(
-                command, directory=directory, depth=depth, base_cwd=base_cwd
+                command,
+                directory=directory,
+                depth=depth,
+                base_cwd=base_cwd,
+                initial_scan=initial_scan,
             )
             if directory.altered_loops <= unstable:
                 return result
@@ -196,10 +206,15 @@ def _normalize_shell_tool_metadata(
 
 
 def _classify_shell_command(
-    command: str, *, directory: ShellDirectoryState, depth: int, base_cwd: Path | None
+    command: str,
+    *,
+    directory: ShellDirectoryState,
+    depth: int,
+    base_cwd: Path | None,
+    initial_scan: ShellScan | None = None,
 ) -> dict[str, Any]:
     try:
-        scan = scan_shell_command(command)
+        scan = scan_shell_command(command) if initial_scan is None else initial_scan
         masked_command, command_substitutions = command_substitution_bodies(
             command, scan.spans, depth=depth
         )

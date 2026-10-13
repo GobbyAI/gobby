@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
             "p0() { echo 0; }; gem push x",
             ["p0()", "{", "echo", "0", ";", "}", ";", "gem", "push", "x"],
         ),
-        ("echo one;; echo two", ["echo", "one", ";;", "echo", "two"]),
+        ("echo one;; echo two", ["echo", "one", ";", ";", "echo", "two"]),
         ("name=value foo()suffix", ["name=value", "foo()suffix"]),
     ],
 )
@@ -28,6 +28,10 @@ def test_literal_words_and_function_headers_keep_spans(command: str, values: lis
     assert [command[start:end] for start, end in scan.spans] == values
     assert not any(token.quoted for token in scan.tokens)
     assert scan.heredocs == []
+
+
+def test_double_semicolon_preserves_separate_subjects() -> None:
+    assert executable_command_subjects("echo one;; echo two") == ["echo one", "echo two"]
 
 
 def test_repeated_scan_does_not_share_mutable_lists() -> None:
@@ -85,3 +89,25 @@ def test_plus_extglob_preserves_word_and_scope(tmp_path: Path, command: str, kin
         assert data["canonical_repo_mutation_scope_unknown"] is True
     else:
         assert "canonical_repo_mutation" not in data
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "p(){ touch a.py;}; p",
+        "p()(touch a.py); p",
+        'p(){ echo "literal"; touch a.py;}; p',
+        "p()('touch' a.py); p",
+        "p(){ case x in x) touch a.py;; esac;}; p",
+        "p(){ cat <<EOF\nliteral\nEOF\ntouch a.py;}; p",
+        "p\\\n() { touch a.py; }; p",
+    ],
+)
+def test_function_scan_reuse_preserves_invoked_writes(tmp_path: Path, command: str) -> None:
+    data: dict[str, object] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command, "cwd": str(tmp_path)},
+        "project_path": str(tmp_path),
+    }
+    normalize_tool_fields(data)
+    assert data["canonical_repo_mutation"] is True

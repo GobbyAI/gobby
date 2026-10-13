@@ -66,7 +66,8 @@ _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]|`")
 _COMMAND_SUBSTITUTION = re.compile(r"\$(?:\\\n)*\((?!(?:\\\n)*\()|`")
 # Stop before '+' so compound-word handling can recognize a mid-word extglob.
 _PLAIN_WORD_RUN = re.compile(r"[A-Za-z0-9_./:=,%-]+")
-_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_./:=,+%{}-]+(?:\(\)[A-Za-z0-9_./:=,+%{}-]*)*|;;|;")
+_PLAIN_SPACE_RUN = re.compile(r"[ \t]+")
+_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_./:=,+%{}-]+(?:\(\)[A-Za-z0-9_./:=,+%{}-]*)*|;")
 _PLAIN_COMMAND = re.compile(r"[A-Za-z0-9_./:=,+%{}(); \t-]*")
 _MAX_SUBSTITUTION_DEPTH = 24
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
@@ -264,6 +265,13 @@ def _scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> Shel
             current.append(char)
             escaped = False
             index += 1
+            continue
+
+        if char in " \t":
+            flush(index)
+            spaces = _PLAIN_SPACE_RUN.match(command, index)
+            assert spaces is not None
+            index = spaces.end()
             continue
 
         pattern_end = cases.pattern_ends.get(0)

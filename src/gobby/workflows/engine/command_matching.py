@@ -42,6 +42,7 @@ from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
 from gobby.hooks._normalization_compound import (
     case_arm_tokens,
     heredoc_substitution_bodies,
+    scan_function_program,
     shell_function_bodies,
 )
 from gobby.hooks._normalization_shell import (
@@ -605,8 +606,9 @@ def _subjects(
         return [command]
     try:
         if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
-            command, _ = function_program
-            scan = scan_shell_command(command)
+            program, _ = function_program
+            scan = scan_function_program(command, program, scan) or scan_shell_command(program)
+            command = program
     except ValueError:
         return [command]
     if heredoc_source == "shell" and not scan.heredocs:
