@@ -8,7 +8,8 @@ from pathlib import Path
 import click
 import pytest
 from fastapi import FastAPI
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.types import Receive, Scope, Send
 
 from scripts.generate_parity_ledger import (
     LEDGER_PATH,
@@ -107,7 +108,7 @@ def test_mapping_rejects_invalid_status_or_unrecorded_drop(tmp_path: Path, statu
     mapping = tmp_path / "statuses.json"
     mapping.write_text(json.dumps({"HTTP GET /health": status}))
     with pytest.raises(ValueError, match="Invalid parity status for HTTP GET /health"):
-        load_statuses(mapping)
+        load_statuses(tmp_path)
 
 
 def test_mapping_accepts_each_documented_status(tmp_path: Path) -> None:
@@ -116,8 +117,41 @@ def test_mapping_accepts_each_documented_status(tmp_path: Path) -> None:
         '{"HTTP GET /a": "proxied", "HTTP GET /b": "delegated", '
         '"HTTP GET /c": "dropped by decision #123"}'
     )
-    assert load_statuses(mapping) == {
+    assert load_statuses(tmp_path) == {
         "HTTP GET /a": "proxied",
         "HTTP GET /b": "delegated",
         "HTTP GET /c": "dropped by decision #123",
     }
+
+
+def test_mapping_merges_all_shards_in_stable_order(tmp_path: Path) -> None:
+    (tmp_path / "z.json").write_text('{"HTTP GET /z": "delegated"}')
+    (tmp_path / "a.json").write_text('{"HTTP GET /b": "proxied", "HTTP GET /a": "delegated"}')
+    assert list(load_statuses(tmp_path).items()) == [
+        ("HTTP GET /a", "delegated"),
+        ("HTTP GET /b", "proxied"),
+        ("HTTP GET /z", "delegated"),
+    ]
+
+
+def test_duplicate_surface_names_both_shards(tmp_path: Path) -> None:
+    (tmp_path / "tasks.json").write_text('{"HTTP GET /api/tasks": "proxied"}')
+    (tmp_path / "remainder.json").write_text('{"HTTP GET /api/tasks": "delegated"}')
+    with pytest.raises(ValueError, match="Duplicate parity surface") as error:
+        load_statuses(tmp_path)
+    assert "tasks.json" in str(error.value)
+    assert "remainder.json" in str(error.value)
+    assert "HTTP GET /api/tasks" in str(error.value)
+
+
+def test_missing_shards_fail_instead_of_unclassifying_everything(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="No parity status shards"):
+        load_statuses(tmp_path)
+
+
+def test_raw_asgi_mount_fails_instead_of_disappearing() -> None:
+    async def endpoint(scope: Scope, receive: Receive, send: Send) -> None:
+        raise AssertionError("Inventory must not invoke the ASGI application")
+
+    with pytest.raises(ValueError, match="Cannot enumerate raw ASGI mount: /proxy/raw"):
+        http_surfaces([Mount("/raw", app=endpoint)], prefix="/proxy")
