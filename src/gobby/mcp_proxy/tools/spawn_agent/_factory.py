@@ -328,6 +328,7 @@ def create_spawn_agent_registry(
         placement: dict[str, Any] | None = None,
         lane: str | None = None,
         title: str | None = None,
+        seat_context: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -377,12 +378,20 @@ def create_spawn_agent_registry(
                 Refusals carry ``placement_error``.
             lane: Optional lane label recorded on the agent run and returned as
                 ``lane`` by list_running_agents and list_agent_runs.
+            seat_context: Prompt-only launch assignments: lane, lane_epic, worktree
+                and first_job. Cannot set workflow controls or runtime identity.
             title: Automatic session and pane title when no task is claimed. Returns
                 after task close or clear; existing manual titles take precedence.
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
         """
+        if seat_context is not None:
+            if set(seat_context) - {"lane", "lane_epic", "worktree", "first_job"}:
+                return {"success": False, "error": "Unknown seat_context assignment key"}
+            if lane and seat_context.get("lane") not in (None, lane):
+                return {"success": False, "error": "seat_context lane differs from launch lane"}
+
         # Resolve parent_session_id to UUID (accepts #N, N, UUID, or prefix)
         resolved_parent_session_id = parent_session_id
         if parent_session_id:
@@ -496,6 +505,8 @@ def create_spawn_agent_registry(
                 initial_variables["_agent_rules"] = agent_body.workflows.rules
             if agent_body.workflows.variables:
                 initial_variables.update(agent_body.workflows.variables)
+        if seat_context is not None:
+            initial_variables["seat_context"] = seat_context
         if title is not None and title.strip():
             from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
 

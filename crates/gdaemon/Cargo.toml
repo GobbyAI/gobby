@@ -52,6 +52,7 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 
 [dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 time = { version = "0.3", features = ["parsing"] }
 assert_cmd = "2"
 tempfile = "3"

@@ -74,7 +74,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
             "name": agent_type,
             "prompts": {"agent": "Assist the operator."},
             "workflows": {"rule_selectors": {"include": []}},
-            "operator_message_channels": [channel.name],
+            "operator_messaging": True,
         },
         source="custom",
     )

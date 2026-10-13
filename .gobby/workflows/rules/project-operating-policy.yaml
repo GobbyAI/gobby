@@ -18,24 +18,257 @@ rules:
         'design-reviewer', 'recovery-steward', 'consolidator']
       and not variables.get('_project_policy_injected')
     effects:
+      - type: set_variable
+        variable: project_policy
+        value:
+          {
+            "lanes": [
+              {
+                "number": 1,
+                "name": "Lane 1: Runbooks",
+                "epic": "#22691",
+                "description": "Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed."
+              },
+              {
+                "number": 2,
+                "name": "Lane 2: 1.0 Rust port",
+                "epic": "#21542",
+                "description": "1.0 Rust port (#21542): the Stage 1 front door (#21543), then Stage 2 and the multi-machine path, except #21555, which is Lane 3, and hub mode (#21575), which is Lane 5. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed."
+              },
+              {
+                "number": 3,
+                "name": "Lane 3: API keys and node registration",
+                "epic": "#21555",
+                "description": "API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed."
+              },
+              {
+                "number": 4,
+                "name": "Lane 4: Rust",
+                "epic": "#22801",
+                "description": "Rust (#22801): non-1.0 Rust work, including Graphify parity (#22948) and the Jev decision classifier it needs. Staffed by its Lane Manager and one developer."
+              },
+              {
+                "number": 5,
+                "name": "Lane 5: Hub mode",
+                "epic": "#21575",
+                "description": "Hub mode (#21575). Staffed by its Lane Manager, one developer and one code reviewer; implementation waits for the operator's plan approval."
+              },
+              {
+                "number": 6,
+                "name": "Lane 6: Everything else",
+                "epic": "#23378",
+                "description": "Everything else (#23378): backlog consolidation and triage. The Consolidator proposes and the Orchestrator applies every task edit. Never sweep the #22978 triage subtree or plan-expanded epics."
+              },
+              {
+                "number": 7,
+                "name": "Lane 7: Stability and restart reliability",
+                "epic": "#24093",
+                "description": "Stability and restart reliability (#24093)."
+              },
+              {
+                "number": 8,
+                "name": "Lane 8: Client chrome and UI",
+                "epic": "#24094",
+                "description": "Client chrome and UI (#24094)."
+              },
+              {
+                "number": 9,
+                "name": "Lane 9: Remove gobby build",
+                "epic": "#24317",
+                "description": "Remove gobby build (#24317): #23341. Planning first; staffed with a Lane Manager, one developer and one reviewer after the operator approves the plan."
+              }
+            ],
+            "integration_branch": "0.5.0",
+            "operator": "Josh",
+            "operator_channel": "gobby-telegram",
+            "close_backlog_cap": 20,
+            "heavy_run_cap": 6,
+            "quiet_hours": "04:45–06:45 America/Chicago",
+            "report_cadence_seconds": 1800,
+            "full_report_minutes": "00-29 UTC",
+            "delta_report_minutes": "30-59 UTC",
+            "critical_paths": [
+              "Story B"
+            ],
+            "launch_defaults": {
+              "team-lane": {
+                "developer_provider": "codex",
+                "developer_model": "gpt-6.1-sol",
+                "developer_reasoning_effort": "medium",
+                "reviewer_provider": "claude",
+                "reviewer_model": "claude-opus-5-5",
+                "reviewer_reasoning_effort": "xhigh",
+                "security_reviewer_provider": "grok",
+                "security_reviewer_model": "grok-4.7",
+                "security_reviewer_reasoning_effort": "xhigh",
+                "researcher_provider": "codex",
+                "researcher_model": "gpt-6.1-sol",
+                "researcher_reasoning_effort": "medium",
+                "manager_provider": "claude",
+                "manager_model": "claude-sonnet-5-5",
+                "manager_reasoning_effort": "medium"
+              },
+              "team-coordination": {
+                "archivist_provider": "claude",
+                "archivist_model": "claude-opus-5-5",
+                "archivist_reasoning_effort": "medium",
+                "log_monitor_provider": "claude",
+                "log_monitor_model": "claude-sonnet-5-5",
+                "log_monitor_reasoning_effort": "medium",
+                "metrics_monitor_provider": "claude",
+                "metrics_monitor_model": "claude-sonnet-5-5",
+                "metrics_monitor_reasoning_effort": "medium",
+                "release_manager_provider": "codex",
+                "release_manager_model": "gpt-6.1-sol",
+                "release_manager_reasoning_effort": "medium",
+                "inbox_manager_provider": "claude",
+                "inbox_manager_model": "claude-opus-5-5",
+                "inbox_manager_reasoning_effort": "medium",
+                "recovery_steward_provider": "claude",
+                "recovery_steward_model": "claude-opus-5-5",
+                "recovery_steward_reasoning_effort": "high",
+                "consolidator_provider": "claude",
+                "consolidator_model": "claude-opus-5-5",
+                "consolidator_reasoning_effort": "medium"
+              },
+              "team-planning": {
+                "plan_writer_provider": "claude",
+                "plan_writer_model": "claude-opus-5-5",
+                "plan_writer_reasoning_effort": "xhigh",
+                "plan_adversary_provider": "codex",
+                "plan_adversary_model": "gpt-6.1-sol",
+                "plan_adversary_reasoning_effort": "medium"
+              }
+            },
+            "role_launch_defaults": {
+              "analyst": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "architect": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "deprecated/qa-dev": {
+                "provider": "claude"
+              },
+              "doc-reviewer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              },
+              "epic-reviewer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "expansion-qa": {
+                "model": "gpt-6-luna"
+              },
+              "feedback-reviewer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              },
+              "memory-curator": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "merge-worker": {
+                "provider": "claude",
+                "model": "sonnet",
+                "reasoning_effort": "high"
+              },
+              "plan-adversary-old": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "plan-adversary-taskless-old": {
+                "provider": "grok",
+                "model": "grok-4.7",
+                "reasoning_effort": "xhigh"
+              },
+              "plan-adversary": {
+                "provider": "grok",
+                "model": "grok-4.7",
+                "reasoning_effort": "xhigh"
+              },
+              "plan-enhancer-old": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "plan-enhancer-taskless-old": {
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "reasoning_effort": "medium"
+              },
+              "plan-enhancer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "plan-writer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              },
+              "planner": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              },
+              "product-manager": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "qa-reviewer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              },
+              "task-close-reviewer": {
+                "provider": "codex",
+                "model": "gpt-6-luna",
+                "reasoning_effort": "medium"
+              },
+              "tech-writer": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              "trajectory-monitor": {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium"
+              }
+            }
+          }
       - type: inject_context
         delivery: on_receipt
         template: |
           ## Project Operating Policy
 
           - Brevity. Load `gobby-skills:get_skill(name="brevity", level="max")` at session start and after every compaction or clear, and apply it to every message and report.
+          - Operator: Josh. Resolve operator delivery from communications config using channel `gobby-telegram` and `resolve_operator_conversation`; never hardcode a conversation ID.
+          - Reporter cadence: status-report runs every 1800 seconds (30 minutes). UTC minute 00-29 selects full; minute 30-59 selects delta. Explicit launch mode wins. Reports include ROADMAP progress and the Story B critical path from task dependencies.
+          - Consolidator first job: #23378 Everything else and its open direct children and subtrees. Route Rust proposals to #22801 Rust. Check stale candidates #23668, #23700 and #23143 against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.
+          - Historical role launch defaults: {{ variables.get('project_policy', {}).get('role_launch_defaults', {}) }}. Supply explicit overrides when launching these roles; bundled definitions inherit.
+          - Team launch defaults: {{ variables.get('project_policy', {}).get('launch_defaults', {}) }}. The coordinator supplies these as explicit runbook inputs; bundled runbooks inherit when omitted.
+          - Bundled agent definitions and runbooks remain project-agnostic. Supply lane, lane_epic, worktree and first_job as launch inputs; project facts live in this rule.
           - Integration branch: `0.5.0`. Authorized pushes run `git push origin <sha>:refs/heads/0.5.0`.
           - Lanes, in priority order. Each lane's open epic carries the `lane` label; `gobby-tasks:list_tasks(label="lane")` is the current list.
-            1. Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed.
-            2. 1.0 Rust port (#21542): the Stage 1 front door (#21543), then Stage 2 and the multi-machine path, except #21555, which is Lane 3, and hub mode (#21575), which is Lane 5. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
-            3. API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed.
-            4. Rust (#22801): non-1.0 Rust work, including Graphify parity (#22948) and the Jev decision classifier it needs. Staffed by its Lane Manager and one developer.
-            5. Hub mode (#21575). Staffed by its Lane Manager, one developer and one code reviewer; implementation waits for the operator's plan approval.
-            6. Everything else (#23378): backlog consolidation and triage. The Consolidator proposes and the Orchestrator applies every task edit. Never sweep the #22978 triage subtree or plan-expanded epics.
-            7. Stability and restart reliability (#24093).
-            8. Client chrome and UI (#24094).
-          - Lanes 1-4 come first. A Lane 5-8 seat takes a heavy slot or close admission only when no Lane 1-4 request is waiting, and Lanes 5-8 launch in stages as load and the close backlog allow.
+          {% for lane in variables.get('project_policy', {}).get('lanes', []) %}
+            {{ lane.number }}. {{ lane.description }}
+          {% endfor %}
+          - Lanes 1-4 come first. A Lane 5-9 seat takes a heavy slot or close admission only when no Lane 1-4 request is waiting, and Lanes 5-9 launch in stages as load and the close backlog allow.
           - No new task outside a lane. Found work goes to the Orchestrator, which files it in the lane that owns it. Existing tasks and epics outside the lanes stay where they are.
+          - Operator placements stay put. No sweep, consolidation, fold, lane move or re-parent touches #22978 (Triage: needs Josh's decision), its descendants, or a task Josh explicitly placed elsewhere without his explicit word. #22225 (Gobby Annotate) stays under #22978. Determine placement from the parent, never from a deferred-by-josh label; do not add or remove that label.
           - Lane tasks first, in every lane. Found work is filed at low priority unless it blocks a lane task or its landing; only a blocker takes a seat ahead of lane tasks. Found work that a lane task's progress resolves folds into that task.
           - One task per lane or sub-lane seat. A candidate waiting on landing, activation or a live check is still that seat's task; read-only prep is fine. A developer whose task is reviewer-LANDed and only waits on landing, activation or close may hand it off with `escalate_task` (reason "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. Developer closes after landing.") and claim the next task when the Orchestrator directs. After landing and the Lane Manager's release, de-escalate it and the developer closes.
           - Don't rebalance lanes. Add a developer and reviewer when a lane can take parallel work; never move tasks between lanes for load balancing. Seat moves are allowed.
@@ -43,7 +276,7 @@ rules:
           - Close backlog cap: 20. The backlog is every task, across all lanes, whose candidate was sent and which is not yet closed. While it exceeds the cap, no new task is assigned; assignment resumes once it is at or under the cap. Planning tasks, tasks parked on an operator decision, and work that drives a backlog task to close don't count. Park any close that needs the operator's review and keep the lanes moving.
           - Close admission. A passing `close_task(preview=true)` checks the deterministic gates only. Wait for the Lane Manager's explicit release before `close_task(preview=false)`. On `close_review_busy`, wait for the active reviewer and the release, then retry.
           - Load. The heavy-work hold starts only after two consecutive five-minute load readings above 54; one reading, or 54 exactly, triggers nothing. It lifts after two consecutive readings below 36. No seat invents, lowers or changes a threshold, admission limit or escalation level: send any proposal to the operator through the Assistant and wait for approval. Give no load numbers unless load is breaching.
-          - Heavy-run cap: 6 concurrent heavy commands (cargo build, clippy, full-crate test runs, e2e suites, benchmarks), granted by the Release Manager.
+          - Heavy-run cap: 6 concurrent heavy commands (cargo build, clippy, full-crate test runs, e2e suites, benchmarks), granted by the Release Manager. Every granted cargo run sets CARGO_BUILD_JOBS=3. Skip the post-land Rust retest when the landed tree equals the reviewed merge tree. Build gclient in the same cutover cargo run.
           - Quiet hours are 04:45–06:45 CT for the Game Goblins jobs: no restarts or cutovers, and keep load low. Game Goblins jobs are never rerun.
           - Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode release keeps `MIN_GCODE_PRUNE_BUDGET_VERSION` in `src/gobby/code_index/gcode_gateway.py` equal to the crate version; a gdaemon release updates `MANAGED_BIN_VERSION_PINS`.
           - The Assistant and the Orchestrator run in operator-opened panes. Launch the rest of a team with the bundled `team-coordination`, `team-lane` and `team-planning` runbooks.

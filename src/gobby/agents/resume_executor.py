@@ -244,6 +244,10 @@ async def resume_agent_run(
     if not child_session_id:
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
     metadata = dict(resume_metadata)
+    cli_mode = "agent"
+    if provider == "grok":
+        cli_mode = "terminal" if metadata.get("execution_mode") == "interactive" else "agent"
+        metadata["provider_cli_mode"] = cli_mode
     local_context_updates = local_context_variable_updates(
         local_context_route,
         local_context_observation,
@@ -415,6 +419,7 @@ async def resume_agent_run(
         )
     command, _cmd_env = build_cli_command(
         cli=provider,
+        mode=cli_mode,
         # Claude appends its prompt after MCP flags below. Codex TUI receives
         # a post-launch composer paste.
         prompt=None if provider in {"claude", "codex"} else prompt,

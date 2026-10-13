@@ -154,8 +154,12 @@ def test_file_writer_options_report_destination(
         "sort --random-source o in.txt",
         "sort --compress-program o in.txt",
         "tar -tf x.tar -C dir",
+        "tar -tf x.tar -T list",
+        "tar -cf x.tar -T list",
         "tar tf extract.tar -C dir",
         "tar --list --file=x.tar --directory=dir",
+        "tar -f x.tar member -t -C dir",
+        "tar -f x.tar member -x -O -C dir",
         "tar -xOf x.tar",
         "tar -xf x.tar --to-stdout",
         "tar --extract --file=x.tar --to-std",
@@ -203,10 +207,22 @@ def test_file_writer_dynamic_destination_fails_closed(tmp_path: Path, command: s
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
-def test_tar_members_before_directory_switch_keep_both_scopes(tmp_path: Path) -> None:
-    data = _metadata(f"cd '{tmp_path}' && tar -xf x.tar a -C /tmp/extract b", tmp_path)
+@pytest.mark.parametrize(
+    ("command", "directory"),
+    [
+        ("tar -xf x.tar a -C /tmp/extract b", "/tmp/extract"),
+        ("tar xf x.tar a -C /tmp/extract b", "/tmp/extract"),
+        ("tar --extract --file=x.tar a -C /tmp/extract b", "/tmp/extract"),
+        ("tar -f x.tar member -x -C /tmp/out", "/tmp/out"),
+        ('tar -f "x file.tar" "member file" --extract -C "/tmp/output dir"', "/tmp/output dir"),
+    ],
+)
+def test_tar_members_before_directory_switch_keep_both_scopes(
+    tmp_path: Path, command: str, directory: str
+) -> None:
+    data = _metadata(f"cd '{tmp_path}' && {command}", tmp_path)
     assert data["canonical_repo_mutation"] is True
-    assert set(data["canonical_file_paths"]) == {str(tmp_path), "/tmp/extract"}
+    assert set(data["canonical_file_paths"]) == {str(tmp_path), directory}
 
 
 @pytest.mark.parametrize("option", ["--dire", "--cd"])
@@ -264,6 +280,26 @@ def test_tar_option_values_and_unmodelled_options_preserve_write_guard(
     else:
         assert str(tmp_path / target) in data["canonical_file_paths"]
         assert not data.get("canonical_repo_mutation_scope_unknown", False)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -xf x.tar -T list -C /tmp/out",
+        "tar -xf x.tar --files-from=list -C /tmp/out",
+        "tar -xf x.tar --files-from list -C /tmp/out",
+        "tar -xf x.tar --files-fr=list -C /tmp/out",
+        "tar -xf x.tar -Tlist -C /tmp/out",
+        "tar -f x.tar -T list -x -C /tmp/out",
+        "tar xTf list x.tar -C /tmp/out",
+        "tar -xf x.tar -C /tmp/out -T list",
+        "tar -xOf x.tar -T list",
+    ],
+)
+def test_tar_member_lists_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(f"cd '{tmp_path}' && {command}", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.parametrize(

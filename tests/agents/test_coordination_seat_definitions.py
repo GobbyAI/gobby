@@ -165,15 +165,15 @@ def test_assistant_routes_and_edits_tasks_only_when_the_operator_asks() -> None:
 
     assert "You turn what the operator says into work for the Orchestrator" in prompt
     assert "Relay the operator's instructions to the Orchestrator verbatim" in prompt
-    assert "The Reporter owns the 30-minute delta and hourly full status" in prompt
+    assert "The Reporter owns status at the project-policy cadence" in prompt
     assert "Only on a failed direct delivery" in prompt
     assert "send_operator_message" in prompt
     assert "Decisions needed:" in prompt
     assert "Restart the daemon or the terminal client only on the operator's go" in prompt
     assert "`gobby-tasks:update_task` only when the operator asks" in prompt
-    assert "While attached to a Telegram conversation, type replies normally." in prompt
+    assert "While attached to a configured conversation, type replies normally." in prompt
     assert "The daemon mirrors completed assistant text automatically." in prompt
-    assert "Do not explicitly send the same reply to Telegram or narrate a send." in prompt
+    assert "Do not explicitly send the same reply to the channel or narrate a send." in prompt
     assert (
         "When unattached, reply once on the channel the operator last used, "
         "and keep replying there until input arrives on another channel."
@@ -234,8 +234,8 @@ def test_consolidator_is_propose_only_with_read_only_task_tools() -> None:
     assert "gobby-agents:spawn_agent" not in step.allowed_mcp_tools
     assert "which applies every task edit" in prompt
     assert "Never edit tasks, claim work, spawn agents" in prompt
-    assert "#23378 Lane 6 - Everything else" in prompt
-    assert "Exclude the whole #22978 triage subtree, including #22360" in prompt
+    assert "use the launch assignment and injected project policy" in prompt
+    assert "Honor project-policy exclusion roots" in prompt
     assert "exclude all plan-expanded epics and their entire subtrees" in prompt
 
 
@@ -280,6 +280,25 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "blockers to the Orchestrator" not in prompt
     assert "sent unprompted to the Assistant" in prompt
     assert "the project's operating policy" in prompt
+
+
+def test_lane_manager_routes_parked_candidates_without_releasing_close() -> None:
+    prompt = _prompt("lane-manager")
+    parked = prompt.split("- Parked candidates.", 1)[1].split("\n    - ", 1)[0]
+    assert "EVENT=CANDIDATE_PARKED" in parked
+    assert "exact TASK, SHA, REASON, blocker, coordinator and prior approval receipt" in parked
+    assert "relay them through the Inbox Manager" in parked
+    assert "responsible seat" in parked
+    assert "EVENT=REVIEW_ONLY_REQUIRED or REASON=review_only" in parked
+    assert "explicit Orchestrator or Lane Manager marking" in parked
+    assert "exact task/SHA is review-only with nothing to land" in parked
+    assert "waiting alone never clears this blocker" in parked
+    assert "available for other routed candidates" in parked
+    assert "EVENT=CANDIDATE_RESUMED" in parked
+    assert "restore its reviewing link" in parked
+    assert "changed SHA is a fresh CANDIDATE" in parked
+    assert "needs fresh review and approval" in parked
+    assert "never supplies a landing receipt or releases a close" in parked
 
 
 def test_lane_manager_recovers_stalled_seats_only_without_a_recovery_steward() -> None:
@@ -327,16 +346,15 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
     assert body.timeout == 900
     assert body.execution_mode == "one_shot"
     assert body.send_message_targets == ["session"]
-    assert body.operator_message_channels == ["gobby-telegram"]
+    assert body.operator_messaging is True
     assert "gobby-communications:send_operator_message" not in body.blocked_mcp_tools
     assert "send_operator_message" in prompt
-    assert "gobby-telegram" in prompt
+    assert "resolve_operator_conversation" in prompt
     assert "success=true" in prompt
     assert 'agent_type="assistant"' in prompt
     assert "Do not read log files" in prompt
     assert "300 seconds" in prompt
-    assert "minute 00-29" in prompt
-    assert "minute 30-59" in prompt
+    assert "cadence and mode selection from the injected project policy" in prompt
     assert "Report mode: full" in prompt
     assert "Report mode: delta" in prompt
     assert 'view="compact", limit=500' in prompt
@@ -352,7 +370,7 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
     assert "never contacts the operator" not in prompt
     assert "the Assistant does that" not in prompt
     for section in (
-        "Lane 1-8",
+        "Policy-defined lanes",
         "time claimed",
         "next five",
         "landing/activation/close",
@@ -365,11 +383,33 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
         "Worktrees",
         "Consolidator",
         "ROADMAP",
-        "Story B critical path",
+        "policy-designated critical paths",
         "Last 30 minutes",
         "Systems nominal",
     ):
         assert section in prompt, section
+
+
+def test_reporter_bounds_queue_resolution_and_names_unreadable_rows() -> None:
+    prompt = _prompt("reporter")
+    budget = _section(prompt, "Cadence and budget")
+    sources = _section(prompt, "Sources")
+    assert "240 seconds" in budget
+    assert "bounded queue refills" in budget
+    assert "remain inside the time budget" in budget
+    assert "current/next-five/candidate block before gathering supplementary evidence" in budget
+    assert "Cache task rows by ref across all sources" in sources
+    assert "at most five unresolved queue refs" in sources
+    assert 'view="compact", limit=40' in sources
+    assert "refill only lanes still short" in sources
+    assert "five eligible tasks are found or its queue is exhausted" in sources
+    assert "refs resolution ignores filters" in sources
+    assert "stage object" in sources
+    assert "A null current_stage means no recorded stage" in sources
+    assert 'Never print "state ?"' in sources
+    assert "ref_errors, omitted rows or unreadable state" in sources
+    assert "GAP: Lane <N> <task ref and known title, or title unavailable>" in sources
+    assert "mark next-five coverage incomplete even if later refs fill five slots" in sources
 
 
 def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDatabase) -> None:
@@ -388,9 +428,9 @@ def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDat
     assert AgentDefinitionBody.model_validate(reporter.definition_json) == _load("reporter")
     for row in manager.list_all():
         body = AgentDefinitionBody.model_validate(row.definition_json)
-        assert body.operator_message_channels == (
-            ["gobby-telegram"] if row.name in {"reporter", "assistant", "archivist"} else []
-        ), row.name
+        assert body.operator_messaging is (row.name in {"reporter", "assistant", "archivist"}), (
+            row.name
+        )
 
 
 def test_installed_reporter_can_send_assistant_fallback(
@@ -425,10 +465,10 @@ def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
     assert "Forward at once" in prompt
     assert "with wake=true" in prompt
     assert 'single word "steady"' in prompt
-    assert "close backlog above 10" in prompt
+    assert "close backlog above the cap in the live project operating policy" in prompt
     assert "found work that blocks a lane task or its landing" in prompt
     assert "a HOLD or RESUME ACK" in prompt
-    assert "close backlog above 5" not in prompt
+    assert "close backlog above 10" not in prompt
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
     assert "local_cli_token" not in prompt
     assert "~/.gobby/bootstrap.yaml" in prompt
