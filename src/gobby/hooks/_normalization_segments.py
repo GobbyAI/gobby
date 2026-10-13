@@ -217,7 +217,7 @@ def _mark_pipeline_read_escape(
     index: int,
     channels: set[str],
 ) -> None:
-    """A tee copy can expose source independently of the pipeline's stdout."""
+    """A pipeline stage can expose source independently of its stdout."""
     for prior in _pipeline_read_indices(segments, index):
         prior = segment_metadata_positions[prior]
         item = metadata[prior]
@@ -227,14 +227,17 @@ def _mark_pipeline_read_escape(
 
         def exposed(scope: Mapping[str, Any]) -> dict[str, Any]:
             outputs = set(scope.get("_canonical_source_read_output_channels", ("stdout",)))
-            if scope.get("canonical_code_navigation_action") == "read" and "stdout" in outputs:
+            if (
+                scope.get("canonical_code_navigation_action") in {"read", "search"}
+                and "stdout" in outputs
+            ):
                 return {
                     **scope,
                     "_canonical_source_read_output_channels": sorted(outputs | channels),
                 }
             return dict(scope)
 
-        if extra.get("canonical_code_navigation_action") == "read":
+        if extra.get("canonical_code_navigation_action") in {"read", "search"}:
             extra = exposed(extra)
         if "_canonical_deferred_source_read" in extra:
             extra["_canonical_deferred_source_read"] = exposed(

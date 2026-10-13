@@ -138,10 +138,19 @@ def broad_read_blocked(repo: Path, command: str, variables: dict[str, Any] | Non
         "cat src/long.py | tee /dev/fd/1 1>&2 | head -n 10",
         "cat src/long.py | tee /dev/fd/3 3>&2 | head -n 10",
         "x=$(echo hi) cat src/long.py",
+        "rg --files src | tee /dev/stderr | head -n10",
+        'rg -n "^" src/long.py | tee /dev/stderr | head -n 10',
+        "rg --files src | cat >&2 | head -n 10",
+        'rg -n "^" src/long.py | tee >(cat >&2) | head -n 10',
+        "cat src/long.py | head -n 100 >&2",
     ],
 )
 def test_reader_and_pipeline_escapes_require_index(repo: Path, command: str) -> None:
-    assert broad_read_blocked(repo, command)
+    data = event(repo, command)
+    assert data["canonical_code_navigation_broad"] is True
+    assert navigation_requires_index(
+        data, {}, data["canonical_code_navigation_action"], broad_only=True
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,6 +165,8 @@ def test_reader_and_pipeline_escapes_require_index(repo: Path, command: str) -> 
         "cat src/long.py | tee /dev/fd/3 3>/tmp/copy | head -n 10",
         "x=$(echo hi) cat src/long.py | head -n 10",
         "cat src/long.py > /dev/null",
+        "cat src/long.py | head -n 10 >&2",
+        "cat src/long.py | head -n 10 > /dev/tty",
     ],
 )
 def test_reader_and_pipeline_bounds_remain_exempt(repo: Path, command: str) -> None:
@@ -165,6 +176,17 @@ def test_reader_and_pipeline_bounds_remain_exempt(repo: Path, command: str) -> N
 def test_null_output_is_a_discard_sink() -> None:
     tokens = scan_shell_command("cat src/long.py > /dev/null").tokens
     assert source_output_destinations(tokens)["stdout"] == "null"
+
+
+def test_subshell_dynamic_command_preserves_parent_write_scope(repo: Path) -> None:
+    data = event(repo, "($X /tmp); touch src/a.py")
+    assert data["canonical_write_file_paths"] == ["src/a.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+def test_subshell_dynamic_command_keeps_inner_write_scope_unknown(repo: Path) -> None:
+    data = event(repo, "($X /tmp; touch src/a.py)")
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def test_git_quoted_literal_backtick_directory_stays_unresolved(repo: Path) -> None:

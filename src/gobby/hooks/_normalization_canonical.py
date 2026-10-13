@@ -108,6 +108,7 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
+    MAX_NARROW_SOURCE_LINES,
     count_option_byte_count,
     count_option_line_count,
     find_navigation_metadata,
@@ -435,13 +436,31 @@ def _classify_shell_command(
             )
             continue
 
+        pipeline_filter = segment.separator_before == "|" and _is_read_only_pipeline_stage(
+            segment.tokens,
+            parts,
+            raw_parts=source_parts[-len(parts) :],
+            cwd=segment_cwd,
+            base_cwd=segment_base,
+        )
+        final_pipeline_stage = (
+            index + 1 >= len(segments) or segments[index + 1].separator_before != "|"
+        )
+        output_bound = _pipeline_filter_output_line_bound(parts) if pipeline_filter else None
         if segment.separator_before == "|":
-            channels = {source_output_destinations(segment.tokens)["stdout"]} - {
-                "stdout",
-                "file",
-                "closed",
-                "null",
-            }
+            channels: set[str] = set()
+            # A final bounded filter exposes only its limited output, even on stderr.
+            if not (
+                final_pipeline_stage
+                and output_bound is not None
+                and output_bound <= MAX_NARROW_SOURCE_LINES
+            ):
+                channels = {source_output_destinations(segment.tokens)["stdout"]} - {
+                    "stdout",
+                    "file",
+                    "closed",
+                    "null",
+                }
             if parts[0].rsplit("/", 1)[-1] == "tee":
                 channels |= tee_output_channels(parts[1:], arm_tokens)
             if channels:
@@ -449,13 +468,7 @@ def _classify_shell_command(
                     metadata, segments, segment_metadata_positions, index, channels
                 )
 
-        if segment.separator_before == "|" and _is_read_only_pipeline_stage(
-            segment.tokens,
-            parts,
-            raw_parts=source_parts[-len(parts) :],
-            cwd=segment_cwd,
-            base_cwd=segment_base,
-        ):
+        if pipeline_filter:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -464,13 +477,13 @@ def _classify_shell_command(
                     shell_raw_words=source_parts,
                 )
             )
-            if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
+            if final_pipeline_stage:
                 _bound_pipeline_reads(
                     metadata,
                     segments,
                     segment_metadata_positions,
                     index,
-                    _pipeline_filter_output_line_bound(parts),
+                    output_bound,
                 )
             continue
 
