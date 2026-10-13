@@ -614,15 +614,17 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        for match in re.finditer(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[start:end]):
-            opening = start + match.start()
+        cursor = start
+        while match := re.search(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[cursor:end]):
+            opening = cursor + match.start()
             tick = command[opening] == "`"
             try:
-                split_substitution |= (
-                    _substitution_end(command, start + match.end(), tick, depth + 1) >= end
-                )
+                close = _substitution_end(command, cursor + match.end(), tick, depth + 1)
+                split_substitution |= close >= end
+                # A delimited outer body contains its nested substitutions too.
+                cursor = close + 1
             except ValueError:
-                continue
+                cursor += match.end()
     if split_substitution and not _runs_substitution_output(scan.tokens):
         resolved = _resolve_substitutions(command, depth, correlations)
         if resolved[0] != command:
