@@ -585,11 +585,14 @@ The plan also sets:
       enforce trusts it. It detects no change at all. For hosted Clef the
       Deployment owner rule cannot hold, because Cloudflare can replace the
       model without notice. This plan does not recommend it.
-17. **LM Studio joins as a local `/v1/systemone` server. Join or replace
-    is proposed for Josh's decision.** Josh, through the Assistant
-    gobby#15976 on 2026-10-12 (#24215): weigh LM Studio as a local decision
-    backend beside Kev and local Clef, and decide whether it replaces or
-    joins them.
+17. **LM Studio joins as a local `/v1/systemone` server (Orchestrator
+    ruling, 2026-10-12).** Josh, through the Assistant gobby#15976 on
+    2026-10-12 (#24215): weigh LM Studio as a local decision backend beside
+    Kev and local Clef, and decide whether it replaces or joins them. The
+    Orchestrator gobby#15977 ruled join on 2026-10-12. The ruling changes no
+    code and can be revisited after a live capture, so it was not sent to
+    Josh separately; the Orchestrator presents it with the stamped
+    amendment.
     - What LM Studio added. LM Studio 0.4.26 adds `POST /v1/systemone`,
       described as a "Jev (TypeSafe AI) compatible" endpoint, and `POST
       /v1/decisions`, described as "OpenAI compatible". Bionic 1.1.8
@@ -664,11 +667,11 @@ The plan also sets:
         because the service appends `/v1/systemone`. The embedding
         endpoint on the same server is configured with `/v1`
         (`docs/guides/search.md:131`).
-    - Join or replace, for Josh. LM Studio, Kev, and `clef_mlx.py serve`
-      all speak the one `systemone` wire, so the choice changes no code.
-      It changes which servers 1.2's contract record, 4.1's guide, and
-      Activation Gate item 2 name.
-      - Recommended: join. Restraint favors LM Studio as the local server
+    - Join or replace. LM Studio, Kev, and `clef_mlx.py serve` all speak
+      the one `systemone` wire, so the choice changes no code. It changes
+      which servers 1.2's contract record, 4.1's guide, and Activation
+      Gate item 2 name.
+      - Ruled: join. Restraint favors LM Studio as the local server
         to reach for first. It already runs on Josh's machines, Gobby
         already points embeddings at it
         (`docs/guides/system-requirements.md:109`,
@@ -2336,8 +2339,9 @@ available with the configured model. With the server stopped, a
   probes named no model, and no model was downloaded or loaded.
   - Decision 17 adds LM Studio as a local `/v1/systemone` server on the
     existing wire, with no code change, as a `shadow` and evaluation
-    backend at most, and lists its unverified surfaces. It recommends join
-    for Josh's decision and names the condition under which replacing
+    backend at most, and lists its unverified surfaces. It records the
+    Orchestrator gobby#15977's ruling of join, which changes no code, and
+    names the condition under which replacing
     `clef_mlx.py serve` becomes the restraint answer.
   - Decision 1 rejects `/v1/decisions` as a wire. Decision 3 rewrites the
     LM Studio exclusion: the local-inference plan stays out of scope
