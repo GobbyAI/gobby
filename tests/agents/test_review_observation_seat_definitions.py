@@ -446,6 +446,25 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
     assert _variables(name)["required_skills_loaded"] is False
 
 
+def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link() -> None:
+    prompt = _prompt("code-reviewer")
+    steps = _steps("code-reviewer")
+    replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
+    assert "same active task supersedes its old SHA" in replacement
+    assert "First set verdict_ready=false, then candidate_received=false" in replacement
+    assert "return to await" in replacement
+    assert "through Intake and Review" in replacement
+    assert "fresh independent_review_approval receipt for that SHA" in replacement
+    assert "Never reuse the superseded SHA's approval" in replacement
+    resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
+    assert 'action="reviewing"' in resume
+    assert "before landing or review-only completion" in resume
+    assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["verdict"])
+    status = steps["verdict"].status_message
+    assert status is not None
+    assert "set verdict_ready=false, then candidate_received=false" in status
+
+
 def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     variables = _variables("code-reviewer")
     steps = _steps("code-reviewer")
@@ -644,6 +663,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert _allowed_mcp_tools(verdict) == {
         "gobby-agents:send_message",
         "gobby-tasks:record_close_receipt",
+        "gobby-tasks:link_task_to_session",
         "gobby-tasks-ops:land_commit",
         "gobby-agents:wait_for_coordination",
     }
@@ -684,8 +704,8 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "If the field is absent, report unknown." in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
     # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
-    new_sha = prompt.index("Review a new SHA for the same task")
-    assert "record a fresh `independent_review_approval`" in prompt[new_sha:]
+    new_sha = prompt.index("- Replacement SHA.")
+    assert "fresh independent_review_approval receipt for that SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
 
 

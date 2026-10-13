@@ -282,6 +282,25 @@ def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
     assert "the project's operating policy" in prompt
 
 
+def test_lane_manager_routes_parked_candidates_without_releasing_close() -> None:
+    prompt = _prompt("lane-manager")
+    parked = prompt.split("- Parked candidates.", 1)[1].split("\n    - ", 1)[0]
+    assert "EVENT=CANDIDATE_PARKED" in parked
+    assert "exact TASK, SHA, REASON, blocker, coordinator and prior approval receipt" in parked
+    assert "relay them through the Inbox Manager" in parked
+    assert "responsible seat" in parked
+    assert "EVENT=REVIEW_ONLY_REQUIRED or REASON=review_only" in parked
+    assert "explicit Orchestrator or Lane Manager marking" in parked
+    assert "exact task/SHA is review-only with nothing to land" in parked
+    assert "waiting alone never clears this blocker" in parked
+    assert "available for other routed candidates" in parked
+    assert "EVENT=CANDIDATE_RESUMED" in parked
+    assert "restore its reviewing link" in parked
+    assert "changed SHA is a fresh CANDIDATE" in parked
+    assert "needs fresh review and approval" in parked
+    assert "never supplies a landing receipt or releases a close" in parked
+
+
 def test_lane_manager_recovers_stalled_seats_only_without_a_recovery_steward() -> None:
     prompt = _prompt("lane-manager")
 
