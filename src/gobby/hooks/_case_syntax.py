@@ -3,7 +3,57 @@
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 
 
-def _word_end(text: str, start: int) -> int:
+def pid_parameter_end(text: str, index: int) -> int | None:
+    """Consume bash's ``$$`` parameter before considering another dollar opener."""
+    return index + 2 if text.startswith("$$", index) else None
+
+
+def _word_expansion_end(text: str, start: int, *, depth: int) -> int | None:
+    """Skip one word expansion without exposing its syntax to the outer case."""
+    if depth > 24:
+        raise ValueError("Shell nesting limit")
+    if (end := pid_parameter_end(text, start)) is not None:
+        return end
+    if text.startswith("$(", start):
+        end = _balanced_parens_end(text, start + 1, depth=depth + 1)
+        if end is None:
+            raise ValueError("Unclosed shell substitution")
+        return end
+    tick = text[start] == "`"
+    if not tick and not text.startswith("${", start):
+        return None
+    closing = "`" if tick else "}"
+    index = start + (1 if tick else 2)
+    quote = ""
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if char == closing and (tick or not quote):
+            return index + 1
+        if quote in {"'", "$'"}:
+            if char == "'":
+                quote = ""
+        elif (
+            char in "$`" and (end := _word_expansion_end(text, index, depth=depth + 1)) is not None
+        ):
+            index = end
+            continue
+        elif not quote and opens_ansi_c_quote(text, index):
+            quote = "$'"
+            index += 2
+            continue
+        elif char in "\"'":
+            if not quote:
+                quote = char
+            elif char == quote:
+                quote = ""
+        index += 1
+    raise ValueError("Unclosed shell word expansion")
+
+
+def _word_end(text: str, start: int, *, depth: int = 0, backtick: bool = False) -> int:
     """Read one shell word without treating quoted syntax as a boundary."""
     quote = ""
     index = start
@@ -12,6 +62,13 @@ def _word_end(text: str, start: int) -> int:
         if char == "\\" and quote != "'":
             index += 2
             continue
+        if backtick and char == "`":
+            break
+        if char in "$`" and quote not in {"'", "$'"}:
+            end = _word_expansion_end(text, index, depth=depth)
+            if end is not None:
+                index = end
+                continue
         if quote:
             if char == quote:
                 quote = ""
@@ -31,13 +88,17 @@ class CaseSyntax:
     The caller feeds unquoted source positions and its current group level.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, depth: int = 0, backtick: bool = False) -> None:
+        self.depth = depth
+        self.backtick = backtick
         self.cases: dict[int, list[str]] = {}
         self.command_position: dict[int, bool] = {}
         self.pattern_ends: dict[int, int] = {}
         self.word_end = 0
 
-    def pattern_paren(self, text: str, index: int, level: int) -> bool:
+    def pattern_paren(
+        self, text: str, index: int, level: int, *, word_end: int | None = None
+    ) -> bool:
         """Return whether this position is a pattern parenthesis, not a group."""
         frames = self.cases.setdefault(level, [])
         pattern_end = self.pattern_ends.get(level)
@@ -67,7 +128,22 @@ class CaseSyntax:
                 self.cases.pop(level, None)
                 self.command_position.pop(level, None)
             return False
-        end = _word_end(text, index)
+        # Callers consume expansions themselves. Without an active case or a
+        # command-position keyword, their word bounds cannot change case state.
+        if not frames:
+            if not self.command_position.get(level, True):
+                return False
+            if not text.startswith(
+                ("case", "esac", "if", "then", "else", "elif", "while", "until", "do", "!", "time"),
+                index,
+            ):
+                self.command_position[level] = False
+                return False
+        end = (
+            _word_end(text, index, depth=self.depth, backtick=self.backtick)
+            if word_end is None
+            else word_end
+        )
         if end == index:
             return False
         self.word_end = end
@@ -92,7 +168,7 @@ class CaseSyntax:
     def _pattern(self, text: str, start: int, level: int) -> None:
         while start < len(text) and text[start].isspace():
             start += 1
-        if text[start : _word_end(text, start)] == "esac":
+        if text[start : _word_end(text, start, depth=self.depth, backtick=self.backtick)] == "esac":
             # The command-position word closes the frame when the caller reaches
             # it; anticipating it here would also close its enclosing case.
             self.cases[level][-1] = "body"
@@ -103,15 +179,25 @@ class CaseSyntax:
         self.pattern_ends[level] = len(text) if end is None else end
 
 
-def _balanced_parens_end(command: str, index: int) -> int | None:
+def _balanced_parens_end(command: str, index: int, *, depth: int = 0) -> int | None:
     """Pair group parentheses, excluding case-pattern syntax."""
-    depth = 0
+    level = 0
     quote = ""
-    cases = CaseSyntax()
+    cases = CaseSyntax(depth=depth)
     position = index
     while position < len(command):
         char = command[position]
-        pattern_paren = not quote and cases.pattern_paren(command, position, depth)
+        if char in "$`" and quote not in {"'", "$'"}:
+            end = _word_expansion_end(command, position, depth=depth)
+            if end is not None:
+                if not quote:
+                    # Use the known expansion end so nested subjects advance
+                    # the case frame without rescanning the nested expansion.
+                    word_end = _word_end(command, end, depth=depth)
+                    cases.pattern_paren(command, position, level, word_end=word_end)
+                position = end
+                continue
+        pattern_paren = not quote and cases.pattern_paren(command, position, level)
         if char == "\\" and quote != "'":
             position += 2
             continue
@@ -121,10 +207,10 @@ def _balanced_parens_end(command: str, index: int) -> int | None:
         elif char in "\"'":
             quote = char
         elif char == "(" and not pattern_paren:
-            depth += 1
+            level += 1
         elif char == ")" and not pattern_paren:
-            depth -= 1
-            if depth == 0:
+            level -= 1
+            if level == 0:
                 return position + 1
         position += 1
     return None
@@ -161,6 +247,9 @@ def case_pattern_end(text: str, start: int, end: int) -> int | None:
         if not quote and opens_ansi_c_quote(text, index):
             quote = "$'"
             index += 2
+            continue
+        if (pid_end := pid_parameter_end(text, index)) is not None:
+            index = pid_end
             continue
         if text.startswith("$(", index) or text.startswith("${", index):
             contexts.append((closing, quote))

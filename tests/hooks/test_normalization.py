@@ -2254,7 +2254,7 @@ class TestHeredocTokenization:
     def test_scan_ends_a_backtick_comment_at_the_closing_backtick(self) -> None:
         scan = scan_shell_command("echo `true # it's` ; ls # `x`")
 
-        assert shell_token_values(scan.tokens) == ["echo", "`true", "`", ";", "ls"]
+        assert shell_token_values(scan.tokens) == ["echo", "`true # it's`", ";", "ls"]
 
 
 class TestToolErrorDetection:

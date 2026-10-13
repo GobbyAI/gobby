@@ -16,6 +16,45 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None:
+    registry = TerminalLeaseRegistry()
+    holder = await registry.attach("term-1", frame_delivery="direct")
+    control = await registry.take_control("term-1", holder.attachment_id, takeover=False)
+    assert control.granted is True
+    original = registry.admit_write(
+        "term-1",
+        attachment_id=holder.attachment_id,
+        expected_lease_generation=control.lease_generation,
+        seq=0,
+        kind="input",
+        payload=b"x:ls",
+    )
+    assert original.ok is True
+    registry.complete_write(holder.attachment_id, 0, "delivered", None)
+    conflict = registry.admit_write(
+        "term-1",
+        attachment_id=holder.attachment_id,
+        expected_lease_generation=control.lease_generation,
+        seq=0,
+        kind="input:x",
+        payload=b"ls",
+    )
+    assert conflict.ok is False
+    assert conflict.reason == "write_seq_conflict"
+    replay = registry.admit_write(
+        "term-1",
+        attachment_id=holder.attachment_id,
+        expected_lease_generation=control.lease_generation,
+        seq=0,
+        kind="input",
+        payload=b"x:ls",
+    )
+    assert replay.ok is True
+    assert replay.recorded_outcome == "delivered"
+    assert replay.join_inflight is False
+
+
+@pytest.mark.asyncio
 async def test_viewports_report_live_gclient_windows_only() -> None:
     registry = TerminalLeaseRegistry()
     first = await registry.attach("shown-terminal")

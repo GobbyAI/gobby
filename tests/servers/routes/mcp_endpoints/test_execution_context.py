@@ -2,8 +2,8 @@
 
 After Change 2b, _set_context_for_request delegates to the shared
 resolve_and_seed_contexts helper. These tests verify the HTTP-specific
-bootstrap (deriving project_id from the X-Gobby-Session-Id header when
-the incoming ref is #N/numeric) and that wrapper session headers own
+bootstrap (deriving project_id from the X-Gobby-Session-Id header independently
+of body session targets) and that wrapper session headers own
 workflow/session context when body arguments target another session.
 """
 
@@ -104,8 +104,17 @@ class TestSetContextForRequest:
         assert mock_helper.call_args.kwargs["session_ref"] is None
         assert mock_helper.call_args.kwargs["session_ref_origin"] == "ambient"
 
-    async def test_hash_n_no_project_header_bootstraps_from_header_session(self) -> None:
-        """#N ref without x-gobby-project-id derives project from x-gobby-session-id."""
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            pytest.param({}, id="no-body-session"),
+            pytest.param({"session_id": "#5"}, id="body-target-session"),
+        ],
+    )
+    async def test_header_session_bootstraps_project_independently_of_body(
+        self, arguments: dict[str, str]
+    ) -> None:
+        """Caller headers derive project scope with or without a body session target."""
         server = _make_server()
         header_session_uuid = str(uuid.uuid4())
         request = _make_request(session_id=header_session_uuid)  # no project_id header
@@ -124,7 +133,7 @@ class TestSetContextForRequest:
                 return_value=SeededContextTokens(),
             ) as mock_helper,
         ):
-            await _set_context_for_request(server, {"session_id": "#5"}, request)
+            await _set_context_for_request(server, arguments, request)
 
         mock_resolve.assert_called_once_with(server.session_manager.db, header_session_uuid)
         # The derived project_id is fed back into the helper
