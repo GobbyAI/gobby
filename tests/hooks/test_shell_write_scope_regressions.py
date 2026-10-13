@@ -291,11 +291,9 @@ def test_nested_wrappers_with_many_functions_report_write(
     def bounded_scan(subject: str) -> ShellScan:
         nonlocal scanned_chars
         scanned_chars += len(subject)
-        # Bound real parser work, including recursive scans, independently of host load.
-        # Allow generous rescanning at eight levels; reject repeated function-body expansion.
-        assert scanned_chars <= 256 * len(command), (
-            "nested wrapper scan work exceeded linear budget"
-        )
+        # Bound cumulative input at this scanner entry point, independently of host load.
+        # Healthy 1000-function cases peak at 25.91x input; 32x leaves 23% headroom.
+        assert scanned_chars <= 32 * len(command), "nested wrapper scan work exceeded linear budget"
         return scan_shell_command(subject)
 
     monkeypatch.setattr(_normalization_canonical, "scan_shell_command", bounded_scan)
