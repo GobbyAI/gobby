@@ -80,7 +80,12 @@ def stub_runner(tmp_path: Path) -> Path:
     (dist / "index.js").write_text(_STUB_RUNTIME, encoding="utf-8")
     (tmp_path / "package.json").write_text('{"type": "module"}', encoding="utf-8")
     runner = tmp_path / "runner.mjs"
-    shutil.copyfile(_RUNNER, runner)
+    # Ring-buffer and priority tests exercise Linux's unchanged monitor path.
+    runner.write_text(
+        "Object.defineProperty(process, 'platform', { value: 'linux' });\n"
+        + _RUNNER.read_text().removeprefix("#!/usr/bin/env node\n"),
+        encoding="utf-8",
+    )
     return runner
 
 

@@ -1,6 +1,9 @@
 """Hermetic pinned upstream bytes for fake SRT installations."""
 
 import gzip
+import hashlib
+import io
+import tarfile
 from pathlib import Path
 
 from gobby.agents.srt_package_patch import (
@@ -25,3 +28,18 @@ def write_srt_proxy_fixture(root: Path, *, patched: bool = True) -> Path:
     if patched:
         apply_srt_proxy_patch(root)
     return path
+
+
+def write_srt_parser_fixture(root: Path) -> Path:
+    """Materialize exact parser dependencies from the integrity-verified 0.0.79 tarball."""
+    fixture = Path(__file__).parent / "fixtures/srt/parser-dependencies-0.0.79.tar.gz"
+    payload = fixture.read_bytes()
+    expected = "4f897ae5ece67f3a6f7103e3553348a7c582aa10d14b11ea5d89f29ac548e282"
+    if hashlib.sha256(payload).hexdigest() != expected:
+        raise ValueError("Pinned SRT parser dependency fixture checksum mismatch")
+    package = root / HTTP_PROXY_PATH.parents[2]
+    package.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        archive.extractall(package, filter="data")
+    write_srt_proxy_fixture(root)
+    return root / MACOS_PROFILE_PATH
