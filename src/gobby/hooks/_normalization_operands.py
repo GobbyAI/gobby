@@ -25,6 +25,7 @@ _FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
     "touch": ("Adrt", frozenset({"--date", "--reference", "--time"})),
     "mkdir": ("m", frozenset({"--mode"})),
     "mv": ("St", frozenset({"--suffix", "--target-directory"})),
+    "ln": ("St", frozenset({"--suffix", "--target-directory"})),
     "cp": ("St", frozenset({"--no-preserve", "--sparse", "--suffix", "--target-directory"})),
     "install": (
         "gmoSt",
@@ -37,6 +38,88 @@ _FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
 # of a longer value-taking option (install --strip vs --strip-program).
 _LONG_FLAGS_SHADOWING_VALUE_OPTIONS = frozenset({"--strip"})
 _INSTALL_LONG_DIRECTORY_CANDIDATES = frozenset({"--debug", "--directory"})
+
+
+def _sort_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
+    """Separate sort's output target from input and option operands."""
+    paths: list[str] = []
+    writes = False
+    index = 1
+    while index < len(parts):
+        word = parts[index]
+        if word == "--":
+            break
+        if word in {"-o", "--output"}:
+            writes = True
+            index += 1
+            if index < len(parts):
+                paths.append(parts[index])
+        elif word.startswith("--output="):
+            writes = True
+            paths.append(word.split("=", 1)[1])
+        elif word.startswith("-") and not word.startswith("--"):
+            for offset, option in enumerate(word[1:], 2):
+                if option in "oktST":
+                    value = word[offset:]
+                    if not value:
+                        index += 1
+                        value = parts[index] if index < len(parts) else ""
+                    if option == "o":
+                        writes = True
+                        if value:
+                            paths.append(value)
+                    break
+        elif word in {"--key", "--field-separator", "--buffer-size", "--temporary-directory"}:
+            index += 1
+        index += 1
+    return writes, paths
+
+
+def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[str]]:
+    """Track extraction directories without treating archive names as options."""
+    extracts = False
+    directories: list[str] = []
+    directory = cwd
+    index = 1
+    while index < len(parts):
+        word = parts[index]
+        if word == "--":
+            if extracts and index + 1 < len(parts):
+                directories.extend(_rebase_shell_paths(["."], directory))
+            break
+        if word in {"--extract", "--get"}:
+            extracts = True
+        elif word.startswith("--directory="):
+            directory = _rebase_shell_paths([word.split("=", 1)[1]], directory)[0]
+            directories.append(directory)
+        elif word in {"--directory", "--file", "--files-from", "--exclude", "--strip-components"}:
+            index += 1
+            if word == "--directory" and index < len(parts):
+                directory = _rebase_shell_paths([parts[index]], directory)[0]
+                directories.append(directory)
+        elif (word.startswith("-") and not word.startswith("--")) or (
+            index == 1 and word and not word.startswith("-")
+        ):
+            old_style = not word.startswith("-")
+            options = word[1:] if not old_style else word
+            for offset, option in enumerate(options, 1):
+                if option == "x":
+                    extracts = True
+                elif option in "fCT":
+                    value = "" if old_style else options[offset:]
+                    if not value:
+                        index += 1
+                        value = parts[index] if index < len(parts) else ""
+                    if option == "C" and value:
+                        directory = _rebase_shell_paths([value], directory)[0]
+                        directories.append(directory)
+                    if not old_style:
+                        break
+        elif not word.startswith("-") and extracts:
+            # A member named before a later -C extracts in the earlier directory.
+            directories.extend(_rebase_shell_paths(["."], directory))
+        index += 1
+    return extracts, list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd)))
 
 
 def _resolve_long_option(option: str, names: frozenset[str]) -> str | None:
