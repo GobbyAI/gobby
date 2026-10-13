@@ -402,6 +402,29 @@ definition change does not alter a run that is already going.
 
 ## Launch And Lifecycle
 
+On macOS, managed executions share one host-side SRT violation monitor per
+immutable runner identity. The monitor survives daemon restarts; an older
+identity drains its existing subscribers during an update. Providers start only
+after their subscription and process identity are registered. The private Unix
+socket is outside provider filesystem grants.
+
+Each subscriber has a mode-`0600` backlog keyed by the daemon-owned run ID.
+Delivery preserves record order, and acknowledgement follows the upstream
+parser and execution-log append. A paused or slow runner can replay its backlog
+without pausing ingestion for other subscribers. Catch-up and normal completion
+delete the backlog. Subscriber loss retains unacknowledged records; run teardown
+or a later monitor startup moves them into `logs/sandbox-violations/`.
+The limit is 32 MiB of queued or unacknowledged records, plus the triggering
+record, header, and up to 1 MiB of acknowledged prefix before compaction.
+Compaction temporarily holds a second copy of the remaining records.
+Exceeding it closes that subscriber and retains its evidence.
+
+Loss of the shared log stream closes and unlinks the monitor socket and stops
+registered providers and their attached descendants. Already-reparented workers
+created through double-fork or `setsid` can survive inside their inherited macOS
+sandbox, without violation monitoring. The monitor cannot recover their lineage
+after reparenting; the closed shared socket refuses new subscriptions.
+
 Gobby constructs the complete Claude, Codex, Grok, Droid, or Antigravity command first,
 preflights SRT, and then wraps that argv exactly once before tmux creation.
 Provider-native OS sandbox flags are omitted in SRT mode, while provider approval

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import signal
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -23,6 +25,7 @@ import pytest
 
 from gobby.agents import srt_monitor
 from gobby.utils.dependency_requirements import SRT_RELEASE
+from tests.srt_fixture_helpers import write_srt_parser_fixture
 
 pytestmark = pytest.mark.unit
 _RUNNER = Path(__file__).resolve().parents[2] / "src/gobby/agents/srt_runner.mjs"
@@ -70,7 +73,9 @@ class MonitorHarness:
         self.events.flush()
         self.events.close()
 
-    def launch(self, suffix: str, *, descendant: bool = False) -> subprocess.Popen[str]:
+    def launch(
+        self, suffix: str, *, descendant: bool = False, orphan: bool = False
+    ) -> subprocess.Popen[str]:
         settings = self.root / f"{suffix}.settings.json"
         settings.write_text("{}")
         ready = "console.log(JSON.stringify(process.env.GOBBY_SRT_MONITOR_SOCKET ?? null));"
@@ -80,6 +85,20 @@ class MonitorHarness:
                 "require('net').createServer(socket => socket.end()).listen(process.argv[2], () => console.log('ready'));"
                 "process.on('SIGTERM', () => {});"
             )
+            if orphan:
+                # Record the actual OS parent only after the intermediary exits.
+                descendant_code = (
+                    "const originalParent = process.ppid;"
+                    "const timer = setInterval(() => {"
+                    " if (process.ppid !== originalParent || process.ppid === 1) {"
+                    "  clearInterval(timer);" + descendant_code + " } }, 5);"
+                )
+                descendant_code = (
+                    "const child = require('child_process').spawn(process.execPath, ['-e', "
+                    + json.dumps(descendant_code)
+                    + ", ...process.argv.slice(1)], { detached: true, stdio: ['ignore','inherit','inherit'] });"
+                    "child.unref();"
+                )
             ready = (
                 "const child = require('child_process').spawn(process.execPath, ['-e', "
                 + json.dumps(descendant_code)
@@ -109,7 +128,12 @@ class MonitorHarness:
                 str(self.root / f"{suffix}.child.pid"),
                 str(self.root / f"{suffix[1:3]}.s"),
             ],
-            env={**os.environ, "GOBBY_SRT_MONITOR_SOCKET": self.socket_path, "TEST_SUFFIX": suffix},
+            env={
+                **os.environ,
+                "GOBBY_SRT_MONITOR_SOCKET": self.socket_path,
+                "GOBBY_SRT_RUN_KEY": suffix.strip("_"),
+                "TEST_SUFFIX": suffix,
+            },
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -162,7 +186,8 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
             + _RUNNER.read_text()
             .removeprefix("#!/usr/bin/env node\n")
             .replace("spawn('/usr/bin/log', [", f"spawn({json.dumps(str(fake_log))}, [")
-            .replace("execFileSync('/bin/ps',", f"execFileSync({json.dumps(str(fake_ps))},")
+            .replace("execFileAsync('/bin/ps',", f"execFileAsync({json.dumps(str(fake_ps))},")
+            .replace("function sharedTransport(", "export function sharedTransport(")
             .replace(
                 "providerIdentity = await transport.providerStarted(child.pid)",
                 f"appendFileSync({json.dumps(str(root))} + '/' + child.pid + '.pid', child.pid+' '+process.pid+' 123 '+child.pid+'-start\\n');\n"
@@ -174,6 +199,7 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
             srt_monitor, "SRT_RELEASE", replace(SRT_RELEASE, runner_sha256=identity)
         )
         monkeypatch.setattr(srt_monitor, "srt_mux_tmpdir", lambda: root)
+        monkeypatch.setattr(srt_monitor, "get_gobby_home", lambda: root)
         socket_path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ)
         monitor = srt_monitor._children[-1]
         try:
@@ -185,13 +211,36 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
 
 
 def _subscribe(path: str, suffix: str) -> tuple[socket.socket, IO[bytes]]:
+    (Path(path).parent / "observer.pid").write_text(
+        f"{os.getpid()} {os.getppid()} 123 {os.getpid()}-start\n"
+    )
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(5)
+    client.settimeout(15)
     client.connect(path)
-    client.sendall(json.dumps({"suffix": suffix}).encode() + b"\n")
+    client.sendall(
+        json.dumps(
+            {"suffix": suffix, "runKey": suffix.strip("_"), "runnerPid": os.getpid()}
+        ).encode()
+        + b"\n"
+    )
     stream = client.makefile("rb")
     assert json.loads(stream.readline())["ready"] is True
     return client, stream
+
+
+def _wait_path(path: Path, *, absent: bool = False, minimum_bytes: int = 1) -> None:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        try:
+            if absent and not path.exists():
+                return
+            if not absent and path.stat().st_size >= minimum_bytes:
+                return
+        except FileNotFoundError:
+            if absent:
+                return
+        time.sleep(0.01)
+    pytest.fail(f"backlog path did not reach expected state: {path}")
 
 
 def test_one_stream_routes_complete_events_and_failure_closes_all(
@@ -340,25 +389,27 @@ def test_runner_update_drains_old_broker_and_new_idle_broker_exits(
                 new_monitor.wait(timeout=5)
 
 
-def test_slow_subscriber_isolated_from_healthy_subscriber(monitor_harness: MonitorHarness) -> None:
+def test_lagging_subscriber_replays_in_order_without_blocking_healthy_subscriber(
+    monitor_harness: MonitorHarness,
+) -> None:
     harness = monitor_harness
     slow, slow_stream = _subscribe(harness.socket_path, "_slow_SBX")
     healthy, healthy_stream = _subscribe(harness.socket_path, "_healthy_SBX")
     with slow, slow_stream, healthy, healthy_stream:
-        for _ in range(4000):
-            harness.events.write(json.dumps({"eventMessage": "x" * 2048 + " _slow_SBX"}) + "\n")
+        messages = [f"{index}:" + "x" * 2048 + " _slow_SBX" for index in range(600)]
+        for message in messages:
+            harness.events.write(json.dumps({"eventMessage": message}) + "\n")
         harness.events.flush()
         harness.event("Sandbox: healthy deny file-read-data /healthy _healthy_SBX")
         assert json.loads(healthy_stream.readline())["message"].endswith("_healthy_SBX")
-        try:
-            while slow_stream.readline():
-                pass
-        except ConnectionResetError:
-            pass
-        failure = Path(harness.socket_path + "._slow_SBX.failed.jsonl")
-        assert 0 < failure.stat().st_size <= 2 * 1024 * 1024
-        saved = [json.loads(line) for line in failure.read_text().splitlines()]
-        assert all(record["message"].endswith("_slow_SBX") for record in saved)
+        last_id = 0
+        for message in messages:
+            record = json.loads(slow_stream.readline())
+            assert record["message"] == message
+            assert record["id"] > last_id
+            last_id = record["id"]
+            slow.sendall(json.dumps({"ack": record["id"]}).encode() + b"\n")
+        _wait_path(harness.root / "slow_SBX.srt-backlog.jsonl.active", absent=True)
         harness.event("Sandbox: healthy deny file-write-data /still-live _healthy_SBX")
         assert "/still-live" in json.loads(healthy_stream.readline())["message"]
 
@@ -398,7 +449,8 @@ def test_acknowledged_records_stay_only_in_execution_log(monitor_harness: Monito
         child.send_signal(signal.SIGINT)
         child.communicate(timeout=15)
         assert child.returncode == -signal.SIGINT
-        assert not Path(harness.socket_path + "._acked_SBX.failed.jsonl").exists()
+        assert not (harness.root / "acked_SBX.srt-backlog.jsonl").exists()
+        assert not (harness.root / "acked_SBX.srt-backlog.jsonl.active").exists()
         assert Path(harness.socket_path + ".jsonl").stat().st_size == 0
         records = [
             json.loads(line)
@@ -428,9 +480,9 @@ def test_provider_identity_guards_refuse_reused_or_unowned_pid(
         "const parent = scenario === 'reused' ? process.pid : 0;\n"
         "writeFileSync(path, `${pid} ${parent} 123 before\\n`);\n"
         "try {\n"
-        " const identity = captureProviderIdentity(pid, process.pid);\n"
+        " const identity = await captureProviderIdentity(pid, process.pid);\n"
         " writeFileSync(path, `${pid} ${parent} 123 reused-start\\n`);\n"
-        " stopProviderTree(pid, identity); throw new Error('guard did not refuse');\n"
+        " await stopProviderTree(pid, identity); throw new Error('guard did not refuse');\n"
         "} catch (error) {\n"
         " const expected = scenario === 'reused' ? 'identity changed' : 'not a descendant';\n"
         " if (!error.message.includes(expected)) throw error;\n"
@@ -508,6 +560,7 @@ def test_terminal_keeps_controlling_tty_and_fails_closed(monitor_harness: Monito
             {
                 **os.environ,
                 "GOBBY_SRT_MONITOR_SOCKET": harness.socket_path,
+                "GOBBY_SRT_RUN_KEY": "terminal",
                 "TEST_SUFFIX": "_terminal_SBX",
             },
         )
@@ -540,3 +593,100 @@ def test_terminal_keeps_controlling_tty_and_fails_closed(monitor_harness: Monito
             os.waitpid(pid, 0)
         except ChildProcessError:
             pass
+
+
+def test_pinned_upstream_parser_records_transport_attribution_and_applies_ignores(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    parser = write_srt_parser_fixture(harness.root)
+    store = parser.with_name("sandbox-violation-store.js")
+    script = harness.root / "parser-probe.mjs"
+    script.write_text(
+        f"import {{ sharedTransport }} from {json.dumps(harness.runner.as_uri())};\n"
+        f"import {{ startMacOSSandboxLogMonitor }} from {json.dumps(parser.as_uri())};\n"
+        f"import {{ SandboxViolationStore }} from {json.dumps(store.as_uri())};\n"
+        "let transport; const store = new SandboxViolationStore();\n"
+        "globalThis.gobbySrtLogTransport = suffix => {\n"
+        " console.log(JSON.stringify({suffix}));\n"
+        f" transport = sharedTransport({json.dumps(harness.socket_path)}, suffix, error => {{\n"
+        "  console.error(error.message); process.exitCode = 1;\n"
+        " }, 'parser-proof'); return transport;\n"
+        "};\n"
+        "startMacOSSandboxLogMonitor(violation => {\n"
+        " store.addViolation(violation); console.log(JSON.stringify(store.getViolations()));\n"
+        "}, { '*': ['/ignored'] }, key => key === 'owned-key' ? 'rg owned-command' : undefined);\n"
+        "await transport.ready; console.log('ready');\n"
+    )
+    child = subprocess.Popen(
+        [str(harness.node), str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=15)
+            suffix = json.loads(child.stdout.readline())["suffix"]
+            assert child.stdout.readline().strip() == "ready"
+            encoded = base64.b64encode(b"owned-key").decode()
+            harness.event(
+                f"Sandbox: node(123) deny(1) file-read-data /ignored\nCMD64_{encoded}_END_{suffix}"
+            )
+            harness.event(
+                f"Sandbox: node(123) deny(1) file-read-data /owned\nCMD64_{encoded}_END_{suffix}"
+            )
+            assert selector.select(timeout=15)
+            records = json.loads(child.stdout.readline())
+            assert len(records) == 1
+            assert records[0]["line"] == "node(123) deny(1) file-read-data /owned"
+            assert records[0]["command"] == "rg owned-command"
+            assert records[0]["encodedCommand"] == encoded
+        harness.finish()
+        stdout, stderr = child.communicate(timeout=8)
+        assert child.returncode == 1, (stdout, stderr)
+        assert "shared violation monitor disconnected" in stderr
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+
+
+def test_monitor_loss_closes_sink_but_reparented_worker_survives(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    child = harness.launch("_orphan_SBX", descendant=True, orphan=True)
+    worker_pid: int | None = None
+    try:
+        assert child.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=15)
+            assert json.loads(child.stdout.readline()) is None
+        fields = (harness.root / "_orphan_SBX.child.pid").read_text().split()
+        worker_pid = int(fields[0])
+        assert int(fields[1]) == 1, "worker must actually be reparented before failure"
+        harness.finish()
+        # The surviving worker inherits stderr; communicate would wait for its
+        # pipe EOF and obscure the specific cleanup failure below.
+        child.wait(timeout=8)
+        assert child.returncode == 1
+        # Approved scope: monitor loss kills attached descendants and closes
+        # the shared sink. Already-reparented workers remain sandboxed and live.
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sink:
+            with pytest.raises((ConnectionRefusedError, FileNotFoundError)):
+                sink.connect(harness.socket_path)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as worker:
+            worker.connect(str(harness.root / "or.s"))
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        if worker_pid is not None:
+            try:
+                os.kill(worker_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass

@@ -849,6 +849,7 @@ async def prepare_sandbox_launch(
             run_environment["GOBBY_SRT_MONITOR_SOCKET"] = await asyncio.to_thread(
                 ensure_srt_monitor, node=installation.node, runner=installation.runner, env=env
             )
+            run_environment["GOBBY_SRT_RUN_KEY"] = run_paths.root.name
         except (OSError, ValueError, RuntimeError) as exc:
             raise SrtRuntimeError(f"Shared SRT violation monitor unavailable: {exc}") from exc
     violation_path = run_paths.root / SRT_VIOLATIONS_RELATIVE_PATH

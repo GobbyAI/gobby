@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from gobby.agents.sandbox_policy import srt_mux_tmpdir
+from gobby.paths import get_gobby_home
 from gobby.utils.dependency_requirements import SRT_RELEASE
 
 _lock = threading.Lock()
@@ -67,7 +68,14 @@ def ensure_srt_monitor(*, node: Path, runner: Path, env: Mapping[str, str]) -> s
         with os.fdopen(descriptor, "ab") as log, parent, child_ready:
             parent.settimeout(30)
             child = subprocess.Popen(
-                [str(node), str(runner), "--monitor", str(path), str(child_ready.fileno())],
+                [
+                    str(node),
+                    str(runner),
+                    "--monitor",
+                    str(path),
+                    str(child_ready.fileno()),
+                    str(get_gobby_home() / "logs" / "sandbox-violations"),
+                ],
                 # The long-lived broker needs no per-run credentials, grants,
                 # provider configuration, or Node preload options.
                 env={"PATH": env.get("PATH", os.defpath)},

@@ -2,12 +2,14 @@
 
 import { appendFileSync, chmodSync, readFileSync, unlinkSync, writeSync, closeSync, openSync, fchmodSync, fstatSync, renameSync, constants } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 import { createConnection, createServer } from 'node:net'
 import { EventEmitter } from 'node:events'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
+import { resolve, dirname, join } from 'node:path'
+import { promisify } from 'node:util'
+import { open, unlink, rename, readdir, mkdir, link, lstat } from 'node:fs/promises'
 import process from 'node:process'
 import { getPriority, setPriority } from 'node:os'
 
@@ -19,10 +21,187 @@ import {
 // This host process outlives daemon restarts. Route complete eventMessage
 // records by SRT's random session suffix, never by a provider PID.
 const runnerIdentity = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex')
+const execFileAsync = promisify(execFile)
 
-async function monitor(socketPath, readyFd) {
+const backlogSuffix = '.srt-backlog.jsonl'
+const backlogLimit = 32 * 1024 * 1024
+const validRunKey = key => typeof key === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(key)
+
+// One private, run-keyed queue is also the failure snapshot. The unacked bound
+// includes queued writes; retain the triggering record before failing closed.
+class Backlog {
+  constructor(directory, metadata) {
+    this.path = join(directory, metadata.runKey + backlogSuffix)
+    this.activePath = this.path + '.active'
+    this.header = JSON.stringify({ monitorBacklog: metadata }) + '\n'
+    this.headerBytes = Buffer.byteLength(this.header)
+    this.file = null
+    this.ownsFile = false
+    this.length = 0
+    this.bytes = 0
+    this.entries = new Map()
+    this.sendQueue = []
+    this.cursor = 0
+    this.tail = Promise.resolve()
+  }
+  serial(operation) {
+    const result = this.tail.then(operation)
+    this.tail = result.catch(() => {})
+    return result
+  }
+  async create() {
+    if (this.file) return
+    const prior = await lstat(this.path).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+    if (prior) throw new Error('unrecovered monitor backlog already exists')
+    this.file = await open(this.activePath, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    this.ownsFile = true
+    await this.file.writeFile(this.header)
+    this.length = this.headerBytes
+  }
+  initialize() { return this.serial(() => this.create()) }
+  add(record) {
+    const data = Buffer.from(JSON.stringify(record) + '\n')
+    this.bytes += data.length
+    const full = this.bytes > backlogLimit
+    const stored = this.serial(async () => {
+      await this.create()
+      const offset = this.length
+      await this.file.writeFile(data)
+      this.length += data.length
+      this.entries.set(record.id, { offset, size: data.length })
+      this.sendQueue.push(record.id)
+    })
+    return { full, stored }
+  }
+  next() {
+    return this.serial(async () => {
+      const id = this.sendQueue[this.cursor]
+      if (id === undefined) return null
+      this.cursor++
+      if (this.cursor >= 1024) {
+        this.sendQueue = this.sendQueue.slice(this.cursor)
+        this.cursor = 0
+      }
+      const entry = this.entries.get(id)
+      if (!entry || !this.file) throw new Error('invalid monitor backlog cursor')
+      const data = Buffer.alloc(entry.size)
+      let count = 0
+      while (count < data.length) {
+        const { bytesRead } = await this.file.read(data, count, data.length - count, entry.offset + count)
+        if (!bytesRead) throw new Error('incomplete monitor backlog record')
+        count += bytesRead
+      }
+      return data
+    })
+  }
+  ack(id) {
+    return this.serial(async () => {
+      if (this.entries.keys().next().value !== id) throw new Error('invalid monitor acknowledgment order')
+      this.bytes -= this.entries.get(id).size
+      this.entries.delete(id)
+      const first = this.entries.values().next().value
+      if (!first) await this.discard()
+      else if (first.offset - this.headerBytes >= 1024 * 1024) await this.compact()
+    })
+  }
+  async discard() {
+    await this.file?.close()
+    this.file = null
+    if (this.ownsFile) await unlink(this.activePath).catch(error => { if (error.code !== 'ENOENT') throw error })
+    this.ownsFile = false
+    this.length = 0
+    this.entries.clear()
+    this.sendQueue = []
+    this.cursor = 0
+  }
+  async compact() {
+    const first = this.entries.values().next().value
+    if (!first) { await this.discard(); return }
+    if (first.offset === this.headerBytes) return
+    const temporaryPath = this.activePath + '.compact'
+    const temporary = await open(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    try {
+      await temporary.writeFile(this.header)
+      const buffer = Buffer.alloc(65536)
+      let position = first.offset
+      while (position < this.length) {
+        const { bytesRead } = await this.file.read(buffer, 0, Math.min(buffer.length, this.length - position), position)
+        if (!bytesRead) throw new Error('incomplete monitor backlog during compaction')
+        await temporary.writeFile(buffer.subarray(0, bytesRead))
+        position += bytesRead
+      }
+      await temporary.close()
+      await rename(temporaryPath, this.activePath)
+      await this.file.close()
+      this.file = await open(this.activePath, constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW)
+      const delta = first.offset - this.headerBytes
+      for (const entry of this.entries.values()) entry.offset -= delta
+      this.length -= delta
+    } finally {
+      await temporary.close().catch(() => {})
+      await unlink(temporaryPath).catch(error => { if (error.code !== 'ENOENT') throw error })
+    }
+  }
+  finish(done) {
+    return this.serial(async () => {
+      if (done) { await this.discard(); return }
+      await this.compact()
+      await this.file?.close()
+      this.file = null
+      if (this.ownsFile) {
+        // Publish only a completed snapshot; never overwrite an earlier failure.
+        await link(this.activePath, this.path)
+        await unlink(this.activePath)
+        this.ownsFile = false
+      }
+    })
+  }
+}
+
+async function recoverBacklogs(directory, retentionDirectory) {
+  const pattern = /^([a-zA-Z0-9_-]{1,128})\.srt-backlog\.jsonl(?:\.active)?$/
+  const names = (await readdir(directory)).filter(name => pattern.test(name))
+  if (!names.length) return
+  const processes = await readProcessTable()
+  for (const name of names) {
+    const path = join(directory, name)
+    const source = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const info = await source.stat()
+      if (!info.isFile() || info.uid !== process.getuid()) throw new Error('unsafe monitor backlog')
+      const buffer = Buffer.alloc(16384)
+      const { bytesRead } = await source.read(buffer, 0, buffer.length, 0)
+      const header = JSON.parse(buffer.subarray(0, bytesRead).toString().split('\n')[0]).monitorBacklog
+      const runKey = name.match(pattern)[1]
+      if (header?.runKey !== runKey) throw new Error('monitor backlog run key mismatch')
+      if (name.endsWith('.active') && header.brokerStarted && processes.get(header.brokerPid)?.started === header.brokerStarted) continue
+      if (header.runnerStarted && processes.get(header.runnerPid)?.started === header.runnerStarted) continue
+      await mkdir(retentionDirectory, { recursive: true, mode: 0o700 })
+      const destination = join(retentionDirectory, runKey + '.monitor-backlog.jsonl')
+      const retained = await open(destination, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
+      try {
+        const retainedInfo = await retained.stat()
+        if (!retainedInfo.isFile() || retainedInfo.uid !== process.getuid()) throw new Error('unsafe monitor backlog retention')
+        await retained.chmod(0o600)
+        let position = 0
+        while (true) {
+          const { bytesRead: count } = await source.read(buffer, 0, buffer.length, position)
+          if (!count) break
+          await retained.writeFile(buffer.subarray(0, count))
+          position += count
+        }
+      } finally { await retained.close() }
+      await unlink(path)
+      await unlink(path + '.compact').catch(error => { if (error.code !== 'ENOENT') throw error })
+      console.error(`gobby-srt monitor: recovered backlog for ${runKey} at ${destination}`)
+    } finally { await source.close() }
+  }
+}
+
+async function monitor(socketPath, readyFd, retentionDirectory) {
   setPriority(0, 19)
   const clients = new Map()
+  const cleanups = new Set()
   let logProcess
   let stopping = false
   let listening = false
@@ -57,30 +236,32 @@ async function monitor(socketPath, readyFd) {
       console.error(`gobby-srt monitor: ${unparsed} malformed records; ${error.message}`)
     }
   }
-  const savePending = state => {
-    if (!state.pending.size) return
-    const path = socketPath + '.' + state.suffix + '.failed.jsonl'
-    const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
-    try {
-      fchmodSync(fd, 0o600)
-      appendFileSync(fd, [...state.pending.values()].join(''))
-      state.pending.clear()
-      state.bytes = 0
-    } finally { closeSync(fd) }
-  }
-  const finishConsumer = state => {
+  const finishConsumer = async state => {
     if (state.finished) return
     state.finished = true
-    try { savePending(state) } catch (error) {
-      console.error(`gobby-srt monitor pending record save failed: ${error.message}`)
-    }
-    if (!state.done && state.providerPid !== null) {
-      try { stopProviderTree(state.providerPid, state.providerIdentity) } catch (error) {
-        console.error(`gobby-srt monitor provider cleanup failed: ${error.message}`)
+    await Promise.all([
+      state.backlog?.finish(state.done).catch(error => console.error(`gobby-srt monitor backlog retention failed for ${state.runKey}: ${error.message}`)),
+      !state.done && state.providerPid !== null
+        ? stopProviderTree(state.providerPid, state.providerIdentity).catch(error => console.error(`gobby-srt monitor provider cleanup failed: ${error.message}`))
+        : undefined,
+    ])
+  }
+  const pump = async (socket, state) => {
+    if (state.pumping || state.blocked || state.finished) return
+    state.pumping = true
+    try {
+      while (!state.blocked && !state.finished && !socket.destroyed) {
+        const record = await state.backlog.next()
+        if (!record || state.finished) break
+        state.blocked = !socket.write(record)
       }
-    }
+    } catch (error) {
+      console.error(`gobby-srt monitor delivery failed for ${state.runKey}: ${error.message}`)
+      socket.destroy()
+    } finally { state.pumping = false }
   }
   const armIdle = () => {
+    clearTimeout(idleTimer)
     if (clients.size === 0 && !stopping) idleTimer = setTimeout(stop, 30000)
   }
   const acknowledge = socket => socket.write(JSON.stringify({ ready: true, identity: runnerIdentity }) + '\n')
@@ -88,7 +269,7 @@ async function monitor(socketPath, readyFd) {
     if (streamReady) return
     streamReady = true
     if (readyFd !== undefined) { writeSync(readyFd, 'ready\n'); closeSync(readyFd) }
-    for (const [socket, state] of clients) if (state.suffix !== null) acknowledge(socket)
+    for (const [socket, state] of clients) if (state.registered) acknowledge(socket)
     armIdle()
   }
   const stop = () => {
@@ -104,46 +285,72 @@ async function monitor(socketPath, readyFd) {
   }
   const server = createServer(socket => {
     clearTimeout(idleTimer)
-    const state = { suffix: null, runnerPid: null, providerPid: null, providerIdentity: null, done: false, finished: false, pending: new Map(), bytes: 0 }
+    const state = { suffix: null, registered: false, runKey: null, runnerPid: null, providerPid: null, providerIdentity: null, done: false, finished: false, backlog: null, blocked: false, pumping: false, queue: Promise.resolve() }
     clients.set(socket, state)
     socket.setTimeout(5000, () => socket.destroy())
     const lines = createInterface({ input: socket, crlfDelay: Infinity })
     lines.on('line', line => {
-      try {
+      state.queue = state.queue.then(async () => {
         const request = JSON.parse(line)
         if (state.done || state.finished) throw new Error('closed monitor subscription')
         if (state.suffix === null && typeof request.suffix === 'string' && /^_[a-z0-9]+_SBX$/.test(request.suffix)) {
           state.suffix = request.suffix
+          if (request.suffix !== '_gobbyprobe_SBX') {
+            if (!validRunKey(request.runKey)) throw new Error('invalid monitor run key')
+            for (const [otherSocket, otherState] of clients) {
+              if (otherSocket !== socket && otherState.runKey === request.runKey) throw new Error('monitor run key already subscribed')
+            }
+            state.runKey = request.runKey
+          }
           if (request.runnerPid !== undefined) {
             if (!Number.isSafeInteger(request.runnerPid) || request.runnerPid <= 1) throw new Error('invalid runner PID')
             state.runnerPid = request.runnerPid
           }
+          const processes = state.runnerPid === null ? new Map() : await readProcessTable()
+          const runnerStarted = processes.get(state.runnerPid)?.started
+          if (state.runnerPid !== null && !runnerStarted) throw new Error('runner identity unavailable')
+          if (state.runKey !== null) {
+            state.backlog = new Backlog(dirname(socketPath), { runKey: state.runKey, runnerPid: state.runnerPid, runnerStarted, brokerPid: process.pid, brokerStarted: processes.get(process.pid)?.started, suffix: state.suffix })
+            await state.backlog.initialize()
+            if (state.finished || socket.destroyed) await state.backlog.finish(false)
+          }
           socket.setTimeout(0)
+          state.registered = true
           if (streamReady) acknowledge(socket)
-        } else if (Number.isSafeInteger(request.ack) && state.pending.has(request.ack)) {
-          state.bytes -= Buffer.byteLength(state.pending.get(request.ack))
-          state.pending.delete(request.ack)
+        } else if (Number.isSafeInteger(request.ack) && state.backlog) {
+          await state.backlog.ack(request.ack)
         } else if (Number.isSafeInteger(request.providerPid) && request.providerPid > 1 && state.providerPid === null) {
           if (state.runnerPid === null) throw new Error('provider registration needs its runner')
-          state.providerIdentity = captureProviderIdentity(request.providerPid, state.runnerPid)
+          const identity = await captureProviderIdentity(request.providerPid, state.runnerPid)
+          if (state.finished || socket.destroyed) {
+            await stopProviderTree(request.providerPid, identity)
+            throw new Error('monitor closed during provider registration')
+          }
+          state.providerIdentity = identity
           state.providerPid = request.providerPid
           socket.write(JSON.stringify({ providerReady: true, identity: state.providerIdentity }) + '\n')
         } else if (request.done === true) {
           state.done = true
         } else throw new Error('invalid monitor request')
-      } catch { socket.destroy() }
+      })
+      state.queue.catch(() => socket.destroy())
     })
     socket.on('error', () => socket.destroy())
+    socket.on('drain', () => { state.blocked = false; void pump(socket, state) })
     socket.on('close', () => {
       clients.delete(socket)
       lines.close()
       // This also stops a provider whose runner was killed or SIGSTOPped and
       // therefore cannot process its own disconnected-transport callback.
-      finishConsumer(state)
+      const cleanup = finishConsumer(state)
+      cleanups.add(cleanup)
+      cleanup.finally(() => cleanups.delete(cleanup))
       armIdle()
     })
   })
+  const serverClosed = new Promise(resolve => server.once('close', resolve))
   try {
+    await recoverBacklogs(dirname(socketPath), retentionDirectory)
     await new Promise((resolve, reject) => {
       server.once('error', reject)
       server.listen(socketPath, resolve)
@@ -165,17 +372,20 @@ async function monitor(socketPath, readyFd) {
         const message = event.eventMessage
         const suffix = message.match(/_[a-z0-9]+_SBX$/)?.[0]
         const id = ++sequence
-        const record = JSON.stringify({ id, message }) + '\n'
         let matched = false
         for (const [socket, state] of clients) {
-          if (!socket.destroyed && state.suffix === suffix) {
+          if (!socket.destroyed && !state.finished && state.backlog && state.suffix === suffix) {
             matched = true
-            state.pending.set(id, record)
-            state.bytes += Buffer.byteLength(record)
-            socket.write(record)
-            if (state.bytes > 1024 * 1024) {
-              console.error(`gobby-srt monitor: slow consumer ${suffix}; closing its subscription`)
-              finishConsumer(state)
+            const { full, stored } = state.backlog.add({ id, message })
+            stored.then(() => pump(socket, state)).catch(error => {
+              console.error(`gobby-srt monitor backlog write failed for ${state.runKey}: ${error.message}`)
+              socket.destroy()
+            })
+            if (full) {
+              console.error(`gobby-srt monitor: ${state.runKey} exceeded 32 MiB backlog; closing its subscription`)
+              const cleanup = finishConsumer(state)
+              cleanups.add(cleanup)
+              cleanup.finally(() => cleanups.delete(cleanup))
               socket.destroy()
             }
           }
@@ -195,10 +405,14 @@ async function monitor(socketPath, readyFd) {
       })
       for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, stop)
     })
-  } finally { stop() }
+  } finally {
+    stop()
+    if (listening) await serverClosed
+    await Promise.allSettled([...cleanups])
+  }
 }
 
-function sharedTransport(socketPath, suffix, failed) {
+function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_SRT_RUN_KEY) {
   const transport = new EventEmitter()
   transport.stdout = new EventEmitter()
   transport.stderr = new EventEmitter()
@@ -223,7 +437,7 @@ function sharedTransport(socketPath, suffix, failed) {
     socket.destroy()
     failed(error)
   }
-  socket.once('connect', () => socket.write(JSON.stringify({ suffix, runnerPid: process.pid }) + '\n'))
+  socket.once('connect', () => socket.write(JSON.stringify({ suffix, runnerPid: process.pid, runKey }) + '\n'))
   lines.on('line', line => {
     try {
       const record = JSON.parse(line)
@@ -257,8 +471,8 @@ function sharedTransport(socketPath, suffix, failed) {
   return transport
 }
 
-function readProcessTable() {
-  const table = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], {
+async function readProcessTable() {
+  const { stdout: table } = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], {
     encoding: 'utf8', timeout: 2000, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
   })
   const entries = new Map()
@@ -271,8 +485,8 @@ function readProcessTable() {
   return entries
 }
 
-export function captureProviderIdentity(pid, runnerPid) {
-  const table = readProcessTable()
+export async function captureProviderIdentity(pid, runnerPid) {
+  const table = await readProcessTable()
   const provider = table.get(pid)
   let ancestor = provider
   const seen = new Set()
@@ -284,8 +498,11 @@ export function captureProviderIdentity(pid, runnerPid) {
   throw new Error('provider is not a descendant of its runner')
 }
 
-export function stopProviderTree(pid, expected) {
-  const initial = readProcessTable().get(pid)
+export async function stopProviderTree(pid, expected) {
+  // This is attached-descendant cleanup, not a lifetime containment API.
+  // Already-reparented double-fork/setsid workers survive inside their inherited
+  // macOS sandbox after the shared monitor closes; they are then unmonitored.
+  const initial = (await readProcessTable()).get(pid)
   if (!initial) return
   // A provider may legitimately change its job group after exec. Creation
   // identity survives that change; a recycled PID has a different start time.
@@ -304,7 +521,7 @@ export function stopProviderTree(pid, expected) {
     // by forking. Keep the original terminal session and /dev/tty intact.
     for (let pass = 0; pass < 10; pass++) {
       const children = new Map()
-      for (const entry of readProcessTable().values()) {
+      for (const entry of (await readProcessTable()).values()) {
         if (!children.has(entry.parent)) children.set(entry.parent, [])
         children.get(entry.parent).push(entry)
       }
@@ -324,7 +541,7 @@ export function stopProviderTree(pid, expected) {
     }
     throw new Error('provider process tree did not quiesce')
   } finally {
-    const current = readProcessTable()
+    const current = await readProcessTable()
     for (const [target, identity] of [...frozen].reverse()) {
       const latest = current.get(target)
       if (latest && latest.started === identity.started) {
@@ -410,9 +627,11 @@ async function main() {
   let transport
   let monitorFailure
   let providerIdentity
-  const stopChild = () => {
+  let gateError
+  let cleanup = Promise.resolve()
+  const stopChild = async () => {
     if (!child?.pid) return
-    if (providerIdentity) stopProviderTree(child.pid, providerIdentity)
+    if (providerIdentity) await stopProviderTree(child.pid, providerIdentity)
     else child.stdio[3]?.end() // Closing the gate prevents an unregistered exec.
   }
   try {
@@ -422,9 +641,9 @@ async function main() {
       globalThis.gobbySrtLogTransport = suffix => {
         transport = sharedTransport(socketPath, suffix, error => {
           monitorFailure = error
-          try { stopChild() } catch (cleanupError) {
+          cleanup = stopChild().catch(cleanupError => {
             monitorFailure = new Error(`fail-closed provider cleanup failed: ${cleanupError.message}`, { cause: cleanupError })
-          }
+          })
         })
         return transport
       }
@@ -453,6 +672,7 @@ async function main() {
     const childEnv = { ...process.env, ...wrapped.env }
     delete childEnv.GOBBY_SRT_TMPDIR
     delete childEnv.GOBBY_SRT_MONITOR_SOCKET
+    delete childEnv.GOBBY_SRT_RUN_KEY
     if (muxTmpdir) {
       if (providerTmpdir === undefined) delete childEnv.TMPDIR
       else childEnv.TMPDIR = providerTmpdir
@@ -472,6 +692,10 @@ async function main() {
     const exited = new Promise(resolve => {
       child.once('error', error => resolve({ error }))
       child.once('exit', (code, signal) => resolve({ code: code ?? 1, signal }))
+      child.stdio[3]?.once('error', error => {
+        gateError = error
+        resolve({ error })
+      })
     })
 
     for (const signal of signals) {
@@ -485,14 +709,23 @@ async function main() {
     }
     if (transport && child.pid) {
       providerIdentity = await transport.providerStarted(child.pid)
-      child.stdio[3].end('go\n')
+      if (gateError) throw gateError
+      await new Promise((resolve, reject) => {
+        child.stdio[3].once('error', reject)
+        child.stdio[3].end('go\n', error => error ? reject(error) : resolve())
+      })
+      if (gateError) throw gateError
     }
     outcome = await exited
     if (outcome.error) throw outcome.error
     if (monitorFailure) throw monitorFailure
   } catch (error) {
     failure = error
+    try { await stopChild() } catch (cleanupError) {
+      failure = new Error(`provider cleanup failed: ${cleanupError.message}`, { cause: error })
+    }
   } finally {
+    await cleanup
     delete globalThis.gobbySrtLogTransport
     for (const [signal, handler] of signalHandlers) {
       try {
@@ -533,7 +766,7 @@ async function main() {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) try {
   if (process.argv[2] === '--monitor') {
-    await monitor(process.argv[3], process.argv[4] === undefined ? undefined : Number(process.argv[4]))
+    await monitor(process.argv[3], process.argv[4] === undefined ? undefined : Number(process.argv[4]), process.argv[5])
   }
   else process.exitCode = await main()
 } catch (error) {
