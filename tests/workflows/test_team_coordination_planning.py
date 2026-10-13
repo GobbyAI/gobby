@@ -193,3 +193,28 @@ def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
     )
     inputs["seats"] = "unapproved-seat"
     assert not renderer.should_run_step(step, context)
+
+
+def test_team_coordination_inbox_manager_defaults_to_sonnet_medium() -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "team-coordination.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        lane="pilot",
+        seats="inbox-manager",
+        workspace="pilot-workspace",
+        project_path="/pilot/shared-checkout",
+        report_to="gobby#14972",
+    )
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    step = next(step for step in definition.steps if step.id == "inbox-manager")
+    assert step.mcp is not None and step.mcp.arguments is not None
+    args = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        step.mcp.arguments, context, drop_none=True
+    )
+    assert (args["provider"], args["model"], args["reasoning_effort"]) == (
+        "claude",
+        "claude-sonnet-5-5",
+        "medium",
+    )

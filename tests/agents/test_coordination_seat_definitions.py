@@ -7,6 +7,7 @@ seats. Each definition is the role text of record for its seat.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -369,6 +370,32 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
         "Systems nominal",
     ):
         assert section in prompt, section
+
+
+def test_reporter_roster_covers_ordered_tabs_empty_panes_and_unclaimed_seats() -> None:
+    roster = (
+        _prompt("reporter").split("## Workspace seat roster", 1)[1].split("## Full report", 1)[0]
+    )
+    for requirement in (
+        "default_project_id",
+        "gobby-workspaces:get_workspace",
+        "every tab in tab order",
+        "every pane under its tab in layout order",
+        "terminal_context.gobby_terminal_id",
+        "gobby-sessions:list_sessions",
+        "gobby-agents:list_running_agents",
+        "provider, model, reasoning effort, state",
+        "claimed task ref with title (or none)",
+        "unlabeled | empty | none / none / none | no seat | task none",
+        "idle | task none",
+        "working",
+        "waiting",
+        "stalled",
+        "roster_complete",
+        "coverage incomplete",
+    ):
+        assert requirement in roster, requirement
+    assert not re.search(r"(?:gobby#|Lane |#\d|[0-9a-f]{8}-[0-9a-f]{4}-)", roster)
 
 
 def test_reporter_bounds_queue_resolution_and_names_unreadable_rows() -> None:
