@@ -30,10 +30,14 @@ def classify_file_command(
             )
 
     if cmd == "tar":
-        extracts, paths = _tar_extract_paths(parts, cwd)
+        extracts, paths, unknown = _tar_extract_paths(parts, cwd)
         if extracts:
             return _ShellSegmentMetadata(
-                "write", paths=tuple(paths), write_paths=tuple(paths), repo_mutation=True
+                "write",
+                paths=tuple(paths),
+                write_paths=tuple(paths),
+                repo_mutation=True,
+                extra={"_canonical_repo_mutation_scope_unknown": True} if unknown else None,
             )
 
     if cmd == "perl" and _has_perl_inplace_option(parts):

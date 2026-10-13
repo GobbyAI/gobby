@@ -38,6 +38,54 @@ _FILE_COMMAND_VALUE_OPTIONS: dict[str, tuple[str, frozenset[str]]] = {
 # of a longer value-taking option (install --strip vs --strip-program).
 _LONG_FLAGS_SHADOWING_VALUE_OPTIONS = frozenset({"--strip"})
 _INSTALL_LONG_DIRECTORY_CANDIDATES = frozenset({"--debug", "--directory"})
+_SORT_VALUE_OPTIONS = frozenset(
+    {
+        "--output",
+        "--key",
+        "--field-separator",
+        "--buffer-size",
+        "--temporary-directory",
+        "--files0-from",
+        "--compress-program",
+        "--random-source",
+        "--batch-size",
+        "--parallel",
+    }
+)
+_TAR_SCOPE_OPTIONS = frozenset(
+    {
+        "--extract",
+        "--get",
+        "--directory",
+        "--cd",
+        "--absolute-names",
+        "--absolute-paths",
+        "--file",
+        "--files-from",
+        "--strip-components",
+        "--to-stdout",
+        "--to-command",
+        "--diff",
+        "--delete",
+        "--dereference",
+        "--group",
+        "--gzip",
+        "--gunzip",
+        "--exclude",
+        "--exclude-from",
+        "--exclude-backups",
+        "--exclude-caches",
+        "--exclude-caches-all",
+        "--exclude-caches-under",
+        "--exclude-tag",
+        "--exclude-tag-all",
+        "--exclude-tag-under",
+        "--exclude-vcs",
+        "--exclude-vcs-ignores",
+        "--exclude-ignore",
+        "--exclude-ignore-recursive",
+    }
+)
 
 
 def _sort_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
@@ -49,14 +97,15 @@ def _sort_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
         word = parts[index]
         if word == "--":
             break
-        if word in {"-o", "--output"}:
+        option = _resolve_long_option(word.split("=", 1)[0], _SORT_VALUE_OPTIONS)
+        if option == "--output" and "=" in word:
+            writes = True
+            paths.append(word.split("=", 1)[1])
+        elif word == "-o" or option == "--output":
             writes = True
             index += 1
             if index < len(parts):
                 paths.append(parts[index])
-        elif word.startswith("--output="):
-            writes = True
-            paths.append(word.split("=", 1)[1])
         elif word.startswith("-") and not word.startswith("--"):
             for offset, option in enumerate(word[1:], 2):
                 if option in "oktST":
@@ -69,32 +118,49 @@ def _sort_output_paths(parts: list[str]) -> tuple[bool, list[str]]:
                         if value:
                             paths.append(value)
                     break
-        elif word in {"--key", "--field-separator", "--buffer-size", "--temporary-directory"}:
+        elif option is not None and "=" not in word:
             index += 1
         index += 1
     return writes, paths
 
 
-def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[str]]:
+def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[str], bool]:
     """Track extraction directories without treating archive names as options."""
     extracts = False
+    to_stdout = False
+    absolute_names = False
     directories: list[str] = []
     directory = cwd
     index = 1
     while index < len(parts):
         word = parts[index]
+        option = _resolve_long_option(word.split("=", 1)[0], _TAR_SCOPE_OPTIONS)
         if word == "--":
             if extracts and index + 1 < len(parts):
                 directories.extend(_rebase_shell_paths(["."], directory))
             break
-        if word in {"--extract", "--get"}:
+        if option in {"--extract", "--get"}:
             extracts = True
-        elif word.startswith("--directory="):
+        elif option in {"--absolute-names", "--absolute-paths"}:
+            absolute_names = True
+        elif option == "--to-stdout":
+            to_stdout = True
+        elif option in {"--directory", "--cd"} and "=" in word:
             directory = _rebase_shell_paths([word.split("=", 1)[1]], directory)[0]
             directories.append(directory)
-        elif word in {"--directory", "--file", "--files-from", "--exclude", "--strip-components"}:
+        elif option in {
+            "--directory",
+            "--cd",
+            "--file",
+            "--files-from",
+            "--exclude",
+            "--strip-components",
+        }:
+            if "=" in word:
+                index += 1
+                continue
             index += 1
-            if word == "--directory" and index < len(parts):
+            if option in {"--directory", "--cd"} and index < len(parts):
                 directory = _rebase_shell_paths([parts[index]], directory)[0]
                 directories.append(directory)
         elif (word.startswith("-") and not word.startswith("--")) or (
@@ -105,6 +171,10 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
             for offset, option in enumerate(options, 1):
                 if option == "x":
                     extracts = True
+                elif option == "O":
+                    to_stdout = True
+                elif option == "P":
+                    absolute_names = True
                 elif option in "fCT":
                     value = "" if old_style else options[offset:]
                     if not value:
@@ -119,7 +189,13 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
             # A member named before a later -C extracts in the earlier directory.
             directories.extend(_rebase_shell_paths(["."], directory))
         index += 1
-    return extracts, list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd)))
+    return (
+        extracts and not to_stdout,
+        []
+        if absolute_names
+        else list(dict.fromkeys(directories or _rebase_shell_paths(["."], cwd))),
+        absolute_names,
+    )
 
 
 def _resolve_long_option(option: str, names: frozenset[str]) -> str | None:
