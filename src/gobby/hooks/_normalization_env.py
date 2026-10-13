@@ -5,7 +5,7 @@ import re
 UNRESOLVED_DIRECTORY = "$GOBBY_UNRESOLVED_DIRECTORY"
 UNRESOLVED_WRAPPER = "$GOBBY_UNRESOLVED_WRAPPER"
 _DURATION = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)[smhd]?")
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 
 
 def env_command(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:

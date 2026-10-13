@@ -631,6 +631,14 @@ async def test_nonforce_head_checkout_allows_unverified_cwd(guard_harness: Guard
         "git --icase-pathspecs checkout -- FOREIGN.TXT",
         "git --icase-pathspecs restore FOREIGN.TXT",
         "GIT_ICASE_PATHSPECS=1 git restore FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS+=1 git checkout FOREIGN.TXT",
+        "GIT_ICASE_PATHSPECS+=1 git restore FOREIGN.TXT",
+        "git checkout -- 'f*.txt'",
+        "git checkout HEAD -- 'f*'",
+        "git restore 'f*.txt'",
+        "git restore '[f]oreign.txt'",
+        "git restore -- 'f?reign.txt'",
+        "git rm -f 'f*.txt'",
     ],
 )
 async def test_checkout_opaque_operands_block_foreign_restore(
@@ -649,7 +657,18 @@ async def test_checkout_opaque_operands_block_foreign_restore(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["checkout owned.txt", "checkout HEAD~0", "checkout -"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "checkout owned.txt",
+        "checkout HEAD~0",
+        "checkout -",
+        "checkout -- owned.txt",
+        "restore owned.txt",
+        "restore --source=HEAD owned.txt",
+        "--icase-pathspecs add owned.txt",
+    ],
+)
 async def test_checkout_literal_operand_controls_allow(
     guard_harness: GuardHarness, operation: str
 ) -> None:
@@ -663,6 +682,33 @@ async def test_checkout_literal_operand_controls_allow(
         harness.event(f"git {operation}", workdir=harness.repo)
     )
     assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+async def test_append_icase_prefix_blocks_foreign_restore(
+    guard_harness: GuardHarness, shell: str
+) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
+    harness = guard_harness
+    harness.db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s))",
+        (RULE_NAME, DIRTY_EDIT_RULE_NAME, "block-unresolved-scope-shell-write"),
+    )
+    (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    result = subprocess.run(
+        [shell, "-c", "GIT_ICASE_PATHSPECS+=1 git ls-files FOREIGN.TXT"],
+        cwd=harness.repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.split() == ["foreign.txt"]
+    event = harness.event("GIT_ICASE_PATHSPECS+=1 git checkout FOREIGN.TXT", workdir=harness.repo)
+    response = await harness.handler._evaluate_rules(event)
+    assert response.decision == "block", response.reason
+    assert event.data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.asyncio

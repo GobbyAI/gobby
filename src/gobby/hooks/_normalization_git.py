@@ -109,6 +109,7 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
     for word in raw_parts[:prefix_length]:
         name, separator, value = word.partition("=")
+        name = name.removesuffix("+")
         if separator and name == "GIT_ICASE_PATHSPECS":
             selectors.append("--icase-pathspecs")
         if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
@@ -265,6 +266,13 @@ def classify_git_mutation(
             candidates = _git_restore_positional_args_after(parts, index + 1)
         else:
             candidates = []
+        if operation != "add" and any(
+            any(character in candidate for character in "*?[")
+            or candidate.startswith((":", "~"))
+            or any(character in candidate for character in _SCRIPT_LIKE_CHARS)
+            for candidate in candidates
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
         paths = [
             word
             for word in candidates

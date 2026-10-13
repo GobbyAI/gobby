@@ -21,6 +21,10 @@ from gobby.workflows.sync_rules import sync_rule_file
 pytestmark = pytest.mark.unit
 
 
+def test_append_assignment_blocks_provider_launch() -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": "X+=1 claude -p hi"})
+
+
 @pytest.mark.parametrize(
     "command",
     [

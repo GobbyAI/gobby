@@ -1402,6 +1402,16 @@ def test_git_checkout_opaque_pathspec_fails_closed(tmp_path: Path, operand: str)
         "GIT_ICASE_PATHSPECS=1 git rm A.py",
         "git --icase-pathspecs mv A.py b.py",
         "GIT_ICASE_PATHSPECS=1 git mv A.py b.py",
+        "GIT_ICASE_PATHSPECS+=1 git checkout A.py",
+        "GIT_ICASE_PATHSPECS+=1 git restore A.py",
+        "GIT_ICASE_PATHSPECS+=1 git rm A.py",
+        "GIT_ICASE_PATHSPECS+=1 git mv A.py b.py",
+        "git checkout -- 'a*.py'",
+        "git checkout HEAD -- 'a*'",
+        "git restore 'a*.py'",
+        "git restore '[a].py'",
+        "git restore -- 'a?.py'",
+        "git rm -f 'a*.py'",
     ],
 )
 def test_git_checkout_script_and_icase_scope_fails_closed(tmp_path: Path, command: str) -> None:

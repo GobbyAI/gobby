@@ -14,6 +14,7 @@ import pytest
 
 from gobby.hooks._ansi_c import ShellDialect
 from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.workflows.engine import command_matching
 from gobby.workflows.engine.command_matching import (
     command_patterns_match,
@@ -22,6 +23,20 @@ from gobby.workflows.engine.command_matching import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "words", [["git", "push"], ["claude", "-p", "hi"], ["bash", "-c", "echo hi"]]
+)
+def test_append_assignment_unwraps_execution(words: list[str]) -> None:
+    assert _unwrap(["X+=1", *words]) == words
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_append_assignment_preserves_command_matching(mask_quoted: bool) -> None:
+    assert command_patterns_match(
+        "X+=1 git push", pattern=r"^git\s+push\b", mask_quoted=mask_quoted
+    )
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
