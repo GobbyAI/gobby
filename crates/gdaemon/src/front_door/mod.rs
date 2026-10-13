@@ -62,6 +62,7 @@ enum Door {
     Backend {
         state: FrontDoorState,
         table: Arc<RouteTable>,
+        machines: axum::Router,
     },
     #[cfg(unix)]
     Node {
@@ -72,10 +73,12 @@ enum Door {
 
 impl FrontDoor {
     pub fn new(state: FrontDoorState, table: RouteTable) -> Self {
+        let machines = crate::nodes::machines_api::router(state.native.clone());
         Self {
             door: Door::Backend {
                 state,
                 table: Arc::new(table),
+                machines,
             },
         }
     }
@@ -96,8 +99,12 @@ impl FrontDoor {
         https: bool,
     ) -> Response<Body> {
         observe_peer(request.headers_mut(), peer, https);
-        let (backend_state, table) = match &self.door {
-            Door::Backend { state, table } => (state, table),
+        let (backend_state, table, machines) = match &self.door {
+            Door::Backend {
+                state,
+                table,
+                machines,
+            } => (state, table, machines),
             #[cfg(unix)]
             Door::Node { node, ws_listener } => {
                 if request.method() == axum::http::Method::POST
@@ -176,7 +183,7 @@ impl FrontDoor {
             return crate::nodes::channel::handle(nodes.clone(), request).await;
         }
         if crate::nodes::machines_api::is_route(request.uri().path()) {
-            return crate::nodes::machines_api::handle(state.native.clone(), request).await;
+            return crate::nodes::machines_api::handle(machines.clone(), request).await;
         }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&state, request).await
