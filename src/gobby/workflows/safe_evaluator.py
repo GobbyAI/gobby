@@ -589,6 +589,7 @@ def build_condition_helpers(
         outstanding_monolith_paths,
         projected_monolith_paths,
     )
+    from .remote_fetch_guard import remote_fetch_execution
     from .task_claim_state import claims_without_edit_target
 
     ctx = context or {}
@@ -657,6 +658,7 @@ def build_condition_helpers(
             "shell_command_runs_ocr_review": shell_command_runs_ocr_review,
             "shell_command_consumes_code_review": shell_command_consumes_code_review,
             "blocks_direct_provider_launch": blocks_direct_provider_launch,
+            "remote_fetch_execution": remote_fetch_execution,
             "task_commit_project_path_allowlist_violation": (
                 task_commit_project_path_allowlist_violation
             ),
