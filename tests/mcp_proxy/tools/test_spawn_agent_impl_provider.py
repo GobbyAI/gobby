@@ -13,14 +13,106 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
+
+
+@pytest.mark.parametrize(
+    "model,effort,expected_model,expected_effort",
+    [
+        (None, None, "claude-sonnet-5-5", "medium"),
+        ("claude-opus-5-5", "high", "claude-opus-5-5", "high"),
+    ],
+    ids=["definition-defaults", "launch-overrides"],
+)
+async def test_inbox_runbook_uses_definition_defaults_for_null_inputs(
+    model: str | None, effort: str | None, expected_model: str, expected_effort: str
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+    workflows = Path(__file__).resolve().parents[3] / "src/gobby/install/shared/workflows"
+    agent_body = AgentDefinitionBody.model_validate(
+        yaml.safe_load((workflows / "agents/inbox-manager.yaml").read_text())
+    )
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((workflows / "pipelines/team-coordination.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    for field in ("provider", "model", "reasoning_effort"):
+        assert inputs[f"inbox_manager_{field}"] is None
+    inputs.update(
+        lane="pilot",
+        seats="inbox-manager",
+        workspace="pilot-workspace",
+        project_path="/repo",
+        report_to="pilot-coordinator",
+        inbox_manager_provider="claude" if model is not None else None,
+        inbox_manager_model=model,
+        inbox_manager_reasoning_effort=effort,
+    )
+    step = next(step for step in definition.steps if step.id == "inbox-manager")
+    assert step.mcp is not None and step.mcp.arguments is not None
+    args = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        step.mcp.arguments,
+        {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"},
+        drop_none=True,
+    )
+    assert args["agent"] == "inbox-manager"
+    if model is None:
+        assert "provider" not in args
+        assert "model" not in args and "reasoning_effort" not in args
+    session_manager = MagicMock()
+    session_manager.get.return_value.source = "claude"
+    handler = MagicMock()
+    handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+    handler.cleanup_environment = AsyncMock()
+    handler.build_context_prompt.return_value = "Manage inbox"
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
+            return_value={"id": "proj-abc", "project_path": "/repo"},
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler",
+            return_value=handler,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            return_value=_make_execute_spawn_result(),
+        ) as execute,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+            return_value="21000000-0000-4000-8000-000000000001",
+        ),
+    ):
+        result = await spawn_agent_impl(
+            prompt=args["prompt"],
+            runner=_make_runner(),
+            agent_body=agent_body,
+            provider=args.get("provider"),
+            model=args.get("model"),
+            reasoning_effort=args.get("reasoning_effort"),
+            parent_session_id="parent-session-xyz",
+            session_manager=session_manager,
+        )
+        await asyncio.gather(*_spawn_background_tasks.values())
+    assert result["success"] is True, result.get("error")
+    request = execute.call_args[0][0]
+    assert request.provider == "claude"
+    assert request.model == expected_model
+    assert request.requested_reasoning_effort == expected_effort
+    assert request.effective_reasoning_effort == expected_effort
 
 
 async def test_invalid_external_grant_rejects_before_allocation() -> None:

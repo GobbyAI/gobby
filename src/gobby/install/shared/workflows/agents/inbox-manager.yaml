@@ -4,6 +4,8 @@ version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: inherit
+model: claude-sonnet-5-5
+reasoning_effort: medium
 execution_mode: interactive
 checkout_mode: inherit
 network: none

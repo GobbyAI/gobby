@@ -49,8 +49,13 @@ def test_bundled_roles_and_runbooks_inherit_provider_choices() -> None:
     agents = get_bundled_agents_path()
     for path in sorted(agents.rglob("*.yaml")):
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text()))
-        for key in ("provider", "model", "reasoning_effort"):
-            assert raw.get(key) in (None, "inherit"), (path.name, key, raw.get(key))
+        assert raw.get("provider") in (None, "inherit"), path.name
+        if path.name == "inbox-manager.yaml":
+            assert raw.get("model") == "claude-sonnet-5-5"
+            assert raw.get("reasoning_effort") == "medium"
+        else:
+            for key in ("model", "reasoning_effort"):
+                assert raw.get(key) in (None, "inherit"), (path.name, key, raw.get(key))
     for path in sorted((agents.parent / "pipelines").glob("team-*.yaml")):
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text()))
         for name, spec in raw["inputs"].items():
