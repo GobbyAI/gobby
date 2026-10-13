@@ -245,7 +245,7 @@ pub fn parse_hub_database_bootstrap(
                 let text = value
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("hub_cert must be a string"))?;
-                (!text.trim().is_empty()).then(|| text.to_owned())
+                (!run_mode::python_strip(text).is_empty()).then(|| text.to_owned())
             }
         },
         database_url: optional_string_field(map, "database_url")?,
@@ -403,7 +403,7 @@ fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Resul
 }
 
 fn non_empty_trimmed(value: &str) -> Option<String> {
-    let trimmed = value.trim();
+    let trimmed = run_mode::python_strip(value);
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 

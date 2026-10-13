@@ -15,6 +15,8 @@ struct Case {
     mode: Option<String>,
     hub_daemon_url: Option<String>,
     hub_cert: Option<String>,
+    database_url: Option<String>,
+    api_key: Option<String>,
     files_home: Option<String>,
     error: Option<String>,
 }
@@ -51,6 +53,8 @@ fn shared_vectors_match_python() -> Result<()> {
                     Some(mode.to_owned()),
                     bootstrap.hub_daemon_url,
                     bootstrap.hub_cert,
+                    bootstrap.database_url,
+                    bootstrap.api_key,
                 ))
             }
             Ok(None) => Err("expected nonempty bootstrap mapping".to_owned()),
@@ -58,7 +62,13 @@ fn shared_vectors_match_python() -> Result<()> {
         };
         let expected = match case.error {
             Some(error) => Err(error),
-            None => Ok((case.mode, case.hub_daemon_url, case.hub_cert)),
+            None => Ok((
+                case.mode,
+                case.hub_daemon_url,
+                case.hub_cert,
+                case.database_url,
+                case.api_key,
+            )),
         };
         if actual != expected {
             mismatches.push(format!(

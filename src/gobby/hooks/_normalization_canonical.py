@@ -166,7 +166,7 @@ def _normalize_shell_tool_metadata(
             initial_scan = scan
             if any(token.value.startswith(("BASHOPTS=", "BASH_ENV=")) for token in scan.tokens):
                 shell_startup_unproven.set(True)
-            if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
+            if function_program := shell_function_bodies(command, scan):
                 program, bodies = function_program
                 initial_scan = scan_function_program(command, program, scan)
                 command = program
