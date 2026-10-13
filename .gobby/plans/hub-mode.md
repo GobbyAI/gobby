@@ -166,14 +166,22 @@ Writer decisions:
     `src/gobby/storage/worktrees.py`.
     - The node creates the workspace, and it removes the workspace when its
       spawn fails before launch.
-    - The hub inserts the row from the first report that lists the launched
-      agent with its workspace (2.6). So a row exists only for a workspace
-      that held a running agent, and the hub sends no workspace command in v1.
+    - 1.4's report route inserts the row before it answers 200, from a live
+      agent's entry or a launched exit that names the workspace. The node
+      repeats an exit until a report carrying it gets 200, so an agent that
+      launches and exits between two health passes, or a hub restart after
+      the 200, loses no row. A row exists only for a workspace that held a
+      launched agent, and the hub sends no workspace command in v1.
     - Finishing a remote workspace, merging and removing it, is D1.
 16. **Hook machine binding.** Q3 trusts `sessions.machine_id`, which comes from
     the hook envelope (`ClaudeCodeAdapter` reads `input_data["machine_id"]`).
     When a hook request carries a verified front-door identity, the hub rejects
-    an envelope whose `machine_id` differs from the key's machine (2.2).
+    an envelope whose `machine_id` is missing or differs from the key's machine
+    (2.2). A hook from another machine then binds only that machine's session
+    rows: every hook lookup that matches a row by an id the event supplies
+    treats another machine's row as a miss, before any write (2.2). A local
+    hook binds any row, as today. The envelope machine is the marker because it
+    reaches every adapter's event and every replayed envelope.
 17. **#24090 dependency.** The gdaemon route extends the node channel's registry
     and handler, which #24090 (Node channel: hub registers, heartbeats, replaces,
     revokes) creates. Per the plan-coverage contract, work gated on another task
@@ -192,7 +200,10 @@ Writer decisions:
       which Q2 eligibility reads (1.4).
     - `POST /api/nodes/report` carries the node's accepted runs, live agents
       with their workspaces, and exits, every 30 s and after each change
-      (1.4). The reconciler settles remote runs from it (2.6).
+      (1.4). The route admits only a report built against the current hub
+      process's `hub_epoch` with a revision above the machine's high-water,
+      records the reported workspace rows, and only then answers 200. The
+      reconciler settles remote runs from it (2.6).
 
     The hub's storage refuses another machine's rows by design:
     `_SessionCRUDMixin.register`, `register_session`, and `require_root` call
@@ -206,6 +217,11 @@ Writer decisions:
       guard and no filesystem access (1.3).
       `LocalProjectCheckoutManager.get(machine_id, project_id)` already does
       exactly that, so `require_root` and its callers stay unchanged.
+
+    The report route's workspace rows (1.4, Decision 15) add no fourth use.
+    Each takes its machine and project from a terminal row the hub created
+    under the first use, on the key's machine and naming the reported run, and
+    the route inserts it directly without calling a guarded manager.
 
     The machine comes only from the verified key
     (`FrontDoorIdentity.machine_id`). No node-to-hub body carries a machine
@@ -221,6 +237,37 @@ Writer decisions:
       owns registering a forwarded session the hub did not pre-register.
 
     The implementation of 1.4 and 2.5 needs a security review.
+19. **A node's agent ceiling is `max_active_agents`, and a report always fits
+    its bound.** Josh ruled on HM-F16 through Orchestrator gobby#15977 on
+    2026-10-12, verbatim: "Cap at 100, configurable. We already have a value
+    for this in the config store."
+    - The key is the existing `max_active_agents` (`DaemonConfig`). Its code
+      default stays 20, and the live config store sets 100 (desired and
+      active, revision 151). It keeps its per-project cap
+      (`agent_slot_cap_refusal`), and 2.5 also applies it per remote machine:
+      under a per-machine lock, a remote spawn counts the target's pending,
+      live, and orphaned terminal rows and, at the ceiling, refuses with
+      `machine_cap_reached` and `stage: "none"` before writing any row. A
+      node runs only gdaemon and reads no config store, so the hub enforces
+      it. No key is added.
+    - Each list in a node report keeps a fixed protocol bound of 1,000 entries
+      in the Rust and Python models (1.1). `max_active_agents` gains
+      `le=1000`, so the configured ceiling never exceeds what one complete
+      report can carry. A value above 1,000 fails config validation. Lowering
+      the value below a node's live count only gates new admissions, and the
+      runs already there were admitted under an earlier value of at most
+      1,000.
+    - The protocol bound is fixed, not tied to the live value, because
+      lowering a tied bound while runs are live would make a node's complete
+      reports invalid and stop that machine's reconciliation.
+    - The hub's count can trail the node's by the agents whose session end
+      reached the hub before their process exited (2.5). So the node also
+      refuses `agent.spawn` with `command_failed` and `stage: "none"` while
+      its accepted and live runs total 1,000 (1.1). That keeps `accepted` and
+      `agents` within the bound in every case, and the hub's ceiling is the
+      operator's policy, exact at admission.
+    - `exits` is not a snapshot: the node sends at most 1,000 per report,
+      oldest first, and the rest follow in later reports.
 
 ## Constraints
 `kind: framing`
@@ -248,8 +295,10 @@ Writer decisions:
   - `handle_session_start` finds the hub's pre-registered row by that id and
     takes `handle_pre_created_session`. That path updates the row (`update`,
     `backfill_terminal_context`) and starts the run. It never calls `register`,
-    and neither method checks the machine. Session end settles the run as it
-    does locally.
+    and neither method checks the machine, so 2.2 checks it at every hook
+    lookup: a hook from another machine binds only that machine's rows, and a
+    foreign row counts as a miss. Session end settles the run as it does
+    locally.
   - A node session that misses that lookup reaches `register_session`, which
     keeps `require_local_machine_id` and is refused (Decision 18). Examples are
     a `/clear` successor and an operator's own CLI on the node; #24151 owns
@@ -462,8 +511,9 @@ Targets:
     the wire. Its machine routing refuses with `checkout_unresolved`,
     `machine_not_found`, and `machine_not_owned`, each `stage: "none"` before
     any command, and reuses `node_offline`. Hub-flow result codes such as
-    `not_stopped`, `spawn_in_doubt`, and `remote_resume_unsupported` stay in
-    their own sections.
+    `not_stopped`, `spawn_in_doubt`, `remote_resume_unsupported`, and
+    `machine_cap_reached` (2.5's per-machine `max_active_agents` ceiling)
+    stay in their own sections.
   - **Stage.** Every error carries `stage`. A node sets `"none"` when the
     command changed nothing and `"partial"` when it may have. gdaemon sets
     `"none"` on `node_offline`, because it writes nothing without a live
@@ -473,8 +523,9 @@ Targets:
   - **Hub route codes.** 1.4's routes answer `node_identity_required` (403),
     `machine_is_local` (403), `unsupported_version` (422), `invalid_body`
     (422), `project_not_found` (404), `project_deleted` (409),
-    `checkout_conflict` (409), `checkout_root_taken` (409), and
-    `checkout_rejected` (422).
+    `checkout_conflict` (409), `checkout_root_taken` (409),
+    `checkout_rejected` (422), and `stale_report` (409, with the body
+    `{code, hub_epoch}`).
   - **Strictness.** Payloads, results, and node bodies reject unknown fields.
   - **v1 commands:**
     - `agent.spawn`: `{run_id, session_id, parent_session_id, project_id, terminal_id, agent_depth, max_agent_depth, workflow_name, provider, model, prompt, provider_args, reasoning_effort, sandbox: {enabled, network: "none"|"trusted", extra_write_paths}, timeout_seconds, title, source_root, workspace: {mode: "none"|"worktree"|"clone", branch_name, base_branch}}` returns `{accepted: true}`. With `mode: "none"` the agent runs in `source_root`, and `branch_name` and `base_branch` are null. With `worktree` or `clone`, `branch_name` is set, and a null `base_branch` means `source_root`'s current branch.
@@ -483,12 +534,17 @@ Targets:
   - **Node bodies, node to hub.** Both go through the hub's front door with
     the node's API key, and neither carries a machine id.
     - `POST /api/nodes/checkouts`: `{v, project_id, root_path}` returns `{root_path, created}`.
-    - `POST /api/nodes/report`: `{v, host_epoch, accepted: [run_id], agents: [{run_id, terminal_id, pid, locator, locator_key, workspace: {mode: "worktree"|"clone", path, branch_name, base_branch} | null}], exits: [{run_id, terminal_id, launched, exit_code, reason: "prepare_failed"|"prepare_timeout"|"launch_failed"|"cancelled"|"exited"}]}` returns `{}`. Each list holds at most 1,000 entries, a bound on what one request can make the hub hold.
+    - `POST /api/nodes/report`: `{v, hub_epoch, revision, host_epoch, accepted: [run_id], agents: [{run_id, terminal_id, pid, locator, locator_key, workspace}], exits: [{run_id, terminal_id, launched, exit_code, reason: "prepare_failed"|"prepare_timeout"|"launch_failed"|"cancelled"|"exited", workspace}]}` returns `{}`. Each `workspace` is `{mode: "worktree"|"clone", path, branch_name, base_branch}` or null. `hub_epoch` is the epoch the node last learned from a `stale_report` refusal, or null. `revision` is a positive integer. Each list holds at most 1,000 entries, a bound on what one request can make the hub hold.
   - **Node duties (#24148).**
     - `agent.spawn`:
       - The node validates the payload, records the run as accepted, and
         replies `{accepted: true}` before it prepares anything. It answers
         `stage: "none"` only when it recorded nothing.
+      - While its accepted and live runs already total 1,000, the node answers
+        `command_failed` with `stage: "none"` and records nothing. So
+        `accepted` and `agents` never exceed their report bound. The hub's
+        ceiling (2.5) normally refuses first; this rule covers agents whose
+        session end reached the hub before their process exited.
       - It then prepares the workspace from `source_root`: a worktree or a
         clone whose path and branch embed `run_id`, so no other machine's row
         names the same path. It launches the provider there. It sets the
@@ -500,6 +556,19 @@ Targets:
       - A failure before launch removes what it prepared and reports an exit
         with `launched: false`. Preparation has a node-side deadline, which
         #24148 sets; passing it is a failure with reason `prepare_timeout`.
+      - Before its first filesystem effect, the node writes a preparation
+        record for the run, naming the workspace path and branch it will
+        create, to the same node-local durable state as its cancel records.
+        Removal is idempotent: a path and branch already gone count as
+        removed. A failed removal, or a node daemon restart during
+        preparation or removal, leaves the record, and the node retries the
+        removal at startup and on each report interval until the path is
+        gone. Only then does it delete the record. Reporting the
+        `launched: false` exit does not clear it, and a cancel record for the
+        same run leaves it in place.
+      - At launch the record becomes the launched workspace's record. The
+        node keeps it until a report carrying the run's exit gets 200, so
+        every report until then can name the workspace.
     - Commands that name the same `run_id` run one at a time in arrival order.
     - `agent.cancel`:
       - The node records the `run_id` as cancelled in node-local durable
@@ -507,24 +576,37 @@ Targets:
         restart. A later `agent.spawn` for it answers `cancelled` with
         `stage: "none"`.
       - For an accepted run that has not launched, it stops preparation,
-        removes what it prepared, answers `{stopped: true}`, and reports an
-        exit with `launched: false` and reason `cancelled`.
+        removes what it prepared under the preparation record's retry rule,
+        answers `{stopped: true}`, and reports an exit with
+        `launched: false` and reason `cancelled`.
       - A cancel for a run with nothing accepted or live answers `not_found`,
         which also proves that nothing runs for that run now or later.
         `{stopped: false}` means the agent may still run.
     - Checkouts: the node registers each checkout it serves before the hub can
       route a spawn of that project to it.
     - Reports:
-      - The node posts a complete snapshot every 30 s and immediately after
-        any change.
+      - The node posts a report every 30 s and immediately after any change.
+        `accepted` and `agents` are complete in every report.
+      - The node sends one report at a time. It builds each one fresh from
+        its current state with the next `revision`, which it keeps in its
+        durable state, so a node daemon restart never repeats a revision. It
+        never resends a report's bytes: a retry is a new report.
+      - A `stale_report` refusal carries the hub's current `hub_epoch`. The
+        node adopts it and sends a fresh report.
       - `accepted` lists runs accepted and not yet launched or exited. A run
         leaves `accepted` only by moving to `agents` or `exits`.
       - `agents` lists the live agents the node launched, read from its
         terminal host, so agents that outlive a node daemon restart stay
         listed. `host_epoch` names the terminal host's current incarnation. A
         workspace appears only after its agent launched.
-      - `exits` lists each run's end and repeats in every report until a
-        report gets 200.
+      - `exits` lists each run's end, oldest first and at most 1,000 per
+        report, and each repeats in every report until a report carrying it
+        gets 200. A `launched: true` exit names the run's workspace, and a
+        `launched: false` exit names none.
+      - The contract lists, as #24148 test cases, out-of-order and retried
+        reports, a `stale_report` refusal, more than 1,000 pending exits, a
+        spawn at 1,000 accepted and live runs, a failed removal, and a node
+        daemon restart at each preparation and removal boundary.
   - **Internal route (gdaemon, built in D2).**
     - `GET /api/internal/nodes/connected` returns `{"machine_ids":[...]}`, the
       machines with a live channel.
@@ -548,11 +630,13 @@ Targets:
   result, and both node bodies, with `deny_unknown_fields`, so #24148 builds
   its bodies from them. It is `pub mod node_commands` in `lib.rs`.
 - `src/gobby/hub/node_commands.py` defines the matching pydantic models with
-  `extra="forbid"`. The report's lists carry `max_length=1000`.
+  `extra="forbid"`. The report's lists carry `max_length=1000`. Both define
+  the `stale_report` refusal body `{code, hub_epoch}`, which the node parses.
 - `corpus.json` holds one named message per shape: each command, each
   command's ok reply, one error reply per code with its stage, a
   `terminal.write` error with `stage: "partial"`, a checkout registration
-  body, a report with all three lists filled, and an empty report. Both tests
+  body, a report with all three lists filled and a launched exit naming its
+  workspace, an empty report, and a `stale_report` refusal. Both tests
   parse every message, re-encode it, and compare it to the corpus value.
 - `ROADMAP.md`: the S4.2 row gains the ← #24090 edge.
 
@@ -563,7 +647,7 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.1.1 - The contract specifies both frames, the three v1 commands with payload and result fields, both node bodies, the error codes with their producers and stage rule, including the hub-client codes 1.3 raises and the route codes 1.4 answers, the node duties, the internal route, and the versioning rule. file: `docs/contracts/node-commands.md`.
+- 1.1.1 - The contract specifies both frames, the three v1 commands with payload and result fields, both node bodies, the error codes with their producers and stage rule, including the hub-client codes 1.3 raises and the route codes 1.4 answers, the node duties with the report ordering rule, the durable preparation record, and the 1,000-run spawn refusal, the internal route, and the versioning rule. file: `docs/contracts/node-commands.md`.
 - 1.1.2 - The Rust types round-trip every corpus message byte-equivalently and reject an unknown field. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
 - 1.1.3 - The Python models round-trip every corpus message and reject an unknown field. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
 - 1.1.4 - In the Python models, a checkout or report body naming `machine_id`, an `agent.spawn` payload carrying `env` or `cwd`, and a report list of 1,001 entries all fail validation. test: `tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine`.
@@ -648,7 +732,7 @@ Verification planned:
 - 1.3.5 - After the fake route accepts a command, a 5xx, a truncated or malformed 200, a read timeout, or a connection reset raises `node_reply_lost` with `stage=None`. test: `tests/hub/test_node_client.py::test_post_send_failures_are_uncertain`.
 - 1.3.6 - A remote target's `checkout_root` is its own `project_checkouts` root, read for a path that does not exist on the hub, while `require_root` for that machine still raises `MachineOwnershipMismatchError`. test: `tests/hub/test_machine_routing.py::test_remote_checkout_read_keeps_local_guard`.
 
-### 1.4 Node routes: checkout registration and run reports [category: code] (depends: 1.1)
+### 1.4 Node routes: checkout registration and run reports [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
 
 Targets:
@@ -681,6 +765,22 @@ Targets:
   pattern.
 - 1.3's `node_command_client()` caches one module-level instance; the inbox
   follows that pattern.
+- Workspace rows (Decision 15): `worktrees` has `id`, `project_id`,
+  `machine_id`, `task_id`, `branch_name`, `worktree_path`, `base_branch`,
+  `agent_session_id`, and `status` (default `active`); `clones` has the same
+  with `clone_path` (`crates/gcore/assets/schema/baseline.sql`). Unique
+  indexes `idx_worktrees_path (machine_id, worktree_path)` and
+  `idx_clones_path (machine_id, clone_path)` make a repeated insert a no-op
+  under `ON CONFLICT DO NOTHING`.
+  - `agent_session_id` references `sessions(id, machine_id)` with
+    `ON DELETE SET NULL`, so a retained row cannot be relied on to reach its
+    run.
+  - A task's `worktree_path` artifact is read by hub-side build paths that run
+    git in that path (`src/gobby/build/claim_recovery.py`,
+    `src/gobby/build/observability.py`), so the route sets none.
+  - `LocalWorktreeManager` and `LocalCloneManager` bind
+    `require_machine_id()`, so the hub's workspace loops skip a node's rows
+    once 2.1.5 pins it. That is why this section depends on 2.1.
 
 **Implementation:**
 - `src/gobby/servers/routes/nodes.py::create_nodes_router(server)` serves both
@@ -701,16 +801,41 @@ Targets:
     `checkout_conflict`, `CheckoutRootTakenError` 409 `checkout_root_taken`,
     and a sentinel or overlay refusal 422 `checkout_rejected`.
   - It never reads or writes the path.
-- `POST /api/nodes/report` stores the report with
-  `node_report_inbox().put(identity.machine_id, report)` and answers `{}`.
+- `POST /api/nodes/report` runs these steps in order:
+  1. `node_report_inbox().admit(identity.machine_id, hub_epoch, revision)`
+     answers 409 `stale_report` with the current `hub_epoch` when the body's
+     epoch is not the inbox's, or when its revision is not above the
+     machine's high-water. Otherwise it raises the high-water to the
+     revision. The refusal comes before any write.
+  2. `record_remote_workspaces` records the report's workspaces in one
+     transaction and commits.
+  3. `put(identity.machine_id, report)` stores the report, and the route
+     answers `{}`. So a 200 means every reported workspace row is durable.
 - `src/gobby/hub/node_reports.py`:
-  - `NodeReportInbox` holds, per machine, the latest report and the exits
-    gathered since the last `take`. `put` replaces the report and merges its
-    exits by `(run_id, terminal_id)`. `take()` returns every machine's entry
-    and empties the inbox. A lock guards both.
+  - `NodeReportInbox` mints `hub_epoch` once, at construction, as a fresh
+    random UUID, so each hub process has its own and never reuses one. It
+    holds, per machine, the revision high-water, the snapshot with the
+    highest revision, and the exits gathered since the last `take`.
+    - `put` replaces the snapshot only with a higher revision, so an older
+      accepted report that finishes last cannot replace a newer one. It
+      merges exits by `(run_id, terminal_id)`.
+    - `take()` returns every machine's snapshot and exits and empties them.
+      High-waters survive `take`.
+    - One lock guards `admit`, `put`, and `take`.
   - A module-level `node_report_inbox()` caches one instance.
-  - The inbox lives in memory. A hub restart loses it, the next report
-    refills it within 30 s, and a lost exit falls to 2.6's absence rules.
+  - `record_remote_workspaces(db, machine_id, report)` reads each
+    `agents[].workspace` and `exits[].workspace` entry.
+    - It skips and logs an entry unless its `terminal_id` row is on
+      `machine_id` and names that `run_id`.
+    - Otherwise it inserts an `active` `worktrees` row (mode `worktree`) or
+      `clones` row (mode `clone`) with a new id, the terminal's project and
+      machine, the run's task, the run's child session as
+      `agent_session_id`, and the entry's path, `branch_name`, and
+      `base_branch`, with `ON CONFLICT DO NOTHING`. It sets no task artifact.
+  - The inbox lives in memory. A hub restart loses it, and the new process's
+    epoch refuses every report built before the restart. Workspace rows are
+    already durable, the next fresh report refills the snapshot, and a lost
+    exit falls to 2.6's absence rules.
 - `register_routes` mounts `create_nodes_router(server)`. Its other mounts
   stay as they are, including `create_hooks_router` (2.2),
   `create_agent_spawn_router` (2.5), and `create_attention_router` (3.1,
@@ -727,8 +852,10 @@ Verification planned:
 
 - 1.4.1 - A key-authenticated checkout registration stores a `project_checkouts` row for the key's machine and the body's root, a path that does not exist on the hub, and a repeat answers `created: false`. test: `tests/servers/test_node_routes.py::test_checkout_registration_uses_key_machine`.
 - 1.4.2 - An unknown project answers 404, a soft-deleted project 409 `project_deleted`, a different root for the same project 409 `checkout_conflict`, and a relative root 422, and none writes a row. test: `tests/servers/test_node_routes.py::test_checkout_registration_refusals`.
-- 1.4.3 - A key-authenticated report lands in the inbox under the key's machine. A second report replaces the first's snapshot, the exits of both stay until `take` returns them, and the inbox is empty after `take`. test: `tests/servers/test_node_routes.py::test_report_inbox_replaces_snapshot_and_merges_exits`.
+- 1.4.3 - A key-authenticated report with the inbox's epoch lands in the inbox under the key's machine. A higher-revision report replaces the first's snapshot, the exits of both stay until `take` returns them, a report of 1,000 exits and a later report of 1 both reach `take`, and the inbox is empty after `take`. test: `tests/servers/test_node_routes.py::test_report_inbox_replaces_snapshot_and_merges_exits`.
 - 1.4.4 - Each route answers 403 `node_identity_required` without a verified identity, 403 `machine_is_local` for a key bound to the hub's machine, 422 for a body naming `machine_id`, and 422 `unsupported_version` for an unknown `v`, and none writes a row or an inbox entry. test: `tests/servers/test_node_routes.py::test_node_routes_refuse_unverified_and_local_identity`.
+- 1.4.5 - A report with a null epoch, or with the epoch of a replaced inbox standing in for a hub restart, answers 409 `stale_report` with the current epoch. So does a report whose revision is at or below the machine's high-water, whether it is a duplicate or arrives out of order. None of them writes a workspace row or touches the snapshot. When two admitted reports finish out of order, the higher revision's snapshot stays. test: `tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier`.
+- 1.4.6 - Before the route answers 200, a live agent entry with a workspace and a `launched: true` exit with a workspace each insert one `worktrees` row, or a `clones` row in clone mode. Each row carries the key's machine, the path, the branch, the base branch, the run's task, and the child session. A repeated entry inserts nothing more. An entry whose terminal is on another machine or names another run inserts none. The row survives a replaced inbox, the task gains no artifact, and the hub's `list_worktrees()` does not return the row. test: `tests/servers/test_node_routes.py::test_reported_workspace_is_durable_before_200`.
 
 ## P2: Machine-correct hub loops and remote callers
 `kind: framing`
@@ -832,34 +959,166 @@ Verification planned:
 
 Targets:
 - `src/gobby/servers/routes/mcp/hooks.py::create_hooks_router`
+- `src/gobby/hooks/session_binding.py`
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::handle_session_start`
+- `src/gobby/hooks/event_handlers/_session_start/handoff.py::resolve_session_start_identity`
+- `src/gobby/hooks/session_lookup.py::SessionLookupService._resolve_metadata_platform_session`
+- `src/gobby/hooks/session_lookup.py::SessionLookupService.resolve`
+- `src/gobby/hooks/session_lookup.py::SessionLookupService._recover_compact_session`
+- `src/gobby/hooks/project_context.py::resolve_hook_project_context`
+- `src/gobby/hooks/project_context.py::_project_id_from_session`
+- `src/gobby/hooks/project_context.py::_cached_session`
+- `src/gobby/hooks/project_context.py::_project_id_from_existing_session`
 - `tests/servers/test_hook_machine_binding.py`
+- `tests/hooks/test_session_binding.py`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_resume_of_a_known_session_is_never_promoted_to_clear`
+- `tests/hooks/test_session_events_coverage.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
+- `tests/hooks/test_handler_execution.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
+- `tests/hooks/test_session_coordinator.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
+- `tests/hooks/test_transcript_path_derivation.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
+
+**Granularity:** nine acceptance items and six production files, one outcome:
+a hook from another machine can neither claim another machine's identity nor
+bind another machine's session row. The ingress check without the lookup guard
+leaves HM-F17 open, because a node with its correct envelope machine could
+still name a hub row's id. The lookup guard without the ingress check would
+trust an envelope machine no key binds. The six files are the one ingress and
+every hook lookup that binds a row from an id the event supplies.
 
 **Research context:**
 - `execute_hook` is nested in `create_hooks_router` and serves
   `POST /api/hooks/execute`. Adapters take `machine_id` from the envelope's
   `input_data` (`src/gobby/adapters/claude_code.py`), and session registration
-  stores it (`require_hook_machine_id`).
+  stores it (`require_hook_machine_id`, `src/gobby/hooks/events.py`, returns
+  `event.machine_id`).
 - `server.auth_service.verified_front_door_identity(request)` returns
   `FrontDoorIdentity(user_id, machine_id, key_id)` only for a key-authenticated
   request that came through gdaemon (`src/gobby/servers/auth_service.py`).
+- The envelope machine is the only remote marker that reaches every lookup.
+  `src/gobby/adapters/agy.py` and `src/gobby/adapters/grok.py` do not call
+  `_copy_platform_session_metadata`, so a metadata flag set at ingress would
+  not reach their events. Hook envelopes are durable and can be processed
+  outside the request, so a request-scoped marker would not reach a replay.
+- `sessions.machine_id` is NOT NULL.
+  `gobby.sessions.machine_scope.is_local_machine_owner(owner, local)` is true
+  only for equal non-empty ids, and `gobby.utils.machine_id.get_machine_id()`
+  is the hub's machine.
+- These lookups bind a row from an id the event supplies, and none checks the
+  row's machine (gcode, 2026-10-12):
+  - `handle_session_start` (`_session_start/flow.py`): `get(external_id)`;
+    then `get(terminal_context.gobby_session_id)`, whose hit has its
+    `external_id` updated; then the web-chat `find_by_external_id`. Each hit
+    goes to `_handle_pre_created_session`, which updates the row and backfills
+    its terminal context. A compact resolution reaches
+    `reconcile_compact_session_activity`, which reactivates the row.
+  - `resolve_session_start_identity` (`_session_start/handoff.py`):
+    `find_by_external_id`, `find_by_external_id_any_project`, and
+    `resolve_compact_continuation`, which selects by source and terminal
+    process identity on any machine (`src/gobby/sessions/compact_identity.py`).
+    Its clear-continuation lookups already compare `session.machine_id`
+    (`resolve_clear_continuation`).
+  - `SessionLookupService._resolve_metadata_platform_session` accepts the
+    `X-Gobby-Session-Id` header's row after an existence check, and `resolve`
+    then runs `_apply_session_mutations` and `_enrich_task_context` on it.
+  - `resolve` takes `_resolve_session_id`'s id, which comes from the cached
+    row or `get_session_id`, neither machine-scoped, and runs the same
+    mutations. `_recover_compact_session` reactivates a
+    `resolve_compact_continuation` row through
+    `reconcile_compact_session_activity` before it returns.
+    `_bind_inherited_tty_native_subagent` already passes the event machine to
+    `find_live_interactive_pane_owner`.
+  - `resolve_hook_project_context` (`src/gobby/hooks/project_context.py`) takes
+    the project from `_project_id_from_session` (terminal-context and metadata
+    ids), `_cached_session`, and `_project_id_from_existing_session`
+    (`find_active_by_external_id`, then `recover_session`, which caches the
+    mapping before it returns). The explicit-project and cwd paths read no row.
+- A session-start miss reaches `register_session`, which keeps
+  `require_local_machine_id` and refuses another machine (Decision 18).
+- Tests:
+  - The pre-created tests in `tests/hooks/test_session_start_handlers.py` put
+    the row on "unknown-machine" and send a local event, so they bind as
+    today.
+  - The test session's machine is the developer's or one minted in the temp
+    home (`safe_gobby_home_dir`, `tests/conftest.py`). A test that sends
+    events from a fixed id such as `21000000-0000-4000-8000-000000000001`
+    without pinning `gobby.utils.machine_id._cached_machine_id` therefore
+    models a remote event. `tests/hooks/test_hooks_manager.py` pins it.
+  - A literal sweep (2026-10-12) found four files that use such an id with no
+    pin: `test_session_events_coverage.py`, `test_handler_execution.py`,
+    `test_session_coordinator.py`, and `test_transcript_path_derivation.py`.
+    `test_resume_of_a_known_session_is_never_promoted_to_clear` binds a mock
+    row with no machine from `…0008`.
 
 **Implementation:**
 - After parsing the body, `execute_hook` reads the verified identity. When it is
-  present and `input_data.machine_id` is present and differs, the hook answers
-  403 `{"code":"hook_machine_mismatch"}` before any adapter runs. A request
-  without an identity (local ghook on the hub's own machine) is unchanged.
+  present, `input_data.machine_id` must be present and equal the key's machine,
+  or the hook answers 403 `{"code":"hook_machine_mismatch"}` before any adapter
+  runs. A request without an identity (local ghook on the hub's own machine) is
+  unchanged.
+- `src/gobby/hooks/session_binding.py` defines
+  `session_binds_event(row_machine_id: str | None, event_machine_id: str | None) -> bool`.
+  It is true when `event_machine_id` is empty or equals `get_machine_id()`, or
+  when `is_local_machine_owner(row_machine_id, event_machine_id)`. A local hook
+  binds any row, as today; a hook from another machine binds only that
+  machine's rows.
+- Each lookup above applies it to the row it matched, before any write. A row
+  that does not bind counts as a miss:
+  - `handle_session_start`: both `get` results, before the `external_id`
+    update, and the web-chat result.
+  - `resolve_session_start_identity`: both external-id results and the compact
+    candidate.
+  - `_resolve_metadata_platform_session`: drops the header's row and its
+    metadata, as it does for an unknown id.
+  - `resolve`: for an event from another machine, it reads the resolved id's
+    row, or uses `cached_session` when that is the row. A foreign row yields no
+    platform session id, no mutation, no enrichment, and no
+    `_platform_session_id`. A local event reads nothing more.
+  - `_recover_compact_session`: a foreign compact row is no match, before
+    `reconcile_compact_session_activity`.
+  - `resolve_hook_project_context`: each of its three session paths treats a
+    foreign row as no project, so resolution continues to the cwd path.
+    `_project_id_from_session` gains the event's machine as a parameter.
+    `recover_session` may still cache a foreign mapping, and every later read
+    of it goes through `_cached_session` or `resolve`, which apply the
+    predicate, so the cache never binds it.
+- A remote miss at session start reaches `register_session`, which refuses
+  another machine. So a node session that misses its pre-created row is
+  refused, as the Constraints say, and #24151 owns registering it.
+- Tests that model a local hook from a fixed machine id pin the hub's machine
+  to that id, as `tests/hooks/test_hooks_manager.py` does. Tests that model a
+  remote event give their rows the event's machine. The verification run over
+  `tests/hooks/` finds any further test of either kind.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/mcp/__init__.py` — no-edit-reason: it re-exports `create_hooks_router` by name.
 - `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: its hook requests carry no front-door identity, so they take the unchanged path; re-run as verification.
+- `src/gobby/sessions/machine_scope.py` — no-edit-reason: `is_local_machine_owner` is reused as is.
+- `src/gobby/sessions/compact_identity.py` — no-edit-reason: `resolve_compact_continuation` stays machine-agnostic, and both of its hook callers apply the predicate to its result.
+- `src/gobby/storage/sessions/_registration_recovery.py` — no-edit-reason: `recover_session` is unchanged, and its result is checked by its hook caller.
+- `tests/hooks/test_hooks_manager.py` — no-edit-reason: it pins the hub's machine to its event machine, so its events stay local.
+- `src/gobby/hooks/hook_manager.py` — no-edit-reason: it calls `SessionLookupService.resolve` and `resolve_hook_project_context`, whose signatures are unchanged.
+- `tests/hooks/test_session_lookup_metadata.py` — no-edit-reason: it pins the hub's machine to `_REAL_MACHINE_ID`; the verification run covers it, and any test there that models a local hook from another fixed id takes the pin rule above.
+- `tests/hooks/test_spawned_grok_child_binding.py` — no-edit-reason: it calls `resolve` with an unchanged signature; the verification run covers it under the same pin rule.
+- `tests/hooks/test_hook_extracted_helpers.py` — no-edit-reason: it calls `resolve_hook_project_context` with an unchanged signature; the verification run covers it under the same pin rule.
+- `tests/hooks/test_session_activation_reconciliation.py` — no-edit-reason: it pins the hub's machine to `LOCAL_MACHINE_ID`, so its events stay local.
+- `tests/hooks/test_hook_manager.py` — no-edit-reason: it pins the hub's machine, so its events stay local; re-run as verification.
+- `tests/events/test_coordination_holds.py` — no-edit-reason: it calls `resolve` with an unchanged signature; re-run as verification.
+- `tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py` — no-edit-reason: it pins the hub's machine, so its events stay local; re-run as verification.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_hook_machine_binding.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_hook_machine_binding.py tests/hooks/ tests/servers/routes/mcp_endpoints/ tests/events/test_coordination_holds.py -v`.
 
 **Acceptance:**
 
-- 2.2.1 - A key-authenticated hook whose envelope names another machine is refused with `hook_machine_mismatch`, and one naming the key's machine is processed. test: `tests/servers/test_hook_machine_binding.py::test_envelope_machine_must_match_key`.
+- 2.2.1 - A key-authenticated hook whose envelope names another machine, or names none, is refused with `hook_machine_mismatch` before any adapter runs, and one naming the key's machine is processed. test: `tests/servers/test_hook_machine_binding.py::test_envelope_machine_must_match_key`.
 - 2.2.2 - A hook without a front-door identity keeps today's behavior. test: `tests/servers/test_hook_machine_binding.py::test_local_hook_unchanged`.
+- 2.2.3 - `session_binds_event` binds any row for an empty or hub-machine event, and for any other event machine only a row on that machine. test: `tests/hooks/test_session_binding.py::test_binding_predicate`.
+- 2.2.4 - A remote session start that names another machine's row by `external_id`, by `terminal_context.gobby_session_id`, by a web-chat `external_id`, or by compact terminal identity changes nothing on that row and reaches `register_session`, which refuses it. test: `tests/hooks/test_session_binding.py::test_session_start_skips_foreign_rows`.
+- 2.2.5 - On start and non-start events, an `X-Gobby-Session-Id` header that names another machine's row is dropped with no mutation and no task enrichment. test: `tests/hooks/test_session_binding.py::test_session_header_skips_foreign_row`.
+- 2.2.6 - A remote non-start event whose `external_id` or compact terminal identity matches another machine's row gets no platform session id, and that row is not revived, backfilled, or reactivated. test: `tests/hooks/test_session_binding.py::test_non_start_lookup_skips_foreign_row`.
+- 2.2.7 - With no explicit project, a remote event whose session ids name another machine's rows takes its project from its cwd and never from those rows. test: `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`.
+- 2.2.8 - A remote session start that names its own machine's pre-created row by `terminal_context.gobby_session_id` takes `handle_pre_created_session` and updates that row. test: `tests/hooks/test_session_binding.py::test_same_machine_precreated_row_binds`.
+- 2.2.9 - A pending clear attempt still cannot claim a resume whose persisted row is on the event's machine. test: `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_resume_of_a_known_session_is_never_promoted_to_clear`.
 
 ### 2.3 Remote terminal writes go through the node [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -994,18 +1253,24 @@ Targets:
 - `src/gobby/agents/session.py::ChildSessionManager.create_child_session`
 - `src/gobby/storage/sessions/_crud.py::_SessionCRUDMixin.register`
 - `src/gobby/storage/agents/_lifecycle.py::_AgentRunLifecycleMixin.create`
+- `src/gobby/config/app.py::DaemonConfig`
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: the derived carrier is regenerated from the registry and its bytes stay the same, because the generator emits no bounds
 - `tests/hub/test_remote_spawn.py`
+- `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
 
-**Granularity:** eleven acceptance items and seven production files, one
+**Granularity:** fourteen acceptance items and eight production files, one
 outcome: every remote spawn ends in one owned state, accepted, failed, or in
 doubt. The items fall into three groups. Routing covers 2.5.3, 2.5.6, 2.5.8,
-and 2.5.9. The launch covers 2.5.1, 2.5.2, 2.5.7, 2.5.10, and 2.5.11.
-Settlement of its outcome covers 2.5.4 and 2.5.5. None closes alone:
+and 2.5.9. The launch covers 2.5.1, 2.5.2, 2.5.7, 2.5.10, 2.5.11, 2.5.12,
+2.5.13, and 2.5.14. Settlement of its outcome covers 2.5.4 and 2.5.5. None
+closes alone:
 - Routing without the launch only adds refusals for remote targets.
 - A launch without settlement leaves runs and leases with no owner after a
   failure, the HM-F2 defect.
 - The routed-machine keyword has no consumer outside this flow, and 2.5.10
   pins that every other caller keeps the local guard.
+- The machine ceiling and the `le=1000` bound exist only to keep a node's
+  report complete under its 1,000-entry list bound (Decision 19).
 
 The periodic reconciler has its own lifecycle owner, `AgentHealthMonitor`, so
 it is already its own section, 2.6.
@@ -1077,8 +1342,37 @@ it is already its own section, 2.6.
   `src/gobby/agents/isolation_models.py::generate_branch_name` falls back to
   `agent/<timestamp>-<hex>`.
 - The hub inserts a remote workspace's row from the node's report (Decision
-  15, 2.6), so this flow writes no `worktrees` or `clones` row and sets no
+  15, 1.4), so this flow writes no `worktrees` or `clones` row and sets no
   task artifact.
+- `max_active_agents` (`DaemonConfig`, `src/gobby/config/app.py`) is
+  `Field(default=20, ge=1, description="Maximum active agents per project.")`
+  with no upper bound. The live config store sets it to 100 (desired and
+  active, revision 151); Josh, verbatim: "Cap at 100, configurable. We already
+  have a value for this in the config store." The spawn flows read it through
+  `configured_max_active_agents()` (`_spawn_guards.py`).
+  `agent_slot_cap_refusal` counts one project's active runs, and
+  `reserve_agent_slot` holds a per-project `asyncio.Lock` from `_SLOT_LOCKS`
+  across the count and the spawn, so concurrent spawns cannot overshoot.
+- The config contracts carry the key's default and description but no bounds
+  (`tests/contracts/http/config_schema.json`,
+  `crates/gcore/assets/config/runtime_config_contract.json`).
+  `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
+  pins the default and the minimum.
+- The validator lists every `DaemonConfig` consumer for this target. In
+  `src/`, only `configured_max_active_agents` reads
+  `DaemonConfig.max_active_agents` (gcode, 2026-10-12); the build flow's
+  `max_active_agents` is `BuildConfig`'s own field
+  (`src/gobby/config/build.py`). Every other consumer reads a validated
+  config, so `le=1000` changes none of them; the live value is 100.
+- A node runs only gdaemon and reads no config store (#24075), so only the hub
+  can enforce the configured ceiling per node. `TerminalManager.list_reconcilable_by_machine`
+  returns a machine's pending, live, and orphaned terminal rows. A remote
+  agent's session end runs `mark_exited` on its row
+  (`TerminalManager.get_live_for_session` selects pending or live rows with no
+  machine filter; 2.6 research), while the node lists the agent in `agents`
+  until its process exits (1.1). So the hub's count can trail the node's by
+  the agents still exiting, and only the node can bound its own lists
+  exactly (1.1's 1,000-run refusal).
 - The tests drive a fake node client; live delivery waits on D2 and #24148.
 
 **Implementation:**
@@ -1125,21 +1419,40 @@ it is already its own section, 2.6.
 
   Local spawns pass none of these, so their sessions keep the local guard and
   their runs and environment are unchanged.
+- `DaemonConfig.max_active_agents` gains `le=1000` (Decision 19). Its default
+  (20) and description stay. Regenerating
+  `crates/gcore/assets/config/runtime_config_contract.json` with
+  `scripts/generate_runtime_config_contract.py` leaves its bytes unchanged,
+  because the generator emits no bounds; the HTTP `config_schema.json`
+  contract carries none either. A new description would change the gcore
+  contract asset, so the per-machine use is stated in Decision 19 and the
+  node-commands contract instead.
 - `spawn_remote_agent(..., routed: RoutedMachine)` takes the 1.3 result, the
   only source of a routed machine. It refuses `resume_session_id` with
   `remote_resume_unsupported` and a placement request with
   `remote_placement_unsupported`. Otherwise:
   1. It runs the local flow's agent-body, provider, model, and depth checks,
-     the `runner.can_spawn` gate, and `TaskSpawnLease` admission.
-  2. It calls `prepare_terminal_spawn` with `machine_id` and
+     the `runner.can_spawn` gate, and `TaskSpawnLease` admission. The
+     callers' per-project `reserve_agent_slot` still applies, so a remote
+     spawn passes both the project cap and the machine ceiling.
+  2. Machine ceiling (Decision 19). It takes a per-machine `asyncio.Lock`,
+     keyed by `routed.machine_id` in a module-level dict in `remote_spawn.py`,
+     and holds it through step 3's `create_pending`. Lock order is project
+     (`reserve_agent_slot`, held by the caller) then machine. Under the lock it
+     counts `list_reconcilable_by_machine(routed.machine_id)`. At or above
+     `configured_max_active_agents()` it releases the unattached lease and
+     returns `machine_cap_reached` with `stage: "none"`, writing no session,
+     run, or terminal row and sending nothing. `_SLOT_LOCKS` and
+     `agent_slot_cap_refusal` are unchanged.
+  3. It calls `prepare_terminal_spawn` with `machine_id` and
      `routed_machine_id` both set to `routed.machine_id`, `agent_run_id=None`,
      the request's `prompt`, `credential_manager=None`, and
      `workspace_path=routed.checkout_root`. It attaches the lease to the run.
      It calls `create_pending(terminal_id, project_id, "native", "gobby",
      terminal_id, machine_id=<target>, session_id=<child>,
      agent_run_id=<run>)`. Session, run, and terminal rows then all name the
-     target before anything is sent.
-  3. It sends one `agent.spawn` (1.1): the run, session, parent, project, and
+     target before anything is sent. It then releases the machine lock.
+  4. It sends one `agent.spawn` (1.1): the run, session, parent, project, and
      terminal ids, the child's `agent_depth`, `max_agent_depth`,
      `workflow_name`, `provider`, `model`, `provider_args`,
      `reasoning_effort`, `sandbox`, `timeout_seconds`, `prompt`, `title`,
@@ -1150,15 +1463,15 @@ it is already its own section, 2.6.
        `agent/<run_id>`. `base_branch` is the request's, else the agent
        body's. `inherit` or no value sends `null`, and the node uses
        `source_root`'s current branch (1.1).
-  4. `{accepted: true}` returns the run id, child session id, and terminal id
+  5. `{accepted: true}` returns the run id, child session id, and terminal id
      with status `pending`. The hub records nothing more here. 2.6 promotes
      the run from the node's report.
-  5. An error with `stage: "none"` is a definite failure. It fails the
+  6. An error with `stage: "none"` is a definite failure. It fails the
      pending terminal (`fail_pending`) and settles the run with
      `_roll_back_run`, which also ends the lease, and returns the error's
      code. A hub restart between those calls leaves a pending terminal for
      2.6's fence or an active run for 2.6's run sweep.
-  6. Any other outcome leaves the spawn in doubt. That covers a `null` or
+  7. Any other outcome leaves the spawn in doubt. That covers a `null` or
      `"partial"` stage and a caller that goes away after the send. The run and
      terminal stay pending, the lease stays attached, and the caller gets
      `spawn_in_doubt` with the run id. 2.6 resolves the spawn.
@@ -1198,9 +1511,12 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
 - `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: its resumes omit `machine` and take the unchanged local path.
 - `tests/skills/test_reference_library.py` — no-edit-reason: it validates documented launch arguments against the schema, and an added optional property accepts them.
+- `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py` — no-edit-reason: the remote flow calls `configured_max_active_agents()` as is, and `agent_slot_cap_refusal`, `reserve_agent_slot`, and `_SLOT_LOCKS` keep the per-project cap.
+- `tests/contracts/http/config_schema.json` — no-edit-reason: it carries the key's default and description but no bounds, and both stay.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py` — no-edit-reason: its caps are at most the default 20, all within `le=1000`.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_spawn.py tests/mcp_proxy/tools/spawn_agent/ tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_backend_ingress.py tests/agents/test_spawn.py tests/agents/test_spawn_resume.py tests/agents/test_agents_session.py tests/sessions/test_sessions_manager.py tests/agents/test_runbook_seat_titles.py tests/integration/test_terminal_mode_worktrees.py tests/storage/agents/test_active_run_scope.py tests/storage/test_machine_scope_writers.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_spawn.py tests/mcp_proxy/tools/spawn_agent/ tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_backend_ingress.py tests/agents/test_spawn.py tests/agents/test_spawn_resume.py tests/agents/test_agents_session.py tests/sessions/test_sessions_manager.py tests/agents/test_runbook_seat_titles.py tests/integration/test_terminal_mode_worktrees.py tests/storage/agents/test_active_run_scope.py tests/storage/test_machine_scope_writers.py tests/config/test_runtime_config_contract.py -v`.
 
 **Acceptance:**
 
@@ -1215,6 +1531,9 @@ Verification planned:
 - 2.5.9 - With a checkout on the target and none on the hub, both the MCP tool and `POST /api/agents/spawn` spawn on the target. test: `tests/hub/test_remote_spawn.py::test_remote_target_needs_no_hub_checkout`.
 - 2.5.10 - `register` for another machine without `routed_machine_id`, and `register_session` for another machine, raise `MachineOwnershipMismatchError`; a `routed_machine_id` that differs from `machine_id` raises it too; a routed registration for an unenrolled machine raises `MachineNotRegisteredError`; and none writes a row. test: `tests/hub/test_remote_spawn.py::test_foreign_session_needs_routed_machine`.
 - 2.5.11 - An isolated remote spawn sends `workspace` with the requested mode, `branch_name` `agent/<run_id>` unless the request names a branch, and `base_branch` `null` for `inherit` or no value; the hub writes no `worktrees` or `clones` row and sets no task artifact. test: `tests/hub/test_remote_spawn.py::test_workspace_intent_names_run_branch`.
+- 2.5.12 - With the target machine's pending, live, and orphaned terminal rows at `configured_max_active_agents()`, a remote spawn returns `machine_cap_reached` with `stage: "none"`, writes no session, run, or terminal row, sends nothing, and frees its lease; two concurrent spawns to a machine one below the ceiling admit exactly one; a spawn to another machine and a local spawn are unaffected. test: `tests/hub/test_remote_spawn.py::test_machine_ceiling_refuses_before_rows`.
+- 2.5.13 - `DaemonConfig(max_active_agents=1000)` validates, `DaemonConfig(max_active_agents=1001)` raises `ValidationError`, and the default stays 20. test: `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`.
+- 2.5.14 - The checked-in runtime config contract still equals the generator's output after the bound. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
 
 ### 2.6 The hub settles remote runs from the node's reports [category: code] (depends: 1.3, 1.4, 2.1, 2.5)
 `kind: deliverable`
@@ -1225,12 +1544,12 @@ Targets:
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.check_unhealthy_agents`
 - `tests/hub/test_remote_reconcile.py`
 
-**Granularity:** eight acceptance items and two production files, one
-outcome: after a remote spawn leaves 2.5, every run, terminal, and workspace
-row on a reporting machine reaches a settled state with one owner,
-`RemoteRunReconciler` under `AgentHealthMonitor`. Promotion and the workspace
-row cover 2.6.1 and 2.6.2, terminal settlement 2.6.3 to 2.6.7, and the run
-sweep 2.6.8. None is safe alone: all three read the same report, and the fence
+**Granularity:** seven acceptance items and two production files, one
+outcome: after a remote spawn leaves 2.5, every run and terminal row on a
+reporting machine reaches a settled state with one owner,
+`RemoteRunReconciler` under `AgentHealthMonitor`. Promotion covers 2.6.1,
+terminal settlement 2.6.2 to 2.6.6, and the run sweep 2.6.7. 1.4 records
+workspace rows. None is safe alone: all three read the same report, and the fence
 exits the terminal whose run the sweep settles after a hub restart.
 
 **Research context:**
@@ -1268,11 +1587,9 @@ exits the terminal whose run the sweep settles after a hub restart.
   a provider that exits without a session end has its completion settling,
   and `"terminal session died unexpectedly"` for a run whose session never
   started a turn.
-- Workspace rows (Decision 15): `worktrees` has `id`, `project_id`,
-  `machine_id`, `task_id`, `branch_name`, `worktree_path`, `base_branch`,
-  `agent_session_id`, and `status` (default `active`); `clones` has the same
-  with `clone_path` (`crates/gcore/assets/schema/baseline.sql`). The local
-  flow records its row after creating the directory
+- Workspace rows (Decision 15) are 1.4's: its report route records them
+  before answering 200, so the reconciler writes none. The local flow records
+  its row after creating the directory
   (`WorktreeIsolationHandler.prepare_environment` calls
   `LocalWorktreeManager.create`).
   - `LocalWorktreeManager.has_path_on_other_machine` makes the hub's
@@ -1280,12 +1597,6 @@ exits the terminal whose run the sweep settles after a hub restart.
     another machine's row also names.
   - `release_session_worktrees` releases only this machine's rows, so a
     remote row keeps its `agent_session_id` after the session ends.
-  - A task's `worktree_path` artifact is read by hub-side build paths that run
-    git in that path (`src/gobby/build/claim_recovery.py`,
-    `src/gobby/build/observability.py`), so the reconciler sets none.
-  - `agent_session_id` references `sessions(id, machine_id)` with
-    `ON DELETE SET NULL`, so a retained row cannot be relied on to reach its
-    run.
 - `node_report_inbox().take()` (1.4) returns each reporting machine's latest
   report and the exits gathered since the last `take`.
   `AgentLifecycleMonitor` runs the health pass every 30 s
@@ -1305,7 +1616,9 @@ exits the terminal whose run the sweep settles after a hub restart.
 - `reconcile()` calls `node_report_inbox().take()` and drops this machine's
   entry. Only machines with an entry are visited, so a node that stops
   reporting keeps its rows as they are. "Consecutive reports" means
-  consecutive passes that each found a report for that machine.
+  consecutive passes that each took a newly admitted report for that machine.
+  1.4 admits only fresh, ordered reports, so a delayed or replayed report
+  never counts.
 - The terminal pass selects terminal rows, not runs, so a terminal outlives
   its run's settlement. For each reporting machine it reads
   `list_reconcilable_by_machine(machine_id)`: pending, live, and orphaned rows,
@@ -1316,15 +1629,9 @@ exits the terminal whose run the sweep settles after a hub restart.
   and for an active run the reconciler calls `dead_reason`, where `None` means
   a completion is settling the run, and otherwise calls
   `cleanup_agent(run, terminal_payload=<reason>)`.
-  - Listed in `agents` and pending: when the entry names a workspace,
-    `record_remote_workspace` runs first, then `record_spawn_identity`.
-    - `record_remote_workspace(db, *, machine_id, terminal, run, workspace)`
-      inserts an `active` `worktrees` row (mode `worktree`) or `clones` row
-      (mode `clone`) with a new id, the terminal's project and machine, the
-      run's task, the run's child session as `agent_session_id`, and the
-      entry's path, `branch_name`, and `base_branch`, with
-      `ON CONFLICT DO NOTHING`. A repeated report, or a hub restart between
-      the insert and the promotion, adds no second row.
+  - Listed in `agents` and pending: 1.4's route already recorded the
+    entry's workspace row before it answered 200, so the reconciler calls
+    `record_spawn_identity`.
     - `record_spawn_identity(run_id, terminal_id, entry, host_epoch)` promotes
       the terminal with `promote_to_live` (the entry's `locator` and
       `locator_key`, and the report's `host_epoch`), then re-reads the run. An
@@ -1380,13 +1687,12 @@ Verification planned:
 **Acceptance:**
 
 - 2.6.1 - A report listing a pending run's agent promotes its terminal live with the entry's locator and the report's `host_epoch` and records `pid` and `terminal_id` on the run; when the agent's session end arrived first, the terminal exits, the run stays ended, and no `pid` is recorded. test: `tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted`.
-- 2.6.2 - The first report listing an agent with a workspace inserts, before the promotion, one `worktrees` row, or a `clones` row in clone mode, carrying the node's `machine_id`, the path, the branch, the base branch, the run's task, and the child session; a repeated report inserts nothing more, an entry without a workspace inserts none, the task gains no artifact, and the hub's `list_worktrees()` does not return the row. test: `tests/hub/test_remote_reconcile.py::test_reported_workspace_is_a_machine_row`.
-- 2.6.3 - A run with a live terminal that a report omits, or a live row from an older `host_epoch`, is left on its first absent report and settled on the second through `mark_exited` and `cleanup_agent`; a run that settles in between is not failed, and its terminal still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_two_reports`.
-- 2.6.4 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and an exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
-- 2.6.5 - A pending run past the deadline and absent from two consecutive reports is sent `agent.cancel` first. `{stopped: true}` or `not_found` then fails its terminal and run, `node_timeout` or `{stopped: false}` changes nothing, and a run listed in `accepted` is never fenced. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
-- 2.6.6 - A machine with no new report gets no command and its rows stay as they are, and local rows are never reconciled. test: `tests/hub/test_remote_reconcile.py::test_unreported_and_local_rows_untouched`.
-- 2.6.7 - In this case the spawn's effect lands and its reply is lost, the agent exits between reports so none lists it, and its session start and session end both reach the hub. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a machine with no new report stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
-- 2.6.8 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first report and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run that completes, or gains a pending or live terminal, between the two reports is not swept, and a run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
+- 2.6.2 - A run with a live terminal that a report omits, or a live row from an older `host_epoch`, is left on its first absent report and settled on the second through `mark_exited` and `cleanup_agent`; a run that settles in between is not failed, and its terminal still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_two_reports`.
+- 2.6.3 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and an exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
+- 2.6.4 - A pending run past the deadline and absent from two consecutive reports is sent `agent.cancel` first. `{stopped: true}` or `not_found` then fails its terminal and run, `node_timeout` or `{stopped: false}` changes nothing, and a run listed in `accepted` is never fenced. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
+- 2.6.5 - A machine with no new report gets no command and its rows stay as they are, and local rows are never reconciled. test: `tests/hub/test_remote_reconcile.py::test_unreported_and_local_rows_untouched`.
+- 2.6.6 - In this case the spawn's effect lands and its reply is lost, the agent exits between reports so none lists it, and its session start and session end both reach the hub. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a machine with no new report stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
+- 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first report and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run that completes, or gains a pending or live terminal, between the two reports is not swept, and a run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
 
 ## P3: Machine-aware roster and attention
 `kind: framing`
@@ -1568,11 +1874,12 @@ Verification planned:
 - 3.3.4 - A lost reply answers 502 `injection_indeterminate` and retires the entry, and a retry sends no second `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry`.
 - 3.3.5 - Two concurrent responses to one entry send one `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once`.
 
-## D1 Remote workspace lifecycle (depends: 2.6)
+## D1 Remote workspace lifecycle (depends: 1.4, 2.6)
 `kind: deferred`
 
-A remote workspace's hub row is a record that the hub inserts from the node's
-report (Decision 15, 2.6). The node removes a workspace only when its spawn
+A remote workspace's hub row is a record that 1.4's report route inserts from
+the node's report before it answers 200 (Decision 15). The node removes a
+workspace only when its spawn
 fails before launch, so a finished remote workspace stays on the node, and its
 row stays `active` with its `agent_session_id`. No existing path finishes it:
 - `LocalWorktreeManager` and `LocalCloneManager` read and write only this
@@ -1740,6 +2047,28 @@ deferral:
   (Decision 18). The remote flow no longer calls `get_terminal_env_vars`, so
   the hub creates no directory for a node's run. The Architecture section adds
   a component diagram and three user stories.
+- 2026-10-12: Repaired for Plan Adversary gobby#16491's HM-F14 to HM-F18 on
+  base 991a6afb96. Orchestrator gobby#15977 ruled on HM-F15 and HM-F16.
+  - HM-F14: 1.4's report route records workspace rows from live entries and
+    launched exits before it answers 200, so an agent that launches and exits
+    between passes, or a hub restart after the 200, loses no row. 1.4 now
+    depends on 2.1, and 2.6 no longer inserts rows.
+  - HM-F15: each hub process mints a fresh random `hub_epoch` that is never
+    reused, and the node sends one fresh report at a time with a durable
+    revision. A stale epoch or a revision at or below the high-water gets 409
+    `stale_report` before any write. No migration.
+  - HM-F16: Josh's ruling sets the ceiling to the existing
+    `max_active_agents`, applied per remote machine in 2.5, with `le=1000`
+    so a full node fits one complete report (Decision 19). The writer found
+    that a remote session end exits the hub's terminal row before the node's
+    process exits, so the node also refuses a spawn at 1,000 accepted and
+    live runs.
+  - HM-F17: a key-authenticated hook must name the key's machine, and a hook
+    from another machine binds only that machine's session rows at every hook
+    lookup (2.2, Decision 16). The writer's sweep added the web-chat,
+    compact-continuation, and session-start identity lookups.
+  - HM-F18: the node keeps a durable preparation record and retries removal
+    until the path is gone.
 
 ## V2: Verification
 `kind: verification`
