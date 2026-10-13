@@ -147,8 +147,9 @@ def create_workspaces_registry(
     @registry.tool(description=f"Read a workspace with its tabs and panes. {_NODE}", read_only=True)
     async def get_workspace(workspace: str, node: str | None = None) -> dict[str, Any]:
         async def work(actor: str) -> dict[str, Any]:
+            managed = isinstance(await get_request_principal(), AgentApiTokenClaims)
             snapshot = await ops().workspace_snapshot(
-                actor, workspace, node=node, sweep_dead_panes=False
+                actor, workspace, node=node, sweep_dead_panes=not managed
             )
             return {
                 "workspace": {**_json(snapshot.workspace), "node_ref": snapshot.node.ref},
@@ -156,7 +157,7 @@ def create_workspaces_registry(
                 "panes": _json(snapshot.panes),
             }
 
-        # Inventory reads neither create a workspace nor prune dead panes.
+        # Managed inventory reads neither create a workspace nor prune dead panes.
         return await _run(work, allow_managed_read=True)
 
     @registry.tool(description=f"Return the workspace named `name`, creating it. {_NODE}")

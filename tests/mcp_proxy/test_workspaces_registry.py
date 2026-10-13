@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -549,9 +549,9 @@ async def test_managed_inventory_requires_an_authenticated_matching_session(
         assert await _code(registry, tool, **arguments) == "forbidden"
 
 
-@pytest.mark.parametrize("managed", [False, True])
-async def test_workspace_inventory_preserves_unbound_panes_without_publication(
-    stack: _Stack, managed: bool
+@pytest.mark.parametrize("caller", ["managed", "operator", "interactive"])
+async def test_workspace_inventory_cleanup_depends_on_authenticated_caller(
+    stack: _Stack, caller: str
 ) -> None:
     registry = _registry(stack)
     session = stack.sessions.register(
@@ -572,16 +572,24 @@ async def test_workspace_inventory_preserves_unbound_panes_without_publication(
             iat=0,
             exp=0,
         )
-        if managed
+        if caller == "managed"
         else None
     )
     with (
         _principal(claims),
-        session_context_for_test(session.id),
+        session_context_for_test(session.id) if caller != "operator" else nullcontext(),
         patch.object(stack.ops, "_publish", wraps=stack.ops._publish) as publish,
     ):
         snapshot = await _ok(registry, "get_workspace", workspace=workspace.id)
-        assert await _code(registry, "get_workspace", workspace=None) == "invalid_op"
+        if caller == "managed":
+            assert await _code(registry, "get_workspace", workspace=None) == "invalid_op"
+    if caller != "managed":
+        assert snapshot["panes"] == []
+        assert snapshot["tabs"] == []
+        assert stack.workspaces.list_panes(workspace.id) == []
+        assert stack.workspaces.list_tabs(workspace.id) == []
+        publish.assert_awaited()
+        return
     assert [pane["id"] for pane in snapshot["panes"]] == [layout.panes[0].id]
     assert stack.workspaces.list_panes(workspace.id) == list(layout.panes)
     assert stack.workspaces.list_tabs(workspace.id) == list(layout.tabs)
