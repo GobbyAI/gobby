@@ -14,6 +14,7 @@ from typing import Any
 from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
+from gobby.claude_config import claude_config_path, update_claude_config
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -269,40 +270,23 @@ async def _patch_mcp_config_for_isolation(
 
     # For Claude provider, register the isolated path in ~/.claude.json
     if provider == "claude":
-        claude_json_path = Path.home() / ".claude.json"
+        claude_json_path = claude_config_path()
         try:
 
-            def _patch_claude_json() -> None:
-                import tempfile
-
-                data: dict[str, Any] = {}
-                if claude_json_path.exists():
-                    try:
-                        data = json.loads(claude_json_path.read_text())
-                    except json.JSONDecodeError:
-                        logger.warning("Malformed ~/.claude.json, re-initializing")
-                        data = {}
-
+            def patch_config(data: dict[str, Any]) -> bool:
                 projects = data.setdefault("projects", {})
+                if not isinstance(projects, dict):
+                    raise ValueError("Claude projects configuration must be an object")
                 project_config = projects.setdefault(isolated_path, {})
-                project_config["mcpServers"] = mcp_config["mcpServers"]
+                if not isinstance(project_config, dict):
+                    raise ValueError("Claude workspace configuration must be an object")
+                servers = project_config.setdefault("mcpServers", {})
+                if not isinstance(servers, dict):
+                    raise ValueError("Claude MCP server configuration must be an object")
+                servers.update(mcp_config["mcpServers"])
+                return True
 
-                # Atomic write via tempfile + os.replace to avoid TOCTOU race
-                fd, tmp_path = tempfile.mkstemp(dir=str(claude_json_path.parent), suffix=".tmp")
-                try:
-                    os.write(fd, (json.dumps(data, indent=2) + "\n").encode())
-                    os.close(fd)
-                    os.replace(tmp_path, str(claude_json_path))
-                except BaseException:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                    raise
-
-            await asyncio.to_thread(_patch_claude_json)
+            await asyncio.to_thread(update_claude_config, claude_json_path, patch_config)
             logger.info("Registered isolated path in ~/.claude.json: %s", isolated_path)
         except Exception as e:
             logger.warning("Failed to patch ~/.claude.json for %s: %s", isolated_path, e)
@@ -329,7 +313,7 @@ def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:
     if provider != "claude":
         return None
 
-    claude_json_path = Path.home() / ".claude.json"
+    claude_json_path = claude_config_path()
     if not claude_json_path.exists():
         return f"provider_mcp_config_missing:{claude_json_path}"
     try:

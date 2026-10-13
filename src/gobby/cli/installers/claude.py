@@ -17,6 +17,7 @@ from typing import Any
 
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.agents.trust import seed_gobby_home_trust
+from gobby.claude_config import claude_config_path
 from gobby.cli.utils import get_install_dir
 from gobby.paths import get_gobby_home
 from gobby.utils.durable_file import durable_replace_text
@@ -373,7 +374,7 @@ def install_claude(
 
     # Configure MCP server in global settings (~/.claude.json)
     # Note: Claude Code uses ~/.claude.json for user-scoped MCP servers
-    global_settings = Path.home() / ".claude.json"
+    global_settings = claude_config_path()
     mcp_result = configure_mcp_server_json(global_settings)
     if mcp_result["success"]:
         result["mcp_configured"] = mcp_result.get("added", False)
@@ -516,7 +517,7 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
             files_removed.append(filename)
 
     # Remove MCP server from global settings (~/.claude.json)
-    global_settings = Path.home() / ".claude.json"
+    global_settings = claude_config_path()
     mcp_result = remove_mcp_server_json(global_settings)
     if mcp_result["success"]:
         result["mcp_removed"] = mcp_result.get("removed", False)

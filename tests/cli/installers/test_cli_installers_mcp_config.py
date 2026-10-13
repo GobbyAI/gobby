@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import tomllib
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -186,10 +185,12 @@ class TestConfigureMCPServerJSON:
     def test_write_failure(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         # File doesn't exist yet, so no backup needed
-        with patch("builtins.open", side_effect=OSError("read-only")):
+        with patch("gobby.claude_config.os.replace", side_effect=OSError("read-only")):
             result = configure_mcp_server_json(settings)
         assert result["success"] is False
         assert "Failed to write" in result["error"]
+        assert not settings.exists()
+        assert not (tmp_path / "settings.json.lock").exists()
 
     def test_custom_server_name(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -278,21 +279,17 @@ class TestRemoveMCPServerJSON:
     def test_write_failure(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"mcpServers": {"gobby": {}}}))
-        # Allow copy2 but fail on write
-        orig_open = open
-
-        def mock_open(path: str | Path, *args: Any, **kwargs: Any) -> Any:
-            if "w" in (args[0] if args else kwargs.get("mode", "r")):
-                raise OSError("read-only fs")
-            return orig_open(path, *args, **kwargs)
-
+        # Allow the locked read and backup, then fail the atomic replacement.
         with (
             patch("gobby.cli.installers.mcp_config_shared._copy2"),
-            patch("builtins.open", side_effect=mock_open),
+            patch("gobby.claude_config.os.replace", side_effect=OSError("read-only fs")),
         ):
             result = remove_mcp_server_json(settings)
         assert result["success"] is False
         assert "Failed to write" in result["error"]
+        assert json.loads(settings.read_text()) == {"mcpServers": {"gobby": {}}}
+        assert result["removed"] is False
+        assert not (tmp_path / "settings.json.lock").exists()
 
 
 # ---------------------------------------------------------------------------
