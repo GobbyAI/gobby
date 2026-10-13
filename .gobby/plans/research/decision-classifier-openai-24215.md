@@ -120,3 +120,40 @@ needs `instructions` and `choices`: the OpenAI shape. No new probe was sent.
   `docs/evidence/decisions/wire-contracts.md`.
 - The Graphify parity plan references only #22604, whose dependency on 1.2
   is unchanged.
+
+## #24253: defer `openai-decisions` until OpenAI Decisions API GA
+
+Josh, button 381243f3 (value `openai-decisions:defer-ga`, 2026-10-12),
+supersedes identity button d8eab611. Orchestrator gobby#15977 gave go on
+2026-10-13. The other wires proceed unchanged: `systemone` (LM Studio,
+Kev), OpenRouter (Jev), and Workers AI (Clef).
+
+- LM Studio: its example and Decision 17 already use `/v1/systemone`, and
+  `/v1/decisions` was only reachable through this wire. No non-OpenAI
+  backend depends on it, so the wire and LM Studio's `/v1/decisions` defer
+  together. Josh's proceeding list is unchanged.
+- `refused` exists only for OpenAI refusal answers, so it defers too.
+- GA re-checks: (1) whether dated snapshots or a resolved `model` in the
+  response now exist (identity contract, Decision 10); (2) the Vercel AI
+  Gateway `gpt-6-luna-decisions` listing as a possible host. Source: the
+  task text and button; no Vercel URL retrieved.
+- New `## D1` after 4.1, before V2, in the shape of hub-mode's D2. It
+  depends on 1.1, 1.2, 2.1, 3.1 and 4.1. Its yaml carries a placeholder
+  task_ref and owner orchestrator. Its Original acceptance items D1.1 and up
+  carry the old 1.2.16, 1.2.17, 4.1.6, the OpenAI parts of 1.1.1, 1.1.4,
+  1.1.10, 1.1.15, 2.1.7 and 3.1.1, and LM Studio's `/v1/decisions` facts.
+- Orchestrator duties: file the D1 task under #24238 with labels
+  `deferred-from:decision-classifier-path:D1` and `needs-planning`,
+  criteria repeating each D1.x ID, and blocked-by the leaves for the
+  sections D1 depends on. Also edit the leaves: 1.1 #24243, 1.2 #24244,
+  2.1 #24245, 3.1 #24246 and 4.1 #24249 (1.2.16, 1.2.17 and 4.1.6 removed).
+- Coverage manifest (plan_hash af1af00c) regenerates after M1 and the
+  leaves settle, under #24224.
+
+Progress: every narrative edit is done, D1 holds D1.1 to D1.7, the V1
+entry is written, and the M1 block is withdrawn. The final sweep is clean.
+Remaining: validate (standard and expansion) after the #24232 cutover's
+DAEMON BACK; ocr per path; commit the plan under #24253 and this note under
+#24215 (15977's request); SHA to 16491 and 15977. Prior M1 routing to
+re-send: 1.1 to 3.3 code, feature, backend, tdd true; 4.1 docs, chore,
+tdd false, tech-writer.
