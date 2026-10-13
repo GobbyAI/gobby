@@ -3,7 +3,7 @@
 import argparse
 import json
 import re
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -55,12 +55,18 @@ def digest_projection(content: str, section: str) -> dict[str, object]:
         }
     if section == "decisions":
         return {
-            name: sections.get(name, "missing heading")
-            for name in (
-                "Decisions needed (Josh)",
-                "Operator actions (Josh)",
-                "Gaps and contradictions",
-            )
+            "entries": [
+                {"heading": name, "text": item.strip()}
+                for name in (
+                    "Decisions needed (Josh)",
+                    "Operator actions (Josh)",
+                    "Gaps and contradictions",
+                )
+                for item in re.split(
+                    r"(?m)^(?=[-*+] |\d+[.)] )", sections.get(name, "missing heading")
+                )
+                if item.strip()
+            ]
         }
     if section != "fleet":
         raise ValueError("section must be queues, fleet, or decisions")
@@ -88,29 +94,84 @@ def digest_projection(content: str, section: str) -> dict[str, object]:
     }
 
 
+def _page_projection(
+    projection: dict[str, object], metadata: dict[str, object], offset: int
+) -> dict[str, object]:
+    """Page complete evidence entries while measuring the entire JSON envelope."""
+    entries = [
+        (name, entry)
+        for name, values in projection.items()
+        if isinstance(values, list)
+        for entry in values
+    ]
+    evidence: dict[str, object] = {
+        name: [] if isinstance(value, list) else value for name, value in projection.items()
+    }
+    result = {
+        **metadata,
+        "evidence": evidence,
+        "offset": offset,
+        "count": 0,
+        "total": len(entries),
+        "next_offset": None,
+    }
+    for index in range(offset, len(entries)):
+        name, entry = entries[index]
+        values = evidence[name]
+        assert isinstance(values, list)
+        values.append(entry)
+        result["count"] = index - offset + 1
+        result["next_offset"] = index + 1 if index + 1 < len(entries) else None
+        if len(json.dumps(result, ensure_ascii=False).encode()) + 1 >= 14_000:
+            values.pop()
+            result["count"] = index - offset
+            result["next_offset"] = index
+            if index == offset:
+                raise ValueError(f"Digest entry at offset {offset} exceeds the 14KB page budget")
+            break
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--section", choices=("queues", "fleet", "decisions"), required=True)
+    parser.add_argument("--offset", type=int, default=0)
     args = parser.parse_args()
-    today = datetime.now(ZoneInfo("America/Chicago")).date().isoformat()
+    today = datetime.now(ZoneInfo("America/Chicago")).date()
     path: Path | None = None
     try:
+        if args.offset < 0:
+            raise ValueError("offset must be nonnegative")
         root = find_project_root()
         if root is None:
             raise ValueError("Reporter digest requires a project root")
-        path = root / ".gobby" / "reports" / f"gobby-digest-{today}.md"
+        reports = root / ".gobby" / "reports"
+        path = reports / f"gobby-digest-{today.isoformat()}.md"
+        source_date = today
+        if not path.exists():
+            previous = []
+            for candidate in reports.glob("gobby-digest-*.md"):
+                try:
+                    digest_date = date.fromisoformat(candidate.stem.removeprefix("gobby-digest-"))
+                except ValueError:
+                    continue
+                if digest_date < today and candidate.is_file():
+                    previous.append((digest_date, candidate))
+            if previous:
+                source_date, path = max(previous)
         content = path.read_text(encoding="utf-8")
-        result = {
+        metadata: dict[str, object] = {
             "source": str(path),
+            "source_date": source_date.isoformat(),
+            "stale": source_date < today,
+            "age_days": (today - source_date).days,
             "modified_at": datetime.fromtimestamp(
                 path.stat().st_mtime, ZoneInfo("America/Chicago")
             ).isoformat(),
             "section": args.section,
-            "evidence": digest_projection(content, args.section),
         }
+        result = _page_projection(digest_projection(content, args.section), metadata, args.offset)
         encoded = json.dumps(result, ensure_ascii=False)
-        if len(encoded.encode()) >= 14_000:
-            raise ValueError("Selected digest section exceeds 14KB; report source gap")
     except (OSError, ValueError) as exc:
         encoded = json.dumps(
             {

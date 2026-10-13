@@ -742,6 +742,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         title_like: str | None = None,
         stages: list[str] | None = None,
         stage_state: str | None = None,
+        updated_since: datetime | None = None,
+        candidate: bool | None = None,
     ) -> int:
         """Count tasks with optional filters.
 
@@ -768,6 +770,8 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             title_like=title_like,
             stages=stages,
             stage_state=stage_state,
+            updated_since=updated_since,
+            candidate=candidate,
         )
 
     def count_by_state(self, project_id: str | None = None) -> dict[str, int]:
@@ -795,7 +799,9 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         """
         return _count_ready_tasks(self.db, project_id=project_id)
 
-    def count_blocked_tasks(self, project_id: str | None = None) -> int:
+    def count_blocked_tasks(
+        self, project_id: str | None = None, parent_task_id: str | None = None
+    ) -> int:
         """Count tasks that are blocked by at least one external blocking dependency.
 
         Excludes parent tasks blocked by their own descendants (completion block, not work block).
@@ -806,7 +812,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Returns:
             Count of blocked tasks
         """
-        return _count_blocked_tasks(self.db, project_id=project_id)
+        return _count_blocked_tasks(self.db, project_id=project_id, parent_task_id=parent_task_id)
 
     def count_closed_since(self, hours: int = 24, project_id: str | None = None) -> int:
         """Count tasks closed within the last N hours."""

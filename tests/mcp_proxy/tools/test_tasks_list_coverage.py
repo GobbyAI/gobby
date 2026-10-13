@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -129,6 +130,7 @@ def test_candidate_queries_group_extraction_before_joining_tasks(
 async def test_list_tasks_caps_only_compact_view() -> None:
     manager = MagicMock()
     manager.list_tasks.return_value = []
+    manager.count_tasks.return_value = 0
     manager.get_candidate_sent_times.return_value = {}
     registry = create_task_registry(manager, MagicMock())
     with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as context:
@@ -249,10 +251,12 @@ async def test_compact_page_elides_oversized_row_without_losing_neighbors(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fact_size", [1, 300])
 async def test_compact_receipt_facts_preserve_summaries_and_full_fetch(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
+    fact_size: int,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager, MagicMock())
@@ -271,7 +275,7 @@ async def test_compact_receipt_facts_preserve_summaries_and_full_fetch(
         for number in range(3)
     ]
     oversized = tasks[1]
-    facts = {f"fact{number}": "x" * 300 for number in range(16)}
+    facts = {f"fact{number}": "x" * fact_size for number in range(16)}
     receipts = [
         record_close_receipt(
             temp_db,
@@ -548,3 +552,124 @@ def test_list_tasks_schema_exposes_closed_filter(task_registry: InternalToolRegi
         "type": "boolean",
         "description": "true = closed only, false = open only, omitted = both",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filter_name", ["claimed", "escalated", "candidate", "updated_since"])
+async def test_compact_totals_match_filters_on_every_page(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    filter_name: str,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager, MagicMock())
+    seat = session_manager.register(
+        external_id="total-author",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Total item {number}",
+            validation_criteria="Filtered totals equal all matching rows.",
+        )
+        for number in range(4)
+    ]
+    for index, task in enumerate(tasks):
+        temp_db.execute(
+            "UPDATE tasks SET claimed_by_session_id = %s, is_escalated = %s, updated_at = %s "
+            "WHERE id = %s",
+            (
+                seat.id if index < 2 else None,
+                index < 2,
+                datetime(2026, 10, 12 if index < 2 else 10, tzinfo=UTC),
+                task.id,
+            ),
+        )
+    messages = InterSessionMessageManager(temp_db)
+    for task in tasks[:2]:
+        event = f"EVENT=CANDIDATE TASK=#{task.seq_num} TASK_TITLE=Total"
+        messages.create_message(seat.id, seat.id, event)
+        messages.create_message(seat.id, seat.id, event)
+    filters: dict[str, Any] = {
+        filter_name: "2026-10-11T00:00:00Z" if filter_name == "updated_since" else True
+    }
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+        return_value={"id": sample_project["id"]},
+    ):
+        pages = [
+            await registry.call(
+                "list_tasks", {**filters, "view": "compact", "limit": 1, "offset": offset}
+            )
+            for offset in range(3)
+        ]
+    assert [page["total"] for page in pages] == [2, 2, 2]
+    assert [page["count"] for page in pages] == [1, 1, 0]
+    assert [page["next_offset"] for page in pages] == [1, None, None]
+    assert {page["rows"][0][0] for page in pages[:2]} == {f"#{task.seq_num}" for task in tasks[:2]}
+    if filter_name != "updated_since":
+        negative_filters: dict[str, Any] = {filter_name: False}
+        assert manager.count_tasks(project_id=sample_project["id"], **negative_filters) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_filter", [True, False])
+async def test_blocked_compact_pages_have_exact_total_and_blocker_refs(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    parent_filter: bool,
+) -> None:
+    from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
+    from gobby.storage.task_dependencies import TaskDependencyManager
+
+    manager = LocalTaskManager(temp_db)
+    parent = manager.create_task(sample_project["id"], "Parent", validation_criteria="Control")
+    blocker = manager.create_task(sample_project["id"], "Blocker", validation_criteria="Control")
+    tasks = [
+        manager.create_task(
+            sample_project["id"],
+            f"Blocked {index}",
+            validation_criteria="Blocked pages retain references",
+            parent_task_id=parent.id if index < 2 else None,
+        )
+        for index in range(3)
+    ]
+    dependencies = TaskDependencyManager(temp_db)
+    for task in tasks:
+        dependencies.add_dependency(task.id, blocker.id, "blocks")
+    registry = create_readiness_registry(manager)
+    expected = tasks[:2] if parent_filter else tasks
+    filters = {"parent_task_id": f"#{parent.seq_num}"} if parent_filter else {}
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._context.get_project_context",
+        return_value={"id": sample_project["id"]},
+    ):
+        pages = [
+            await registry.call(
+                "list_blocked_tasks", {**filters, "view": "compact", "limit": 1, "offset": offset}
+            )
+            for offset in range(len(expected) + 1)
+        ]
+    assert [page["total"] for page in pages] == [len(expected)] * len(pages)
+    assert [page["next_offset"] for page in pages] == [*range(1, len(expected)), None, None]
+    assert [page["count"] for page in pages] == [1] * len(expected) + [0]
+    assert {page["rows"][0][0] for page in pages[:-1]} == {f"#{task.seq_num}" for task in expected}
+    assert all(page["rows"][0][8] == [[f"#{blocker.seq_num}", "Blocker"]] for page in pages[:-1])
+    manager.close_task(blocker.id)
+    assert manager.count_blocked_tasks(project_id=sample_project["id"]) == 0
+
+
+def test_count_title_matches_literal_list_filter(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    expected = manager.create_task(sample_project["id"], "100%_done", validation_criteria="Control")
+    manager.create_task(sample_project["id"], "100abcXdone", validation_criteria="Control")
+    filters = {"project_id": sample_project["id"], "title_like": "%_"}
+    assert [task.id for task in manager.list_tasks(**filters)] == [expected.id]
+    assert manager.count_tasks(**filters) == 1

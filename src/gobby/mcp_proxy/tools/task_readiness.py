@@ -501,8 +501,18 @@ def create_readiness_registry(
         limit: int = 20,
         all_projects: bool = False,
         project: str | None = None,
+        offset: int = 0,
+        view: str = "default",
     ) -> dict[str, Any]:
         """List tasks that are currently blocked, including what blocks them."""
+        # The task factory imports this registry; defer projection imports until a call.
+        from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+        from gobby.mcp_proxy.tools.tasks._listing import compact_tasks
+
+        if view not in {"default", "compact"} or offset < 0 or limit < 1:
+            return {"error": "Use view=default|compact, offset >= 0, limit >= 1"}
+        if view == "compact":
+            limit = min(limit, 100)
         try:
             project_id = _resolve_project_id(task_manager, project, all_projects)
         except ValueError as e:
@@ -519,8 +529,28 @@ def create_readiness_registry(
             parent_task_id=parent_task_id,
             limit=limit,
             project_id=project_id,
+            offset=offset,
         )
-        return {"tasks": [t.to_brief() for t in blocked_tasks], "count": len(blocked_tasks)}
+        total = task_manager.count_blocked_tasks(
+            parent_task_id=parent_task_id, project_id=project_id
+        )
+        result = (
+            compact_tasks(blocked_tasks, RegistryContext(task_manager), offset, total=total)
+            if view == "compact"
+            else {
+                "tasks": [t.to_brief() for t in blocked_tasks],
+                "count": len(blocked_tasks),
+                "total": total,
+                "next_offset": None,
+            }
+        )
+        if (
+            blocked_tasks
+            and result.get("next_offset") is None
+            and offset + len(blocked_tasks) < total
+        ):
+            result["next_offset"] = offset + len(blocked_tasks)
+        return result
 
     registry.register(
         name="list_blocked_tasks",
@@ -534,6 +564,8 @@ def create_readiness_registry(
                     "default": None,
                 },
                 "limit": {"type": "integer", "description": "Max results", "default": 20},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "view": {"type": "string", "enum": ["default", "compact"], "default": "default"},
                 "all_projects": {
                     "type": "boolean",
                     "description": "If true, list tasks from all projects instead of just the current project",

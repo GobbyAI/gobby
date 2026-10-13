@@ -125,6 +125,7 @@ class TestListBlockedTasks:
             "status": "open",
         }
         task_manager.list_blocked_tasks.return_value = [mock_task]
+        task_manager.count_blocked_tasks.return_value = 1
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -141,6 +142,7 @@ class TestListBlockedTasks:
 
         task_manager = MagicMock()
         task_manager.list_blocked_tasks.return_value = []
+        task_manager.count_blocked_tasks.return_value = 0
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -151,6 +153,7 @@ class TestListBlockedTasks:
             parent_task_id="parent-123",
             limit=10,
             project_id="test-project-id",
+            offset=0,
         )
         assert task_manager.list_blocked_tasks.call_count == 1
         assert task_manager.list_blocked_tasks.call_args is not None
@@ -161,6 +164,7 @@ class TestListBlockedTasks:
 
         task_manager = MagicMock()
         task_manager.list_blocked_tasks.return_value = []
+        task_manager.count_blocked_tasks.return_value = 0
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -177,6 +181,7 @@ class TestListBlockedTasks:
 
         task_manager = MagicMock()
         task_manager.list_blocked_tasks.return_value = []
+        task_manager.count_blocked_tasks.return_value = 0
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -480,6 +485,7 @@ class TestReadinessEdgeCases:
         blocked_task = MagicMock()
         blocked_task.to_brief.return_value = {"id": "task-1", "status": "open"}
         task_manager.list_blocked_tasks.return_value = [blocked_task]
+        task_manager.count_blocked_tasks.return_value = 1
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -501,6 +507,7 @@ class TestReadinessEdgeCases:
         task_b.to_brief.return_value = {"id": "task-b", "status": "open"}
 
         task_manager.list_blocked_tasks.return_value = [task_a, task_b]
+        task_manager.count_blocked_tasks.return_value = 2
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_blocked = registry.get_tool("list_blocked_tasks")
@@ -519,6 +526,7 @@ class TestReadinessEdgeCases:
         # or treated as ready depending on implementation
         task_manager.list_blocked_tasks.return_value = []
         task_manager.list_ready_tasks.return_value = []
+        task_manager.count_blocked_tasks.return_value = 0
 
         registry = create_readiness_registry(task_manager=task_manager)
         list_ready = registry.get_tool("list_ready_tasks")
@@ -538,6 +546,7 @@ class TestReadinessEdgeCases:
         task_manager = MagicMock()
         task_manager.list_ready_tasks.return_value = []
         task_manager.list_blocked_tasks.return_value = []
+        task_manager.count_blocked_tasks.return_value = 0
 
         registry = create_readiness_registry(task_manager=task_manager)
 
