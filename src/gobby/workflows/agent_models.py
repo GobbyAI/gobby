@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
+from jinja2 import TemplateError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -296,4 +297,9 @@ class AgentDefinitionBody(BaseModel):
         for name in ("seat_context", "project_policy"):
             if context[name] is None:
                 context[name] = {}
-        return TemplateEngine().render(prompt, context)
+        try:
+            return TemplateEngine().render(prompt, context)
+        except TemplateError as exc:
+            raise ValueError(
+                f"Agent definition '{self.name}' has invalid prompts.{surface} template: {exc}"
+            ) from exc
