@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -26,6 +27,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     active_owned_dirty_paths,
+    foreign_dirty_edit_conflict,
     foreign_owned_dirty_paths,
     parse_git_commit_invocations,
 )
@@ -795,7 +797,7 @@ async def test_shell_git_status_after_external_commit_reconciles_attribution(
 
 
 @pytest.mark.asyncio
-async def test_dirty_edit_ownership_inspection_failure_allows(
+async def test_dirty_edit_ownership_inspection_failure_blocks(
     guard_harness: GuardHarness,
 ) -> None:
     (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
@@ -808,7 +810,50 @@ async def test_dirty_edit_ownership_inspection_failure_allows(
             guard_harness.edit_event("foreign.txt")
         )
 
-    assert response.decision == "allow"
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "could not verify dirty-path ownership" in response.reason
+    assert "database unavailable" in response.reason
+    assert "retry" in response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "cause"),
+    [
+        (PoolTimeout("connection pool timeout"), "connection pool timeout"),
+        (
+            DirtyEditOwnershipInspectionError(
+                "git rev-parse --show-toplevel failed: permission denied"
+            ),
+            "git rev-parse --show-toplevel failed: permission denied",
+        ),
+    ],
+    ids=["pool-timeout", "git-rev-parse-failure"],
+)
+async def test_dirty_edit_inspection_failure_names_cause_and_retry(
+    guard_harness: GuardHarness,
+    failure: Exception,
+    cause: str,
+) -> None:
+    event = guard_harness.edit_event("foreign.txt")
+    event.data.update({"canonical_repo_mutation": True, "canonical_file_paths": ["foreign.txt"]})
+    with patch(
+        "gobby.workflows.commit_guard._active_foreign_path_owners", side_effect=failure
+    ) as inspect_owners:
+        reason = await foreign_dirty_edit_conflict(
+            guard_harness.db,
+            event,
+            session_id=guard_harness.current_session.id,
+            project_id=guard_harness.project.id,
+            project_path=str(guard_harness.repo),
+        )
+
+    inspect_owners.assert_called_once()
+    assert "could not verify dirty-path ownership" in reason
+    assert cause in reason
+    assert "Fix that cause" in reason
+    assert "retry once the daemon and repository are available" in reason
 
 
 @pytest.mark.asyncio

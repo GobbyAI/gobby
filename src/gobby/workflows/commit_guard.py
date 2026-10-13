@@ -564,7 +564,9 @@ async def foreign_dirty_edit_conflict(
                 checkout_root=project_path,
             )
         except (psycopg.OperationalError, PoolTimeout) as exc:
-            raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
+            raise DirtyEditOwnershipInspectionError(
+                f"database ownership inspection failed: {exc}"
+            ) from exc
         candidate_paths = overlapping_task_edit_paths(owners.keys(), mutation_paths)
         if not candidate_paths:
             return ""
@@ -586,13 +588,16 @@ async def foreign_dirty_edit_conflict(
         if not conflicts:
             return ""
         return format_dirty_edit_reason(conflicts)
-    except DirtyEditOwnershipInspectionError:
+    except DirtyEditOwnershipInspectionError as exc:
         logger.warning(
             "Cross-session dirty edit ownership inspection failed",
             extra={"session_id": session_id, "project_id": project_id},
             exc_info=True,
         )
-        return ""
+        return (
+            f"Edit blocked: Gobby could not verify dirty-path ownership ({exc}). "
+            "Fix that cause, or retry once the daemon and repository are available."
+        )
 
 
 def _canonical_mutation_paths(event: HookEvent, project_path: str) -> set[str]:
