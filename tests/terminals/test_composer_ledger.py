@@ -25,7 +25,12 @@ from gobby.terminals.composer_ledger import (
     release_composer,
     write_ledger,
 )
-from gobby.terminals.host_events import InputActivityEvent, InterruptKind, TerminalExitedEvent
+from gobby.terminals.host_events import (
+    InputActivityEvent,
+    InputEffect,
+    InterruptKind,
+    TerminalExitedEvent,
+)
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -43,6 +48,7 @@ def _host(
     submit: bool | None = False,
     interrupt: InterruptKind | None = None,
     epoch: str = "e1",
+    effect: InputEffect = "edit",
 ) -> InputActivityEvent:
     return InputActivityEvent(
         terminal_id=terminal_id,
@@ -54,6 +60,7 @@ def _host(
         epoch=epoch,
         seq=seq,
         submit=submit,
+        effect=effect,
     )
 
 
@@ -239,6 +246,45 @@ def test_keypad_enter_flags_a_submit() -> None:
     ledger.observe_write("t1", origin="operator", kind="input", payload="draft\x1bOM")
     ledger.record_submit("t1")
     assert ledger.read("t1") == _EMPTY
+
+
+@pytest.mark.parametrize("effect", ["control", "cursor"])
+@pytest.mark.parametrize("draft", [False, True])
+def test_native_non_text_input_preserves_composer_state(effect: InputEffect, draft: bool) -> None:
+    ledger = _tracked("t1")
+    if draft:
+        ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, effect=effect))
+    assert ledger.read("t1") == (_DRAFT if draft else _EMPTY)
+
+
+def test_native_controls_preserve_held_text_and_advance_the_cursor() -> None:
+    ledger = _tracked("t1")
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+    held = ledger.read("t1")
+    ledger.observe_host_event(_host(1, effect="control"))
+    assert ledger.read("t1") == held
+    # Replaying a different event at the consumed cursor cannot create a draft.
+    ledger.observe_host_event(_host(1, effect="edit"))
+    assert ledger.read("t1") == held
+
+
+def test_native_cursor_input_invalidates_held_text() -> None:
+    ledger = _tracked("t1")
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+    ledger.observe_host_event(_host(1, effect="cursor"))
+    assert ledger.read("t1") == _DRAFT
+
+
+@pytest.mark.parametrize("payload", ["\x1b[M\x1b[A", "\x1b[M \r!"])
+def test_x10_coordinates_do_not_invalidate_or_submit_held_text(payload: str) -> None:
+    ledger = _tracked("t1")
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+    held = ledger.read("t1")
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    assert ledger.read("t1") == held
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == held
 
 
 def test_operator_raw_input_with_carriage_return_flags_submit() -> None:

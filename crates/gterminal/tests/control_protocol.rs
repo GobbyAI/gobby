@@ -1052,7 +1052,8 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
                            kind: &str,
                            bytes: u64,
                            interrupt: serde_json::Value,
-                           submit: bool| {
+                           submit: bool,
+                           effect: &str| {
         let event = recv_json(events);
         assert_eq!(event["event"], "input_activity", "{event}");
         assert_eq!(event["terminal_id"], "grant-terminal", "{event}");
@@ -1062,10 +1063,11 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
         assert_eq!(event["bytes"], bytes, "{event}");
         assert_eq!(event["interrupt"], interrupt, "{event}");
         assert_eq!(event["submit"], submit, "{event}");
+        assert_eq!(event["effect"], effect, "{event}");
         assert!(event.get("data").is_none(), "{event}");
         assert!(event.get("text").is_none(), "{event}");
     };
-    let cases: [(ClientMessage, &str, u64, serde_json::Value, bool); 5] = [
+    let cases: [(ClientMessage, &str, u64, serde_json::Value, bool, &str); 5] = [
         (
             ClientMessage::Input {
                 data: b"x".to_vec(),
@@ -1074,6 +1076,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             1,
             serde_json::Value::Null,
             false,
+            "edit",
         ),
         (
             ClientMessage::Input {
@@ -1083,6 +1086,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             1,
             json!("esc"),
             false,
+            "edit",
         ),
         (
             ClientMessage::Input {
@@ -1092,6 +1096,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             3,
             serde_json::Value::Null,
             false,
+            "cursor",
         ),
         (
             ClientMessage::Input {
@@ -1101,6 +1106,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             1,
             serde_json::Value::Null,
             true,
+            "edit",
         ),
         (
             ClientMessage::Paste { text: "abc".into() },
@@ -1108,11 +1114,28 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             3,
             serde_json::Value::Null,
             false,
+            "edit",
         ),
     ];
-    for (message, kind, bytes, interrupt, submit) in cases {
+    for (message, kind, bytes, interrupt, submit, effect) in cases {
         embed_support::write_msg(&mut frames, &message);
-        expect_activity(&mut events, kind, bytes, interrupt, submit);
+        expect_activity(&mut events, kind, bytes, interrupt, submit, effect);
+    }
+    for data in [&b"\x1b[I"[..], b"\x1b[O", b"\x1b[<64;12;8M", b"\x1b[M \r!"] {
+        embed_support::write_msg(
+            &mut frames,
+            &ClientMessage::Input {
+                data: data.to_vec(),
+            },
+        );
+        expect_activity(
+            &mut events,
+            "input",
+            data.len() as u64,
+            serde_json::Value::Null,
+            false,
+            "control",
+        );
     }
 
     // A mismatched revoke keeps the grant; an unqualified revoke clears it.
@@ -1128,7 +1151,14 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             data: b"y".to_vec(),
         },
     );
-    expect_activity(&mut events, "input", 1, serde_json::Value::Null, false);
+    expect_activity(
+        &mut events,
+        "input",
+        1,
+        serde_json::Value::Null,
+        false,
+        "edit",
+    );
     let cleared = rpc(
         &mut requests,
         "revoke_input",
@@ -1181,7 +1211,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
             data: b"\x03".to_vec(),
         },
     );
-    expect_activity(&mut events, "input", 1, json!("ctrl_c"), false);
+    expect_activity(&mut events, "input", 1, json!("ctrl_c"), false, "edit");
     let exited = recv_json(&mut events);
     assert_eq!(exited["event"], "terminal_exited", "{exited}");
     assert_eq!(exited["host_terminal_id"], host_terminal_id, "{exited}");

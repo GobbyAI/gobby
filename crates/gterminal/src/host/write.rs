@@ -7,6 +7,7 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 use tokio::time::{sleep_until, Instant};
 
+use super::activity::{classify_input, InputEffect};
 use super::events::InputActivity;
 use super::helpers::{err, named_key_bytes, s};
 use super::state::{HostState, Inner, TerminalSlot};
@@ -167,7 +168,7 @@ impl HostState {
             if slot.input_grant.as_deref() != Some(holder) {
                 return Err("input_not_granted");
             }
-            let submit = input.submit(slot);
+            let (effect, submit) = input.classify(slot);
             deliver_native(slot, input)?;
             InputActivity {
                 terminal_id: slot.identity.terminal_id.clone(),
@@ -177,6 +178,7 @@ impl HostState {
                 bytes,
                 interrupt,
                 submit,
+                effect,
             }
         };
         self.events.emit_input_activity(activity).await;
@@ -371,10 +373,17 @@ impl NativeInput {
 
     /// Whether `slot`'s child reads this input as Enter. A paste it takes
     /// bracketed is text; an unbracketed one reaches it as keystrokes.
-    fn submit(&self, slot: &TerminalSlot) -> bool {
+    fn classify(&self, slot: &TerminalSlot) -> (InputEffect, bool) {
         match self {
-            Self::Bytes(bytes) => presses_enter(bytes),
-            Self::Paste(text) => !pastes_bracketed(slot) && presses_enter(text.as_bytes()),
+            Self::Bytes(bytes) => classify_input(bytes),
+            Self::Paste(text) => (
+                if text.is_empty() {
+                    InputEffect::Control
+                } else {
+                    InputEffect::Edit
+                },
+                !pastes_bracketed(slot) && presses_enter(text.as_bytes()),
+            ),
         }
     }
 }
@@ -777,9 +786,18 @@ mod tests {
                 runtime,
             ));
 
-            assert_eq!(NativeInput::Paste("ls\r".to_owned()).submit(slot), submits);
-            assert!(!NativeInput::Paste("ls".to_owned()).submit(slot));
-            assert!(NativeInput::Bytes(b"\r".to_vec()).submit(slot));
+            assert_eq!(
+                NativeInput::Paste("ls\r".to_owned()).classify(slot),
+                (InputEffect::Edit, submits)
+            );
+            assert_eq!(
+                NativeInput::Paste("ls".to_owned()).classify(slot),
+                (InputEffect::Edit, false)
+            );
+            assert_eq!(
+                NativeInput::Bytes(b"\r".to_vec()).classify(slot),
+                (InputEffect::Edit, true)
+            );
         }
     }
 

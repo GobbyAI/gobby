@@ -10,6 +10,7 @@ from typing import Any, Literal
 from gobby.terminals.host_protocol import HostListRow
 
 InputKind = Literal["input", "paste"]
+InputEffect = Literal["control", "cursor", "edit"]
 InterruptKind = Literal["esc", "ctrl_c"]
 
 
@@ -43,6 +44,7 @@ class InputActivityEvent:
     seq: int
     # The chunk holds CR outside bracketed paste; ``None`` from a host without the flag.
     submit: bool | None = None
+    effect: InputEffect = "edit"
 
 
 HostEvent = TerminalExitedEvent | InputActivityEvent
@@ -68,6 +70,16 @@ def _interrupt_kind(value: object) -> InterruptKind | None:
     raise ValueError(f"unknown input_activity interrupt: {value!r}")
 
 
+def _input_effect(value: object) -> InputEffect:
+    if value == "control":
+        return "control"
+    if value == "cursor":
+        return "cursor"
+    if value == "edit":
+        return "edit"
+    raise ValueError(f"unknown input_activity effect: {value!r}")
+
+
 def decode_host_event(payload: dict[str, Any]) -> HostEvent:
     event = str(payload.get("event", ""))
     if event == "terminal_exited":
@@ -89,6 +101,7 @@ def decode_host_event(payload: dict[str, Any]) -> HostEvent:
             epoch=str(payload["epoch"]),
             seq=int(payload["seq"]),
             submit=submit if isinstance(submit := payload.get("submit"), bool) else None,
+            effect=_input_effect(payload.get("effect", "edit")),
         )
     raise ValueError(f"unknown host event: {event}")
 
