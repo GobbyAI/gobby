@@ -66,11 +66,13 @@ from gobby.hooks._normalization_pipeline import (
 from gobby.hooks._normalization_redirects import (
     extract_redirection_paths,
     has_mutating_output_redirection,
-    redirects_stdout_to_file,
+    redirect_source_read_metadata,
+    tee_output_channels,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import (
     _bound_pipeline_reads,
+    _mark_pipeline_read_escape,
     _pipeline_filter_output_line_bound,
     _ShellSegmentMetadata,
     _split_shell_segments,
@@ -233,6 +235,7 @@ def _classify_shell_command(
     pending_case_pattern = False
     previous_end = 0
     metadata: list[_ShellSegmentMetadata] = []
+    segment_metadata_positions: list[int] = []
     segments = _split_shell_segments(tokens)
     try:
         directory.prepare_groups(segments, spans_by_token, command)
@@ -362,6 +365,8 @@ def _classify_shell_command(
                 metadata.append(body_metadata)
         if parts[:1] != ["for"] and not preserves_directory(parts):
             directory.mark_unproven()
+        # Substitution and heredoc metadata precede the owning segment's entry.
+        segment_metadata_positions.append(len(metadata))
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
@@ -413,6 +418,13 @@ def _classify_shell_command(
             )
             continue
 
+        if segment.separator_before == "|" and parts[0].rsplit("/", 1)[-1] == "tee":
+            channels = tee_output_channels(parts[1:], segment.tokens)
+            if channels:
+                _mark_pipeline_read_escape(
+                    metadata, segments, segment_metadata_positions, index, channels
+                )
+
         if segment.separator_before == "|" and _is_read_only_pipeline_stage(
             segment.tokens,
             parts,
@@ -430,7 +442,11 @@ def _classify_shell_command(
             )
             if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
                 _bound_pipeline_reads(
-                    metadata, segments, index, _pipeline_filter_output_line_bound(parts)
+                    metadata,
+                    segments,
+                    segment_metadata_positions,
+                    index,
+                    _pipeline_filter_output_line_bound(parts),
                 )
             continue
 
@@ -467,6 +483,32 @@ def _classify_shell_command(
 
 
 def _classify_shell_segment(
+    tokens: list[ShellToken],
+    parts: list[str],
+    cwd: str | None,
+    *,
+    depth: int = 0,
+    piped_stdin: bool = False,
+    base_cwd: Path | None = None,
+    invocation_cwd: str | None = None,
+    search_base_cwd: Path | None = None,
+    raw_by_token: dict[int, str] | None = None,
+) -> _ShellSegmentMetadata:
+    metadata = _classify_shell_segment_impl(
+        tokens,
+        parts,
+        cwd,
+        depth=depth,
+        piped_stdin=piped_stdin,
+        base_cwd=base_cwd,
+        invocation_cwd=invocation_cwd,
+        search_base_cwd=search_base_cwd,
+        raw_by_token=raw_by_token,
+    )
+    return replace(metadata, extra=redirect_source_read_metadata(metadata.extra, tokens))
+
+
+def _classify_shell_segment_impl(
     tokens: list[ShellToken],
     parts: list[str],
     cwd: str | None,
@@ -575,19 +617,6 @@ def _classify_shell_segment(
             extra["canonical_edit_file_paths"] = list(
                 dict.fromkeys([*extra["canonical_edit_file_paths"], *redirection_paths])
             )
-        if redirects_stdout_to_file(tokens):
-            extra.pop("_canonical_deferred_source_read", None)
-            extra.pop("_canonical_pending_source_reads", None)
-        if extra.get("canonical_code_navigation_action") == "read" and redirects_stdout_to_file(
-            tokens
-        ):
-            # Fully redirected stdout never reaches the model: a copy or
-            # concatenation, not source navigation gcode could serve.
-            extra = {
-                key: extra[key]
-                for key in ("canonical_script_execution", "canonical_script_bodies")
-                if key in extra
-            }
         # A shell reads its script as it runs, so output appended to it becomes code.
         if any(
             _rewrites_script(
@@ -876,7 +905,25 @@ def _classify_shell_segment_without_redirection(
     if cmd in {"rg", "grep", "git"}:
         return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
 
-    if cmd in {"cat", "head", "tail", "bat", "nl"}:
+    if cmd == "xargs" and parts[1:2] == ["cat"]:
+        # Stdin supplies file operands, not source contents; their scope is unknown.
+        navigation = {
+            "canonical_code_navigation_action": "read",
+            "canonical_code_navigation_broad": True,
+            "canonical_source_read_scope": "full_file",
+            "_canonical_code_navigation_scope_unknown": True,
+        }
+        return _ShellSegmentMetadata(
+            "read",
+            extra={**navigation, "canonical_code_navigation_segments": [navigation]},
+        )
+
+    if cmd == "awk" and parts[1:2] == ["1"]:
+        # The constant-true program prints every input record.
+        parts = ["cat", *parts[2:]]
+        cmd = "cat"
+
+    if cmd in {"cat", "head", "tail", "bat", "nl", "less"}:
         positional = _shell_positional_args(parts)
         paths = _rebase_navigation_shell_paths(
             [
