@@ -732,7 +732,7 @@ Targets:
 - `crates/gdaemon/tests/run_modes.rs`
 - `crates/gdaemon/tests/front_door.rs::spawn_serve`
 - `crates/gdaemon/tests/front_door.rs::spawn_tls_serve`
-- `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_node_mode_fail_closed`
+- `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`
 
 **Research context:**
 - `crates/gdaemon/src/state.rs::RuntimeState::prepare` (line 27):
