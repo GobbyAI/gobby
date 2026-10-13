@@ -372,6 +372,28 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
         assert section in prompt, section
 
 
+def test_reporter_bounds_queue_resolution_and_names_unreadable_rows() -> None:
+    prompt = _prompt("reporter")
+    budget = _section(prompt, "Cadence and budget")
+    sources = _section(prompt, "Sources")
+    assert "240 seconds" in budget
+    assert "bounded queue refills" in budget
+    assert "remain inside the time budget" in budget
+    assert "current/next-five/candidate block before gathering supplementary evidence" in budget
+    assert "Cache task rows by ref across all sources" in sources
+    assert "at most five unresolved queue refs" in sources
+    assert 'view="compact", limit=40' in sources
+    assert "refill only lanes still short" in sources
+    assert "five eligible tasks are found or its queue is exhausted" in sources
+    assert "refs resolution ignores filters" in sources
+    assert "stage object" in sources
+    assert "A null current_stage means no recorded stage" in sources
+    assert 'Never print "state ?"' in sources
+    assert "ref_errors, omitted rows or unreadable state" in sources
+    assert "GAP: Lane <N> <task ref and known title, or title unavailable>" in sources
+    assert "mark next-five coverage incomplete even if later refs fill five slots" in sources
+
+
 def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDatabase) -> None:
     result = sync_bundled_agents(definition_db)
 
