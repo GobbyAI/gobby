@@ -12,7 +12,6 @@ Tests cover:
 import json
 import os
 from pathlib import Path
-from typing import IO, Any
 from unittest.mock import patch
 
 import pytest
@@ -808,46 +807,32 @@ class TestEdgeCases:
     def test_configure_json_write_error(self, temp_dir: Path) -> None:
         """Test handling write permission error for JSON."""
         settings_path = temp_dir / "settings.json"
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        original = json.dumps({"unrelated": "preserved"})
+        settings_path.write_text(original)
 
-        with patch("builtins.open") as mock_open:
-            # First call succeeds (read attempt on non-existent file - handled)
-            # Second call fails (write)
-            mock_open.side_effect = [
-                FileNotFoundError(),  # File doesn't exist (OK)
-                OSError("Permission denied"),  # Write fails
-            ]
-
-            # Need to also ensure parent exists check passes
+        with patch("gobby.claude_config.os.replace", side_effect=OSError("Permission denied")):
             result = configure_mcp_server_json(settings_path)
 
         assert result["success"] is False
         assert "Failed to write" in result["error"]
+        assert settings_path.read_text() == original
+        assert not Path(f"{settings_path}.lock").exists()
 
     def test_remove_json_write_error(self, temp_dir: Path) -> None:
         """Test handling write permission error when removing from JSON."""
         settings_path = temp_dir / "settings.json"
         existing = {"mcpServers": {"gobby": {"command": "uv"}}}
-        settings_path.write_text(json.dumps(existing))
+        original = json.dumps(existing)
+        settings_path.write_text(original)
 
-        # Track call count to differentiate read vs write calls
-        original_open = open
-        call_count = [0]
-
-        def mock_open_fn(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any]:
-            call_count[0] += 1
-            # Fail on the write call (mode "w")
-            if "w" in str(mode):
-                raise OSError("Permission denied")
-            return original_open(path, mode, *args, **kwargs)
-
-        with patch("gobby.cli.installers.mcp_config.copy2"):  # Skip actual backup
-            with patch("builtins.open", mock_open_fn):
-                result = remove_mcp_server_json(settings_path)
+        with patch("gobby.claude_config.os.replace", side_effect=OSError("Permission denied")):
+            result = remove_mcp_server_json(settings_path)
 
         assert result["success"] is False
         assert result["error"] is not None
         assert "Failed to write" in result["error"]
+        assert settings_path.read_text() == original
+        assert not Path(f"{settings_path}.lock").exists()
 
     def test_install_cli_content_multiple_command_dirs(self, temp_dir: Path) -> None:
         """Test that both commands/ and prompts/ directories are processed."""
