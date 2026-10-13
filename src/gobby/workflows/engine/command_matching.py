@@ -818,7 +818,12 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             executed.extend(bodies)
             has_correlation |= bool(bodies)
             out.append(f"{subject[index:start]}{subject[end]}")
-            correlated.append(f"{subject[index:start]}{' '.join(bodies)}{subject[end]}")
+            projection = " ".join(bodies)
+            if tick:
+                # The projection is inside backquotes again, so restore that
+                # escape layer while executable bodies retain decoded syntax.
+                projection = re.sub(r"([$`\\])", r"\\\1", projection)
+            correlated.append(f"{subject[index:start]}{projection}{subject[end]}")
             index = end + 1
             continue
         try:

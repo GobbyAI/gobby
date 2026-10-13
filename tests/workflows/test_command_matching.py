@@ -55,6 +55,12 @@ def test_unresolved_nested_backticks_fail_closed(mask_quoted: bool) -> None:
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
+@pytest.mark.parametrize("command", [r"echo `echo '\`'`", r"x=`printf '%s' '\`'`; echo hi"])
+def test_backtick_literal_correlation_stays_data(command: str, mask_quoted: bool) -> None:
+    assert not command_patterns_match(command, pattern=r"^git\s+push\b", mask_quoted=mask_quoted)
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize(
     "command",
     [
