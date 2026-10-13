@@ -31,7 +31,8 @@ def _bound_compact_row(
     page: dict[str, Any] = {"columns": columns, "rows": [row], "count": 1, "next_offset": None}
     if ref_errors:
         page["ref_errors"] = ref_errors
-    if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+    # Reserve envelope space for total and continuation metadata.
+    if len(json.dumps(page, default=str, indent=2).encode()) < 14_000 - 256:
         return row
 
     ref = row[0]
@@ -45,7 +46,7 @@ def _bound_compact_row(
             row[column] = [[blocker[0], pointer] for blocker in row[column]]
         elif row[column] is not None:
             row[column] = pointer
-        if len(json.dumps(page, default=str, indent=2).encode()) < 14_000:
+        if len(json.dumps(page, default=str, indent=2).encode()) < 14_000 - 256:
             return row
     return [ref, f"Row elided; {pointer}", *([None] * (len(columns) - 2))]
 
@@ -55,6 +56,7 @@ def compact_tasks(
     ctx: RegistryContext,
     offset: int,
     ref_errors: list[dict[str, Any]] | None = None,
+    total: int | None = None,
 ) -> dict[str, Any]:
     """Return every task field needed for fleet sections in a bounded page."""
     candidate_times = ctx.task_manager.get_candidate_sent_times([task.id for task in tasks])
@@ -74,6 +76,8 @@ def compact_tasks(
         "latest_linked_commit",
     ]
     result: dict[str, Any] = {"columns": columns, "rows": [], "count": 0, "next_offset": None}
+    if total is not None:
+        result["total"] = total
     if ref_errors:
         result["ref_errors"] = ref_errors
         if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
@@ -99,7 +103,12 @@ def compact_tasks(
             task_discovery_payload(task)["state"],
             datetime_to_iso(candidate_times.get(task.id)),
             [
-                [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
+                [
+                    receipt.kind,
+                    receipt.commit_sha,
+                    receipt.recorded_at,
+                    {"_elided": f"get_task(task_id='{task.id}', brief=false)"},
+                ]
                 for receipt in list_close_receipts(ctx.task_manager.db, task.id)
             ],
             task.commits[-1] if task.commits else None,
@@ -107,7 +116,12 @@ def compact_tasks(
         row = _bound_compact_row(row, columns, task.id, ref_errors if not rows else None)
         rows.append(row)
         result["count"] = len(rows)
-        if len(json.dumps(result, default=str, indent=2).encode()) >= 14_000:
+        # Budget for a numeric continuation, including unresolved source refs.
+        bounded_page = {
+            **result,
+            "next_offset": offset + len(tasks) + len(ref_errors or []),
+        }
+        if len(json.dumps(bounded_page, default=str, indent=2).encode()) >= 14_000:
             rows.pop()
             result["count"] = len(rows)
             result["next_offset"] = index
@@ -178,7 +192,7 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
                     tasks.append(task)
                     positions.append(position)
             result = (
-                compact_tasks(tasks, ctx, offset, ref_errors)
+                compact_tasks(tasks, ctx, offset, ref_errors, total=len(refs))
                 if view == "compact"
                 else {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
             )
@@ -237,9 +251,20 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
             **closed_filter,
         )
         if view == "compact":
-            result = compact_tasks(tasks, ctx, offset)
-            if result.get("next_offset") is None and len(tasks) == limit:
-                result["next_offset"] = offset + limit
+            total = ctx.task_manager.count_tasks(
+                current_stage_state=current_stage_filter,
+                priority=priority,
+                task_type=task_type,
+                label=label,
+                parent_task_id=parent_task_id,
+                title_like=title_like,
+                project_id=project_id,
+                **state_filters,
+                **closed_filter,
+            )
+            result = compact_tasks(tasks, ctx, offset, total=total)
+            if tasks and result.get("next_offset") is None and offset + len(tasks) < total:
+                result["next_offset"] = offset + len(tasks)
         else:
             result = {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
         if parent_task_id:

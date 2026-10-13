@@ -4,6 +4,7 @@ import json
 from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import Self
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -111,3 +112,147 @@ def test_fleet_uses_latest_topic_evidence_and_excludes_earlier_terminal_states()
 def test_task_refs_rejects_unbounded_range() -> None:
     with pytest.raises(ValueError, match="exceeds bounded resolution"):
         task_refs("#1–#1000")
+
+
+def test_decisions_keep_complete_bullets_and_heading_identity() -> None:
+    projection = digest_projection(
+        "## Decisions needed (Josh)\n- First decision\n  continued evidence\n"
+        "- Second decision\n## Operator actions (Josh)\n1. Restart\n"
+        "## Gaps and contradictions\n* Missing receipt\n",
+        "decisions",
+    )
+    assert projection["entries"] == [
+        {"heading": "Decisions needed (Josh)", "text": "- First decision\n  continued evidence"},
+        {"heading": "Decisions needed (Josh)", "text": "- Second decision"},
+        {"heading": "Operator actions (Josh)", "text": "1. Restart"},
+        {"heading": "Gaps and contradictions", "text": "* Missing receipt"},
+    ]
+
+
+@pytest.mark.parametrize("section", ["decisions", "queues", "fleet"])
+def test_main_pages_complete_entries_under_byte_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    section: str,
+) -> None:
+    project = tmp_path / "checkout"
+    reports = project / ".gobby/reports"
+    reports.mkdir(parents=True)
+    today = datetime.now(ZoneInfo("America/Chicago")).date().isoformat()
+    text = "é" * 3000
+    if section == "decisions":
+        content = "## Decisions needed (Josh)\n" + "".join(f"- {i} {text}\n" for i in range(7))
+        expected = [f"- {i} {text}" for i in range(7)] + ["missing heading", "missing heading"]
+        key = "entries"
+    elif section == "queues":
+        content = "## Lane queues — current\n" + "".join(
+            f"| {i} | epic | {text} | ignored | #1 | #2 |\n" for i in range(1, 8)
+        )
+        expected = [str(i) for i in range(1, 8)]
+        key = "lanes"
+    else:
+        content = "## Orchestrator updates — current\n" + "".join(
+            f"- {topic} {text}\n" for topic in ("close backlog", "heavy slot", "hold", "ROADMAP")
+        )
+        expected = []
+        key = "backlog"
+    (reports / f"gobby-digest-{today}.md").write_text(content)
+    monkeypatch.setattr(reporter_sources, "find_project_root", lambda: project)
+    offset = 0
+    seen: list[str] = []
+    counts: list[int] = []
+    for _ in range(20):
+        monkeypatch.setattr(
+            "sys.argv", ["reporter_sources", "--section", section, "--offset", str(offset)]
+        )
+        reporter_sources.main()
+        output = capsys.readouterr().out
+        assert len(output.encode()) < 14_000
+        page = json.loads(output)
+        assert "error" not in page
+        assert page["offset"] == offset
+        assert page["stale"] is False
+        counts.append(page["count"])
+        if section == "decisions":
+            seen.extend(entry["text"] for entry in page["evidence"][key])
+        elif section == "queues":
+            seen.extend(entry["lane"] for entry in page["evidence"][key])
+        else:
+            seen.extend(entry for values in page["evidence"].values() for entry in values)
+        if page["next_offset"] is None:
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+    else:
+        pytest.fail("Source paging failed to terminate")
+    assert len(counts) > 1
+    assert sum(counts) == page["total"]
+    if section == "fleet":
+        assert seen == [
+            f"- {topic} {text}" for topic in ("close backlog", "heavy slot", "hold", "ROADMAP")
+        ]
+    else:
+        assert seen == expected
+
+
+@pytest.mark.parametrize("current_exists", [True, False])
+def test_main_rollover_uses_latest_prior_digest_and_labels_age(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    current_exists: bool,
+) -> None:
+    class PinnedDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls(2026, 10, 13, tzinfo=tz)
+
+    reports = tmp_path / ".gobby/reports"
+    reports.mkdir(parents=True)
+    dates = ["2026-10-10", "2026-10-12", "2026-10-14", "invalid"]
+    if current_exists:
+        dates.append("2026-10-13")
+    for day in dates:
+        (reports / f"gobby-digest-{day}.md").write_text(f"## Decisions needed (Josh)\n- {day}\n")
+    monkeypatch.setattr(reporter_sources, "datetime", PinnedDatetime)
+    monkeypatch.setattr(reporter_sources, "find_project_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["reporter_sources", "--section", "decisions"])
+    reporter_sources.main()
+    page = json.loads(capsys.readouterr().out)
+    source_date = "2026-10-13" if current_exists else "2026-10-12"
+    assert page["source"] == str(reports / f"gobby-digest-{source_date}.md")
+    assert page["source_date"] == source_date
+    assert page["age_days"] == (0 if current_exists else 1)
+    assert page["stale"] is (not current_exists)
+    assert page["evidence"]["entries"][0]["text"] == f"- {source_date}"
+
+
+@pytest.mark.parametrize("offset,large", [(-1, False), (0, True)])
+def test_source_page_errors_are_bounded_and_identify_the_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    offset: int,
+    large: bool,
+) -> None:
+    reports = tmp_path / ".gobby/reports"
+    reports.mkdir(parents=True)
+    today = datetime.now(ZoneInfo("America/Chicago")).date().isoformat()
+    (reports / f"gobby-digest-{today}.md").write_text(
+        "## Decisions needed (Josh)\n- " + "é" * (10_000 if large else 1)
+    )
+    monkeypatch.setattr(reporter_sources, "find_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "sys.argv", ["reporter_sources", "--section", "decisions", "--offset", str(offset)]
+    )
+    reporter_sources.main()
+    output = capsys.readouterr().out
+    assert len(output.encode()) < 14_000
+    result = json.loads(output)
+    assert "evidence" not in result
+    assert result["error"] == (
+        "Digest entry at offset 0 exceeds the 14KB page budget"
+        if large
+        else "offset must be nonnegative"
+    )

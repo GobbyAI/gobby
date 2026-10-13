@@ -1,11 +1,17 @@
 """Task aggregate operations."""
 
+from datetime import datetime
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, newer_than_now_expr
 from gobby.storage.tasks._models import task_type_filter_values
-from gobby.storage.tasks._queries import _awaiting_human_review_sql, _ready_tasks_cte_sql
+from gobby.storage.tasks._queries import (
+    _awaiting_human_review_sql,
+    _candidate_message_sql,
+    _ready_tasks_cte_sql,
+)
+from gobby.storage.tasks._read import _escape_like_pattern
 
 
 def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
@@ -100,6 +106,8 @@ def count_tasks(
     title_like: str | None = None,
     stages: list[str] | None = None,
     stage_state: str | None = None,
+    updated_since: datetime | None = None,
+    candidate: bool | None = None,
 ) -> int:
     """Count tasks with optional filters.
 
@@ -122,6 +130,15 @@ def count_tasks(
     if project_id:
         query += " AND t.project_id = %s"
         params.append(project_id)
+    if updated_since is not None:
+        query += " AND t.updated_at >= %s"
+        params.append(updated_since)
+    if candidate is not None:
+        query += f""" AND {"NOT " if not candidate else ""}EXISTS (
+            SELECT 1 FROM ({_candidate_message_sql()}) events
+            WHERE events.project_id = t.project_id
+              AND events.seq_text = t.seq_num::text
+        )"""
     if current_stage_state:
         clause, clause_params = _stage_state_filter_clause(current_stage_state)
         if clause:
@@ -163,8 +180,8 @@ def count_tasks(
         query += " AND t.parent_task_id = %s"
         params.append(parent_task_id)
     if title_like:
-        query += " AND t.title LIKE %s"
-        params.append(f"%{title_like}%")
+        query += " AND t.title LIKE %s ESCAPE '\\'"
+        params.append(f"%{_escape_like_pattern(title_like)}%")
     if stages:
         placeholders = ", ".join("%s" for _ in stages)
         query += f"""
@@ -279,6 +296,7 @@ def count_closed_since(
 def count_blocked_tasks(
     db: HubDatabase,
     project_id: str | None = None,
+    parent_task_id: str | None = None,
 ) -> int:
     """Count tasks that are blocked by at least one external blocking dependency.
 
@@ -309,6 +327,10 @@ def count_blocked_tasks(
     if project_id:
         query += " AND t.project_id = %s"
         params.append(project_id)
+
+    if parent_task_id:
+        query += " AND t.parent_task_id = %s"
+        params.append(parent_task_id)
 
     result = db.fetchone(query, tuple(params))
     return result["count"] if result else 0
