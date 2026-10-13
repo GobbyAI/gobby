@@ -95,12 +95,15 @@ def agent_run_is_headless(agent_run: object) -> bool:
     provider = getattr(agent_run, "provider", None)
     if not isinstance(provider, str):
         return False
+    metadata = getattr(agent_run, "resume_metadata_json", None)
+    if provider == "grok" and isinstance(metadata, Mapping):
+        if metadata.get("provider_cli_mode") == "terminal":
+            return False
     if provider_capabilities(provider).headless_spawn:
         return True
     agent_name = getattr(agent_run, "agent_name", None)
     if provider != "codex" or agent_name != "task-close-reviewer":
         return False
-    metadata = getattr(agent_run, "resume_metadata_json", None)
     sandbox = metadata.get("sandbox") if isinstance(metadata, Mapping) else None
     if not isinstance(sandbox, Mapping):
         # Unrecorded launch: refusing a TUI reviewer only forgoes one compaction,

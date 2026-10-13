@@ -15,9 +15,11 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import validate_workflow_definition_data
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -188,6 +190,27 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
         "Never fix what you review",
     ):
         assert phrase in prompt, phrase
+
+
+def test_security_reviewer_grok_resolution_preserves_seat_authority(temp_db: HubDatabase) -> None:
+    AgentDefinitionManager(temp_db).create("security-reviewer", _raw("security-reviewer"))
+    body = resolve_agent("security-reviewer", temp_db, cli_source="grok")
+
+    assert body is not None
+    assert body.provider == "grok"
+    assert body.model_dump(exclude={"provider"}) == _load("security-reviewer").model_dump(
+        exclude={"provider"}
+    )
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    selected = {
+        row.name
+        for row in RuleDefinitionManager(temp_db).list_all()
+        if rule_matches_agent(body, row)
+    }
+    assert {"no-send-keys", "scope-spawned-agent-send-message"} <= selected
+    assert set(body.blocked_tools) == WRITE_BLOCKED_TOOLS
+    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    assert body.send_message_targets == ["parent", "session"]
 
 
 def test_debugger_reports_one_verdict_and_never_commits_a_fix() -> None:

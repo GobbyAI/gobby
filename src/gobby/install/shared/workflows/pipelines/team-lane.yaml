@@ -6,7 +6,7 @@ description: |
   Run with seats and lane; infer the lane manager, workspace, pane, unique idle worktree and
   tab size (from the gclient window showing the workspace).
   Workspace names, worktree branch names and tab sizes are accepted as explicit overrides.
-  Approved seats: developer, code-reviewer, researcher and lane-manager.
+  Approved seats: developer, code-reviewer, security-reviewer, researcher and lane-manager.
   Launches fresh sessions; rerunning duplicates live seats.
 tags: [runbook]
 resume_on_restart: true
@@ -39,7 +39,7 @@ inputs:
   seats:
     type: string
     default: developer
-    description: "Comma-separated missing seat kinds: developer, code-reviewer, researcher, lane-manager"
+    description: "Comma-separated missing seat kinds: developer, code-reviewer, security-reviewer, researcher, lane-manager"
   report_to:
     type: string
     default: null
@@ -60,6 +60,15 @@ inputs:
     type: string
     default: claude-opus-5-5
   reviewer_reasoning_effort:
+    type: string
+    default: xhigh
+  security_reviewer_provider:
+    type: string
+    default: grok
+  security_reviewer_model:
+    type: string
+    default: grok-4.7
+  security_reviewer_reasoning_effort:
     type: string
     default: xhigh
   researcher_provider:
@@ -103,6 +112,9 @@ steps:
           - name: code-reviewer
             title: "${{ 'Lane ' + inputs.lane + ' code reviewer' }}"
             agent: code-reviewer
+          - name: security-reviewer
+            title: "${{ 'Lane ' + inputs.lane + ' security reviewer' }}"
+            agent: security-reviewer
           - name: researcher
             title: "${{ 'Lane ' + inputs.lane + ' researcher' }}"
             agent: researcher
@@ -153,6 +165,28 @@ steps:
           ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
           'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
           'title': 'Lane ' + inputs.lane + ' code reviewer'}} }}
+
+  - id: security-reviewer
+    condition: "${{ 'security-reviewer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: security-reviewer
+        title: "${{ 'Lane ' + inputs.lane + ' security reviewer' }}"
+        lane: "${{ inputs.lane }}"
+        provider: "${{ inputs.security_reviewer_provider }}"
+        model: "${{ inputs.security_reviewer_model }}"
+        reasoning_effort: "${{ inputs.security_reviewer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.guard.output.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the security reviewer seat for lane ${{ inputs.lane }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ steps.guard.output.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ steps.guard.output.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'pane': steps.guard.output.lane_pane, 'axis': 'balanced',
+          'columns': steps.guard.output.lane_columns, 'rows': steps.guard.output.lane_rows,
+          'title': 'Lane ' + inputs.lane + ' security reviewer'}} }}
 
   - id: researcher
     condition: "${{ 'researcher' in inputs.seats.split(',') }}"
