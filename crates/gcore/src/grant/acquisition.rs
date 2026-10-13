@@ -73,7 +73,9 @@ impl<'a> AcquireRequest<'a> {
             .map(|value| value.trim().to_owned())
             .filter(|value| !value.is_empty());
         request.managed_bootstrap = std::env::var_os(MANAGED_BOOTSTRAP_ENV).map(PathBuf::from);
-        request.managed_envelope = std::env::var(crate::local_token::AGENT_API_TOKEN_ENV).ok();
+        request.managed_envelope = std::env::var(crate::local_token::AGENT_API_TOKEN_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         request.expected_execution_id = std::env::var("GOBBY_AGENT_RUN_ID")
             .ok()
             .filter(|value| !value.trim().is_empty())
