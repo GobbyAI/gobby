@@ -716,7 +716,13 @@ def test_foreign_pane_does_not_override_workspace(lane_env: LaneEnv) -> None:
 @pytest.mark.parametrize("ambiguous", [False, True])
 @pytest.mark.parametrize(
     "seat,explicit_worktree",
-    [("developer", False), ("code-reviewer", False), ("code-reviewer", True)],
+    [
+        ("developer", False),
+        ("code-reviewer", False),
+        ("code-reviewer", True),
+        ("security-reviewer", False),
+        ("security-reviewer", True),
+    ],
 )
 def test_registered_guard_resolves_two_input_command(
     lane_env: LaneEnv, ambiguous: bool, seat: str, explicit_worktree: bool
@@ -778,7 +784,7 @@ def test_registered_guard_resolves_two_input_command(
     )
     with session_context_for_test(child.id):
         result = registry.call_sync("check_runbook_seats", arguments)
-    if seat == "code-reviewer" and not explicit_worktree:
+    if seat != "developer" and not explicit_worktree:
         assert result["success"] is False
         assert result["error_code"] == "runbook_seat_refused"
         assert "worktree=" in result["error"]
@@ -862,7 +868,10 @@ class TeamEntrypointProxy:
             ),
         ),
         ("team-planning", ("plan-writer", "plan-adversary")),
-        ("team-lane", ("developer", "code-reviewer", "researcher", "lane-manager")),
+        (
+            "team-lane",
+            ("developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"),
+        ),
     ],
 )
 @pytest.mark.parametrize("subset", [False, True], ids=["all-seats", "last-seat-only"])

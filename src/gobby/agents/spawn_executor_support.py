@@ -111,6 +111,7 @@ def _record_resume_launch_details(
     mcp_path: str | None = None,
     strict_mcp: bool | None = None,
     sandbox_launch: SandboxLaunch | None = None,
+    provider_cli_mode: str | None = None,
 ) -> None:
     """Persist post-resolution CLI launch details for daemon-stop resume."""
     if request.resume_metadata_json is None:
@@ -120,6 +121,8 @@ def _record_resume_launch_details(
     if db is None:
         return
     metadata = dict(request.resume_metadata_json)
+    if provider_cli_mode is not None:
+        metadata["provider_cli_mode"] = provider_cli_mode
     metadata["sandbox_args"] = list(sandbox_args or [])
     metadata["sandbox_env"] = dict(sandbox_env or {})
     if sandbox_launch is not None:

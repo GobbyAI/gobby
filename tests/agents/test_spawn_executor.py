@@ -270,8 +270,10 @@ def test_codex_preapproved_gobby_tools_exist_on_mcp_handler() -> None:
         assert tool_name in tool_names
 
 
+@pytest.mark.parametrize("provider_cli_mode", [None, "terminal"])
 def test_record_resume_launch_details_uses_resolved_agent_run_id(
     monkeypatch: pytest.MonkeyPatch,
+    provider_cli_mode: str | None,
 ) -> None:
     db = object()
     session_manager = SimpleNamespace(_storage=SimpleNamespace(db=db))
@@ -310,6 +312,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
         env={UV_CACHE_DIR: "/launch/uv", "LAUNCH_ONLY": "yes"},
         mcp_path="/path/.mcp.json",
         strict_mcp=True,
+        provider_cli_mode=provider_cli_mode,
     )
 
     assert calls == [
@@ -318,6 +321,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
             "resolved-run",
             {
                 "provider": "codex",
+                **({"provider_cli_mode": provider_cli_mode} if provider_cli_mode else {}),
                 "sandbox_args": ["--sandbox"],
                 "sandbox_env": {},
                 "env": {
