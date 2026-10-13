@@ -86,7 +86,11 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         )
     };
     let value = value.replace(['\t', '\r', '\n'], "");
-    let (scheme, rest) = value.trim().split_once("://").ok_or_else(invalid)?;
+    let (scheme, rest) = value
+        .trim()
+        .trim_start_matches(|character: char| character <= '\u{20}')
+        .split_once("://")
+        .ok_or_else(invalid)?;
     let scheme = scheme.to_ascii_lowercase();
     if !matches!(scheme.as_str(), "http" | "https") {
         return Err(invalid());
@@ -100,6 +104,12 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
     if !netloc.starts_with('[') && authority.contains(['[', ']']) {
         return Err(invalid());
     }
+    let lowercase_host = |host: &str| {
+        host.split_once('%').map_or_else(
+            || host.to_lowercase(),
+            |(address, scope)| format!("{}%{scope}", address.to_lowercase()),
+        )
+    };
     let (host, port) = if let Some(ipv6) = netloc.strip_prefix('[') {
         let (host, suffix) = ipv6.split_once(']').ok_or_else(invalid)?;
         // Match urllib's bracketed-host validation, including scoped IPv6 and IPvFuture.
@@ -124,11 +134,7 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         } else {
             Some(suffix.strip_prefix(':').ok_or_else(invalid)?)
         };
-        let host = host.split_once('%').map_or_else(
-            || host.to_lowercase(),
-            |(address, scope)| format!("{}%{scope}", address.to_lowercase()),
-        );
-        (format!("[{host}]"), port)
+        (format!("[{}]", lowercase_host(host)), port)
     } else {
         let (host, port) = netloc
             .split_once(':')
@@ -136,7 +142,7 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         if host.is_empty() || host.contains([':', '[', ']']) {
             return Err(invalid());
         }
-        (host.to_lowercase(), port)
+        (lowercase_host(host), port)
     };
     if authority.contains('@') {
         return Err(FilesHomeError::Invalid(

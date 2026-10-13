@@ -1,6 +1,28 @@
 {
     "cases": [
         {
+            "name": "node_unbracketed_percent_host_case",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://HO%41ST:443"},
+            "mode": "node",
+            "hub_daemon_url": "https://ho%41ST:443"
+        },
+        {
+            "name": "node_path_params_refused",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host/;x"},
+            "error": "hub_daemon_url path must be empty or /"
+        },
+        {
+            "name": "node_empty_path_params_refused",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host/;"},
+            "error": "hub_daemon_url path must be empty or /"
+        },
+        {
+            "name": "node_leading_c0_control",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "\u0001https://host"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
             "name": "uppercase_scheme",
             "bootstrap": {
                 "datastore_mode": "remote",

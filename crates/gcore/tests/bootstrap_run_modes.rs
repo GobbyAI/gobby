@@ -35,34 +35,38 @@ fn shared_vectors_match_python() -> Result<()> {
     let corpus: Corpus = serde_json::from_str(include_str!(
         "../../../tests/fixtures/bootstrap_run_modes.json"
     ))?;
+    let mut mismatches = Vec::new();
     for case in corpus.cases {
         let yaml = serde_yaml::to_string(&case.bootstrap)?;
         let parsed = parse_hub_database_bootstrap(&yaml);
-        if let Some(error) = case.error {
-            assert_eq!(
-                parsed.expect_err(&case.name).to_string(),
-                error,
-                "{}",
+        let actual = match parsed {
+            Ok(Some(bootstrap)) => {
+                let mode = match bootstrap.mode {
+                    RunMode::Standalone => "standalone",
+                    RunMode::Hub => "hub",
+                    RunMode::Node => "node",
+                };
+                Ok((
+                    Some(mode.to_owned()),
+                    bootstrap.hub_daemon_url,
+                    bootstrap.hub_cert,
+                ))
+            }
+            Ok(None) => Err("expected nonempty bootstrap mapping".to_owned()),
+            Err(error) => Err(error.to_string()),
+        };
+        let expected = match case.error {
+            Some(error) => Err(error),
+            None => Ok((case.mode, case.hub_daemon_url, case.hub_cert)),
+        };
+        if actual != expected {
+            mismatches.push(format!(
+                "{}: expected {expected:?}, got {actual:?}",
                 case.name
-            );
-        } else {
-            let bootstrap = parsed
-                .expect(&case.name)
-                .expect("nonempty bootstrap mapping");
-            let mode = match bootstrap.mode {
-                RunMode::Standalone => "standalone",
-                RunMode::Hub => "hub",
-                RunMode::Node => "node",
-            };
-            assert_eq!(Some(mode), case.mode.as_deref(), "{}", case.name);
-            assert_eq!(
-                bootstrap.hub_daemon_url, case.hub_daemon_url,
-                "{}",
-                case.name
-            );
-            assert_eq!(bootstrap.hub_cert, case.hub_cert, "{}", case.name);
+            ));
         }
     }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     Ok(())
 }
 
