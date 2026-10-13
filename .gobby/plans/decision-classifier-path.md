@@ -613,9 +613,11 @@ The plan also sets:
       The probes named no model, and no model was downloaded or loaded.
       - `/v1/systemone` validates the request this wire sends. It requires
         `state` and `questions`, raises no error for a missing `model`,
-        requires `instructions` on a Noul and `criteria` on a Choice, and
-        answers a complete Noul with `noModelsLoaded` when no model is
-        loaded. The existing `systemone` wire therefore needs no change.
+        and requires `instructions` on a Noul and `criteria` on a Choice.
+        A complete Noul with no `model` field, sent while only the
+        embedding model below was loaded, answered `noModelsLoaded`. The
+        route did not treat that embedding instance as a loaded model.
+        The existing `systemone` wire therefore needs no change.
       - `/v1/decisions` requires `model`, `input`, and `questions`, an
         array whose items need `instructions` and `choices`. Decision 1
         rejects it.
@@ -643,8 +645,10 @@ The plan also sets:
       unverified. LM Studio is therefore a `shadow` and evaluation backend
       at most, as both Clef forms are under Decision 16. It reaches
       `enforce` only if LM Studio documents its input limit and
-      `usage.input_tokens` semantics and a live capture then passes item 4
-      under `response_version`. No contract is added.
+      `usage.input_tokens` semantics, accepts a version-pinned
+      `ai.decisions.model` (its identifiers name loaded instances, not
+      versions), and a live capture then passes item 4 under
+      `response_version`. No contract is added.
     - Operator duties under Decision 3:
       - the operator downloads and loads the decision model, for example
         with `lms load`, and sets `ai.decisions.model` to its loaded
@@ -1175,8 +1179,8 @@ before any code, with no live server:
   - the 0.4.26 `/v1/systemone` and `/v1/decisions` routes, cited as the
     doc snippets retrieved 2026-10-12;
   - the observed `/v1/systemone` request validation, including
-    `noModelsLoaded` with no model loaded, and the `/v1/models` card
-    fields;
+    `noModelsLoaded` for a complete Noul with no `model` field while only
+    an embedding model was loaded, and the `/v1/models` card fields;
   - why `/v1/decisions` is not a wire: its array `questions` with
     `choices` (Decision 1);
   - what stays unverified: the response shape, `usage.input_tokens`, the
