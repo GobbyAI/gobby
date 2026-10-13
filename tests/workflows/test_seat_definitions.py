@@ -314,8 +314,11 @@ def test_archivist_sends_workspace_digest_as_attachment() -> None:
     assert "<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md" in prompt
     assert "literal absolute path" in prompt
     assert "gobby-communications:send_operator_attachment" in prompt
-    assert "channel `gobby-telegram`" in prompt
-    assert _bundled()["archivist"]["operator_message_channels"] == ["gobby-telegram"]
+    assert (
+        "Resolve the operator channel from project policy or communications configuration" in prompt
+    )
+    assert "resolve_operator_conversation" in prompt
+    assert _bundled()["archivist"]["operator_messaging"] is True
     assert "at most a one-line caption" in prompt
 
 

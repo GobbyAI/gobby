@@ -41,27 +41,27 @@ inputs:
     description: "Live operator session ref for readiness, blockers and unassigned waits"
   plan_writer_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   plan_writer_model:
     type: string
-    default: claude-opus-5-5
+    default: null
     description: "Seat model; override to change the default"
   plan_writer_reasoning_effort:
     type: string
-    default: xhigh
+    default: null
     description: "Seat reasoning effort; override to change the default"
   plan_adversary_provider:
     type: string
-    default: codex
+    default: null
     description: "Seat provider; override to change the default"
   plan_adversary_model:
     type: string
-    default: gpt-6.1-sol
+    default: null
     description: "Seat model; override to change the default"
   plan_adversary_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
 
 steps:

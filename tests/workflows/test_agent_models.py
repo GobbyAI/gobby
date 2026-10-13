@@ -2,13 +2,39 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
+from jinja2 import TemplateError
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("surface", ["agent", "persona"])
+@pytest.mark.parametrize("prompt", ["literal {{", "literal {%", "{{ missing }}"])
+def test_invalid_prompt_template_reports_definition_and_surface(
+    surface: Literal["agent", "persona"], prompt: str
+) -> None:
+    from gobby.workflows.agent_models import AgentDefinitionBody
+
+    definition = AgentDefinitionBody.model_validate(
+        {
+            "name": "custom",
+            "surfaces": ["spawn", "persona"],
+            "prompts": {"agent": prompt, "persona": prompt},
+            "workflows": {"rule_selectors": {"include": []}},
+        }
+    )
+
+    with pytest.raises(
+        ValueError, match=f"Agent definition 'custom' has invalid prompts.{surface}"
+    ) as error:
+        definition.prompt_for(surface)
+
+    assert isinstance(error.value.__cause__, TemplateError)
+
 
 _STEPFUL_YAML = """
 name: planner

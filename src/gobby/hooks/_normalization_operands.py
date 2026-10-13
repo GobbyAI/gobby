@@ -174,6 +174,8 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
             directory = _rebase_shell_paths([word.split("=", 1)[1]], directory)[0]
             directories.append(directory)
         elif option in _TAR_VALUE_OPTIONS:
+            if option == "--files-from":
+                unmodelled = True
             if "=" in word:
                 index += 1
                 continue
@@ -194,6 +196,8 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
                 elif option == "P":
                     absolute_names = True
                 elif option in "fCTXIb":
+                    if option == "T":
+                        unmodelled = True
                     value = "" if old_style else options[offset:]
                     if not value:
                         index += 1
@@ -205,7 +209,7 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
                         break
                 elif option not in "xvzjJZpkmUoOPB":
                     unmodelled = True
-        elif not word.startswith("-") and extracts:
+        elif not word.startswith("-"):
             # A member named before a later -C extracts in the earlier directory.
             directories.extend(_rebase_shell_paths(["."], directory))
         index += 1

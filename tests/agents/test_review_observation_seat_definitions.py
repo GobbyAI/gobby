@@ -495,7 +495,7 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     assert "gobby-agents:send_message" in _allowed_mcp_tools(steps["review"])
     assert 'set_variable(name="candidate_task"' in prompt
     assert 'scope="step"' in prompt
-    assert "against the current `0.5.0` head" in prompt
+    assert "integration branch named by the injected project policy" in prompt
     assert "EVENT=CANDIDATE_VERDICT TASK=#NNNNN" in prompt
     assert "VERDICT=LAND|BOUNCE" in prompt
     assert "HIGH, MEDIUM or LOW" in prompt

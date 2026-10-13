@@ -31,7 +31,7 @@ def test_team_lane_renders_security_reviewer(override: bool) -> None:
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(lane="3", seats="security-reviewer")
-    expected = ("grok", "grok-4.7", "xhigh")
+    expected: tuple[str | None, str | None, str | None] = (None, None, None)
     if override:
         expected = ("codex", "gpt-6.1-sol", "high")
         for name, value in zip(("provider", "model", "reasoning_effort"), expected, strict=True):
@@ -40,6 +40,7 @@ def test_team_lane_renders_security_reviewer(override: bool) -> None:
     context["steps"]["guard"] = {
         "output": {
             "project_path": "/pilot/worktree",
+            "worktree": "pilot-worktree",
             "report_to": "gobby#14972",
             "lane_pane": "pilot:lane",
             "lane_columns": 160,
@@ -61,7 +62,7 @@ def test_team_lane_renders_security_reviewer(override: bool) -> None:
     assert step.mcp.arguments is not None
     args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert args["agent"] == "security-reviewer"
-    assert (args["provider"], args["model"], args["reasoning_effort"]) == expected
+    assert (args.get("provider"), args.get("model"), args.get("reasoning_effort")) == expected
     assert args["checkout_mode"] == "none" and args["project_path"] == "/pilot/worktree"
     assert args["execution_mode"] == "interactive"
     assert args["reserved_run_id"] == "pilot-run"
@@ -177,6 +178,8 @@ def test_team_lane_contains_only_approved_seats() -> None:
         "lane_columns",
         "lane_rows",
         "lane",
+        "lane_epic",
+        "first_job",
         "workspace",
         "lane_pane",
         "worktree",
@@ -201,15 +204,15 @@ def test_team_lane_contains_only_approved_seats() -> None:
     assert [
         definition.inputs[f"reviewer_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["claude", "claude-opus-5-5", "xhigh"]
+    ] == [None, None, None]
     assert [
         definition.inputs[f"researcher_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["codex", "gpt-6.1-sol", "medium"]
+    ] == [None, None, None]
     assert [
         definition.inputs[f"manager_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["claude", "claude-sonnet-5-5", "medium"]
+    ] == [None, None, None]
 
 
 def test_team_lane_passes_lane_to_every_seat() -> None:
