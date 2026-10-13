@@ -160,6 +160,8 @@ async def foreign_staged_commit_conflict(
                         project_id=project_id,
                         checkout_root=checkout_root,
                     )
+                except psycopg.errors.QueryCanceled as exc:
+                    raise DirtyEditOwnershipInspectionError("workflow evaluation timeout") from exc
                 except (psycopg.OperationalError, PoolTimeout) as exc:
                     raise DirtyEditOwnershipInspectionError(
                         "database ownership inspection failed"

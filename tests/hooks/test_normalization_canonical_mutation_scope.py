@@ -1406,6 +1406,11 @@ def test_git_checkout_opaque_pathspec_fails_closed(tmp_path: Path, operand: str)
         "GIT_ICASE_PATHSPECS+=1 git restore A.py",
         "GIT_ICASE_PATHSPECS+=1 git rm A.py",
         "GIT_ICASE_PATHSPECS+=1 git mv A.py b.py",
+        'env "$n=1" git restore A.py',
+        "env GIT_ICASE_$x=1 git restore A.py",
+        "GIT_INDEX_FILE=/foreign/index git restore A.py",
+        "GIT_COMMON_DIR=/foreign/common git restore A.py",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/foreign git restore A.py",
         "git checkout -- 'a*.py'",
         "git checkout HEAD -- 'a*'",
         "git restore 'a*.py'",
@@ -1418,7 +1423,7 @@ def test_git_checkout_script_and_icase_scope_fails_closed(tmp_path: Path, comman
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     data = _invocation_metadata(command, tool_cwd=tmp_path)
     assert data["canonical_tool_kind"] == "write"
-    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data.get("canonical_repo_mutation_scope_unknown") is True
 
 
 @pytest.mark.parametrize("operation", ["checkout -f feature", "switch --discard-changes feature"])

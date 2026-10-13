@@ -38,6 +38,8 @@ GIT_SELECTOR_ENV_VARS = frozenset(
         "GIT_GLOB_PATHSPECS",
         "GIT_NOGLOB_PATHSPECS",
         "GIT_LITERAL_PATHSPECS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
     }
 )
 
@@ -72,13 +74,32 @@ def classify_search_segment(
     return _ShellSegmentMetadata("search", paths=tuple(paths), extra=extra)
 
 
+def git_selector_name(word: str) -> bool:
+    """Recognize selectors and names whose expansion cannot be proven harmless."""
+    name = word.split("=", 1)[0].removesuffix("+")
+    return (
+        name in GIT_SELECTOR_ENV_VARS
+        or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        or "__gobby_expansion__" in name
+        or any(char in name for char in "$`{}*?[")
+    )
+
+
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
     """Fail closed after shell-level selector assignments or declarations."""
-    if parts[:1] == ["set"]:
+    if parts[:1] and parts[0] in {"set", "setopt", "unsetopt", "shopt"}:
+        words = parts[1:]
+        if parts[0] == "set" and "--" in words:
+            words = words[: words.index("--")]
         return any(
-            word == "allexport"
-            or (word.startswith("-") and not word.startswith("--") and "a" in word[1:])
-            for word in parts[1:]
+            word.lower().replace("_", "").removeprefix("no") in {"allexport", "keyword"}
+            or (
+                parts[0] != "shopt"
+                and word.startswith(("-", "+"))
+                and word not in {"-", "+", "--"}
+                and any(char in word[1:] for char in "ak")
+            )
+            for word in words
         )
     if parts[:1] == ["eval"]:
         try:
@@ -86,19 +107,16 @@ def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
         except ValueError:
             return True
         return any(
-            any(
-                word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS
-                for word in (token.value for token in segment.tokens)
-            )
+            any(git_selector_name(word) for word in (token.value for token in segment.tokens))
             for segment in _split_shell_segments(tokens)
         )
     if not parts:
         words = raw_parts
-    elif parts[0] in {"export", "declare", "typeset", "local", "readonly"}:
-        words = parts[1:]
+    elif parts[0] in {"export", "declare", "typeset", "local", "readonly", "integer", "float"}:
+        words = [word for word in parts[1:] if not word.startswith(("-", "+"))]
     else:
         return False
-    return any(word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS for word in words)
+    return any(git_selector_name(word) for word in words)
 
 
 def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
@@ -108,13 +126,17 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     selectors: list[str] = ["--git-dir=$GIT_DIR"] if exported_git_selector.get() else []
     prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
     for word in raw_parts[:prefix_length]:
+        if not git_selector_name(word):
+            continue
         name, separator, value = word.partition("=")
         name = name.removesuffix("+")
         if separator and name == "GIT_ICASE_PATHSPECS":
             selectors.append("--icase-pathspecs")
-        if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
+        elif separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
             option = "--git-dir" if name == "GIT_DIR" else "--work-tree"
             selectors.append(f"{option}={value}")
+        else:
+            selectors.append("--git-dir=$GIT_DIR")
     return [parts[0], *selectors, *parts[1:]]
 
 
