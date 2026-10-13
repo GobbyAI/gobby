@@ -1839,27 +1839,49 @@ async def test_positional_owned_path_preserves_pattern_message_data(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "setup",
+    ("setup", "shell"),
     [
-        "export GIT_ICASE_PATHSPECS=1;",
-        "export GIT_ICASE_PATHSPECS=1 &&",
-        "set -a; GIT_ICASE_PATHSPECS=1;",
-        "declare -x GIT_ICASE_PATHSPECS=1;",
-        "! export GIT_ICASE_PATHSPECS=1;",
-        "set -a; read GIT_ICASE_PATHSPECS <<< 1;",
-        "set -a; printf -v GIT_ICASE_PATHSPECS 1;",
-        "set -a; let GIT_ICASE_PATHSPECS=1;",
-        'set -a; : "${GIT_ICASE_PATHSPECS:=1}";',
-        "set -o allexport; read GIT_ICASE_PATHSPECS <<< 1;",
+        ("export GIT_ICASE_PATHSPECS=1;", "bash"),
+        ("export GIT_ICASE_PATHSPECS=1 &&", "bash"),
+        ("set -a; GIT_ICASE_PATHSPECS=1;", "bash"),
+        ("declare -x GIT_ICASE_PATHSPECS=1;", "bash"),
+        ("! export GIT_ICASE_PATHSPECS=1;", "bash"),
+        ("set -a; read GIT_ICASE_PATHSPECS <<< 1;", "bash"),
+        ("set -a; printf -v GIT_ICASE_PATHSPECS 1;", "bash"),
+        ("set -a; let GIT_ICASE_PATHSPECS=1;", "bash"),
+        ('set -a; : "${GIT_ICASE_PATHSPECS:=1}";', "bash"),
+        ("set -o allexport; read GIT_ICASE_PATHSPECS <<< 1;", "bash"),
+        ("shopt -os allexport; read GIT_ICASE_PATHSPECS <<< 1;", "bash"),
+        ("shopt -s -o allexport; read GIT_ICASE_PATHSPECS <<< 1;", "bash"),
+        ("x=PATHSPECS; export GIT_ICASE_$x=1;", "bash"),
+        ('n=GIT_ICASE_PATHSPECS; export "$n=1";', "bash"),
+        ('n=GIT_ICASE_PATHSPECS; declare -x "$n"=1;', "bash"),
+        ("export GIT_{ICASE,X}_PATHSPECS=1;", "bash"),
+        ("export $(echo GIT_ICASE_PATHSPECS)=1;", "bash"),
+        ("setopt allexport; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("setopt ALL_EXPORT; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("setopt -a; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("set -o ALL_EXPORT; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("set -o all_export; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("unsetopt noallexport; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("set +o noallexport; read GIT_ICASE_PATHSPECS <<< 1;", "zsh"),
+        ("integer -x GIT_ICASE_PATHSPECS=1;", "zsh"),
+        ("x=PATHSPECS; export GIT_ICASE_$x=1;", "zsh"),
+        ('n=GIT_ICASE_PATHSPECS; export "$n=1";', "zsh"),
+        ('n=GIT_ICASE_PATHSPECS; declare -x "$n"=1;', "zsh"),
+        ("export GIT_{ICASE,X}_PATHSPECS=1;", "zsh"),
+        ("export $(echo GIT_ICASE_PATHSPECS)=1;", "zsh"),
     ],
 )
 async def test_exported_pathspec_mode_refuses_foreign_capture(
-    guard_harness: GuardHarness, setup: str
+    guard_harness: GuardHarness, setup: str, shell: str
 ) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
     (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     command = f"{setup} git commit --only -m x -- FOREIGN.TXT"
     response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
-    subprocess.run(["bash", "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
+    subprocess.run([shell, "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
     assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
     assert response.decision == "block"
 
@@ -2400,3 +2422,134 @@ async def test_subshell_navigation_cannot_hide_foreign_staged_checkout(
     assert "working directory" in response.reason
     assert _git(guard_harness.repo, "write-tree") == foreign_index
     assert _git(worktree, "write-tree") == owned_index
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "shell"),
+    [
+        ("set -k; git commit --only -m x -- FOREIGN.TXT GIT_ICASE_PATHSPECS=1", "bash"),
+        ("set -o keyword; git commit --only -m x -- FOREIGN.TXT GIT_ICASE_PATHSPECS=1", "bash"),
+        ('n=GIT_ICASE_PATHSPECS; env "$n=1" git commit --only -m x -- FOREIGN.TXT', "bash"),
+        ('n=GIT_ICASE_PATHSPECS; env "$n=1" git commit --only -m x -- FOREIGN.TXT', "zsh"),
+    ],
+)
+async def test_keyword_and_dynamic_env_refuse_foreign_capture(
+    guard_harness: GuardHarness, command: str, shell: str
+) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    subprocess.run([shell, "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
+    assert response.decision == "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("setup", "shell"),
+    [
+        ("set -x;", "bash"),
+        ("set -o pipefail;", "bash"),
+        ("shopt -s nullglob;", "bash"),
+        ('export PATH="$PATH";', "bash"),
+        ("declare -a arr=(a b);", "bash"),
+        ("set -- -a;", "bash"),
+        ("setopt extendedglob;", "zsh"),
+    ],
+)
+async def test_selector_controls_preserve_owned_commit(
+    guard_harness: GuardHarness, setup: str, shell: str
+) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    (guard_harness.repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    command = f"{setup} git commit -m x -- owned.txt"
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    subprocess.run([shell, "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "owned.txt"
+    assert response.decision == "allow"
+
+
+@pytest.mark.parametrize(
+    ("command", "contains_commit"),
+    [
+        ("echo 'unterminated", False),
+        ("legit 'unterminated", False),
+        ("git commit -m x\necho 'unterminated", True),
+        ("g\\it commit -m x\necho 'unterminated", True),
+        ("'g'it commit -m x\necho 'unterminated", True),
+        ('g"it" commit -m x\necho \'unterminated', True),
+    ],
+)
+def test_malformed_shell_requires_git_word(command: str, contains_commit: bool) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert bool(invocations) is contains_commit
+    if contains_commit:
+        assert all(invocation.cwd_unverified for invocation in invocations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", ["keyword", "zsh-allexport"])
+async def test_additional_linked_selectors_refuse_foreign_capture(
+    guard_harness: GuardHarness, tmp_path: Path, selection: str
+) -> None:
+    shell = "zsh" if selection == "zsh-allexport" else "bash"
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} is unavailable")
+    linked = tmp_path / "linked"
+    _git(guard_harness.repo, "worktree", "add", "--detach", str(linked))
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    root = shlex.quote(str(guard_harness.repo))
+    git_dir = shlex.quote(str(guard_harness.repo / ".git"))
+    commands = {
+        "keyword": f"set -k; git commit -a -m x GIT_DIR={git_dir} GIT_WORK_TREE={root}",
+        "zsh-allexport": (
+            f"setopt allexport; read GIT_DIR <<< {git_dir}; "
+            f"read GIT_WORK_TREE <<< {root}; git commit -a -m x"
+        ),
+    }
+    command = commands[selection]
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(command, workdir=linked)
+    )
+    subprocess.run([shell, "-c", command], cwd=linked, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
+    assert response.decision == "block"
+
+
+@pytest.mark.asyncio
+async def test_ownership_query_cancel_blocks_with_evaluation_timeout(
+    guard_harness: GuardHarness,
+) -> None:
+    with patch(
+        "gobby.workflows.commit_guard._active_foreign_path_owners",
+        side_effect=psycopg.errors.QueryCanceled("canceling statement due to statement timeout"),
+    ) as lookup:
+        response = await guard_harness.handler._evaluate_rules(
+            guard_harness.event("git commit -m x")
+        )
+    lookup.assert_called_once()
+    assert response.decision == "block"
+    assert "timeout" in (response.reason or "").lower()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c core.worktree=/foreign commit -m x owned.txt",
+        "git -ccore.worktree=/foreign commit -m x owned.txt",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/foreign git commit -m x owned.txt",
+        "GIT_CONFIG_PARAMETERS=\"'core.worktree=/foreign'\" git commit -m x owned.txt",
+        "export GIT_CONFIG_COUNT=1; git commit -m x owned.txt",
+        "declare -x GIT_CONFIG_KEY_0=core.worktree; git commit -m x owned.txt",
+        "eval 'export GIT_CONFIG_VALUE_0=/foreign'; git commit -m x owned.txt",
+        "n=0; export GIT_CONFIG_KEY_$n=core.worktree; git commit -m x owned.txt",
+    ],
+)
+def test_config_selectors_are_unverified(command: str) -> None:
+    invocations = parse_git_commit_invocations(command)
+    assert len(invocations) == 1
+    assert invocations[0].cwd_unverified

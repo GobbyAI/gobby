@@ -28,6 +28,33 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.parametrize("agent_type", ["developer", "plan-enhancer", None, "plan-writer"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".gobby/plans/coverage/project/24231/plan.coverage.yaml",
+        ".gobby/plans/coverage/.regenerate.log",
+    ],
+)
+async def test_coverage_review_scope_exempts_only_plan_writer(
+    repo: Path, agent_type: str | None, path: str
+) -> None:
+    artifact = repo / path
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("coverage: pending\n", encoding="utf-8")
+    _git(repo, "add", path)
+    variables: dict[str, object] = {
+        "_agent_type": agent_type,
+        "task_claimed": True,
+        "session_dirty_files": {str(repo): [path]},
+    }
+    scope = await inspect_commit_review_scope(
+        _event("git commit -m coverage", repo), str(repo), variables
+    )
+    assert scope.has_reviewable_paths is (agent_type != "plan-writer")
+
+
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
