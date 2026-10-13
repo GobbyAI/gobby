@@ -21,8 +21,11 @@ Task #24215 amended it on 2026-10-12 to add LM Studio's `/v1/systemone` as
 a local server (Decisions 3 and 17). Josh then asked for changes the same
 day: "OpenAI has a decisions api we should support as part of the Jev plan.
 It's not really a Jev plan but a system one style adapter for multiple
-providers." The revision adds OpenAI's Decisions API as a wire (Decisions 1
+providers." The revision added OpenAI's Decisions API as a wire (Decisions 1
 and 18) and states the plan as that adapter.
+
+Task #24253 amended it on 2026-10-13: Josh deferred the OpenAI wire until
+OpenAI's Decisions API reaches general availability (Decision 18, D1).
 
 This plan adds that path. It mirrors the four parts of the embedding path:
 - a config block, `ai.decisions`;
@@ -34,18 +37,16 @@ This plan adds that path. It mirrors the four parts of the embedding path:
 The contract is a System One-style decision: a state and typed questions
 in, calibrated typed answers per question key out. Consumers and the MCP
 tool use only that contract. A wire adapts it to one provider's request and
-response shape. Four wires serve it, and all are first-class choices
+response shape. Three wires serve it, and all are first-class choices
 through one config shape, as local and hosted embedding endpoints are:
 - `POST /v1/systemone`, served by TypeSafe's direct API, Kev, the other
   open clones, a local Clef server, and LM Studio 0.4.26 Build 4 or newer;
 - OpenRouter's `POST /api/alpha/decisions`, which serves Jev and is the
   external test target;
 - Cloudflare Workers AI's `POST /ai/run/@cf/cloudflare/<model>`, which
-  serves hosted Clef and Clef-flash;
-- OpenAI's `POST /v1/decisions`, which serves `gpt-6-luna`. LM Studio's
-  OpenAI-compatible `/v1/decisions` takes the same shape.
+  serves hosted Clef and Clef-flash.
 
-Jev, Clef, and Luna are backends. Gobby's typed question and answer model
+Jev and Clef are backends. Gobby's typed question and answer model
 is the contract, and a new provider shape is one more wire.
 
 The plan also sets:
@@ -65,7 +66,7 @@ The plan also sets:
    Noul, and returns a typed answer per question key. That is the only
    contract consumers and the MCP tool see. `ai.decisions.wire_api` selects
    the wire, following `GenerationEndpointConfig.wire_api`
-   (`config/ai.py:56`). The first three wires share the keyed request
+   (`config/ai.py:56`). All three wires share the keyed request
    `{model, state, questions}`:
    - `systemone` (default): the service posts to `{api_base}/v1/systemone`.
      TypeSafe's direct endpoint, Kev (Apache-2.0, MLX on Apple Silicon, whose
@@ -88,35 +89,14 @@ The plan also sets:
      `questions`, with no `provider` flags. Cloudflare wraps the decision
      response in its REST envelope `{result, success, errors, messages}`,
      and the service reads `result` (Decision 15).
-   - `openai-decisions`: the service posts to `{api_base}/v1/decisions`,
-     with `api_base` `https://api.openai.com` and `model` `gpt-6-luna`
-     (Decision 18). The request is OpenAI's array shape `{model, input,
-     questions}`:
-     - `input` is the state as compact JSON text,
-       `json.dumps(state, ensure_ascii=False, separators=(",", ":"))`, in
-       the caller's key order;
-     - `questions` is an array in the caller's key order. Each item carries
-       `name` (the question key), `type`, and `instructions`;
-     - a Choice is `{"type": "choice", ...}` with `choices`, an array of
-       `{"value": <option key>, "description": <option text>}` in
-       `criteria` order, so 2.1's order reversal reaches this wire too;
-     - a Noul is `{"type": "predicate", ...}`, OpenAI's name for the same
-       primitive.
-
-     The response's `answers` array is matched by `name`. A Choice answer
-     carries `choice`, `confidence`, and `probabilities` as an array of
-     `{value, probability}`, which the service reads into the keyed form.
-     A predicate answer carries `probability`. A `refusal` answer fails the
-     call as `refused` (Decision 9). LM Studio's `POST /v1/decisions`,
-     documented as "OpenAI compatible", takes the same shape (Decision 17),
-     so this wire reaches it with `api_base` at the LM Studio server root.
 
    Consumers never branch on the wire. The adapter is one request builder
-   and one response reader per shape, keyed and array, plus the URL, the
-   request extras, the Workers AI envelope, and the per-wire defaults
-   below. Everything else is one code path. Another provider shape later
-   adds one `wire_api` value and one builder and reader pair; there is no
-   provider registry.
+   and one response reader for the keyed shape, plus the URL, the request
+   extras, the Workers AI envelope, and the per-wire defaults below.
+   Everything else is one code path. Another provider shape later adds one
+   `wire_api` value and one builder and reader pair; there is no provider
+   registry. OpenAI's array-shape `/v1/decisions` is the first such shape,
+   deferred to D1 (Decision 18).
 2. **Local and hosted endpoints are equal choices, as in embeddings.** On
    2026-09-29 Josh dropped the loopback restriction and the `allow_remote`
    opt-in, superseding his 2026-09-24 pilot ruling and his earlier
@@ -130,11 +110,7 @@ The plan also sets:
      are the privacy mechanism Gobby supplies. Cloudflare documents no
      request-level privacy flag for the Workers AI route, so a `workers-ai`
      endpoint sends consumer text under the operator's Cloudflare account
-     terms. OpenAI documents none for `/v1/decisions` either. Its data
-     controls page lists the route as not used for training, with up to
-     30-day abuse-monitoring retention and up to 24 hours of prompt-cache
-     state, and Zero Data Retention needs OpenAI's approval (Decision 18). An `openai-decisions` endpoint therefore sends
-     consumer text under the operator's OpenAI account terms.
+     terms.
    - Every backend, local or hosted, reaches `enforce` only with a Decision
      10 backend identity and the Activation Gate's live capture. Without
      them it runs as `shadow`, fail closed.
@@ -178,7 +154,7 @@ The plan also sets:
    `_embedding_binding`:
    - it is `unavailable` with a reason when `api_base` or `model` is unset;
    - otherwise it is available, with provider `systemone`, `openrouter`,
-     `cloudflare`, or `openai` from `wire_api`, adapter style
+     or `cloudflare` from `wire_api`, adapter style
      `LLM_PROVIDER` for every wire, and
      `metadata = {model, wire_api, max_input_tokens}`. Embeddings likewise
      use one adapter style for local and hosted endpoints.
@@ -264,17 +240,6 @@ The plan also sets:
        truncated to fit. It documents neither the scope of
        `usage.input_tokens` nor the truncation point, so the live capture
        verifies both.
-     - 922,000 for `openai-decisions`, a provisional default inferred from
-       the `gpt-6-luna` model page: its 1,050,000-token context window minus
-       its 128,000 maximum output tokens
-       (`https://developers.openai.com/api/docs/models/gpt-6-luna`,
-       retrieved 2026-10-12). OpenAI documents no maximum input for the
-       model or for the Decisions route, and the route documents no scope or
-       truncation behavior either, so the live capture verifies all three.
-       The guide's example, one
-       predicate on a 42-token input reporting `input_tokens: 42`,
-       suggests the count covers `input`; its scope stays unverified
-       (Decision 18).
      - An explicit value overrides the default. TypeSafe direct documents
        64k for the whole request and 32k for state plus the longest question
        (`https://docs.typesafe.ai/models`), so a TypeSafe endpoint sets the
@@ -296,12 +261,9 @@ The plan also sets:
      `^[A-Za-z0-9_.-]{1,100}$`, or a Choice with fewer than 2 or more than
      255 options. These limits are the union of the documented ones:
      Workers AI documents all three (1 to 64 questions, that key pattern,
-     and 2 to 255 options), TypeSafe and OpenAI document the 2-to-255
-     option range, and the local `clef_mlx.py` server rejects an empty
-     question map with HTTP 400. OpenAI's official pages, as read on
-     2026-10-12, give no question-count maximum or `name` pattern, so the
-     live capture confirms that 64 questions and this key pattern pass on
-     `openai-decisions` (Decision 18).
+     and 2 to 255 options), TypeSafe documents the 2-to-255 option range,
+     and the local `clef_mlx.py` server rejects an empty question map with
+     HTTP 400.
      One rule set serves every wire, so no consumer's batching depends on
      the wire. A request a backend would reject as a permanent 4xx therefore
      never reaches it and never opens the cooldown shared by every consumer.
@@ -330,12 +292,10 @@ The plan also sets:
      keeps a dead or misconfigured server from charging the found-work hook
      its timeout on every Stop.
    - Local outcomes never open it: `unconfigured`, `oversize`,
-     `invalid_request`, `refused`, a `timeout` under a caller budget
-     shorter than `timeout_seconds`, and caller cancellation. So one
-     consumer's short budget, oversized input, or refused content cannot
-     disable the shared service for the others. `refused` is an OpenAI
-     refusal answer (Decision 18): the model declined that content, and
-     the server is healthy. `asyncio.CancelledError` propagates unchanged.
+     `invalid_request`, a `timeout` under a caller budget shorter than
+     `timeout_seconds`, and caller cancellation. So one consumer's short
+     budget or oversized input cannot disable the shared service for the
+     others. `asyncio.CancelledError` propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
      fingerprint of every service-affecting field: `api_base`, `model`, a hash
      of the resolved `api_key`, `wire_api`, `identity_contract`,
@@ -398,10 +358,7 @@ The plan also sets:
         so this contract gives Kev no version signal, and the Activation
         Gate's alias check fails it there. The same holds for both Clef
         forms (Decision 16). Whether LM Studio echoes the requested name
-        is unverified (Decision 17). OpenAI lists one undated snapshot,
-        `gpt-6-luna`, and its reference example answers with that same
-        name, so the check fails there too on the documented evidence
-        (Decision 18).
+        is unverified (Decision 17).
       - unset (the default): no identity, so every consumer stays in
         `shadow`, fail closed.
     - Residual gap: under `model_card`, the card fetch and the decision
@@ -690,9 +647,9 @@ The plan also sets:
         missing `instructions` and `choices`. That covers the probed
         Choice branch only: LM Studio's docs also show a predicate
         question with `type`, `name`, and `instructions` and no `choices`.
-        That is OpenAI's array shape, so the `openai-decisions` wire
-        (Decisions 1 and 18) reaches this route with `api_base` at the
-        server root. The probes validated the request only. Every
+        That is OpenAI's array shape, which only the deferred
+        `openai-decisions` wire sends, so this route defers with that wire
+        (Decision 18, D1). The probes validated the request only. Every
         response surface below is unverified on this route too, and this
         plan's LM Studio example stays on `/v1/systemone`, whose request
         validation matched the keyed wire field for field.
@@ -762,13 +719,36 @@ The plan also sets:
     - The Graphify parity plan (`.gobby/plans/gcode-graphify-parity-delta.md`)
       is unaffected. It references only #22604's held Jev choice gate and
       chooses no backend.
-18. **OpenAI's Decisions API is the `openai-decisions` wire (Josh,
+18. **OpenAI's Decisions API waits for general availability (Josh,
     2026-10-12).** Josh chose Request changes on the stamped #24215
     amendment, through the Orchestrator gobby#15977: "OpenAI has a
     decisions api we should support as part of the Jev plan. It's not
     really a Jev plan but a system one style adapter for multiple
-    providers." This reverses the earlier rejection of `/v1/decisions` in
-    Decision 1.
+    providers." The #24215 revision added an `openai-decisions` wire for
+    `gpt-6-luna`. Josh then deferred that wire until OpenAI's Decisions
+    API reaches general availability (button 381243f3, value
+    `openai-decisions:defer-ga`), superseding his pending identity choice
+    (button d8eab611). The Orchestrator gave the go on 2026-10-13 under
+    #24253. The wire's design moves unchanged to D1, and this plan ships
+    the three keyed wires.
+    - Trigger: OpenAI announces general availability of `POST
+      /v1/decisions`. The route is in public beta on the evidence below.
+    - Re-checks at general availability, before D1 is planned:
+      1. Identity: whether OpenAI then publishes a dated `gpt-6-luna`
+         snapshot, or a response's `model` reports a resolved version, so
+         Activation Gate item 4 can pass under `response_version`
+         (Decision 10).
+      2. Host: whether the Vercel AI Gateway's `gpt-6-luna-decisions`
+         listing can serve the model. The source is #24253's text and
+         button 381243f3; no Vercel page was retrieved, so the plan states
+         no Vercel fact.
+    - What defers with the wire: the array-shape builder and reader, the
+      `refused` outcome (only an OpenAI refusal answer raises it), the
+      922,000-token inferred default, the OpenAI contract record and
+      fixtures, the evaluation price, the config guide's OpenAI example,
+      and LM Studio's `/v1/decisions`, which only this wire reaches
+      (Decision 17). LM Studio's `/v1/systemone`, Kev, OpenRouter's Jev,
+      and both Clef forms proceed unchanged.
     - Sources, retrieved 2026-10-12: the
       [Decisions guide](https://developers.openai.com/api/docs/guides/decisions),
       the [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
@@ -792,18 +772,10 @@ The plan also sets:
         entries. A `refusal` answer carries only `name` and `type`, and
         the request's other answers still return. `usage` carries
         `input_tokens`, `output_tokens`, and `total_tokens`.
-    - The mapping onto Gobby's contract is Decision 1's array shape. Noul
-      is sent as `predicate`. Score has no consumer and is not built
-      (Decision 7). Gobby sends text state only, as compact JSON in
-      `input`, and never sends images.
-    - Refusal. A refusal is the model declining that content, and it is
-      neither a server fault nor an answer a consumer can threshold. The
-      service fails the whole call as `DecisionsUnavailable(reason=
-      "refused")`, a local outcome that never opens the cooldown
-      (Decision 9). Every consumer already treats an unavailable classifier
-      as its fallback, so no consumer changes. The other answers in a
-      partly refused response are dropped, because 3.1 and 3.3 accept one
-      complete result or none.
+    - D1 holds the mapping onto Gobby's contract and the refusal outcome.
+      Noul would be sent as `predicate`. Score has no consumer and is not
+      built (Decision 7). Gobby would send text state only, as compact
+      JSON in `input`, and never images.
     - Unverified, read from no official page: error statuses and bodies on
       this route, rate limits, the route's own input limit and truncation
       behavior, the scope of `usage.input_tokens`, the question `name`
@@ -815,10 +787,10 @@ The plan also sets:
       input tokens for `gpt-6-luna`, with no cache or output charges. The
       model page doubles the input rate above 272K input tokens, and
       regional processing adds 10%. Plan Adversary gobby#16491 read both
-      pages directly on 2026-10-12. 2.1 uses the base rate as an estimate,
-      like the other prices, and excludes both multipliers.
+      pages directly on 2026-10-12. D1's comparison uses the base rate as
+      an estimate, like 2.1's other prices, and excludes both multipliers.
     - Privacy: no request-level flag, so the operator's OpenAI account
-      terms apply (Decision 2). The data controls page lists no application
+      terms would apply (Decision 2). The data controls page lists no application
       state retention for the route, except that prompt caching may keep
       encrypted KV tensors on OpenAI's GPU machines for up to 24 hours.
       Gobby sends text only, so the page's image exception does not apply.
@@ -827,19 +799,10 @@ The plan also sets:
       undated snapshot, `gpt-6-luna`, and its reference example answers
       with that same name. So Activation Gate item 4 fails twice on the
       documented evidence: no version can be pinned, and the alias check
-      cannot see a resolved version. OpenAI is therefore a `shadow` and
-      evaluation backend, as both Clef forms are under Josh's Decision 16
-      option A, and no contract is added. Shadow mode, 2.1's comparison,
-      and `gobby-decisions:evaluate` all work with it unchanged. It reaches
-      `enforce` only after OpenAI publishes a pinnable dated snapshot and
-      documents the route's limit and `usage.input_tokens` scope, a plan
-      revision admits that snapshot, and a live capture passes item 4.
-      Whether to trust an undated model through a `declared` contract
-      instead is Josh's decision, which Decision 16 left with him.
-    - Why the keyed wires stay: each serves backends this wire does not.
-      TypeSafe, Kev, and local Clef speak `systemone`, as does LM Studio's
-      `/v1/systemone`, whose request validation was observed; OpenRouter
-      serves Jev; Workers AI serves hosted Clef.
+      cannot see a resolved version. On that evidence OpenAI would be a
+      `shadow` and evaluation backend, as both Clef forms are under Josh's
+      Decision 16 option A, and no contract is added. Re-check 1 revisits
+      this at general availability.
 
 ## As-Is Facts
 `kind: framing`
@@ -971,9 +934,8 @@ when every one of these holds:
    `/v1/systemone` server, such as Kev from the post-0.6 installer option,
    a local `clef_mlx.py serve`, or LM Studio 0.4.26 Build 4 or newer
    (Decision 17);
-   OpenRouter's `/api/alpha/decisions`; Workers AI's
-   `/ai/run/@cf/cloudflare/<model>`; or a `/v1/decisions` server, OpenAI's
-   or LM Studio's (Decision 18).
+   OpenRouter's `/api/alpha/decisions`; or Workers AI's
+   `/ai/run/@cf/cloudflare/<model>`.
 3. `GET /api/llm/status` reports `decide` available with that model.
 4. The PD has verified a live capture against that endpoint, committed as
    `docs/evidence/decisions/<wire_api>-live-<date>.md`:
@@ -987,13 +949,12 @@ when every one of these holds:
      - `model_card` (a server Josh runs): the server's source commit, its
        `/v1/models` card, and the limit and usage semantics read from that
        source;
-     - `response_version` (TypeSafe direct, OpenRouter, Workers AI, or
-       OpenAI): `ai.decisions.model` pinned to a version (`jev-1.13.0`, or
+     - `response_version` (TypeSafe direct, OpenRouter, or Workers AI):
+       `ai.decisions.model` pinned to a version (`jev-1.13.0`, or
        `typesafe/jev-1.13`), and every captured response reporting one
        resolved version; an alias check, where a request for the provider's
-       alias (`jev-latest`, `~typesafe/jev-latest`, `clef` and
-       `clef-flash` on Workers AI, or `gpt-6-luna` on OpenAI) must come
-       back as a resolved version
+       alias (`jev-latest`, `~typesafe/jev-latest`, or `clef` and
+       `clef-flash` on Workers AI) must come back as a resolved version
        different from the alias, which a server that echoes names fails; the provider's documented input limit, error codes, and
        `usage.input_tokens` semantics, cited by URL and retrieval date; and
        two live checks: a request estimated just under
@@ -1008,9 +969,7 @@ when every one of these holds:
 
      If the limit or the usage semantics are undocumented, unknown, or
      mismatched, this item does not hold. That is LM Studio's state on
-     2026-10-12 under either contract (Decision 17). OpenAI's state on
-     2026-10-12 also fails this item: no pinnable version, and an
-     undocumented route limit and usage scope (Decision 18).
+     2026-10-12 under either contract (Decision 17).
 
    No consumer leaves `shadow` before this item holds. Gobby does not start,
    stop, or install the server.
@@ -1086,13 +1045,13 @@ wire, as `_embedding_binding` uses one style for local and hosted endpoints.
 | Field | Type | Default |
 | --- | --- | --- |
 | `api_base` | `str \| None` | `None` |
-| `wire_api` | `Literal["systemone", "openrouter-decisions", "workers-ai", "openai-decisions"]` | `"systemone"` |
+| `wire_api` | `Literal["systemone", "openrouter-decisions", "workers-ai"]` | `"systemone"` |
 | `identity_contract` | `Literal["model_card", "response_version"] \| None` | `None` |
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
 | `max_input_tokens` | `int` | `8192`, `ge=256`, below the resolved `backend_max_state_tokens` |
-| `backend_max_state_tokens` | `int \| None` | `None`, resolving to `65536` for `systemone` and `workers-ai`, `32000` for `openrouter-decisions`, and `922000` for `openai-decisions`; an explicit value is `gt=0` |
+| `backend_max_state_tokens` | `int \| None` | `None`, resolving to `65536` for `systemone` and `workers-ai`, and `32000` for `openrouter-decisions`; an explicit value is `gt=0` |
 | `failure_cooldown_seconds` | `float` | `60`, `ge=0` |
 | `community_label` | `ChoiceConsumerConfig` | `default_factory` |
 | `tool_rerank` | `RerankConsumerConfig` | `default_factory` |
@@ -1154,8 +1113,8 @@ precondition against the shared config. The rest of the test is unchanged.
 `_decision_binding(config)`:
 - `unavailable` with reason "Decision capability requires ai.decisions.api_base
   and ai.decisions.model." when either is unset;
-- otherwise available, with provider `systemone`, `openrouter`,
-  `cloudflare`, or `openai` from `wire_api`,
+- otherwise available, with provider `systemone`, `openrouter`, or
+  `cloudflare` from `wire_api`,
   `adapter_style=AIAdapterStyle.LLM_PROVIDER`,
   `models=(config.ai.decisions.model,)`, and
   `metadata={"wire_api": ..., "max_input_tokens": ..., "api_base_configured": True}`.
@@ -1190,9 +1149,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 1.1.1 - A loopback `api_base`, a hosted `https://openrouter.ai/api`, a
-  Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`,
-  and OpenAI's `https://api.openai.com`
+- 1.1.1 - A loopback `api_base`, a hosted `https://openrouter.ai/api`, and a
+  Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`
   all load, a malformed URL is rejected by `validate_optional_endpoint_url`,
   and no `allow_remote` field exists. test:
   `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
@@ -1208,8 +1166,7 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
 - 1.1.4 - `decide` reports unavailable with its reason when unconfigured and
   available with the model, `adapter_style` `llm_provider`, and provider
-  `systemone`, `openrouter`, `cloudflare`, or `openai` by `wire_api` when
-  configured,
+  `systemone`, `openrouter`, or `cloudflare` by `wire_api` when configured,
   and it appears in the registry status snapshot. test:
   `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
 - 1.1.5 - `api_base` row: defaults to `None`, and the capability is
@@ -1227,9 +1184,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   rejects a value at or above the resolved `backend_max_state_tokens`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.10 - `backend_max_state_tokens` row: defaults to `None`, resolves to
-  `65536` under `systemone` and `workers-ai`, `32000` under
-  `openrouter-decisions`, and `922000` under `openai-decisions`, keeps an
-  explicit value, and rejects `0`. test:
+  `65536` under `systemone` and `workers-ai` and `32000` under
+  `openrouter-decisions`, keeps an explicit value, and rejects `0`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.11 - `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`.
   test:
@@ -1247,8 +1203,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   and rejects `enforce` without both. test:
   `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 - 1.1.15 - `wire_api` row: defaults to `systemone`, accepts
-  `openrouter-decisions`, `workers-ai`, and `openai-decisions`, and rejects
-  any other value. test:
+  `openrouter-decisions` and `workers-ai`, and rejects any other value,
+  including `openai-decisions` (D1). test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.16 - `identity_contract` row: defaults to `None`, accepts
   `response_version` with every wire, and accepts `model_card` only with
@@ -1266,26 +1222,23 @@ Targets:
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `tests/ai/fixtures/openrouter_decisions_choice_response.json`
 - `tests/ai/fixtures/workers_ai_choice_response.json`
-- `tests/ai/fixtures/openai_decisions_choice_response.json`
 - `docs/evidence/decisions/wire-contracts.md`
 
-**Granularity:** Seventeen acceptance items, one outcome: a `choose` call
+**Granularity:** Fifteen acceptance items, one outcome: a `choose` call
 that either returns validated answers with their backend identity metadata,
 which is `None` when identity is unverified, or raises a typed
 `DecisionsUnavailable`.
 - Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
   (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
   backend identity (1.2.9, 1.2.10), strict parsing (1.2.1), the
-  OpenRouter wire (1.2.11), the Workers AI wire (1.2.12), the OpenAI wire
-  and its refusal outcome (1.2.17), the request limits (1.2.13), and log
-  redaction (1.2.5) are all properties of that one call path, in one
-  module and one test file.
+  OpenRouter wire (1.2.11), the Workers AI wire (1.2.12), the request
+  limits (1.2.13), and log redaction (1.2.5) are all properties of that one
+  call path, in one module and one test file.
 - No subset is independently closeable. A service without strict parsing
   hands consumers unvalidated answers, one without the ceiling lets Kev
   truncate silently, and one without the cooldown stalls every consumer on a
-  dead server. The array-shape builder and reader share every check after
-  them with the keyed shape.
-- The pinned contract record (1.2.6, 1.2.14, 1.2.15, 1.2.16) fixes the field
+  dead server.
+- The pinned contract record (1.2.6, 1.2.14, 1.2.15) fixes the field
   names the parser and its fixtures use, so it comes first inside the same
   leaf.
 
@@ -1343,43 +1296,17 @@ before any code, with no live server:
     echoed `model`, the `/v1/models` body, the request lock, the missing
     authentication, and the remote image fetching.
 - It records the LM Studio facts (Decision 17):
-  - the `/v1/systemone` and `/v1/decisions` routes and their 0.4.26
-    Build 4 minimum, cited from the pages read on 2026-10-12;
+  - the `/v1/systemone` route and its 0.4.26 Build 4 minimum, cited from
+    the pages read on 2026-10-12. Its `/v1/decisions` route speaks the
+    deferred `openai-decisions` shape, so its facts belong to D1;
   - llama.cpp's `POST /v1/systemone` documentation and LM Studio's
     `context_length` load field, as upstream references only;
   - the observed `/v1/systemone` request validation, including
     `noModelsLoaded` for a complete Noul with no `model` field while only
     an embedding model was loaded, and the `/v1/models` card fields;
-  - the observed `/v1/decisions` request validation, with the exact probed
-    requests and the Choice-branch scope of the `choices` rejection: the
-    OpenAI array shape that `openai-decisions` sends (Decisions 1 and 18);
   - what stays unverified: the response shape, `usage.input_tokens`, the
     `model` echo, the input limit and truncation, bearer handling on this
     route, just-in-time loading, and the served decision models.
-- It records OpenAI's documented Decisions contract as retrieved on
-  2026-10-12 (Decision 18):
-  - `POST /v1/decisions`, public beta, `gpt-6-luna` as the only model, and
-    its one undated snapshot;
-  - the request: `model`, `input`, and `questions` with `name`, `type`,
-    and `instructions`, `choices` of `{value, description}` (2 to 255,
-    unique), and the `predicate`, `choice`, and `score` types;
-  - the response: `answers` matched by `name`, the predicate, Choice, and
-    refusal answer shapes, `model`, and `usage` with `input_tokens`,
-    `output_tokens`, and `total_tokens`;
-  - the model page's 1,050,000-token context and 128,000-token output
-    maximum, with the 922,000 default recorded as inferred from them and
-    no documented input maximum; the data controls entry for the route,
-    with its prompt-caching exception; and the guide's base price with its
-    regional and long-context multipliers;
-  - what stays unverified: error statuses and bodies, rate limits, the
-    route's own input limit and truncation, the scope of
-    `usage.input_tokens`, the `name` pattern, the question maximum, and
-    resolved-version reporting.
-- `tests/ai/fixtures/openai_decisions_choice_response.json` is authored
-  from OpenAI's reference schema, with `model` `gpt-6-luna`, an `answers`
-  array whose Choice entries carry `name`, `type`, `choice`, `confidence`,
-  and `probabilities` as `{value, probability}` entries, and `usage`
-  carrying `input_tokens`, `output_tokens`, and `total_tokens`.
 - `tests/ai/fixtures/workers_ai_choice_response.json` is authored from
   Cloudflare's output schema inside the REST envelope, with `model`,
   `answers`, and `usage` carrying `input_tokens` and `output_tokens`.
@@ -1400,21 +1327,20 @@ and measures the characters-per-token ratio. The estimate stays advisory
 
 Module contents:
 - `ChoiceQuestion(instructions: str, criteria: Mapping[str, str])`,
-  serialized on the keyed wires as `{"type": "choice", "instructions": ...,
-  "criteria": ...}`, and on `openai-decisions` as Decision 1's array item
-  with `name` and `choices`. `instructions` is required, with no default;
-  each consumer writes its own.
+  serialized as `{"type": "choice", "instructions": ..., "criteria": ...}`.
+  `instructions` is required, with no default; each consumer writes its
+  own.
 - `ChoiceAnswer(choice, probabilities, confidence)`, where `probabilities`
-  is keyed by option on every wire.
+  is keyed by option.
 - `DecisionsUnavailable(reason: Literal["unconfigured", "cooldown",
-  "oversize", "invalid_request", "refused", "truncated", "timeout",
-  "transport", "http_status", "parse"], detail: str)`. `invalid_request`,
-  `refused`, and `truncated` are local outcomes under Decision 9 and never
-  open the cooldown.
-- One request builder and one response reader per shape: keyed for
-  `systemone`, `openrouter-decisions`, and `workers-ai`, and array for
-  `openai-decisions` (Decision 1). The reader returns answers keyed by
-  question, so every check after it is shared.
+  "oversize", "invalid_request", "truncated", "timeout", "transport",
+  "http_status", "parse"], detail: str)`. `invalid_request` and
+  `truncated` are local outcomes under Decision 9 and never open the
+  cooldown.
+- One request builder and one response reader serve the keyed shape that
+  `systemone`, `openrouter-decisions`, and `workers-ai` share (Decision 1).
+  The reader returns answers keyed by question, so every check after it is
+  shared.
 - Every failure leaves the service as `DecisionsUnavailable`, and no `httpx`
   exception escapes. After retries, an `httpx.TransportError` maps to
   `transport`. Expiry of the service's own `asyncio.timeout` maps to
@@ -1463,9 +1389,8 @@ Transport, per Decisions 8 and 9:
   hardening in `utils/daemon_client.py:396-466`. There is no config knob to
   change it;
 - the URL is `{api_base}/v1/systemone` under `systemone`,
-  `{api_base}/alpha/decisions` under `openrouter-decisions`,
-  `{api_base}/ai/run/@cf/cloudflare/{model}` under `workers-ai`, and
-  `{api_base}/v1/decisions` under `openai-decisions`. Only
+  `{api_base}/alpha/decisions` under `openrouter-decisions`, and
+  `{api_base}/ai/run/@cf/cloudflare/{model}` under `workers-ai`. Only
   `openrouter-decisions` adds `provider: {"zdr": true, "data_collection":
   "deny"}` to the body;
 - `Authorization: Bearer` is sent only when `api_key` is set;
@@ -1478,25 +1403,15 @@ Transport, per Decisions 8 and 9:
   - under `workers-ai`, a 2xx body must be an object whose `success` is
     `true` and whose `result` is an object. Anything else raises `parse`,
     and `result` is then parsed as the decision response below;
-  - under `openai-decisions`, `answers` must be an array of objects, each
-    with a string `name` and a string `type`. The names must be unique and
-    equal the question keys exactly, or the response raises `parse`. Any
-    entry whose `type` is `refusal` then raises `refused`, which never
-    opens the cooldown. A `predicate` answer is read as Noul. A Choice
-    answer's `probabilities` must be an array of `{value, probability}`
-    entries with unique string values, which the reader keys by value. The
-    keyed checks below then apply unchanged;
   - the response `model` must be a non-empty string. It is returned as
     `response_model` and never compared with the request. TypeSafe and
     OpenRouter answer with a resolved version: `jev-1.13.0` for
     `jev-latest` on TypeSafe, and `typesafe/jev-1.13-20260917` for
     `typesafe/jev-1.13` on OpenRouter. Workers AI's versioning is
-    undocumented, and OpenAI's reference example answers with the
-    undated `gpt-6-luna`. Backend identity is Decision 10's job;
+    undocumented. Backend identity is Decision 10's job;
   - response fields outside the answer schemas and `usage.input_tokens`,
     such as OpenRouter's `id`, `provider`, `usage.output_tokens` and
-    `usage.cost`, Workers AI's `errors` and `messages`, and OpenAI's
-    `usage.output_tokens` and `usage.total_tokens`, are ignored;
+    `usage.cost`, and Workers AI's `errors` and `messages`, are ignored;
   - a Choice answer must carry `probabilities` and `confidence`. OpenRouter's
     reference marks them optional, TypeSafe's marks them required, and a
     Choice answer without them raises `parse`;
@@ -1523,11 +1438,7 @@ Transport, per Decisions 8 and 9:
     the live capture. A local `clef_mlx.py` server satisfies both for the
     whole prompt once the operator sets `backend_max_state_tokens: 16384`.
     LM Studio documents neither its limit nor `usage.input_tokens`, so it
-    stays unverified until the live capture (Decision 17). OpenAI
-    documents `usage.input_tokens` but no input maximum for the model or
-    the route, no truncation behavior, and not the count's scope; the
-    922,000 default is inferred (Decision 8). So it also stays unverified
-    until the live capture (Decision 18).
+    stays unverified until the live capture (Decision 17).
     The Activation Gate's live capture verifies both for the
     configured server, and an unverified or mismatched server keeps every
     consumer in `shadow`;
@@ -1634,26 +1545,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `clef_mlx.py serve`. behavior: "/ai/run/@cf/cloudflare/" in
   `docs/evidence/decisions/wire-contracts.md`.
 - 1.2.15 - The pinned contract record holds the LM Studio `/v1/systemone`
-  facts with the 0.4.26 Build 4 minimum and their unverified items, and
-  the observed `/v1/decisions` request validation that `openai-decisions`
-  matches. behavior: "noModelsLoaded" in
+  facts with the 0.4.26 Build 4 minimum and their unverified items.
+  behavior: "noModelsLoaded" in
   `docs/evidence/decisions/wire-contracts.md`.
-- 1.2.16 - The pinned contract record holds OpenAI's documented Decisions
-  contract for `gpt-6-luna` with its unverified items. behavior:
-  "gpt-6-luna" in `docs/evidence/decisions/wire-contracts.md`.
-- 1.2.17 - Under `openai-decisions`, `choose` posts to
-  `{api_base}/v1/decisions` with the bearer key and no `provider` field.
-  The body carries `model`, `input` as the state's compact JSON text, and
-  a `questions` array in key order whose items carry `name`, `type`
-  `choice`, `instructions`, and `choices` as `{value, description}` in
-  `criteria` order. It parses the OpenAI fixture into keyed answers while
-  ignoring `output_tokens` and `total_tokens`, and under
-  `response_version` it returns identity `response:gpt-6-luna`. A
-  duplicate, missing, or extra answer `name`, or `probabilities` values
-  that differ from the option keys, raise `parse`. A response with one
-  `refusal` entry raises `refused` without opening the cooldown, and the
-  next call dials. test:
-  `tests/ai/test_decisions_service.py::test_openai_wire_posts_and_parses`.
 
 ## P2: Evaluation
 `kind: framing`
@@ -1736,9 +1630,9 @@ daemon config.
   through `config/_loading.py::load_yaml` with the same secret resolver as
   the daemon config, so a `$secret:` `api_key` resolves, and it is validated
   as `DecisionsConfig`.
-- This compares Clef, Clef-flash, Jev, Kev, `gpt-6-luna`, and the
-  incumbent on one dataset without reconfiguring the live daemon
-  (Decisions 15 and 18).
+- This compares Clef, Clef-flash, Jev, Kev, and the incumbent on one
+  dataset without reconfiguring the live daemon (Decision 15).
+  `gpt-6-luna` joins the comparison with D1.
 - Every backend replays the same splits, and steps 2 to 5 run per backend.
 
 The steps:
@@ -1766,10 +1660,8 @@ The steps:
 4. Compute the order-flip rate and p50 and p95 latency. Also compute cost:
    estimated input tokens per call, and the per-call cost at each pinned
    hosted price per million input tokens: Jev at $0.042 on OpenRouter
-   (`jev.md`), Clef at $0.24 and Clef-flash at $0.09 on Workers AI
-   (Decision 15), and `gpt-6-luna` at its $0.10 base rate on OpenAI,
-   excluding the long-context and regional multipliers (Decision 18). A
-   local backend bills nothing, so these give
+   (`jev.md`), and Clef at $0.24 and Clef-flash at $0.09 on Workers AI
+   (Decision 15). A local backend bills nothing, so these give
    local-versus-hosted numbers per consumer. Each provider bills its own
    tokenizer's count, so the figures are estimates.
 5. Compute every Decision 12 metric for the consumer:
@@ -1896,7 +1788,7 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 2.1.7 - Two `--decisions` backends replay one synthetic dataset over
   identical splits. The report gives each its own identity, response model,
   thresholds, metrics, and verdict, a side-by-side table, and the per-call
-  cost at $0.042, $0.24, $0.09, and $0.10 per million input tokens. With no
+  cost at $0.042, $0.24, and $0.09 per million input tokens. With no
   `--decisions`, the daemon's `ai.decisions` is the one backend. A
   `$secret:` `api_key` in a decisions file resolves and never appears in
   the report. test:
@@ -1920,7 +1812,6 @@ Targets:
 - `tests/ai/fixtures/systemone_noul_response.json`
 - `tests/ai/fixtures/openrouter_decisions_noul_response.json`
 - `tests/ai/fixtures/workers_ai_noul_response.json`
-- `tests/ai/fixtures/openai_decisions_noul_response.json`
 - `docs/evidence/decisions/wire-contracts.md`
 - `tests/mcp_proxy/services/test_recommendation_decisions.py`
 
@@ -1934,13 +1825,10 @@ cannot reject every candidate, which is why the tool consumer uses Noul
 
 Add `async noul(consumer, state, propositions: Mapping[str, str], *,
 timeout_seconds: float | None = None) -> DecisionResult[NoulAnswer]`, with
-`NoulAnswer(probability: float)`, to `DecisionService`. On the keyed wires
-each proposition is serialized as `{"type": "noul", "instructions":
-<proposition>}`, and `probability` is read from the answer's `noul` field.
-On `openai-decisions` it is serialized as `{"name": <key>, "type":
-"predicate", "instructions": <proposition>}`, and `probability` is read
-from the predicate answer's `probability` field (Decision 18). Both go
-through the same strict parsing. It uses the same
+`NoulAnswer(probability: float)`, to `DecisionService`. Each proposition is
+serialized as `{"type": "noul", "instructions": <proposition>}`, and
+`probability` is read from the answer's `noul` field, through the same
+strict parsing. It uses the same
 transport, ceiling, and cooldown. Its wire field names come from the Noul
 schema that 1.2 pinned in `docs/evidence/decisions/wire-contracts.md`:
 - Before any code in this leaf, author
@@ -1949,11 +1837,8 @@ schema that 1.2 pinned in `docs/evidence/decisions/wire-contracts.md`:
   OpenRouter's schema with a dated `model`, `id`, `provider`, and `usage`
   carrying `output_tokens` and `cost`, and
   `tests/ai/fixtures/workers_ai_noul_response.json` from Cloudflare's
-  output schema inside the REST envelope (Decision 15), and
-  `tests/ai/fixtures/openai_decisions_noul_response.json` from OpenAI's
-  predicate answer schema with `model` `gpt-6-luna` and `usage` carrying
-  `total_tokens`, each with three propositions. The `noul` parser tests
-  read all four fixtures.
+  output schema inside the REST envelope (Decision 15), each with three
+  propositions. The `noul` parser tests read all three fixtures.
 - Append to the evidence file a note naming the fixture and any field the
   consumer relies on. Runtime compatibility waits for the Activation Gate's
   live capture.
@@ -2020,9 +1905,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - `noul` posts per-proposition questions on every wire, as
-  `predicate` items with `name` on `openai-decisions`, parses the four
-  documented-schema Noul fixtures, and returns probabilities by key
+- 3.1.1 - `noul` posts per-proposition questions on every wire, parses the
+  three documented-schema Noul fixtures, and returns probabilities by key
   under the same ceiling and cooldown. The fixture note is appended to
   `docs/evidence/decisions/wire-contracts.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
@@ -2207,7 +2091,7 @@ values. So the tool registers through `registry.register(name="evaluate",
 - `questions`: an object with 1 to 64 properties whose keys match
   `^[A-Za-z0-9_.-]{1,100}$`, whose values are
   `oneOf` two closed shapes, the question shapes 1.2 and 3.1 accept, which
-  each wire's builder serializes:
+  the keyed builder serializes for every wire:
   - Choice: `{"type": "choice", "instructions": <non-empty string>,
     "criteria": <object, 2 to 255 properties, string values of length at
     least 1>}`. The question and option bounds are the Decision 8 request
@@ -2371,7 +2255,7 @@ rows. `docs/guides/configuration.md` documents config sections and the
 Edits:
 - Add an `ai.decisions` section to `configuration.md`. It opens by stating
   the contract as a System One-style decision that each wire adapts. It
-  covers the fields; the four `wire_api` choices, with a local Kev
+  covers the fields; the three `wire_api` choices, with a local Kev
   example, a local Clef
   example (`clef_mlx.py serve` on `127.0.0.1` with
   `backend_max_state_tokens: 16384`), an LM Studio example (Decision 17:
@@ -2379,13 +2263,10 @@ Edits:
   decision model the operator loads,
   `backend_max_state_tokens` from the live capture, and a `$secret:`
   `api_key` when LM Studio's authentication is on), an OpenRouter example,
-  a Workers AI Clef example, and an OpenAI example (`api_base`
-  `https://api.openai.com`, `model` `gpt-6-luna`, a `$secret:` `api_key`,
-  the account's data terms, and the `refused` outcome); the OpenRouter
-  privacy flags; the request limits; the identity contracts, including
-  why neither Clef form, LM Studio, nor OpenAI reaches `enforce`
-  (Decisions 16, 17, and 18); the local Clef latency figures (Decision
-  15); and `GET /api/llm/status`.
+  and a Workers AI Clef example; the OpenRouter privacy flags; the request
+  limits; the identity contracts, including why neither Clef form nor LM
+  Studio reaches `enforce` (Decisions 16 and 17); the local Clef latency
+  figures (Decision 15); and `GET /api/llm/status`.
 - Add rows to `llm-features.md` for `ai.decisions.tool_rerank` and
   `ai.decisions.found_work`, with their modes and fallbacks.
 - Add a paragraph on shadow records, the 2.1 evaluation script, and the
@@ -2396,7 +2277,7 @@ Edits:
 
 **Acceptance:**
 
-- 4.1.1 - The configuration guide documents `ai.decisions` with all four
+- 4.1.1 - The configuration guide documents `ai.decisions` with all three
   `wire_api` choices, local Kev and Clef examples, OpenRouter and Workers AI
   examples, and the identity contracts. behavior: "openrouter-decisions" in
   `docs/guides/configuration.md`.
@@ -2416,11 +2297,109 @@ Edits:
   `backend_max_state_tokens` from the live capture, a `$secret:` `api_key`
   when LM Studio's authentication is on, and the Decision 17 identity
   consequence. behavior: "lms load" in `docs/guides/configuration.md`.
-- 4.1.6 - The configuration guide documents OpenAI's Decisions API as the
-  `openai-decisions` wire: `api_base` `https://api.openai.com`, `model`
-  `gpt-6-luna`, a `$secret:` `api_key`, the account's data terms, the
-  `refused` outcome, and the Decision 18 identity consequence. behavior:
-  "openai-decisions" in `docs/guides/configuration.md`.
+
+## D1 OpenAI Decisions API wire at general availability (depends: 1.1, 1.2, 2.1, 3.1, 4.1)
+`kind: deferred`
+
+The `openai-decisions` wire for `gpt-6-luna`, as the #24215 revision
+designed it, waits for OpenAI's Decisions API to reach general availability
+(Decision 18). At that trigger the task first runs Decision 18's two
+re-checks: the identity contract (a dated snapshot or a resolved response
+`model`) and the Vercel AI Gateway's `gpt-6-luna-decisions` listing. A plan
+revision then restores the design below into 1.1, 1.2, 2.1, 3.1, and 4.1,
+Decisions 1, 2, 5, 8, 9, and 10, and Activation Gate items 2 and 4. The
+design to carry into the task:
+- Config (1.1): `wire_api` adds `openai-decisions`, `_decision_binding`
+  reports provider `openai`, and `backend_max_state_tokens` resolves to
+  922,000. That default is inferred from the `gpt-6-luna` model page's
+  1,050,000-token context window minus its 128,000 maximum output tokens
+  (`https://developers.openai.com/api/docs/models/gpt-6-luna`, retrieved
+  2026-10-12). OpenAI documents no input maximum for the model or the
+  route, no truncation behavior, and not the scope of
+  `usage.input_tokens`, so the live capture verifies all three.
+- Request (1.2): the service posts to `{api_base}/v1/decisions`, with
+  `api_base` `https://api.openai.com`, the bearer key, and no `provider`
+  field. The body is OpenAI's array shape `{model, input, questions}`:
+  - `input` is the state as compact JSON text,
+    `json.dumps(state, ensure_ascii=False, separators=(",", ":"))`, in the
+    caller's key order;
+  - `questions` is an array in the caller's key order, and each item
+    carries `name` (the question key), `type`, and `instructions`;
+  - a Choice is `{"type": "choice", ...}` with `choices`, an array of
+    `{"value": <option key>, "description": <option text>}` in `criteria`
+    order, so 2.1's order reversal reaches this wire too;
+  - a Noul is `{"type": "predicate", ...}`, OpenAI's name for the same
+    primitive.
+- Response (1.2): `answers` must be an array of objects, each with a string
+  `name` and a string `type`. The names must be unique and equal the
+  question keys exactly, or the response raises `parse`. Any entry whose
+  `type` is `refusal` then raises `refused`. A `predicate` answer's
+  `probability` is read as the Noul probability. A Choice answer's
+  `probabilities` must be an array of `{value, probability}` entries with
+  unique string values, which the reader keys by value, and the keyed
+  checks then apply unchanged. `usage.output_tokens` and
+  `usage.total_tokens` are ignored. The reference example's `model` is the
+  undated `gpt-6-luna`.
+- Refusal (Decision 9): a refusal is the model declining that content,
+  neither a server fault nor an answer a consumer can threshold.
+  `DecisionsUnavailable` gains `refused`, a local outcome that never opens
+  the cooldown. Every consumer already treats an unavailable classifier as
+  its fallback, so no consumer changes. The other answers in a partly
+  refused response are dropped, because 3.1 and 3.3 accept one complete
+  result or none.
+- Request limits (Decision 8): OpenAI documents the 2-to-255 option range.
+  Its pages give no question-count maximum or `name` pattern, so the live
+  capture confirms that 64 questions and the key pattern pass.
+- Contract record (1.2): OpenAI's documented contract as retrieved on
+  2026-10-12, with Decision 18's unverified list, the 922,000 default
+  recorded as inferred, the data controls entry with its prompt-caching
+  exception, and the base price with its multipliers. It also records LM
+  Studio's `/v1/decisions` route with its 0.4.26 Build 4 minimum and the
+  observed request validation, with the exact probed requests and the
+  Choice-branch scope of the `choices` rejection (Decision 17).
+- Fixtures: `tests/ai/fixtures/openai_decisions_choice_response.json` (1.2)
+  and `tests/ai/fixtures/openai_decisions_noul_response.json` (3.1, three
+  propositions), authored from OpenAI's reference schema with `model`
+  `gpt-6-luna`. Choice entries carry `name`, `type`, `choice`,
+  `confidence`, and `probabilities` as `{value, probability}` entries, and
+  `usage` carries `input_tokens`, `output_tokens`, and `total_tokens`.
+- Evaluation (2.1): `gpt-6-luna` joins the comparison at its $0.10 base
+  rate per million input tokens, excluding the long-context and regional
+  multipliers (Decision 18).
+- Privacy (Decision 2): OpenAI documents no request-level flag. Its data
+  controls page lists the route as not used for training, with up to
+  30-day abuse-monitoring retention and up to 24 hours of prompt-cache
+  state, and Zero Data Retention needs OpenAI's approval. An
+  `openai-decisions` endpoint sends consumer text under the operator's
+  OpenAI account terms.
+- Guide (4.1): an OpenAI example with `api_base` `https://api.openai.com`,
+  `model` `gpt-6-luna`, a `$secret:` `api_key`, the account's data terms,
+  the `refused` outcome, and the identity consequence that re-check 1
+  settles.
+
+Original acceptance:
+- D1.1: `wire_api` accepts `openai-decisions`, OpenAI's `https://api.openai.com` `api_base` loads, `backend_max_state_tokens` resolves to `922000` under that wire, and `decide` reports provider `openai` (from 1.1.1, 1.1.4, 1.1.10, and 1.1.15; this flips 1.1.15's rejection of `openai-decisions`).
+- D1.2: The pinned contract record holds OpenAI's documented Decisions contract for `gpt-6-luna` with its unverified items (from 1.2.16).
+- D1.3: The pinned contract record holds LM Studio's `/v1/decisions` route and the observed request validation that `openai-decisions` matches (from 1.2.15).
+- D1.4: Under `openai-decisions`, `choose` posts to `{api_base}/v1/decisions` with the bearer key and no `provider` field, sends `input` as the state's compact JSON text and a `questions` array in key order whose items carry `name`, `type` `choice`, `instructions`, and `choices` as `{value, description}` in `criteria` order, parses the OpenAI fixture into keyed answers, and returns identity `response:gpt-6-luna` under `response_version`; a duplicate, missing, or extra answer `name`, or `probabilities` values that differ from the option keys, raise `parse`, and one `refusal` entry raises `refused` without opening the cooldown (from 1.2.17).
+- D1.5: `noul` posts `predicate` items with `name` on `openai-decisions` and parses the OpenAI Noul fixture (from 3.1.1).
+- D1.6: The evaluation report gives `gpt-6-luna`'s per-call cost at $0.10 per million input tokens (from 2.1.7).
+- D1.7: The configuration guide documents the `openai-decisions` wire with its example, data terms, `refused` outcome, and identity consequence (from 4.1.6).
+
+```yaml
+deferral:
+  task_ref: "TBD-openai-decisions-ga"
+  reason: "needs-planning: Josh deferred the openai-decisions wire (gpt-6-luna) until OpenAI's Decisions API reaches general availability (button 381243f3). At the trigger, re-check the identity contract (a dated snapshot or a resolved response model) and the Vercel AI Gateway gpt-6-luna-decisions listing, then revise the plan. Created at expansion per the plan-coverage contract."
+  owner: "orchestrator"
+  original_acceptance_items:
+    - D1.1
+    - D1.2
+    - D1.3
+    - D1.4
+    - D1.5
+    - D1.6
+    - D1.7
+```
 
 ## V2: Verification
 `kind: verification`
@@ -2671,6 +2650,34 @@ available with the configured model. With the server stopped, a
     controls page's prompt-caching exception of up to 24 hours.
   - Routing of every deliverable is unchanged, Decision 16 is unchanged,
     and OpenAI stays a `shadow` and evaluation backend.
+- 2026-10-13: #24253, by Plan Writer gobby#16490. Josh deferred the
+  `openai-decisions` wire until OpenAI's Decisions API reaches general
+  availability (button 381243f3, value `openai-decisions:defer-ga`),
+  superseding identity button d8eab611. The Orchestrator gobby#15977 gave
+  the go on 2026-10-13. Base: stamped a4de350657.
+  - Decision 18 is now the deferral record: the general availability
+    trigger and two re-checks, the identity contract and the Vercel AI
+    Gateway `gpt-6-luna-decisions` listing. The Vercel re-check cites
+    #24253 and the button; no Vercel page was retrieved.
+  - New D1 carries the wire's design and its original acceptance as
+    D1.1 to D1.7.
+  - Removed from scope: the `wire_api` value, provider `openai`, and the
+    922,000 default (1.1); the array-shape builder and reader, `refused`,
+    the OpenAI contract record, fixture, and wire test, and 1.2.16 and
+    1.2.17 (1.2); the $0.10 price (2.1); the OpenAI Noul fixture (3.1);
+    and 4.1.6 (4.1). Decisions 1, 2, 5, 8, 9, 10, and 17, the Overview,
+    and Activation Gate items 2 and 4 drop the wire.
+  - LM Studio's `/v1/decisions` defers with the wire, since only that wire
+    reaches it. LM Studio's `/v1/systemone`, Kev, OpenRouter's Jev, and both
+    Clef forms are unchanged, so Josh's list of proceeding wires holds.
+  - Routing of every deliverable is unchanged. The stamped M1 was withdrawn
+    for re-derivation.
+- 2026-10-13: Consensus with Plan Adversary gobby#16491 on the #24253
+  amendment at 29ca7e26a7, with no blocking finding. D1 preserves every
+  removed OpenAI obligation: the wire, its fixtures, the refusal outcome,
+  the evaluation price, the guide, and LM Studio's `/v1/decisions` facts.
+  Active scope stays the three keyed wires. Routing of the seven
+  deliverables and their heading dependencies is unchanged.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -2681,9 +2688,9 @@ available with the configured model. With the server stopped, a
   task_type: feature
   depends_on: []
   validation_criteria: '1.1.1: A loopback `api_base`, a hosted `https://openrouter.ai/api`,
-    a Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`, and
-    OpenAI''s `https://api.openai.com` all load, a malformed URL is rejected by `validate_optional_endpoint_url`,
-    and no `allow_remote` field exists. test: `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
+    and a Workers AI `https://api.cloudflare.com/client/v4/accounts/<account_id>`
+    all load, a malformed URL is rejected by `validate_optional_endpoint_url`, and
+    no `allow_remote` field exists. test: `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
 
     1.1.2: `model` is required with `api_base`, `enforce` requires `evaluated_model`
     and `evaluated_backend`, `accept_below < accept_above`, every threshold outside
@@ -2696,8 +2703,8 @@ available with the configured model. With the server stopped, a
 
     1.1.4: `decide` reports unavailable with its reason when unconfigured and available
     with the model, `adapter_style` `llm_provider`, and provider `systemone`, `openrouter`,
-    `cloudflare`, or `openai` by `wire_api` when configured, and it appears in the
-    registry status snapshot. test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
+    or `cloudflare` by `wire_api` when configured, and it appears in the registry
+    status snapshot. test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
 
     1.1.5: `api_base` row: defaults to `None`, and the capability is unavailable while
     it is unset. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
@@ -2714,9 +2721,8 @@ available with the configured model. With the server stopped, a
     a value at or above the resolved `backend_max_state_tokens`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.10: `backend_max_state_tokens` row: defaults to `None`, resolves to `65536`
-    under `systemone` and `workers-ai`, `32000` under `openrouter-decisions`, and
-    `922000` under `openai-decisions`, keeps an explicit value, and rejects `0`. test:
-    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+    under `systemone` and `workers-ai` and `32000` under `openrouter-decisions`, keeps
+    an explicit value, and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.11: `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`. test:
     `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
@@ -2733,8 +2739,9 @@ available with the configured model. With the server stopped, a
     `0.9`, and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce`
     without both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 
-    1.1.15: `wire_api` row: defaults to `systemone`, accepts `openrouter-decisions`,
-    `workers-ai`, and `openai-decisions`, and rejects any other value. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+    1.1.15: `wire_api` row: defaults to `systemone`, accepts `openrouter-decisions`
+    and `workers-ai`, and rejects any other value, including `openai-decisions` (D1).
+    test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
     1.1.16: `identity_contract` row: defaults to `None`, accepts `response_version`
     with every wire, and accepts `model_card` only with `systemone`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
@@ -2833,20 +2840,7 @@ available with the configured model. With the server stopped, a
     \ facts for `joint_schema_model.py` and `clef_mlx.py serve`. behavior: \"/ai/run/@cf/cloudflare/\"\
     \ in `docs/evidence/decisions/wire-contracts.md`.\n1.2.15: The pinned contract\
     \ record holds the LM Studio `/v1/systemone` facts with the 0.4.26 Build 4 minimum\
-    \ and their unverified items, and the observed `/v1/decisions` request validation\
-    \ that `openai-decisions` matches. behavior: \"noModelsLoaded\" in `docs/evidence/decisions/wire-contracts.md`.\n\
-    1.2.16: The pinned contract record holds OpenAI's documented Decisions contract\
-    \ for `gpt-6-luna` with its unverified items. behavior: \"gpt-6-luna\" in `docs/evidence/decisions/wire-contracts.md`.\n\
-    1.2.17: Under `openai-decisions`, `choose` posts to `{api_base}/v1/decisions`\
-    \ with the bearer key and no `provider` field. The body carries `model`, `input`\
-    \ as the state's compact JSON text, and a `questions` array in key order whose\
-    \ items carry `name`, `type` `choice`, `instructions`, and `choices` as `{value,\
-    \ description}` in `criteria` order. It parses the OpenAI fixture into keyed answers\
-    \ while ignoring `output_tokens` and `total_tokens`, and under `response_version`\
-    \ it returns identity `response:gpt-6-luna`. A duplicate, missing, or extra answer\
-    \ `name`, or `probabilities` values that differ from the option keys, raise `parse`.\
-    \ A response with one `refusal` entry raises `refused` without opening the cooldown,\
-    \ and the next call dials. test: `tests/ai/test_decisions_service.py::test_openai_wire_posts_and_parses`."
+    \ and their unverified items. behavior: \"noModelsLoaded\" in `docs/evidence/decisions/wire-contracts.md`."
   labels:
   - covers:decision-classifier-path:1.2:1.2.1
   - covers:decision-classifier-path:1.2:1.2.2
@@ -2863,8 +2857,6 @@ available with the configured model. With the server stopped, a
   - covers:decision-classifier-path:1.2:1.2.13
   - covers:decision-classifier-path:1.2:1.2.14
   - covers:decision-classifier-path:1.2:1.2.15
-  - covers:decision-classifier-path:1.2:1.2.16
-  - covers:decision-classifier-path:1.2:1.2.17
   tdd: true
   source_section: '1.2'
   implementation_domain: backend
@@ -2913,8 +2905,8 @@ available with the configured model. With the server stopped, a
 
     2.1.7: Two `--decisions` backends replay one synthetic dataset over identical
     splits. The report gives each its own identity, response model, thresholds, metrics,
-    and verdict, a side-by-side table, and the per-call cost at $0.042, $0.24, $0.09,
-    and $0.10 per million input tokens. With no `--decisions`, the daemon''s `ai.decisions`
+    and verdict, a side-by-side table, and the per-call cost at $0.042, $0.24, and
+    $0.09 per million input tokens. With no `--decisions`, the daemon''s `ai.decisions`
     is the one backend. A `$secret:` `api_key` in a decisions file resolves and never
     appears in the report. test: `tests/scripts/test_decisions_eval.py::test_compares_backends_side_by_side`.'
   labels:
@@ -2934,10 +2926,9 @@ available with the configured model. With the server stopped, a
   depends_on:
   - '2.1'
   validation_criteria: '3.1.1: `noul` posts per-proposition questions on every wire,
-    as `predicate` items with `name` on `openai-decisions`, parses the four documented-schema
-    Noul fixtures, and returns probabilities by key under the same ceiling and cooldown.
-    The fixture note is appended to `docs/evidence/decisions/wire-contracts.md`. test:
-    `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
+    parses the three documented-schema Noul fixtures, and returns probabilities by
+    key under the same ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/wire-contracts.md`.
+    test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 
     3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
     An incumbent that succeeds after `timeout_seconds` still returns its own result.
@@ -3063,7 +3054,7 @@ available with the configured model. With the server stopped, a
   - '3.2'
   - '3.3'
   validation_criteria: '4.1.1: The configuration guide documents `ai.decisions` with
-    all four `wire_api` choices, local Kev and Clef examples, OpenRouter and Workers
+    all three `wire_api` choices, local Kev and Clef examples, OpenRouter and Workers
     AI examples, and the identity contracts. behavior: "openrouter-decisions" in `docs/guides/configuration.md`.
 
     4.1.2: The features guide lists both consumers with their modes and fallbacks.
@@ -3081,19 +3072,13 @@ available with the configured model. With the server stopped, a
     a local `/v1/systemone` server: `api_base` at the server root, `model` as the
     identifier of a decision model the operator loads with `lms load`, `backend_max_state_tokens`
     from the live capture, a `$secret:` `api_key` when LM Studio''s authentication
-    is on, and the Decision 17 identity consequence. behavior: "lms load" in `docs/guides/configuration.md`.
-
-    4.1.6: The configuration guide documents OpenAI''s Decisions API as the `openai-decisions`
-    wire: `api_base` `https://api.openai.com`, `model` `gpt-6-luna`, a `$secret:`
-    `api_key`, the account''s data terms, the `refused` outcome, and the Decision
-    18 identity consequence. behavior: "openai-decisions" in `docs/guides/configuration.md`.'
+    is on, and the Decision 17 identity consequence. behavior: "lms load" in `docs/guides/configuration.md`.'
   labels:
   - covers:decision-classifier-path:4.1:4.1.1
   - covers:decision-classifier-path:4.1:4.1.2
   - covers:decision-classifier-path:4.1:4.1.3
   - covers:decision-classifier-path:4.1:4.1.4
   - covers:decision-classifier-path:4.1:4.1.5
-  - covers:decision-classifier-path:4.1:4.1.6
   tdd: false
   source_section: '4.1'
   assigned_agent: tech-writer

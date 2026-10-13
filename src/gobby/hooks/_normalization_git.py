@@ -2,6 +2,7 @@
 
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 from gobby.hooks._normalization_env import UNRESOLVED_DIRECTORY
 from gobby.hooks._normalization_operands import (
@@ -14,6 +15,7 @@ from gobby.hooks._normalization_operands import (
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata, _split_shell_segments
 from gobby.hooks._normalization_shell import (
+    _SCRIPT_LIKE_CHARS,
     _contains_unexpanded_shell_reference,
     _looks_path_target,
     _rebase_navigation_shell_paths,
@@ -21,6 +23,7 @@ from gobby.hooks._normalization_shell import (
     _strip_shell_wrappers,
     scan_shell_command,
 )
+from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.code_navigation import search_navigation_metadata, shell_command_name
 
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
@@ -35,6 +38,8 @@ GIT_SELECTOR_ENV_VARS = frozenset(
         "GIT_GLOB_PATHSPECS",
         "GIT_NOGLOB_PATHSPECS",
         "GIT_LITERAL_PATHSPECS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
     }
 )
 
@@ -69,13 +74,32 @@ def classify_search_segment(
     return _ShellSegmentMetadata("search", paths=tuple(paths), extra=extra)
 
 
+def git_selector_name(word: str) -> bool:
+    """Recognize selectors and names whose expansion cannot be proven harmless."""
+    name = word.split("=", 1)[0].removesuffix("+")
+    return (
+        name in GIT_SELECTOR_ENV_VARS
+        or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        or "__gobby_expansion__" in name
+        or any(char in name for char in "$`{}*?[")
+    )
+
+
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
     """Fail closed after shell-level selector assignments or declarations."""
-    if parts[:1] == ["set"]:
+    if parts[:1] and parts[0] in {"set", "setopt", "unsetopt", "shopt"}:
+        words = parts[1:]
+        if parts[0] == "set" and "--" in words:
+            words = words[: words.index("--")]
         return any(
-            word == "allexport"
-            or (word.startswith("-") and not word.startswith("--") and "a" in word[1:])
-            for word in parts[1:]
+            word.lower().replace("_", "").removeprefix("no") in {"allexport", "keyword"}
+            or (
+                parts[0] != "shopt"
+                and word.startswith(("-", "+"))
+                and word not in {"-", "+", "--"}
+                and any(char in word[1:] for char in "ak")
+            )
+            for word in words
         )
     if parts[:1] == ["eval"]:
         try:
@@ -83,19 +107,16 @@ def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
         except ValueError:
             return True
         return any(
-            any(
-                word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS
-                for word in (token.value for token in segment.tokens)
-            )
+            any(git_selector_name(word) for word in (token.value for token in segment.tokens))
             for segment in _split_shell_segments(tokens)
         )
     if not parts:
         words = raw_parts
-    elif parts[0] in {"export", "declare", "typeset", "local", "readonly"}:
-        words = parts[1:]
+    elif parts[0] in {"export", "declare", "typeset", "local", "readonly", "integer", "float"}:
+        words = [word for word in parts[1:] if not word.startswith(("-", "+"))]
     else:
         return False
-    return any(word.split("=", 1)[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS for word in words)
+    return any(git_selector_name(word) for word in words)
 
 
 def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
@@ -105,10 +126,17 @@ def git_environment_parts(raw_parts: list[str], parts: list[str]) -> list[str]:
     selectors: list[str] = ["--git-dir=$GIT_DIR"] if exported_git_selector.get() else []
     prefix_length = len(raw_parts) - len(_strip_shell_wrappers(raw_parts))
     for word in raw_parts[:prefix_length]:
+        if not git_selector_name(word):
+            continue
         name, separator, value = word.partition("=")
-        if separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
+        name = name.removesuffix("+")
+        if separator and name == "GIT_ICASE_PATHSPECS":
+            selectors.append("--icase-pathspecs")
+        elif separator and name in {"GIT_DIR", "GIT_WORK_TREE"}:
             option = "--git-dir" if name == "GIT_DIR" else "--work-tree"
             selectors.append(f"{option}={value}")
+        else:
+            selectors.append("--git-dir=$GIT_DIR")
     return [parts[0], *selectors, *parts[1:]]
 
 
@@ -119,6 +147,7 @@ def git_command_parts(
     index = 1
     git_cwd = cwd or (str(base_cwd) if base_cwd is not None else None)
     unknown = bool(git_cwd and git_cwd.startswith(UNRESOLVED_DIRECTORY))
+    icase_pathspecs = False
     while index < len(parts):
         word = parts[index]
         if word in {"-C", "-c"}:
@@ -133,6 +162,9 @@ def git_command_parts(
             elif value.split("=", 1)[0].lower() == "core.worktree":
                 unknown = True
             index += 2
+        elif word == "--icase-pathspecs":
+            icase_pathspecs = True
+            index += 1
         elif word in {
             "--no-pager",
             "--paginate",
@@ -140,7 +172,6 @@ def git_command_parts(
             "--literal-pathspecs",
             "--glob-pathspecs",
             "--noglob-pathspecs",
-            "--icase-pathspecs",
             "--no-optional-locks",
             "--no-replace-objects",
         }:
@@ -151,6 +182,11 @@ def git_command_parts(
             index += 2 if word in {"--git-dir", "--work-tree", "--namespace", "--exec-path"} else 1
         else:
             break
+    unknown = unknown or (
+        icase_pathspecs
+        and index < len(parts)
+        and parts[index] in {"checkout", "restore", "rm", "mv"}
+    )
     return [parts[0], *parts[index:]], git_cwd, unknown
 
 
@@ -162,6 +198,61 @@ def classify_git_mutation(
     index = 1
     operation = parts[index] if index < len(parts) else ""
     arguments = parts[index + 1 :]
+    if operation == "switch" or (operation == "checkout" and "--" not in arguments):
+        operands = _shell_positional_args_after(
+            parts, index + 1, option_args={"-b", "-B", "--orphan"}
+        )
+        if operation == "checkout" and any(
+            operand.startswith("~") or any(character in operand for character in _SCRIPT_LIKE_CHARS)
+            for operand in operands
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == "checkout" and any(
+            argument in {"-p", "--patch", "--pathspec-from-file"}
+            or argument.startswith("--pathspec-from-file=")
+            or (argument.startswith("-") and not argument.startswith("--") and "p" in argument[1:])
+            or any(character in argument for character in "*?[")
+            or argument.startswith(":")
+            or _contains_unexpanded_shell_reference(argument)
+            for argument in arguments
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        forced = any(
+            argument in {"--force", "--discard-changes", "--merge"}
+            or (
+                argument.startswith("-")
+                and not argument.startswith("--")
+                and any(flag in argument[1:] for flag in "fm")
+            )
+            for argument in arguments
+        )
+        head_checkout = operation == "checkout" and arguments == ["HEAD"]
+        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        if root is None:
+            if (operation == "switch" or head_checkout) and not forced and not unknown:
+                return _ShellSegmentMetadata("execute")
+            return _ShellSegmentMetadata("write", repo_mutation=True)
+        extra: dict[str, Any] = {"canonical_edit_file_paths": []}
+        if forced:
+            extra["canonical_git_force_checkout_roots"] = [str(root)]
+        # A positional checkout operand can be either a revision or a path,
+        # even a tracked file deleted on disk. Check every operand rather than guess.
+        checked_paths = (
+            operation == "checkout"
+            and bool(operands)
+            and not head_checkout
+            and not any(argument in {"-b", "-B", "--orphan"} for argument in arguments)
+        )
+        if forced or checked_paths:
+            extra["canonical_git_checkout_mutation"] = True
+        return _ShellSegmentMetadata(
+            "execute",
+            paths=tuple(_rebase_shell_paths(operands, git_cwd))
+            if checked_paths and not forced
+            else (str(root),),
+            repo_mutation=forced or checked_paths,
+            extra=extra,
+        )
     if operation in {"rm", "mv"}:
         skip_value = False
         for argument in arguments:
@@ -197,6 +288,13 @@ def classify_git_mutation(
             candidates = _git_restore_positional_args_after(parts, index + 1)
         else:
             candidates = []
+        if operation != "add" and any(
+            any(character in candidate for character in "*?[")
+            or candidate.startswith((":", "~"))
+            or any(character in candidate for character in _SCRIPT_LIKE_CHARS)
+            for candidate in candidates
+        ):
+            return _ShellSegmentMetadata("write", repo_mutation=True)
         paths = [
             word
             for word in candidates
@@ -213,7 +311,10 @@ def classify_git_mutation(
                 "write",
                 paths=(git_cwd,),
                 repo_mutation=True,
-                extra={"canonical_edit_file_paths": []},
+                extra={
+                    "canonical_edit_file_paths": [],
+                    "canonical_git_sequencer_scope_paths": [git_cwd],
+                },
             )
         return _ShellSegmentMetadata("write", repo_mutation=True)
     return None

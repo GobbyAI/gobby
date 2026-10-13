@@ -14,6 +14,7 @@ import pytest
 
 from gobby.hooks._ansi_c import ShellDialect
 from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.workflows.engine import command_matching
 from gobby.workflows.engine.command_matching import (
     command_patterns_match,
@@ -22,6 +23,20 @@ from gobby.workflows.engine.command_matching import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "words", [["git", "push"], ["claude", "-p", "hi"], ["bash", "-c", "echo hi"]]
+)
+def test_append_assignment_unwraps_execution(words: list[str]) -> None:
+    assert _unwrap(["X+=1", *words]) == words
+
+
+@pytest.mark.parametrize("mask_quoted", [False, True])
+def test_append_assignment_preserves_command_matching(mask_quoted: bool) -> None:
+    assert command_patterns_match(
+        "X+=1 git push", pattern=r"^git\s+push\b", mask_quoted=mask_quoted
+    )
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])
@@ -456,14 +471,28 @@ def test_later_case_arm_function_matches_blocks(command: str, mask_quoted: bool)
     assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
 
 
-@pytest.mark.timeout(5)
+@pytest.mark.timeout(120)
 @pytest.mark.parametrize("mask_quoted", [False, True])
 @pytest.mark.parametrize("wrapper", ["echo $({body})", "cat <({body})", "( {body} )"])
-def test_nested_wrappers_with_many_functions_match_blocks(mask_quoted: bool, wrapper: str) -> None:
+def test_nested_wrappers_with_many_functions_match_blocks(
+    mask_quoted: bool, wrapper: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     command = "; ".join([*(f"p{j}() {{ echo {j}; }}" for j in range(300)), "gem push x"])
     for i in range(8):
         command = f"f{i}() {{ :; }}; " + wrapper.format(body=command)
+    scanned_chars = 0
+
+    def bounded_scan(subject: str, *, dialect: ShellDialect = "bash") -> ShellScan:
+        nonlocal scanned_chars
+        scanned_chars += len(subject)
+        # Bound cumulative input at this scanner entry point, independently of host load.
+        # Healthy 300-function cases peak at 78.63x input; 96x leaves 22% headroom.
+        assert scanned_chars <= 96 * len(command), "nested wrapper scan work exceeded linear budget"
+        return scan_shell_command(subject, dialect=dialect)
+
+    monkeypatch.setattr(command_matching, "scan_shell_command", bounded_scan)
     assert command_patterns_match(command, pattern=GEM_PUSH, mask_quoted=mask_quoted)
+    assert scanned_chars >= len(command), "nested wrapper scan work was not observed"
 
 
 @pytest.mark.parametrize("mask_quoted", [False, True])

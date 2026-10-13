@@ -347,6 +347,7 @@ def install_droid(
     mcp_result = configure_mcp_server_json(
         _droid_mcp_file(project_path, mode),
         extra_server_fields={"type": "stdio"},
+        follow_provider_symlink=True,
     )
     if mcp_result["success"]:
         result["mcp_configured"] = mcp_result.get("added", False) or mcp_result.get(
@@ -396,7 +397,9 @@ def uninstall_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
                 result["error"] = f"Failed to write Droid hooks: {exc}"
                 return result
 
-    mcp_result = remove_mcp_server_json(_droid_mcp_file(project_path, mode))
+    mcp_result = remove_mcp_server_json(
+        _droid_mcp_file(project_path, mode), follow_provider_symlink=True
+    )
     if mcp_result["success"]:
         result["mcp_removed"] = mcp_result.get("removed", False)
     else:

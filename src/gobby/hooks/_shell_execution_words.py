@@ -1,9 +1,8 @@
 """Argument parsing for shell execution wrappers."""
 
-import re
 from collections.abc import Collection
 
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+from gobby.hooks._normalization_env import _ASSIGNMENT
 
 
 def option_word_count(

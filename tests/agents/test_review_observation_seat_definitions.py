@@ -562,14 +562,15 @@ def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
         assert _matches(handler["when"], content, candidate_task="#42") is resets
 
 
-def test_archivist_writes_only_the_desktop_digest() -> None:
+def test_archivist_writes_only_the_workspace_digest() -> None:
     body = _load("archivist")
     prompt = _prompt("archivist")
 
     assert body.blocked_tools == []
     assert body.step_workflow is None
     assert "`archivist-write-scope`" in prompt
-    assert "`~/Desktop/gobby-digest-YYYY-MM-DD.md`" in prompt
+    assert "<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md" in prompt
+    assert "~/Desktop" not in prompt
     assert "No one else writes the digest" in prompt
     assert '"Lane queues"' in prompt
     assert "only active and parked" in prompt

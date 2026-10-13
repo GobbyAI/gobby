@@ -120,3 +120,56 @@ needs `instructions` and `choices`: the OpenAI shape. No new probe was sent.
   `docs/evidence/decisions/wire-contracts.md`.
 - The Graphify parity plan references only #22604, whose dependency on 1.2
   is unchanged.
+
+## #24253: defer `openai-decisions` until OpenAI Decisions API GA
+
+Josh, button 381243f3 (value `openai-decisions:defer-ga`, 2026-10-12),
+supersedes identity button d8eab611. Orchestrator gobby#15977 gave go on
+2026-10-13. The other wires proceed unchanged: `systemone` (LM Studio,
+Kev), OpenRouter (Jev), and Workers AI (Clef).
+
+- LM Studio: its example and Decision 17 already use `/v1/systemone`, and
+  `/v1/decisions` was only reachable through this wire. No non-OpenAI
+  backend depends on it, so the wire and LM Studio's `/v1/decisions` defer
+  together. Josh's proceeding list is unchanged.
+- `refused` exists only for OpenAI refusal answers, so it defers too.
+- GA re-checks: (1) whether dated snapshots or a resolved `model` in the
+  response now exist (identity contract, Decision 10); (2) the Vercel AI
+  Gateway `gpt-6-luna-decisions` listing as a possible host. Source: the
+  task text and button; no Vercel URL retrieved.
+- New `## D1` after 4.1, before V2, in the shape of hub-mode's D2. It
+  depends on 1.1, 1.2, 2.1, 3.1 and 4.1. Its yaml carries a placeholder
+  task_ref and owner orchestrator. Its Original acceptance items D1.1 and up
+  carry the old 1.2.16, 1.2.17, 4.1.6, the OpenAI parts of 1.1.1, 1.1.4,
+  1.1.10, 1.1.15, 2.1.7 and 3.1.1, and LM Studio's `/v1/decisions` facts.
+- Orchestrator duties: file the D1 task under #24238 with labels
+  `deferred-from:decision-classifier-path:D1` and `needs-planning`,
+  criteria repeating each D1.x ID, and blocked-by the leaves for the
+  sections D1 depends on. Also edit the leaves: 1.1 #24243, 1.2 #24244,
+  2.1 #24245, 3.1 #24246 and 4.1 #24249 (1.2.16, 1.2.17 and 4.1.6 removed).
+- Coverage manifest (plan_hash af1af00c) regenerates after M1 and the
+  leaves settle, under #24224.
+
+#24215 validation (2026-10-13): Plan Writer gobby#16490 ran the real
+validator in expansion mode on #24215's own M1-bearing bytes, extracted
+with `git show a4de350657:.gobby/plans/decision-classifier-path.md` to a
+scratch path: `uv run gobby plans validate <scratch path> -p
+/Users/josh/Projects/gobby --mode expansion`. It passed with no warning.
+Those bytes have SHA256 af1af00c6c361e64c769d5c0c6acfbdcf90d6f964a6134a2b3695fc960bb8947,
+and carry the M1 that Adversary gobby#16491 derived: manifest digest
+f78e50590cffd2551941507bcac1ba6c829526f162171ad65f63b47c4a8b2714 from
+source SHA256 150189448cd85a5171880b1aea5f77844ba307352ee50a8a9f864e89aebbe57b.
+16491 is asked to rerun the same check.
+
+#24253 outcome (2026-10-13):
+- The amendment was committed at 29ca7e26a7; standard validation passed.
+- Adversary gobby#16491 reached consensus with no blocking finding, and
+  the V1 consensus entry was committed at b05ac770c8.
+- 16491 derived and applied M1 from those bytes: seven entries, 59
+  acceptance labels, digest e88b0c43, rendered SHA256 0e9acbdc. The
+  rendered plan was committed unchanged at 8e237763d0.
+- Expansion validation passed on the committed M1-bearing bytes, warning
+  free: `uv run gobby plans validate
+  .gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
+  --mode expansion`, run by gobby#16491 and by gobby#16490 at 8e237763d0.
+- Nothing remains for the Writer.

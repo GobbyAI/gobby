@@ -455,8 +455,13 @@ async def test_seat_write_scope_is_path_aware(
         assert "The Assistant writes only under" in (blocked.reason or "")
 
     digest = f"{digest_dir}/gobby-digest-2026-09-27.md"
-    assert await decision(ARCHIVIST, _write(project, digest)) == "allow"
+    assert (
+        await decision(ARCHIVIST, _write(project, ".gobby/reports/gobby-digest-2026-09-27.md"))
+        == "allow"
+    )
     for path in (
+        digest,
+        ".gobby/reports/notes.md",
         f"{digest_dir}/notes.md",
         f"{digest_dir}/gobby-digest.md",
         f"{digest_dir}/gobby-digest-2026-09-27-v2.md",
@@ -465,7 +470,7 @@ async def test_seat_write_scope_is_path_aware(
     ):
         blocked = await _decide(engine, _write(project, path), ARCHIVIST)
         assert blocked.decision == "block", path
-        assert "The Archivist writes only the dated desktop digest" in (blocked.reason or "")
+        assert "The Archivist writes only the dated digest" in (blocked.reason or "")
 
     for seat in (ASSISTANT, ARCHIVIST):
         assert await decision(seat, opaque) == "block"
@@ -479,7 +484,7 @@ async def test_archivist_staging_scope_is_bounded(
 ) -> None:
     home = (tmp_path / "home").resolve()
     monkeypatch.setenv("HOME", str(home))
-    desktop = home / "Desktop"
+    reports = tmp_path / ".gobby/reports"
     digest = "gobby-digest-2026-10-10.md"
     for filename, expected in (
         (digest, "allow"),
@@ -500,7 +505,7 @@ async def test_archivist_staging_scope_is_bounded(
         (f"{digest}.tmp.29592.D4C9FE167B3E", "block"),
         (f"{digest}.tmp.29592.d4c9fe167b3e.bak", "block"),
     ):
-        file_path = str(desktop / filename)
+        file_path = str(reports / filename)
         tool_input = (
             {"file_path": file_path, "content": "digest"}
             if tool_name == "Write"
@@ -508,7 +513,12 @@ async def test_archivist_staging_scope_is_bounded(
         )
         response = await _decide(
             engine,
-            {"tool_name": tool_name, "tool_input": tool_input, "cwd": str(tmp_path)},
+            {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "cwd": str(tmp_path),
+                "project_path": str(tmp_path),
+            },
             ARCHIVIST,
         )
         assert response.decision == expected, filename

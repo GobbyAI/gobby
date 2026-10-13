@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1325,6 +1326,152 @@ def test_git_directory_option_rebases_mutation_paths(tmp_path: Path, operation: 
     target = tmp_path / "other"
     data = _invocation_metadata(f"git -C {target} {operation}", tool_cwd=tmp_path)
     assert data["canonical_file_paths"] == [str(target / "x.py")]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "checkout feature",
+        "checkout -f feature",
+        "checkout --force feature",
+        "checkout -b new",
+        "switch feature",
+        "switch -c new",
+        "switch -f feature",
+        "switch --discard-changes feature",
+    ],
+)
+@pytest.mark.parametrize("directory_form", ["git_option", "cd"])
+@pytest.mark.parametrize("subdirectory", [False, True])
+def test_git_branch_checkout_resolves_worktree_scope(
+    tmp_path: Path, operation: str, directory_form: str, subdirectory: bool
+) -> None:
+    target = tmp_path / "other"
+    subprocess.run(["git", "init", "-q", str(target)], check=True)
+    nested = target / "sub"
+    nested.mkdir()
+    directory = nested if subdirectory else target
+    prefix = f"git -C {directory}" if directory_form == "git_option" else f"cd {directory} && git"
+    data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
+
+    assert data["canonical_tool_kind"] == "execute"
+    expected_scope = target / "feature" if operation == "checkout feature" else target
+    if operation == "checkout feature" and subdirectory:
+        expected_scope = nested / "feature"
+    assert data["canonical_file_paths"] == [str(expected_scope)]
+    assert data["canonical_edit_file_paths"] == []
+    assert not data.get("canonical_write_file_paths")
+    assert data.get("canonical_repo_mutation_scope_unknown") is None
+
+
+@pytest.mark.parametrize("operand", ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py"])
+def test_git_checkout_positional_operands_have_checked_scope(tmp_path: Path, operand: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_edit_file_paths"] == []
+    assert (
+        str(tmp_path / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
+    )
+
+
+@pytest.mark.parametrize(
+    "operand", ["-p", "--patch a.py", "--pathspec-from-file=paths", "*.py", ":(glob)*.py"]
+)
+def test_git_checkout_opaque_pathspec_fails_closed(tmp_path: Path, operand: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout {a,b}.py",
+        "git checkout ~+/a.py",
+        "git checkout ~/a.py",
+        "git checkout @{-1}",
+        "git --icase-pathspecs checkout A.py",
+        "GIT_ICASE_PATHSPECS=1 git checkout A.py",
+        "env GIT_ICASE_PATHSPECS=1 git checkout A.py",
+        "git --icase-pathspecs checkout -- A.py",
+        "git --icase-pathspecs restore A.py",
+        "GIT_ICASE_PATHSPECS=1 git restore A.py",
+        "git --icase-pathspecs rm A.py",
+        "GIT_ICASE_PATHSPECS=1 git rm A.py",
+        "git --icase-pathspecs mv A.py b.py",
+        "GIT_ICASE_PATHSPECS=1 git mv A.py b.py",
+        "GIT_ICASE_PATHSPECS+=1 git checkout A.py",
+        "GIT_ICASE_PATHSPECS+=1 git restore A.py",
+        "GIT_ICASE_PATHSPECS+=1 git rm A.py",
+        "GIT_ICASE_PATHSPECS+=1 git mv A.py b.py",
+        'env "$n=1" git restore A.py',
+        "env GIT_ICASE_$x=1 git restore A.py",
+        "GIT_INDEX_FILE=/foreign/index git restore A.py",
+        "GIT_COMMON_DIR=/foreign/common git restore A.py",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/foreign git restore A.py",
+        "git checkout -- 'a*.py'",
+        "git checkout HEAD -- 'a*'",
+        "git restore 'a*.py'",
+        "git restore '[a].py'",
+        "git restore -- 'a?.py'",
+        "git rm -f 'a*.py'",
+    ],
+)
+def test_git_checkout_script_and_icase_scope_fails_closed(tmp_path: Path, command: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(command, tool_cwd=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data.get("canonical_repo_mutation_scope_unknown") is True
+
+
+@pytest.mark.parametrize("operation", ["checkout -f feature", "switch --discard-changes feature"])
+@pytest.mark.parametrize("directory_form", ["git_option", "cd"])
+def test_git_branch_checkout_unproven_root_fails_closed(
+    tmp_path: Path, operation: str, directory_form: str
+) -> None:
+    target = tmp_path / "not-a-checkout"
+    target.mkdir()
+    prefix = f"git -C {target}" if directory_form == "git_option" else f"cd {target} && git"
+    data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("operation", ["checkout -f feature", "switch --discard-changes feature"])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "git --git-dir x",
+        "git --work-tree x",
+        "GIT_DIR=x git",
+        "export GIT_WORK_TREE=x; git",
+        "git -C $X",
+        "git -c core.worktree=x",
+    ],
+)
+def test_git_branch_checkout_selectors_stay_unknown(
+    tmp_path: Path, prefix: str, operation: str
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_git_branch_checkout_retains_each_force_scope_and_only_real_edits(tmp_path: Path) -> None:
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+    edited = roots[1] / "edited.py"
+    data = _invocation_metadata(
+        f"git -C {roots[0]} checkout -f feature && git -C {roots[1]} switch -f feature "
+        f"&& touch {edited}",
+        tool_cwd=tmp_path,
+        project_path=tmp_path,
+    )
+    assert data["canonical_git_force_checkout_roots"] == [str(root) for root in roots]
+    assert data["canonical_file_paths"] == [str(root) for root in roots] + [str(edited)]
+    assert data["canonical_edit_file_paths"] == [str(edited)]
 
 
 @pytest.mark.parametrize("prefix", ["true &&", "git status &&", "git --no-pager", "git -c k=v"])

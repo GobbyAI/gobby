@@ -1,6 +1,144 @@
 {
     "cases": [
         {
+            "name": "hub_cert_file_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_cert": "\u001c"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": null
+        },
+        {
+            "name": "hub_cert_group_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_cert": "\u001d"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": null
+        },
+        {
+            "name": "hub_cert_record_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_cert": "\u001e"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": null
+        },
+        {
+            "name": "hub_cert_unit_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_cert": "\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": null
+        },
+        {
+            "name": "database_url_file_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "database_url": "\u001c"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": null
+        },
+        {
+            "name": "database_url_group_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "database_url": "\u001d"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": null
+        },
+        {
+            "name": "database_url_record_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "database_url": "\u001e"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": null
+        },
+        {
+            "name": "database_url_unit_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "database_url": "\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": null
+        },
+        {
+            "name": "api_key_file_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "api_key": "\u001c"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": null
+        },
+        {
+            "name": "api_key_group_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "api_key": "\u001d"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": null
+        },
+        {
+            "name": "api_key_record_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "api_key": "\u001e"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": null
+        },
+        {
+            "name": "api_key_unit_separator_only_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "api_key": "\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": null
+        },
+        {
+            "name": "local_separator_only_hub_url_absent",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_daemon_url": "\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null
+        },
+        {
+            "name": "remote_separator_only_hub_url_absent",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "\u001f"},
+            "error": "hub_daemon_url is required for datastore_mode: remote"
+        },
+        {
+            "name": "remote_separator_only_files_home_absent",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host", "files_home": "\u001f"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "local_trailing_files_home_separators",
+            "bootstrap": {"files_home": "/tmp/gobby-vector-files\u001c\u001d\u001e\u001f"},
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "files_home": "/tmp/gobby-vector-files"
+        },
+        {
+            "name": "node_trailing_file_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001c"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_group_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001d"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_record_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001e"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_trailing_unit_separator",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://host\u001f"},
+            "mode": "node",
+            "hub_daemon_url": "https://host"
+        },
+        {
+            "name": "node_mixed_surrounding_whitespace",
+            "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "\u001c https://HOST:443/ \u001f\u2003"},
+            "mode": "node",
+            "hub_daemon_url": "https://host:443"
+        },
+        {
             "name": "node_unbracketed_percent_host_case",
             "bootstrap": {"datastore_mode": "remote", "hub_daemon_url": "https://HO%41ST:443"},
             "mode": "node",

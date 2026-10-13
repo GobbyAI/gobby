@@ -124,7 +124,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         """Reject an edit to another active claim's live checkout/path pairs."""
         data = event.data
         edit_paths = data.get("canonical_edit_file_paths")
-        if isinstance(edit_paths, list):
+        sequencer_paths = data.get("canonical_git_sequencer_scope_paths")
+        if isinstance(sequencer_paths, list):
             # Sequencer recovery has repository scope but does not author a file.
             # Permit that exemption only within this seat's own checkout.
             cwd = Path(event.cwd).resolve() if event.cwd else current_tool_cwd(data)
@@ -132,8 +133,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
             workspace = session.workspace_path if session is not None else None
             own_cwd = Path(workspace).resolve() if isinstance(workspace, str) and workspace else cwd
             own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
-            for path in data.get("canonical_file_paths", []):
-                if path in edit_paths:
+            for path in sequencer_paths:
+                if isinstance(edit_paths, list) and path in edit_paths:
                     continue
                 target = resolve_tool_path(path, cwd)
                 target_root = checkout_root(target) if target is not None else None

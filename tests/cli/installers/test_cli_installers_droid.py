@@ -104,6 +104,66 @@ def test_install_droid_project_mode_writes_project_hooks(
     )
 
 
+@pytest.mark.parametrize("mode", ["global", "project"])
+def test_droid_mcp_symlink_survives_install_and_uninstall(
+    project_path: Path, droid_env: Path, mode: str
+) -> None:
+    config_dir = droid_env if mode == "global" else project_path
+    mcp_file = config_dir / ".factory" / "mcp.json"
+    mcp_file.parent.mkdir(parents=True)
+    target = droid_env / "shared-mcp.json"
+    target.write_text(json.dumps({"mcpServers": {"alpha": {"command": "node"}}}))
+    mcp_file.symlink_to(target)
+    original = target.read_bytes()
+
+    assert install_droid(project_path, mode=mode)["success"] is True
+    assert mcp_file.is_symlink()
+    assert set(_load_json(target)["mcpServers"]) == {"alpha", "gobby"}
+    backups = list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    assert any(backup.read_bytes() == original for backup in backups)
+    assert not list(target.parent.glob(f"{target.name}.*.backup"))
+    installed = target.read_bytes()
+    assert uninstall_droid(project_path, mode=mode)["success"] is True
+    assert mcp_file.is_symlink()
+    assert _load_json(target)["mcpServers"] == {"alpha": {"command": "node"}}
+    backups = list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    assert any(backup.read_bytes() == installed for backup in backups)
+    assert not list(target.parent.glob(f"{target.name}.*.backup"))
+
+
+@pytest.mark.parametrize("mode", ["global", "project"])
+@pytest.mark.parametrize("target_parent_exists", [False, True])
+def test_droid_dangling_mcp_symlink_respects_existing_target_parent(
+    project_path: Path, droid_env: Path, mode: str, target_parent_exists: bool
+) -> None:
+    config_dir = droid_env if mode == "global" else project_path
+    mcp_file = config_dir / ".factory" / "mcp.json"
+    mcp_file.parent.mkdir(parents=True)
+    target = droid_env / "external" / "mcp.json"
+    if target_parent_exists:
+        target.parent.mkdir()
+    mcp_file.symlink_to(target)
+
+    assert uninstall_droid(project_path, mode=mode)["success"] is True
+    assert not target.exists()
+    assert target.parent.exists() is target_parent_exists
+    result = install_droid(project_path, mode=mode)
+    assert result["mcp_configured"] is target_parent_exists
+    assert mcp_file.is_symlink()
+    assert target.parent.exists() is target_parent_exists
+    assert not list(mcp_file.parent.glob(f"{mcp_file.name}.*.backup"))
+    if target_parent_exists:
+        assert set(_load_json(target)["mcpServers"]) == {"gobby"}
+    else:
+        assert not target.exists()
+    assert uninstall_droid(project_path, mode=mode)["success"] is True
+    assert mcp_file.is_symlink()
+    if target_parent_exists:
+        assert _load_json(target) == {}
+    else:
+        assert not target.parent.exists()
+
+
 def test_install_droid_preserves_existing_mcp_servers(
     project_path: Path,
     droid_env: Path,

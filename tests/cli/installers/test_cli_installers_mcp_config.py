@@ -28,6 +28,13 @@ from gobby.cli.installers.mcp_config_shared import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def isolated_claude_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+
 def test_remove_toml_table_block_preserves_trailing_comments_after_last_table() -> None:
     content = (
         '[model]\nname = "gpt-5"\n\n[mcp_servers.gobby]\ncommand = "uv"\n\n# trailing comment\n\n'

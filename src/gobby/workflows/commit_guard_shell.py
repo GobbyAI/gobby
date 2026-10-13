@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from gobby.hooks._normalization_git import GIT_SELECTOR_ENV_VARS, git_selector_setup
+from gobby.hooks._normalization_git import git_selector_name, git_selector_setup
 from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import (
     _MAX_SUBSTITUTION_DEPTH,
@@ -71,7 +71,17 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
         # Bash may execute complete lines before rejecting malformed later
         # syntax. Splitting decoded words loses nested-shell quote provenance,
         # so it cannot prove that an executable prefix contains no commit.
-        return (GitCommitInvocation(pathspecs=(), cwd_unverified=True),)
+        # Remove quoting/escaping conservatively: g\it and 'g'it still execute
+        # Git, even when a later line cannot be tokenized.
+        possible_words = command.replace("\\\n", "").translate(str.maketrans("", "", "\\'\""))
+        # ANSI-C escapes and substitutions can compute a Git command name.
+        # A failed scan cannot prove such expansions are harmless.
+        return (
+            (GitCommitInvocation(pathspecs=(), cwd_unverified=True),)
+            if re.search(r"(?<![\w.-])git(?![\w.-])", possible_words)
+            or any(char in command for char in "$`")
+            else ()
+        )
 
     invocations: list[GitCommitInvocation] = []
     if any(_parse_git_commit_invocations(text, depth + 1) for text in expansions):
@@ -160,11 +170,8 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
                     or selector_set
                     or arguments_unverified
                     or "--icase-pathspecs" in tokens[index + 1 : commit_index]
-                    or any(
-                        word.partition("=")[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS
-                        for word in tokens[:index]
-                        if "=" in word
-                    )
+                    or any(git_selector_name(word) for word in tokens[:index])
+                    or _config_selector_option(tokens[index + 1 : commit_index])
                     or any(
                         path.startswith(":") or any(char in path for char in "*?[]{}\\")
                         for path in pathspecs
@@ -179,6 +186,22 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
             break
 
     return tuple(invocations)
+
+
+def _config_selector_option(options: list[str]) -> bool:
+    """Configuration can select a different worktree before a commit."""
+    for index, option in enumerate(options):
+        if option == "-c" and index + 1 < len(options):
+            value = options[index + 1]
+        elif option.startswith("-c"):
+            value = option[2:]
+        elif option.startswith("--config-env="):
+            value = option.partition("=")[2]
+        else:
+            continue
+        if value.partition("=")[0].lower() == "core.worktree" or git_selector_name(value):
+            return True
+    return False
 
 
 _COMMIT_VALUE_OPTIONS = frozenset(

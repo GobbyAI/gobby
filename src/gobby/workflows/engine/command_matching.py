@@ -42,6 +42,7 @@ from gobby.hooks._ansi_c import SHELL_DIALECTS, opens_ansi_c_quote
 from gobby.hooks._normalization_compound import (
     case_arm_tokens,
     heredoc_substitution_bodies,
+    scan_function_program,
     shell_function_bodies,
 )
 from gobby.hooks._normalization_shell import (
@@ -605,8 +606,9 @@ def _subjects(
         return [command]
     try:
         if function_program := shell_function_bodies(command, scan.tokens, scan.spans):
-            command, _ = function_program
-            scan = scan_shell_command(command)
+            program, _ = function_program
+            scan = scan_function_program(command, program, scan) or scan_shell_command(program)
+            command = program
     except ValueError:
         return [command]
     if heredoc_source == "shell" and not scan.heredocs:
@@ -614,15 +616,17 @@ def _subjects(
     correlations = [] if correlated_subjects is None else correlated_subjects
     split_substitution = False
     for start, end in scan.spans:
-        for match in re.finditer(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[start:end]):
-            opening = start + match.start()
+        cursor = start
+        while match := re.search(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(", command[cursor:end]):
+            opening = cursor + match.start()
             tick = command[opening] == "`"
             try:
-                split_substitution |= (
-                    _substitution_end(command, start + match.end(), tick, depth + 1) >= end
-                )
+                close = _substitution_end(command, cursor + match.end(), tick, depth + 1)
+                split_substitution |= close >= end
+                # A delimited outer body contains its nested substitutions too.
+                cursor = close + 1
             except ValueError:
-                continue
+                cursor += match.end()
     if split_substitution and not _runs_substitution_output(scan.tokens):
         resolved = _resolve_substitutions(command, depth, correlations)
         if resolved[0] != command:

@@ -5,6 +5,7 @@ import re
 from gobby.hooks._ansi_c import opens_ansi_c_quote
 from gobby.hooks._case_syntax import case_pattern_end
 from gobby.hooks._normalization_shell import (
+    ShellScan,
     ShellToken,
     _substitution_end,
     backtick_body,
@@ -31,12 +32,15 @@ def shell_function_bodies(
     word_start = True
     less_than_run = 0
     in_backtick = False
+    # Only line continuations change this view. Otherwise source positions
+    # already index the normalized text, including comments and heredocs.
+    joins_lines = "\\\n" in command
     heredoc_ends = (
         {body.start: body.end for body in scan_shell_command(command).heredocs}
-        if "<<" in command
+        if joins_lines and "<<" in command
         else {}
     )
-    index = 0
+    index = 0 if joins_lines else len(command)
     while index < len(command):
         char = command[index]
         if not quote and not escaped and command.startswith("\\\n", index):
@@ -77,25 +81,52 @@ def shell_function_bodies(
             quote = "$'" if char == "'" and opens_ansi_c_quote(command, index - 1) else char
         index += 1
     offsets.append(len(command))
-    normalized = "".join(view)
+    normalized = "".join(view) if joins_lines else command
     headers: list[tuple[int, int]] = []
     bodies: dict[int, str] = {}
     for index in range(len(tokens)):
         start = spans[index][0]
         if headers and start < headers[-1][1]:
             continue
-        header = _FUNCTION_HEADER.match(normalized, positions[start])
+        header = _FUNCTION_HEADER.match(normalized, positions[start] if joins_lines else start)
         if header is None:
             continue
         if _FUNCTION_BODY.match(normalized, header.end()):
-            end = offsets[header.end()]
+            end = offsets[header.end()] if joins_lines else header.end()
             headers.append((start, end))
             bodies[end] = header[1] or header[2]
+    if not headers:
+        return None
     masked = list(command)
     for start, end in headers:
         masked[start:end] = " " * (end - start)
     program = "".join(masked)
-    return (program, bodies) if headers else None
+    return program, bodies
+
+
+def scan_function_program(command: str, program: str, scan: ShellScan) -> ShellScan | None:
+    """Reuse unchanged words after headers are blanked, with conservative fallbacks."""
+    if scan.heredocs or re.search(r"\b(?:case|esac)\b", command):
+        return None
+    tokens: list[ShellToken] = []
+    spans: list[tuple[int, int]] = []
+    for token, (start, end) in zip(scan.tokens, scan.spans, strict=True):
+        part = program[start:end]
+        if part == command[start:end]:
+            tokens.append(token)
+            spans.append((start, end))
+        elif part.strip():
+            if token.quoted:
+                return None
+            try:
+                fragment = scan_shell_command(part)
+            except ValueError:
+                return None
+            if fragment.heredocs:
+                return None
+            tokens.extend(fragment.tokens)
+            spans.extend((start + left, start + right) for left, right in fragment.spans)
+    return ShellScan(tokens, spans, [])
 
 
 def heredoc_substitution_bodies(text: str, *, depth: int) -> tuple[list[str], bool]:

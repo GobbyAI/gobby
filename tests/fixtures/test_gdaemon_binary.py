@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import os
+import subprocess
+from collections.abc import Callable, Generator
 from pathlib import Path
-from unittest.mock import patch
+from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,6 +20,58 @@ from tests.fixtures.gdaemon_binary import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_pair_node_launches_prepared_binary(tmp_path: Path) -> None:
+    """The enrolled node uses the same prepared binary selection as the hub."""
+    import yaml
+
+    from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
+    from tests.e2e import test_hub_node_pair as pair
+    from tests.e2e.conftest import DaemonInstance
+
+    binary_dir = tmp_path / "selected-binaries"
+    env = {NATIVE_BIN_DIR_ENV: str(binary_dir), "DATABASE_URL": "parent-db"}
+    hub = MagicMock(spec=DaemonInstance)
+    hub.http_port = 12345
+    hub.cert_path = tmp_path / "hub.crt"
+    hub.cert_path.write_text("isolated certificate", encoding="utf-8")
+    process = MagicMock(spec=subprocess.Popen)
+    process.poll.return_value = None
+
+    def enrolled_login(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        bootstrap_path = home / "bootstrap.yaml"
+        bootstrap = yaml.safe_load(bootstrap_path.read_text(encoding="utf-8"))
+        bootstrap.update(api_key="node-key", api_key_id="node-key-id")
+        bootstrap_path.write_text(yaml.safe_dump(bootstrap), encoding="utf-8")
+        (home / "machine_id").write_text("node-machine", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    with (
+        patch.object(pair, "_login", side_effect=enrolled_login),
+        patch.object(pair, "pem_fingerprint", return_value="fingerprint"),
+        patch.object(pair, "prepare_daemon_env", return_value=env) as prepare,
+        patch.object(subprocess, "Popen", return_value=process) as popen,
+    ):
+        node_fixture = cast(
+            Callable[[DaemonInstance, Path], Generator[pair.EnrolledNode]],
+            inspect.unwrap(pair.pair_node),
+        )
+        fixture = node_fixture(hub, tmp_path)
+        try:
+            node = next(fixture)
+            prepare.assert_called_once_with(home_dir=node.home)
+            assert popen.call_args.args[0] == [
+                str(binary_dir / native_bin_name("gdaemon")),
+                "serve",
+            ]
+            assert popen.call_args.kwargs["env"]["GOBBY_HOME"] == str(node.home)
+            assert "DATABASE_URL" not in popen.call_args.kwargs["env"]
+        finally:
+            fixture.close()
+
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5.0)
 
 
 @pytest.mark.parametrize("configured", [None, "cargo-cache", "absolute"])

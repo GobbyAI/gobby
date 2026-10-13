@@ -3,7 +3,7 @@ import logging
 import mimetypes
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -135,6 +135,41 @@ def create_communications_registry(
             return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.exception("Operator message delivery failed")
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
+        description=(
+            "Send an existing workspace file directly to the enrolled operator's Telegram DM. "
+            "Requires an explicit operator_message_channels grant in the installed agent definition. "
+            "Takes no destination and preserves conversation attachment state."
+        )
+    )
+    async def send_operator_attachment(
+        channel: str,
+        file_path: str,
+        caption: str = "",
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        try:
+            destination = await asyncio.to_thread(
+                operator_destination, channel, get_current_session_id()
+            )
+            return cast(
+                dict[str, Any],
+                await send_attachment(
+                    channel=channel,
+                    file_path=file_path,
+                    caption=caption,
+                    filename=filename,
+                    content_type=content_type,
+                    metadata={"platform_destination": destination, "thread_id": None},
+                ),
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+        except Exception as exc:
+            logger.exception("Operator attachment delivery failed")
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
