@@ -108,7 +108,7 @@ under stage2-plan:now.
   `_initialize_envelope` does with an insert-if-absent race. Without this, a fresh
   install whose backend never started could not issue.
 
-**Granularity:** Twelve deliverables, one per independently testable outcome:
+**Granularity:** Eleven deliverables, one per independently testable outcome:
 
 - seam (1.1);
 - pool (1.2);
@@ -160,8 +160,9 @@ pub trait RouteFamily<S>: Send + Sync {
     fn router(&self) -> axum::Router<S>;
     /// False sends the request to the proxy unchanged, whatever the backend.
     fn claims(&self, _parts: &axum::http::request::Parts) -> bool { true }
-    /// Compare mode, claimed non-GET/HEAD request: check the proxied response.
-    fn check_proxied<'a>(&'a self, _parts: &'a Parts, _status: StatusCode, _body: &'a [u8])
+    /// Compare mode, claimed non-GET/HEAD request: check the proxied response against
+    /// the request that produced it. `request` is the body bytes compare already buffered.
+    fn check_proxied<'a>(&'a self, _parts: &'a Parts, _request: &'a [u8], _status: StatusCode, _response: &'a [u8])
         -> Pin<Box<dyn Future<Output = ProxiedCheck> + Send + 'a>> { Box::pin(async { ProxiedCheck::Skipped }) }
 }
 pub enum ProxiedCheck { Skipped, Verified, Mismatch(String) } // Mismatch carries a JSON pointer or reason, never values
@@ -314,9 +315,10 @@ Compare-mode policy for a claimed request (after the 1.1 claims gate):
   4. A native leg that errors or fails to collect is recorded as `native_error`
      and never changes the returned response.
 - **Any other method:**
-  1. Proxy once.
+  1. Keep the request body bytes `compare` already buffers, then proxy once with a
+     clone of them (`Bytes` clones share the buffer; the body is never read twice).
   2. Collect the proxied body and call
-     `entry.family.check_proxied(&parts, status, &body)`.
+     `entry.family.check_proxied(&parts, &request_body, status, &response_body)`.
   3. Record `verified`, `mismatch` (detail from the check) or `skipped`.
   4. Return the proxied response rebuilt from the collected bytes.
 
@@ -366,7 +368,7 @@ Research context:
 
 - 2.1.1 - A claimed GET in Compare mode returns the proxied response and records `match`, or `diff` with a pointer and no values. test: `crates/gdaemon/tests/compare.rs::get_compare_records_match_and_diff_without_values`.
 - 2.1.2 - JSON bodies that differ only in key order record `match`. test: `crates/gdaemon/tests/compare.rs::json_bodies_compare_by_value`.
-- 2.1.3 - A claimed POST in Compare mode never reaches the native router, and the family check's outcome is recorded. test: `crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg`.
+- 2.1.3 - A claimed POST in Compare mode never reaches the native router, the backend and `check_proxied` both receive the original request bytes, and the family check's outcome is recorded. test: `crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg`.
 - 2.1.4 - A failing native leg records `native_error` and the caller still receives the proxied response. test: `crates/gdaemon/tests/compare.rs::native_failure_returns_the_proxied_response`.
 - 2.1.5 - The report counts per family within `--since` and fails on any diff, native_error or mismatch, and on an empty window. test: `crates/gdaemon/tests/compare.rs::report_fails_on_mismatch_and_empty_window`.
 
@@ -406,8 +408,10 @@ Create the crate and register it:
 - `prefixes()` returns `&["/api/runtime", "/api/config"]`;
 - `router<S>()` returns its routes with an internal `Arc<RuntimeState { pool, home }>`
   applied;
-- `claims(parts)` is true only for `GET /api/config/effective` with an
-  `x-gobby-key-id` header.
+- `claims(parts)` requires an `x-gobby-key-id` header. Under `/api/config` it is
+  true only for `GET /api/config/effective`. 3.2 and 3.4 extend `claims` to their
+  `/api/runtime` routes and leave the 3.1 test unchanged, because that test asserts
+  only `/api/config` paths and unidentified callers.
 
 The front door strips client-sent identity headers and inserts them only for a
 resolved API key (`auth.rs::AuthState::authenticate`, `IDENTITY_HEADERS`).
@@ -423,8 +427,12 @@ resolved API key (`auth.rs::AuthState::authenticate`, `IDENTITY_HEADERS`).
   WHERE state.id = TRUE ORDER BY store.key
   ```
 
-  This mirrors `src/gobby/storage/config_repository.py::ConfigRepository._read_coherent`.
-  `values` are the contract defaults overlaid with decoded rows. Decoding follows
+  This mirrors `src/gobby/storage/config_repository.py::ConfigRepository._read_coherent`,
+  including its two edge rules. Zero rows means `config_state` is absent, which is
+  an error (the handler's 500). With an empty `config_store` the join yields one
+  row with a null key, and rows with a null key are dropped, so the snapshot is
+  the revision plus contract defaults.
+  `values` are the contract defaults overlaid with decoded non-null-key rows. Decoding follows
   `config_repository.py::decode_config_value`, as in `_complete_values`.
 - `machine_values(&Snapshot)` mirrors
   `src/gobby/servers/routes/configuration_effective.py::_machine_config_values`:
@@ -465,7 +473,8 @@ Research context:
 
 - 3.1.1 - `crates/gruntime` builds as workspace member `gobby-runtime` (publish false, workspace version) and gdaemon links it. file: `crates/gruntime/Cargo.toml`.
 - 3.1.2 - `GET /api/config/effective` with an API-key identity returns Python's projection of the desired configuration with `no-store`. test: `crates/gruntime/tests/config.rs::effective_config_matches_python_projection`.
-- 3.1.3 - The family claims only identified `GET /api/config/effective`, and every other `/api/config` path, method or unidentified caller is forwarded. test: `crates/gruntime/tests/config.rs::only_identified_effective_reads_are_claimed`.
+- 3.1.3 - Under `/api/config` the family claims only identified `GET /api/config/effective`; every other `/api/config` path or method, and an unidentified caller on any path, is forwarded. test: `crates/gruntime/tests/config.rs::only_identified_effective_reads_are_claimed`.
+- 3.1.5 - With an empty `config_store` the snapshot is the revision plus contract defaults, and a missing `config_state` row returns 500. test: `crates/gruntime/tests/config.rs::empty_store_serves_defaults_and_missing_state_fails`.
 - 3.1.4 - Values that still hold `$secret:` or `${…}` after expansion are omitted. test: `crates/gruntime/tests/config.rs::unresolved_values_are_omitted`.
 
 ### 3.2 Grant signing and presentation in gcore; native `GET /api/runtime/config` [category: code] (depends: 3.1)
@@ -473,7 +482,7 @@ Research context:
 
 Targets:
 - `crates/gcore/src/grant/mod.rs::*` — scope-reason: declare and re-export the `presentation` module
-- `crates/gcore/src/grant/presentation.rs`
+- `crates/gcore/src/grant/presentation/mod.rs`
 - `crates/gcore/src/grant/presentation/tests.rs`
 - `crates/gcore/src/schema/runner.rs::auth_schema_for`
 - `crates/gcore/src/schema/mod.rs`
@@ -520,7 +529,8 @@ Targets:
   `{"config_revision": snapshot.revision, "settings": machine_values(snapshot)}` with
   `no-store`. Rejections use `Rejection::status()` and `Rejection::body()`.
 
-`claims` for `GET /api/runtime/config` is true only when the request has
+This deliverable extends 3.1's `claims` and leaves `crates/gruntime/tests/config.rs`
+unchanged. `claims` for `GET /api/runtime/config` is true only when the request has
 `x-gobby-key-id` and an `X-Gobby-Runtime-Grant` header that decodes to a grant with
 principal kind `interactive`. Managed grants, undecodable headers and missing
 headers go to Python, which keeps its 400 `malformed grant` and 401 answers.
@@ -660,7 +670,8 @@ Targets:
 - `crates/gruntime/tests/fixtures/capability_vectors.json`
 - `tests/runtime_grants/test_capability_vectors.py`
 
-`claims` for `POST /api/runtime/handshake` is true only when the request carries
+This deliverable extends 3.2's `claims` and leaves `crates/gruntime/tests/config.rs`
+unchanged. `claims` for `POST /api/runtime/handshake` is true only when the request carries
 `x-gobby-key-id` and no `gobby-agent-v1.` bearer. The handler mirrors
 `src/gobby/servers/routes/runtime_handshake.py::handshake` together with
 `src/gobby/runtime_grants/handshake.py::HandshakeService.issue_for_operator`:
@@ -775,8 +786,10 @@ all of the following hold:
 - `expires_at ≤ issued_at + 3600` and `expires_at ≤ postgres.valid_until`.
 
 Otherwise it returns `Mismatch(<first differing JSON pointer>)`, never values. The
-check reads the request body only to learn the claims; compare mode collects the
-body once for this purpose.
+project, session and overlay claims come from the `request` bytes that 1.1's
+`check_proxied` signature carries and 2.1 passes from compare's single buffered
+copy; the machine comes from the `x-gobby-machine-id` header on `parts`. An
+unparseable request body returns `Mismatch("/request")`.
 
 Research context:
 - D3 rules this check because a native leg would issue a second credential. Python
@@ -850,9 +863,10 @@ Research context:
 **Acceptance:**
 
 - 4.1.1 - The manifest declares `runtime` native with origin python, owns the handshake, config and new cases, and no longer lists `config` or `runtime_handshake`. file: `tests/contracts/http/manifest.json`.
-- 4.1.2 - `config_effective` and `runtime_config` are recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
+- 4.1.2 - `runtime_config` is recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
 - 4.1.3 - Every corpus case replays equal against the e2e daemon with `runtime: native`. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 4.1.4 - The Rust parity precheck passes with `runtime` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+- 4.1.5 - `config_effective` is recorded from Python and committed. file: `tests/contracts/http/config_effective.json`.
 
 ### 4.2 E2E: compare smoke, backend-kill fallback, flip and rollback [category: test] (depends: 4.1)
 `kind: deliverable`
@@ -944,13 +958,20 @@ Moving them requires the Rust side to own:
 
 All of these sit in Python's agent lifecycle and move with the S2.7 hub work.
 
+- D1.1: Rust answers the managed challenge and issues capability-token
+  (agent_run, tool_chat, maintenance) and managed-principal handshakes, with
+  bootstrap files, rotation, `grant.json` rewriting and execution revocation.
+- D1.2: Rust serves `GET /api/runtime/config` for managed grants, including
+  managed revocation and binding liveness.
+
 ```yaml
 deferral:
-  task_ref: "#24149"
-  reason: "Managed issuance depends on the agent lifecycle (bootstrap files, rotation loop, grant.json rewriting, execution revocation) that S2.7 moves; this plan serves interactive principals and forwards managed ones."
+  task_ref: "TBD-at-expansion"
+  reason: "Managed issuance depends on the agent lifecycle (bootstrap files, rotation loop, grant.json rewriting, execution revocation) that the S2.7 hub work (#24149) moves; this plan serves interactive principals and forwards managed ones."
   owner: "gobby-1.0 stage 2 (S2.7)"
   original_acceptance_items:
-    - 3.4.4
+    - D1.1
+    - D1.2
 ```
 
 ## D2 Remaining `/api/config` routes in Rust (depends: 3.1)
@@ -960,13 +981,16 @@ Only `GET /api/config/effective` is native (D4). The values, schema and write ro
 stay proxied under the claimed prefix. Python's `ConfigRuntime` still owns live
 activation, subscribers and restart-pending state.
 
+- D2.1: Rust serves the remaining `/api/config` routes (values, schema and writes)
+  after config activation leaves Python.
+
 ```yaml
 deferral:
   task_ref: "TBD-at-expansion"
   reason: "Config writes and the active snapshot are owned by Python's ConfigRuntime; serving them natively needs config activation to leave Python first."
   owner: "gobby-1.0 stage 2"
   original_acceptance_items:
-    - 3.1.3
+    - D2.1
 ```
 
 ## E1 End-to-end verification
