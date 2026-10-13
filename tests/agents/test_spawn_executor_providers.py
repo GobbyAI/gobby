@@ -148,6 +148,7 @@ def test_claude_reviewer_state_preserves_auth_and_hooks_without_copying_account_
     assert json.loads((config / ".claude.json").read_text(encoding="utf-8")) == {
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": True,
+        "projects": {"/workspace": {"hasTrustDialogAccepted": True}},
     }
     assert (config / "projects" / "-workspace").is_dir()
     assert (config / "projects" / "-workspace").resolve() == (
@@ -205,7 +206,12 @@ def test_claude_reviewer_state_keeps_only_mcp_scopes_and_current_transcripts(
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": True,
         "mcpServers": {"gobby": user_server},
-        "projects": {workspace: {"mcpServers": {"gobby": project_server}}},
+        "projects": {
+            workspace: {
+                "mcpServers": {"gobby": project_server},
+                "hasTrustDialogAccepted": True,
+            }
+        },
     }
     assert not (private / "projects" / "-other").exists()
     transcript = private / "projects" / encoded / "review.jsonl"

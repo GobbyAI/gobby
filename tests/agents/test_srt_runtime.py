@@ -727,6 +727,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         private = Path(launch.provider_env["CLAUDE_CONFIG_DIR"])
         seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))
         assert seed["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        accepted = (
+            seed.get("projects", {}).get(str(workspace.resolve()), {}).get("hasTrustDialogAccepted")
+        )
+        assert accepted is (True if reviewer_auto_approve else None)
         assert launch.provider_env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == ""
         denies = policy["filesystem"]["denyWrite"]
         assert str(host_global) not in policy["filesystem"]["allowWrite"]

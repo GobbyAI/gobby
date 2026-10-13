@@ -36,6 +36,7 @@ def prepare_claude_reviewer_home(
         "hasCompletedOnboarding": True,
         "bypassPermissionsModeAccepted": auto_approve,
     }
+    workspace_config: dict[str, object] = {}
     if source_global.is_file():
         source = json.loads(source_global.read_text(encoding="utf-8"))
         if not isinstance(source, dict):
@@ -58,7 +59,14 @@ def prepare_claude_reviewer_home(
         projects = source.get("projects", {})
         project = projects.get(workspace, {}) if isinstance(projects, dict) else {}
         if isinstance(project, dict) and isinstance(servers := project.get("mcpServers"), dict):
-            seed["projects"] = {workspace: {"mcpServers": servers}}
+            workspace_config["mcpServers"] = servers
+    if auto_approve:
+        # Claude requires persisted acceptance; a transcript directory is insufficient.
+        workspace_config["hasTrustDialogAccepted"] = True
+    if workspace_config:
+        seed["projects"] = {
+            path: dict(workspace_config) for path in {workspace, str(Path(workspace).resolve())}
+        }
     config = cache / "claude"
     # Refuse redirected or reused state before writing, including failed setup retries.
     config.mkdir(mode=0o700, parents=True)
