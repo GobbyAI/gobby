@@ -746,7 +746,7 @@ Targets:
 - `test_gmcp_on_node_reaches_hub_through_relay` waits for the node's listener
   and channel as `test_node_enrolls_and_relays` does. It then opens a `gmcp`
   session through `gmcp_client.py` with `GOBBY_HOME` set to the node home and
-  no `GOBBY_DAEMON_URL`, and calls `list_mcp_servers`.
+  neither `GOBBY_DAEMON_URL` nor `GOBBY_PORT`, and calls `list_mcp_servers`.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_stateless_ambient_session.py tests/e2e/test_hub_node_pair.py tests/servers/routes/mcp_endpoints/test_registry_routes.py tests/servers/routes/mcp_endpoints/test_template_routes.py tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py tests/servers/test_mcp_execution_context.py tests/skills/ tests/agents/test_spawn_executor.py -q`,
@@ -909,7 +909,7 @@ Targets:
 - `docs/reference-audit/admin.json::*` — scope-reason: the `gobby mcp-server` row becomes a `gmcp` row
 - `docs/reference-audit/mcp-servers.json::*` — scope-reason: the `gobby` `init_project` row's implementation becomes `crates/gmcp/src/tools.rs::init_project`
 - `scripts/generate_parity_ledger.py`
-- `docs/contracts/parity-ledger-status.json`
+- `docs/contracts/parity-ledger-status.d/remainder.json`
 - `docs/contracts/parity-ledger.md`
 - `web/src/components/settings/sections/McpToolsSection.tsx::*` — scope-reason: the `tool_timeouts` path and its Per-tool timeouts editor leave
 - `web/src/components/settings/sections/configFields.tsx::*` — scope-reason: `NumberMapConfigField` leaves; the `tool_timeouts` editor was its only consumer
@@ -998,7 +998,9 @@ Targets:
     `CLI gobby mcp-server` and `HTTP GET /api/mcp/bridge/tool-timeouts`,
     which this leaf retires.
   - `load_statuses` accepts `proxied`, `delegated`, or
-    `dropped by decision #N` from `docs/contracts/parity-ledger-status.json`.
+    `dropped by decision #N` from the JSON shards in
+    `docs/contracts/parity-ledger-status.d/`, one per classification group,
+    merged in filename order. A key in two shards fails generation.
     `render_ledger` raises on a mapped key whose surface is gone unless its
     status is a drop, and keeps dropped rows as evidence.
   - `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`
@@ -1010,10 +1012,9 @@ Targets:
     queued, so a retired surface may carry a non-drop status before this leaf
     lands, and generation would then fail.
   - #24323 (Parity ledger: shard the status mapping into one file per
-    classification group) is in progress. It moves the mapping into
-    `docs/contracts/parity-ledger-status.d/<group>.json`. If it lands before
-    expansion, this leaf's mapping target becomes the shard that holds these
-    keys.
+    classification group) landed at `c4566fdd76` and replaced the single
+    mapping file with those shards. No shard holds the fourteen keys this leaf
+    sets, and no rule assigns a key to a group.
 - `tests/workflows/test_active_progressive_discovery_guidance.py::ACTIVE_GUIDANCE_FILES`
   lists `stdio_tools.py`, and the test reads every listed file, so deleting
   the module fails it. The tool descriptions it scans move into
@@ -1055,9 +1056,12 @@ Targets:
   `crates/gmcp/src/tools.rs::init_project` (path and symbol).
 - `collect_surfaces` lists `MCP stdio gobby:<name>` for each tool in
   `crates/gmcp/contracts/tools_list.v1.json`, and the ledger's sources sentence
-  names the `gmcp` stdio client and that fixture. The status mapping marks the
-  twelve stdio rows `delegated` and records `CLI gobby mcp-server` and
-  `HTTP GET /api/mcp/bridge/tool-timeouts` as `dropped by decision #23275`.
+  names the `gmcp` stdio client and that fixture. The `remainder.json` shard
+  marks the twelve stdio rows `delegated` and records `CLI gobby mcp-server`
+  and `HTTP GET /api/mcp/bridge/tool-timeouts` as
+  `dropped by decision #23275`. A key that a classification leaf has already
+  placed in another shard is updated in that shard instead, because the
+  generator rejects duplicate keys.
   Regenerate `docs/contracts/parity-ledger.md` with
   `uv run python scripts/generate_parity_ledger.py`; never edit it by hand.
 - The guidance test lists `tools_list.v1.json` in place of `stdio_tools.py`,
@@ -1407,8 +1411,8 @@ root is #23275. Drafting creates no tasks, labels, or edges.
     deleted `.gobby/roles/_common.md`. Decision 1 rechecks rmcp (3.5.1 is still
     the latest) and the crate name. Line counts and ranges are re-measured.
   - #24323 (Parity ledger: shard the status mapping into one file per
-    classification group) is in progress, and 1.7's mapping target follows it
-    if it lands before expansion.
+    classification group) landed at `c4566fdd76`, so 1.7 targets its
+    `remainder.json` shard (Orchestrator gobby#15977).
   - New acceptance items left the M1 manifest stale. The whole
     `## M1 Task Manifest` block is withdrawn; its bytes stay in Git history at
     `208d6318fe`. The Adversary derives a fresh M1 after delta review.
