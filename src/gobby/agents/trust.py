@@ -7,7 +7,7 @@ for the configured Gobby home so Gobby-owned files are trusted before agents
 start using them.
 
 Each CLI has a different trust mechanism:
-- Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
+- Claude Code: projects[<path>].hasTrustDialogAccepted in the active global JSON config
 - Codex CLI: ~/.codex/config.toml [projects."<path>"] trust_level = "trusted"
 - Droid CLI: --auto high handles spawned-agent permissions, no trust database needed
 """
@@ -201,7 +201,7 @@ def _is_windows_absolute_path(path: str) -> bool:
 
 
 def _seed_claude_trust(paths: list[str], result: TrustSeedResult) -> None:
-    """Seed Claude Code project-directory trust for all paths."""
+    """Seed Claude Code persisted workspace trust for all paths."""
     for path in paths:
         _pre_approve_claude(path, result=result)
 
@@ -209,33 +209,56 @@ def _seed_claude_trust(paths: list[str], result: TrustSeedResult) -> None:
 def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = None) -> None:
     """Pre-approve a directory for Claude Code.
 
-    Creates the project directory under ~/.claude/projects/ if it doesn't
-    exist. Claude treats directory existence as implicit trust.
+    Persist hasTrustDialogAccepted in the global config Claude reads. Transcript
+    directory existence does not imply trust on current Claude versions.
     """
     directory_text = os.fspath(directory)
-    claude_home = Path.home() / ".claude" / "projects"
+    configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    claude_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".claude"
+    legacy_config = claude_home / ".config.json"
+    suffix = "-custom-oauth" if os.environ.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") else ""
+    config_path = (
+        legacy_config
+        if legacy_config.exists() or legacy_config.is_symlink()
+        else (claude_home if configured_home else Path.home()) / f".claude{suffix}.json"
+    )
     encoded = encode_claude_project_path(directory_text)
-    project_dir = claude_home / encoded
-
-    if project_dir.exists():
-        if result is not None:
-            result.add_entry(
-                store="claude_projects",
-                target=os.fspath(project_dir),
-                status="existing",
-            )
-        return
+    project_dir = claude_home / "projects" / encoded
 
     try:
+        if claude_home.is_symlink() or config_path.is_symlink():
+            raise ValueError("Claude trust configuration must not be redirected by symlinks")
+        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        if not isinstance(config, dict):
+            raise ValueError("Claude global configuration must be an object")
+        projects = config.setdefault("projects", {})
+        if not isinstance(projects, dict):
+            raise ValueError("Claude projects configuration must be an object")
+        project = projects.setdefault(directory_text, {})
+        if not isinstance(project, dict):
+            raise ValueError("Claude workspace configuration must be an object")
+        changed = project.get("hasTrustDialogAccepted") is not True
+        if changed:
+            project["hasTrustDialogAccepted"] = True
+            _atomic_write_text(config_path, json.dumps(config, indent=2) + "\n")
+            if result is not None:
+                result.add_file_written(config_path)
+
+        existing = project_dir.exists()
         project_dir.mkdir(parents=True, exist_ok=True)
         if result is not None:
             result.add_entry(
+                store="claude_config",
+                target=directory_text,
+                status="updated" if changed else "existing",
+            )
+            result.add_entry(
                 store="claude_projects",
                 target=os.fspath(project_dir),
-                status="created",
+                status="existing" if existing else "created",
             )
         logger.info("Pre-approved Claude workspace trust for %s", directory_text)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         message = f"Failed to pre-approve Claude trust for {directory_text}: {exc}"
         if result is not None:
             result.add_error(message)
