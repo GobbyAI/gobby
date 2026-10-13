@@ -2542,7 +2542,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite 0.29.0",
  "tower-service",
  "uuid",
 ]

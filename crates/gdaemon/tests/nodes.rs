@@ -607,16 +607,22 @@ async fn channel_database(case: impl AsyncFnOnce(&ChannelDb) -> Result<()>) -> R
     let machine = Uuid::new_v4();
     let key_id = Uuid::new_v4();
     let hash = gobby_core::api_key_format::hash(KEY);
-    admin.batch_execute(&format!(
-        "CREATE SCHEMA {schema}; GRANT USAGE ON SCHEMA {schema} TO gobby_daemon_runtime; \
-         CREATE TABLE {schema}.machines(id uuid PRIMARY KEY, last_heartbeat_at timestamptz, node_version text); \
-         CREATE TABLE {schema}.api_keys(id uuid PRIMARY KEY, user_id uuid NOT NULL, machine_id uuid NOT NULL, \
+    admin
+        .batch_execute(&format!(
+            "CREATE SCHEMA {schema}; GRANT USAGE ON SCHEMA {schema} TO gobby_daemon_runtime; \
+         CREATE TABLE {schema}.machines(id uuid PRIMARY KEY, \
+         last_heartbeat_at timestamptz, node_version text); \
+         CREATE TABLE {schema}.api_keys(id uuid PRIMARY KEY, \
+         user_id uuid NOT NULL, machine_id uuid NOT NULL, \
          key_hash text NOT NULL, revoked_at timestamptz, last_used_at timestamptz); \
-         GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {schema} TO gobby_daemon_runtime; \
+         GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {schema} \
+         TO gobby_daemon_runtime; \
          INSERT INTO {schema}.machines(id) VALUES ('{machine}'); \
          INSERT INTO {schema}.api_keys(id,user_id,machine_id,key_hash) \
-         VALUES ('{key_id}','{}','{machine}','{hash}')", Uuid::new_v4()
-    )).await?;
+         VALUES ('{key_id}','{}','{machine}','{hash}')",
+            Uuid::new_v4()
+        ))
+        .await?;
     let separator = if url.contains('?') { '&' } else { '?' };
     let db = ChannelDb {
         admin,
@@ -661,9 +667,17 @@ impl ChannelDb {
     }
 
     async fn row(&self) -> Result<(Option<f64>, Option<String>)> {
-        let row = self.admin.query_one(&format!(
-            "SELECT extract(epoch FROM last_heartbeat_at)::double precision,node_version FROM {}.machines WHERE id=$1::text::uuid", self.schema
-        ), &[&self.machine.to_string()]).await?;
+        let row = self
+            .admin
+            .query_one(
+                &format!(
+                    "SELECT extract(epoch FROM last_heartbeat_at)::double precision,node_version \
+                 FROM {}.machines WHERE id=$1::text::uuid",
+                    self.schema
+                ),
+                &[&self.machine.to_string()],
+            )
+            .await?;
         Ok((row.get(0), row.get(1)))
     }
 
@@ -717,14 +731,26 @@ impl ChannelDb {
             let mut poll = tokio::time::interval(Duration::from_millis(5));
             loop {
                 // The locking transaction otherwise retains its first activity snapshot.
-                self.admin.simple_query("SELECT pg_stat_clear_snapshot()").await?;
-                let row = self.admin.query_one(
-                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='gobby-gdaemon-nodes-test' AND wait_event_type='Lock' AND query LIKE $1)",
-                    &[&format!("%{relation}%")]).await?;
-                if row.get::<_, bool>(0) { return Ok::<_, anyhow::Error>(()); }
+                self.admin
+                    .simple_query("SELECT pg_stat_clear_snapshot()")
+                    .await?;
+                let row = self
+                    .admin
+                    .query_one(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity \
+                     WHERE application_name='gobby-gdaemon-nodes-test' \
+                     AND wait_event_type='Lock' AND query LIKE $1)",
+                        &[&format!("%{relation}%")],
+                    )
+                    .await?;
+                if row.get::<_, bool>(0) {
+                    return Ok::<_, anyhow::Error>(());
+                }
                 poll.tick().await;
             }
-        }).await.with_context(|| format!("waiting for blocked {relation} query"))??;
+        })
+        .await
+        .with_context(|| format!("waiting for blocked {relation} query"))??;
         Ok(())
     }
 }
@@ -872,12 +898,13 @@ async fn channel_registers_and_replaces() -> Result<()> {
         let mut first = open_channel(hub.addr).await?;
         hello(&mut first, "first-version").await?;
         ack(&mut first, db.machine).await?;
+        // Send the suppression ping before database observations consume its interval.
+        first.send(PeerMessage::Ping(vec![1].into())).await?;
         assert!(hub.nodes.registry.is_connected(db.machine));
         assert_eq!(hub.nodes.registry.connected_ids(), vec![db.machine]);
         let initial = db.row().await?;
         assert!(initial.0.is_some());
         assert_eq!(initial.1.as_deref(), Some("first-version"));
-        first.send(PeerMessage::Ping(vec![1].into())).await?;
         assert!(matches!(
             timeout(TIMEOUT, first.next()).await?.unwrap()?,
             PeerMessage::Pong(_)
@@ -1202,6 +1229,8 @@ async fn silent_or_malformed_channel_is_closed() -> Result<()> {
 #[tokio::test]
 async fn node_channel_reconnects_with_backoff() -> Result<()> {
     let mut timing = channel_timing();
+    timing.backoff_start = Duration::from_millis(100);
+    timing.backoff_max = Duration::from_millis(400);
     timing.idle_timeout = Duration::from_millis(240);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -1245,7 +1274,16 @@ async fn node_channel_reconnects_with_backoff() -> Result<()> {
                 let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(
                     request_key.as_bytes(),
                 );
-                stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.expect("upgrade");
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                     Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("upgrade");
                 let mut socket = WebSocketStream::from_raw_socket(
                     stream,
                     tokio_tungstenite::tungstenite::protocol::Role::Server,
@@ -1322,8 +1360,10 @@ async fn node_channel_reconnects_with_backoff() -> Result<()> {
     .enumerate()
     {
         let elapsed = attempts[index + 1] - attempts[index];
+        // Accept-to-accept gaps include handshake and scheduler work under load.
+        // The first upper bound stays below the ceiling to reject jumping to it.
         assert!(
-            elapsed >= *delay && elapsed < *delay + Duration::from_millis(150),
+            elapsed >= *delay && elapsed < *delay + Duration::from_millis(200),
             "backoff {index}: {elapsed:?}"
         );
     }
@@ -1345,16 +1385,27 @@ async fn node_channel_reconnects_with_backoff() -> Result<()> {
 #[tokio::test]
 async fn channel_requires_a_key_on_a_hub() -> Result<()> {
     channel_database(async |db| {
-        let timing = channel_timing(); let hub = channel_hub(db, timing).await?;
+        let timing = channel_timing();
+        let hub = channel_hub(db, timing).await?;
         let mut forged = get("/api/nodes/channel");
         forged.headers_mut().remove("authorization");
-        forged.headers_mut().insert("connection", "Upgrade".parse()?);
+        forged
+            .headers_mut()
+            .insert("connection", "Upgrade".parse()?);
         forged.headers_mut().insert("upgrade", "websocket".parse()?);
-        forged.headers_mut().insert("sec-websocket-version", "13".parse()?);
+        forged
+            .headers_mut()
+            .insert("sec-websocket-version", "13".parse()?);
         let nonce = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0_u8; 16]);
-        forged.headers_mut().insert("sec-websocket-key", nonce.parse()?);
-        forged.headers_mut().insert("x-gobby-machine-id", db.machine.to_string().parse()?);
-        forged.headers_mut().insert("x-gobby-key-id", db.key_id.to_string().parse()?);
+        forged
+            .headers_mut()
+            .insert("sec-websocket-key", nonce.parse()?);
+        forged
+            .headers_mut()
+            .insert("x-gobby-machine-id", db.machine.to_string().parse()?);
+        forged
+            .headers_mut()
+            .insert("x-gobby-key-id", db.key_id.to_string().parse()?);
         assert_eq!(send(hub.addr, forged).await.0, StatusCode::UNAUTHORIZED);
         // Standalone forwards the same path rather than mounting node routes.
         let backend = TcpListener::bind("127.0.0.1:0").await?;
@@ -1363,64 +1414,169 @@ async fn channel_requires_a_key_on_a_hub() -> Result<()> {
             let (mut stream, _) = backend.accept().await.expect("standalone backend");
             let (head, _) = read_head(&mut stream).await;
             assert!(head.starts_with("GET /api/nodes/channel"));
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\n{\"proxy\":true}").await.expect("backend response");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\
+                  Connection: close\r\n\r\n{\"proxy\":true}",
+                )
+                .await
+                .expect("backend response");
         });
-        let auth = Arc::new(AuthState::new("test-secret".into(), Some(Arc::new(PostgresKeyResolver::new(&db.url))), hub._home.path().join("bootstrap.yaml"))?);
+        let auth = Arc::new(AuthState::new(
+            "test-secret".into(),
+            Some(Arc::new(PostgresKeyResolver::new(&db.url))),
+            hub._home.path().join("bootstrap.yaml"),
+        )?);
         let state = FrontDoorState::new(target, BackendState::Down, auth);
         let table = RouteTable::new(FAMILIES, &Default::default(), &state);
-        let listen = TcpListener::bind("127.0.0.1:0").await?; let addr = listen.local_addr()?;
-        let standalone = tokio::spawn(serve_doors(vec![(listen, FrontDoor::new(state, table))], None, std::future::pending()));
+        let listen = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listen.local_addr()?;
+        let standalone = tokio::spawn(serve_doors(
+            vec![(listen, FrontDoor::new(state, table))],
+            None,
+            std::future::pending(),
+        ));
         let (status, body) = send(addr, get("/api/nodes/channel")).await;
-        assert_eq!(status, StatusCode::OK); assert_eq!(body["proxy"], true);
-        standalone.abort(); let _ = standalone.await; backend_task.await?;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["proxy"], true);
+        standalone.abort();
+        let _ = standalone.await;
+        backend_task.await?;
         // Revoked during hello admission: no ack, no live publication.
-        let mut peer = open_channel(hub.addr).await?; db.revoke().await?;
-        hello(&mut peer, "revoked-before-hello").await?; close_code(&mut peer, 4401).await?;
-        assert!(hub.nodes.registry.connection_id(db.machine).is_none());
-        db.admin.batch_execute(&format!("UPDATE {}.api_keys SET revoked_at=NULL", db.schema)).await?;
         let mut peer = open_channel(hub.addr).await?;
-        db.lock_machine().await?; hello(&mut peer, "revoked-during-write").await?;
-        db.wait_blocked("machines").await?; db.revoke().await?; db.unlock().await?;
-        close_code(&mut peer, 4401).await?; assert!(!hub.nodes.registry.is_connected(db.machine));
+        db.revoke().await?;
+        hello(&mut peer, "revoked-before-hello").await?;
+        close_code(&mut peer, 4401).await?;
+        assert!(hub.nodes.registry.connection_id(db.machine).is_none());
+        db.admin
+            .batch_execute(&format!(
+                "UPDATE {}.api_keys SET revoked_at=NULL",
+                db.schema
+            ))
+            .await?;
+        let mut peer = open_channel(hub.addr).await?;
+        db.lock_machine().await?;
+        hello(&mut peer, "revoked-during-write").await?;
+        db.wait_blocked("machines").await?;
+        db.revoke().await?;
+        db.unlock().await?;
+        close_code(&mut peer, 4401).await?;
+        assert!(!hub.nodes.registry.is_connected(db.machine));
         // Reset the transport while the pre-ack check is blocked.
-        db.admin.batch_execute(&format!("UPDATE {}.api_keys SET revoked_at=NULL", db.schema)).await?;
-        let mut peer = open_channel(hub.addr).await?; db.lock_keys().await?;
-        hello(&mut peer, "reset-before-ack").await?; db.wait_blocked("api_keys").await?;
+        db.admin
+            .batch_execute(&format!(
+                "UPDATE {}.api_keys SET revoked_at=NULL",
+                db.schema
+            ))
+            .await?;
+        let mut peer = open_channel(hub.addr).await?;
+        db.lock_keys().await?;
+        hello(&mut peer, "reset-before-ack").await?;
+        db.wait_blocked("api_keys").await?;
         assert!(!hub.nodes.registry.is_connected(db.machine));
         use std::os::fd::AsRawFd;
-        let linger = libc::linger { l_onoff: 1, l_linger: 0 };
+        let linger = libc::linger {
+            l_onoff: 1,
+            l_linger: 0,
+        };
         // SAFETY: the live socket fd and correctly sized linger value stay valid for this call.
-        assert_eq!(unsafe { libc::setsockopt(peer.get_mut().as_raw_fd(), libc::SOL_SOCKET, libc::SO_LINGER, (&linger as *const libc::linger).cast(), std::mem::size_of_val(&linger) as libc::socklen_t) }, 0);
-        drop(peer); db.unlock().await?;
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    peer.get_mut().as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_LINGER,
+                    (&linger as *const libc::linger).cast(),
+                    std::mem::size_of_val(&linger) as libc::socklen_t,
+                )
+            },
+            0
+        );
+        drop(peer);
+        db.unlock().await?;
         timeout(TIMEOUT, async {
             let mut poll = tokio::time::interval(Duration::from_millis(5));
-            while hub.nodes.registry.connection_id(db.machine).is_some() { poll.tick().await; }
-        }).await?;
+            while hub.nodes.registry.connection_id(db.machine).is_some() {
+                poll.tick().await;
+            }
+        })
+        .await?;
         assert!(!hub.nodes.registry.is_connected(db.machine));
         // Synthetic sinks prove publication and deadline ordering independent of TCP buffers.
         let registry = Registry::default();
         let (old, mut close) = registry.register(db.machine);
         let (next, _next_close) = registry.register(db.machine);
-        assert!(!registry.mark_live(db.machine, old)); assert!(!registry.is_connected(db.machine));
-        let sends = Arc::new(AtomicUsize::new(0)); let count = sends.clone();
-        let mut sink = Box::pin(futures_util::sink::unfold((), move |(), _: axum::extract::ws::Message| { count.fetch_add(1, Ordering::SeqCst); async { Ok::<_, Infallible>(()) } }));
-        assert_eq!(channel::send_ack(&mut sink, &registry, db.machine, old, &mut close, Instant::now()+timing.recheck_deadline).await, AckOutcome::Close(4409));
+        assert!(!registry.mark_live(db.machine, old));
+        assert!(!registry.is_connected(db.machine));
+        let sends = Arc::new(AtomicUsize::new(0));
+        let count = sends.clone();
+        let mut sink = Box::pin(futures_util::sink::unfold(
+            (),
+            move |(), _: axum::extract::ws::Message| {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { Ok::<_, Infallible>(()) }
+            },
+        ));
+        assert_eq!(
+            channel::send_ack(
+                &mut sink,
+                &registry,
+                db.machine,
+                old,
+                &mut close,
+                Instant::now() + timing.recheck_deadline
+            )
+            .await,
+            AckOutcome::Close(4409)
+        );
         assert_eq!(sends.load(Ordering::SeqCst), 0);
-        assert_eq!(registry.connection_id(db.machine), Some(next)); assert!(!registry.is_connected(db.machine));
+        assert_eq!(registry.connection_id(db.machine), Some(next));
+        assert!(!registry.is_connected(db.machine));
         let (id, mut close) = registry.register(db.machine);
-        let mut pending = Box::pin(futures_util::sink::unfold((), |(), _: axum::extract::ws::Message| std::future::pending::<Result<(), Infallible>>()));
-        let deadline = Instant::now()+Duration::from_millis(60);
-        assert_eq!(channel::send_ack(&mut pending, &registry, db.machine, id, &mut close, deadline).await, AckOutcome::Drop);
-        assert!(registry.connection_id(db.machine).is_none()); assert!(!registry.is_connected(db.machine));
+        let mut pending = Box::pin(futures_util::sink::unfold(
+            (),
+            |(), _: axum::extract::ws::Message| std::future::pending::<Result<(), Infallible>>(),
+        ));
+        let deadline = Instant::now() + Duration::from_millis(60);
+        assert_eq!(
+            channel::send_ack(
+                &mut pending,
+                &registry,
+                db.machine,
+                id,
+                &mut close,
+                deadline
+            )
+            .await,
+            AckOutcome::Drop
+        );
+        assert!(registry.connection_id(db.machine).is_none());
+        assert!(!registry.is_connected(db.machine));
         let (id, mut close) = registry.register(db.machine);
-        let mut sink = Box::pin(futures_util::sink::unfold((), |(), message: axum::extract::ws::Message| {
-            assert!(!registry.is_connected(db.machine)); assert!(matches!(message, axum::extract::ws::Message::Text(_)));
-            async { Ok::<_, Infallible>(()) }
-        }));
-        assert_eq!(channel::send_ack(&mut sink, &registry, db.machine, id, &mut close, Instant::now()+timing.recheck_deadline).await, AckOutcome::Live);
+        let mut sink = Box::pin(futures_util::sink::unfold(
+            (),
+            |(), message: axum::extract::ws::Message| {
+                assert!(!registry.is_connected(db.machine));
+                assert!(matches!(message, axum::extract::ws::Message::Text(_)));
+                async { Ok::<_, Infallible>(()) }
+            },
+        ));
+        assert_eq!(
+            channel::send_ack(
+                &mut sink,
+                &registry,
+                db.machine,
+                id,
+                &mut close,
+                Instant::now() + timing.recheck_deadline
+            )
+            .await,
+            AckOutcome::Live
+        );
         assert!(registry.is_connected(db.machine));
         Ok(())
-    }).await
+    })
+    .await
 }
 
 #[tokio::test]

@@ -50,7 +50,8 @@ test-group = 'serial-db'
 [[profile.default.overrides]]
 # Schema subprocesses share hub roles and must not inherit sibling capture pipes
 # while long apply tests run (the macOS FD_CLOEXEC race described above).
-filter = 'package(gobby-daemon) & (test(retention::tests::database) | binary(schema_cli) | binary(cli_contract))'
+# Node fixtures hold one advisory lock; schedule them before their bounded lock wait.
+filter = 'package(gobby-daemon) & (test(retention::tests::database) | binary(schema_cli) | binary(cli_contract) | binary(nodes))'
 test-group = 'serial-db'
 
 [[profile.default.overrides]]

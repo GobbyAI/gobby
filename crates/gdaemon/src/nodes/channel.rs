@@ -189,14 +189,20 @@ fn persist_heartbeat(
     version: String,
 ) -> tokio::task::JoinHandle<PersistOutcome<anyhow::Result<()>>> {
     tokio::spawn(async move {
-        nodes.registry.persist(machine, connection, async {
-            let client = nodes.db.get().await?;
-            client.execute(
-                "UPDATE machines SET last_heartbeat_at=now(),node_version=$2 WHERE id=$1::text::uuid",
-                &[&machine.to_string(), &version],
-            ).await?;
-            Ok(())
-        }).await
+        nodes
+            .registry
+            .persist(machine, connection, async {
+                let client = nodes.db.get().await?;
+                client
+                    .execute(
+                        "UPDATE machines SET last_heartbeat_at=now(),node_version=$2 \
+                 WHERE id=$1::text::uuid",
+                        &[&machine.to_string(), &version],
+                    )
+                    .await?;
+                Ok(())
+            })
+            .await
     })
 }
 
@@ -367,10 +373,14 @@ async fn connect_client(
 pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTiming) {
     use tokio_tungstenite::tungstenite::Message as PeerMessage;
     let mut backoff = timing.backoff_start;
+    let mut failure_reported = false;
     loop {
-        if let Ok(Ok(mut socket)) =
-            tokio::time::timeout(timing.attempt_timeout, connect_client(&node)).await
-        {
+        let attempt = tokio::time::timeout(timing.attempt_timeout, connect_client(&node))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity);
+        if let Ok(mut socket) = attempt {
+            failure_reported = false;
             backoff = timing.backoff_start;
             let mut idle = Instant::now() + timing.idle_timeout;
             let mut pings = tokio::time::interval_at(
@@ -396,6 +406,11 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
                     },
                 }
             }
+        } else if let Err(error) = attempt
+            && !failure_reported
+        {
+            eprintln!("node channel connection failed; retrying with backoff: {error}");
+            failure_reported = true;
         }
         tokio::time::sleep(backoff).await;
         backoff = backoff.saturating_mul(2).min(timing.backoff_max);

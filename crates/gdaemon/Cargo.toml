@@ -23,7 +23,7 @@ path = "src/main.rs"
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["ws"] }
 futures-util = "0.3"
-tokio-tungstenite = "0.26.2"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
