@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 # ON REMOVAL: delete this import outright -- nothing replaces it.
 from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
 from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.sandbox_cargo import sandbox_cargo_environment
 from gobby.agents.sandbox_policy import (
     SRT_SETTINGS_RELATIVE_PATH,
     SRT_VIOLATIONS_RELATIVE_PATH,
@@ -841,6 +842,17 @@ async def prepare_sandbox_launch(
         )
     finally:
         finish_spawn_phase(phase_timings_ms, "verify_srt_installation", verify_started)
+    run_environment.update(ps_shim_path_env(ps_shim_dir, effective_env))
+    run_environment.update(
+        await asyncio.to_thread(
+            sandbox_cargo_environment,
+            assets=run_paths.assets,
+            node=installation.node,
+            workspace=Path(workspace_path),
+            target=run_paths.cargo_target,
+            env={**effective_env, **run_environment},
+        )
+    )
     policy_path = run_paths.root / SRT_SETTINGS_RELATIVE_PATH
     violation_path = run_paths.root / SRT_VIOLATIONS_RELATIVE_PATH
     _write_private_file(policy_path, policy_bytes)
@@ -860,7 +872,6 @@ async def prepare_sandbox_launch(
         provider_env={
             **run_environment,
             "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir()),
-            **ps_shim_path_env(ps_shim_dir, effective_env),
         },
         provider_executable=provider_executable,
         node_path=str(installation.node),
