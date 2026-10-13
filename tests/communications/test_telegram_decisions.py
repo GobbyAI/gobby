@@ -18,7 +18,12 @@ from gobby.communications.chat_backend import ChatSessionCommsBackend
 from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.manager import CommunicationsManager
-from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
+from gobby.communications.models import (
+    ChannelConfig,
+    ChannelNotFoundError,
+    CommsIdentity,
+    CommsMessage,
+)
 from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.communications.telegram_callbacks import TelegramCallbackRegistry
@@ -39,6 +44,31 @@ _SOURCE_MESSAGE_ID = 99
 _TS = datetime(2026, 9, 27, tzinfo=UTC)
 _KEYBOARD = [[{"text": "Approve", "value": "approve"}, {"text": "Changes", "value": "changes"}]]
 _OK: dict[str, Any] = {"ok": True, "result": True}
+_SENDER_LABEL = "Lane 4 (gobby#16004)"
+_SENDER_PREFIX = f"<b>{_SENDER_LABEL}:</b>\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recreated", [False, True])
+async def test_missing_decision_channel_refuses_edit_and_restores_source(
+    decision: _Decision, recreated: bool
+) -> None:
+    post_json = AsyncMock()
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    manager._channel_by_name = (
+        {"telegram": replace(decision.channel, id="replacement-channel")} if recreated else {}
+    )
+    with pytest.raises(ChannelNotFoundError, match=decision.channel.id):
+        await edit_keyboard_message(
+            manager, adapter, decision.source.id, "Ship it?", _CHAT_ID, _SHIP
+        )
+    post_json.assert_not_awaited()
+    restored = decision.store.get_message(decision.source.id)
+    assert restored is not None
+    assert restored.content == decision.source.content
+    assert restored.metadata_json["inline_keyboard"] == _KEYBOARD
+    assert restored.metadata_json.get("callback_generation", 0) == 0
 
 
 @dataclass
@@ -134,6 +164,7 @@ def _manager(decision: _Decision, adapter: TelegramAdapter) -> MagicMock:
     manager._store = decision.store
     manager.decision_locks = DecisionLocks()
     manager._channel_by_name = {"telegram": decision.channel}
+    manager.telegram_sender_label.return_value = _SENDER_LABEL
     manager._adapters = {"telegram": adapter}
     manager.admit_inbound_message = AsyncMock(return_value=True)
     manager._identity_manager.resolve_inbound_identity.return_value = IdentityResolution(
@@ -225,7 +256,7 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
 
     assert handled[0].metadata_json["callback_status"] == "reissued"
     text, _ = _republished(post_json)
-    assert text == "Approve the design?"
+    assert text == _SENDER_PREFIX + "Approve the design?"
     approve_token, changes_token = _reissued_tokens(post_json)
     assert _row(decision).get("callback_state") is None
     assert _row(decision)["callback_generation"] == 1
@@ -420,7 +451,7 @@ async def test_long_decision_is_republished_in_place_and_answered_once(
     assert stale[0].metadata_json["callback_status"] == "reissued"
     edits = _calls(post_json, "editMessageText")
     assert [edit["message_id"] for edit in edits] == ["200", "201"]
-    assert edits[0]["text"].startswith("Review the plan below.")
+    assert edits[0]["text"].startswith(_SENDER_PREFIX + "Review the plan below.")
     assert "reply_markup" not in edits[0]
     assert _calls(post_json, "sendMessage") == []
     token = edits[1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
@@ -549,7 +580,10 @@ async def test_failed_reissue_reports_retry_and_the_next_click_repairs_it(
 @pytest.mark.asyncio
 async def test_refused_keyboard_edit_restores_the_live_decision(decision: _Decision) -> None:
     async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if method == "editMessageText" and payload["text"] != "Approve the design?":
+        if (
+            method == "editMessageText"
+            and payload["text"].removeprefix(_SENDER_PREFIX) != "Approve the design?"
+        ):
             return {"ok": False, "description": "Bad Request: message can't be edited"}
         return _OK
 
@@ -586,7 +620,11 @@ async def test_ambiguous_keyboard_edit_failure_keeps_the_staged_keyboard(
     dropped: list[dict[str, Any]] = []
 
     async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if method == "editMessageText" and payload["text"] == "Ship it?" and not dropped:
+        if (
+            method == "editMessageText"
+            and payload["text"].removeprefix(_SENDER_PREFIX) == "Ship it?"
+            and not dropped
+        ):
             dropped.append(payload)
             raise httpx.ConnectError("connection reset")
         return _OK
@@ -615,7 +653,7 @@ async def test_ambiguous_keyboard_edit_failure_keeps_the_staged_keyboard(
     assert _routed(decision, "q-old") is None
     # The new choices go out with the new question, whichever text Telegram held.
     text, buttons = _republished(post_json)
-    assert text == "Ship it?"
+    assert text == _SENDER_PREFIX + "Ship it?"
     assert [button["text"] for button in buttons] == ["Ship"]
     ship_token = buttons[0]["callback_data"]
     routed = await inbound.handle_messages("telegram", [_click(adapter, ship_token, "q-ok")])
@@ -639,7 +677,10 @@ async def test_ambiguous_keyboard_edit_failure_keeps_the_staged_keyboard(
 @pytest.mark.asyncio
 async def test_refused_button_removal_keeps_the_decision_pending(decision: _Decision) -> None:
     async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if method == "editMessageText" and payload["text"] != "Approve the design?":
+        if (
+            method == "editMessageText"
+            and payload["text"].removeprefix(_SENDER_PREFIX) != "Approve the design?"
+        ):
             return {"ok": False, "description": "Bad Request: message can't be edited"}
         return _OK
 

@@ -979,8 +979,11 @@ class TelegramAdapter(BaseChannelAdapter):
 
 def _labeled_chunks(content: str, limit: int, sender_label: object) -> list[str]:
     """Render Markdown before adding the escaped sender to every Telegram chunk."""
-    if not isinstance(sender_label, str) or not sender_label:
-        return markdown_to_telegram_html_chunks(content, limit)
+    if not isinstance(sender_label, str) or not sender_label.strip():
+        chunks = markdown_to_telegram_html_chunks(content, limit)
+        if len(chunks) > 1:
+            raise ValueError("Chunked Telegram messages require a managed sender label")
+        return chunks
     label = sender_label
     prefix = f"<b>{html.escape(label)}:</b>\n"
     chunks = markdown_to_telegram_html_chunks(content, limit - len(label) - 2)
