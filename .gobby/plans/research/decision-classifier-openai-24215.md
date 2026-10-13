@@ -150,10 +150,15 @@ Kev), OpenRouter (Jev), and Workers AI (Clef).
 - Coverage manifest (plan_hash af1af00c) regenerates after M1 and the
   leaves settle, under #24224.
 
-Progress: every narrative edit is done, D1 holds D1.1 to D1.7, the V1
-entry is written, and the M1 block is withdrawn. The final sweep is clean.
-Remaining: validate (standard and expansion) after the #24232 cutover's
-DAEMON BACK; ocr per path; commit the plan under #24253 and this note under
-#24215 (15977's request); SHA to 16491 and 15977. Prior M1 routing to
-re-send: 1.1 to 3.3 code, feature, backend, tdd true; 4.1 docs, chore,
-tdd false, tech-writer.
+Outcome (2026-10-13):
+- The amendment was committed at 29ca7e26a7; standard validation passed.
+- Adversary gobby#16491 reached consensus with no blocking finding, and
+  the V1 consensus entry was committed at b05ac770c8.
+- 16491 derived and applied M1 from those bytes: seven entries, 59
+  acceptance labels, digest e88b0c43, rendered SHA256 0e9acbdc. The
+  rendered plan was committed unchanged at 8e237763d0.
+- Expansion validation passed on the committed M1-bearing bytes, warning
+  free: `uv run gobby plans validate
+  .gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
+  --mode expansion`, run by gobby#16491 and by gobby#16490 at 8e237763d0.
+- Nothing remains for the Writer.
