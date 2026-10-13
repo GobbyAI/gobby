@@ -62,6 +62,103 @@ class TestEncodePath:
 
 
 class TestPreApproveClaude:
+    @pytest.mark.parametrize(
+        "config_variant", ["default", "custom", "legacy", "custom-legacy", "oauth", "custom-oauth"]
+    )
+    def test_seeds_persisted_trust_for_workspace_and_resolved_path(
+        self, tmp_path: Path, config_variant: str
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        alias = tmp_path / "alias"
+        alias.symlink_to(workspace, target_is_directory=True)
+        custom_config = config_variant.startswith("custom")
+        legacy = "legacy" in config_variant
+        oauth = "oauth" in config_variant
+        config_dir = tmp_path / "custom-claude" if custom_config else tmp_path / ".claude"
+        config_dir.mkdir()
+        config_name = ".claude-custom-oauth.json" if oauth else ".claude.json"
+        config_path = (
+            config_dir / ".config.json"
+            if legacy
+            else (config_dir if custom_config else tmp_path) / config_name
+        )
+        projects = {
+            str(alias): {"hasTrustDialogAccepted": False, "allowedTools": ["Read"]},
+            "/other/workspace": {"hasTrustDialogAccepted": True},
+        }
+        original = {
+            "theme": "dark",
+            "projects": projects,
+        }
+        config_path.write_text(json.dumps(original))
+        # An existing transcript directory must not skip persisted acceptance.
+        (config_dir / "projects" / encode_claude_project_path(alias)).mkdir(parents=True)
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch.dict(
+                os.environ,
+                {
+                    "CLAUDE_CONFIG_DIR": str(config_dir) if custom_config else "",
+                    "CLAUDE_CODE_CUSTOM_OAUTH_URL": "https://example.invalid" if oauth else "",
+                },
+            ),
+        ):
+            pre_approve_directory("claude", alias)
+
+        expected = {
+            **original,
+            "projects": {
+                **projects,
+                str(alias): {"hasTrustDialogAccepted": True, "allowedTools": ["Read"]},
+                str(workspace.resolve()): {"hasTrustDialogAccepted": True},
+            },
+        }
+        assert json.loads(config_path.read_text()) == expected
+
+    def test_install_trust_seeds_persisted_gobby_home_acceptance(self, tmp_path: Path) -> None:
+        gobby_home = tmp_path / ".gobby"
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
+        ):
+            result = seed_gobby_home_trust("claude", gobby_home=gobby_home)
+
+        assert result["success"] is True
+        config_path = tmp_path / ".claude.json"
+        config = json.loads(config_path.read_text())
+        assert config["projects"][str(gobby_home)]["hasTrustDialogAccepted"] is True
+        assert str(config_path) in result["files_written"]
+
+    @pytest.mark.parametrize("invalid", ["json", "root", "projects", "entry", "symlink"])
+    def test_invalid_config_is_preserved(self, tmp_path: Path, invalid: str) -> None:
+        workspace = tmp_path / "workspace"
+        config_path = tmp_path / ".claude.json"
+        content = {
+            "json": "{invalid",
+            "root": "[]",
+            "projects": '{"projects": []}',
+            "entry": json.dumps({"projects": {str(workspace): []}}),
+            "symlink": '{"theme": "dark"}',
+        }[invalid]
+        source = tmp_path / "redirected.json" if invalid == "symlink" else config_path
+        source.write_text(content)
+        if invalid == "symlink":
+            config_path.symlink_to(source)
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": "", "CLAUDE_CODE_CUSTOM_OAUTH_URL": ""}),
+        ):
+            result = seed_gobby_home_trust("claude", gobby_home=workspace)
+
+        assert result["success"] is False
+        assert result["errors"]
+        assert result["files_written"] == []
+        assert source.read_text() == content
+
     def test_creates_project_directory(self, tmp_path: Path) -> None:
         clone_dir = "/private/tmp/gobby-clones/test-task"
         claude_projects = tmp_path / ".claude" / "projects"
