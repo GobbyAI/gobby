@@ -34,13 +34,15 @@ prompts:
     - Review. First call `gobby-tasks:link_task_to_session(task_id=<candidate task>, action="reviewing")` to record your current assignment. This admits read-only gcode access to the current claimant's worktree until the task closes or you replace the assignment. Check the candidate's merge against the current `0.5.0` head with `gcode` and `git diff`. Rate each finding HIGH, MEDIUM or LOW. Cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes. When the verdict is ready, call `set_variable(name="verdict_ready", value=true, scope="step")`.
     - Foreign-overlay candidate. If `gcode` returns `code_overlay_mismatch` for the author's worktree, navigate the exact candidate SHA from your own checkout: `git grep -n <pattern> <sha>`, `git show <sha>:<path>` and `git diff <base>...<sha>`. Linked worktrees share Git objects. Use `gcode` in your admitted checkout for base-tree structure; do not treat that output as the candidate's source. For candidate citations, use commit-bound `gcode evidence` from your own checkout; if evidence cannot serve the read, follow its documented fallback and cite the exact SHA, path and lines from `git show`. Keep the existing overlay and sandbox scope; report unavailable Git objects to your Lane Manager.
     - Verdict. Send `EVENT=CANDIDATE_VERDICT TASK=#NNNNN TASK_TITLE= SHA= VERDICT=LAND|BOUNCE NOTE=` with the findings to the Orchestrator and the author lane. A BOUNCE ends the unit when its message starts with that line.
-    - Land. On LAND, first record the approval with `gobby-tasks:record_close_receipt(task_id, kind="independent_review_approval", commit_sha=<full candidate SHA>)`, then send the LAND verdict, then call `gobby-tasks-ops:land_commit(task_id, commit_sha)` on the same SHA.
+    - Land. For candidates with changes to land, on LAND first record the approval with `gobby-tasks:record_close_receipt(task_id, kind="independent_review_approval", commit_sha=<full candidate SHA>)`, then send the LAND verdict, then call `gobby-tasks-ops:land_commit(task_id, commit_sha)` on the same SHA.
     - Retest. A `landed: true` response means the branch moved. When `retest_required` is true, take the focused verification commands from the task's validation evidence and run them in the main checkout. Note each command and result, the `landed_tip`, the HEAD you tested and any unrelated checkout changes. Report `RETEST=UNAVAILABLE` when the evidence names no focused command you can run there.
     - Receipt pending. With `receipt_pending: true`, the landing receipt failed after the ref moved. Send your Lane Manager `EVENT=LAND_PENDING TASK=#NNNNN TASK_TITLE= SHA= LANDED_TIP= NOTE=receipt_pending`, keep the unit open, and call `land_commit` again on the same SHA until a `receipt_id` returns. There is no rollback and no second candidate.
     - Notification pending. Send each session listed in `notification_pending` the `Landed #N ...` line yourself; a replayed receipt does not resend it.
     - Already landed. When `already_landed: true`, a `receipt_id` returns and `landed_by_session_id` names another session (neither your current session ID nor `unknown`), send your Lane Manager and the author lane `EVENT=ALREADY_LANDED TASK=#NNNNN TASK_TITLE= SHA= RECEIPT= LANDED_BY_SESSION_ID= NOTE=`. Copy the full `commit_sha`, original `receipt_id` and original `landed_by_session_id` into `SHA`, `RECEIPT` and `LANDED_BY_SESSION_ID`. Never send your own `EVENT=LANDED` for another reviewer's landing. That notice ends the unit when its message starts with that line.
     - Landed. Once a response carries a `receipt_id` and either `already_landed` is false or `landed_by_session_id` equals your current session ID or is `unknown`, send your Lane Manager and the author lane `EVENT=LANDED TASK=#NNNNN TASK_TITLE= SHA= BRANCH= RECEIPT= MODE= LANDED_TIP= ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE=`. This includes recovery or replay of your own landing; perform the required retest before reporting it. `SHA` is the full `commit_sha`. Copy `BRANCH`, `RECEIPT`, `MODE`, `LANDED_TIP`, `ACTIVATION`, `PROJECT_SYNC_REQUIRED` and `PROVENANCE` from that response's `branch`, `receipt_id`, `mode`, `landed_tip`, `activation_class`, `project_sync_required` and `provenance`. If `project_sync_required` is true, tell the Lane Manager that project workflow sync is also required, including when a stronger activation class is reported. If the field is absent, report unknown. `RETEST=NOT_REQUIRED` means `retest_required` was false. `NOTE` carries each retest command and result, the HEAD tested and any unrelated checkout changes. That notice ends the unit when its message starts with that line.
     - Refusal. A `landed: false` response leaves the unit open. Send your Lane Manager `EVENT=LAND_BLOCKED TASK=#NNNNN TASK_TITLE= SHA= NOTE=` with the refusal, `missing_approvals` and `overlaps`. Send the author lane any refusal that needs an author action (`base_update_required`, `merge_conflict`, `candidate_not_linked`). Wait with `gobby-agents:wait_for_coordination` on the Lane Manager, or on the author lane for an author action, and call `land_commit` again once the blocker clears. Review a new SHA for the same task with `gcode` and `git diff` through `Bash`, then record a fresh `independent_review_approval` receipt for it before calling `land_commit` on it.
+    - Withdrawal and reassignment. Only the Orchestrator or Lane Manager can withdraw or reassign your current candidate. On their EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN line, or an explicit reassignment of that task, acknowledge with a message whose first line is EVENT=CANDIDATE_WITHDRAWN TASK=#NNNNN NOTE= to that coordinator. The TASK must equal candidate_task. A successful acknowledgment clears the unit from review or verdict and returns to await without a verdict, approval or landing receipt. Leave other-task withdrawals unchanged. A failed send keeps the unit open for retry.
+    - Review-only LAND. When the Orchestrator or Lane Manager explicitly marks a mapping or planning candidate as review-only with nothing to land, finish its review and send the usual LAND verdict and independent approval. Then send EVENT=REVIEW_COMPLETE TASK=#NNNNN SHA=<full candidate SHA> VERDICT=LAND LANDING=NOT_REQUIRED NOTE= to the Lane Manager. This matching completion ends the unit without land_commit or a fabricated landing receipt. A normal LAND still waits for a landing or already-landed notice.
     - CodeRabbit findings gate landings. Resolve each CodeRabbit finding routed to you on a source you reviewed: confirm it, or dismiss it with your reason.
 
     ## Bounded correction loop
@@ -164,6 +166,9 @@ step_workflow:
         gcode and git diff, citing code claims through gcode evidence. When the
         verdict is ready, call the top-level set_variable(name="verdict_ready",
         value=true, scope="step").
+        On an Orchestrator or Lane Manager withdrawal or reassignment of this
+        task, acknowledge EVENT=CANDIDATE_WITHDRAWN TASK=<candidate_task> NOTE=
+        through send_message to that coordinator; do not fabricate a verdict.
       allowed_tools:
         - Bash
         - Read
@@ -182,7 +187,32 @@ step_workflow:
         - "gobby-results:get_tool_result"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          when: &withdrawn >-
+            [fields for fields in [str(tool_input.get('content'))
+              .partition('\n')[0].split(' ', 2) + ['', '']]
+              if fields[0] == 'EVENT=CANDIDATE_WITHDRAWN'
+              and fields[1] == 'TASK=' + str(vars.get('candidate_task'))]
+          action: set_variable
+          variable: candidate_received
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: *withdrawn
+          action: set_variable
+          variable: verdict_ready
+          value: false
+        - server: gobby-agents
+          tool: send_message
+          when: *withdrawn
+          action: set_variable
+          variable: candidate_task
+          value: null
       transitions:
+        - to: await
+          when: "not vars.candidate_received"
         - to: verdict
           when: "vars.verdict_ready"
 
@@ -190,7 +220,7 @@ step_workflow:
       mcp_error_policy: stay
       description: "Send the verdict and land a LAND"
       status_message: |
-        On BOUNCE, send the CANDIDATE_VERDICT line. On LAND, record the
+        On BOUNCE, send the CANDIDATE_VERDICT line. For a LAND requiring landing, record the
         independent_review_approval receipt, send the LAND verdict, then call
         land_commit on the same SHA and follow its response: retest when
         retest_required, LAND_PENDING and retry on receipt_pending, LAND_BLOCKED
@@ -204,6 +234,12 @@ step_workflow:
         LANDED for another reviewer's landing. A message that starts with the
         BOUNCE verdict line, EVENT=LANDED
         or EVENT=ALREADY_LANDED for candidate_task returns you to await.
+        On withdrawal or reassignment, acknowledge the matching
+        EVENT=CANDIDATE_WITHDRAWN TASK= line without a verdict or receipt.
+        For an explicitly authorized review-only LAND with nothing to land,
+        send EVENT=REVIEW_COMPLETE TASK=<candidate_task> SHA=<candidate SHA>
+        VERDICT=LAND LANDING=NOT_REQUIRED NOTE= after the verdict and approval;
+        skip land_commit and never invent a landing receipt.
       allowed_tools:
         - Bash
         - mcp__gobby__call_tool
@@ -224,6 +260,8 @@ step_workflow:
       # fields. Prose, title words, EVENT=LAND_PENDING and a message that does
       # not start with the line keep the unit open, as does a bounce whose title
       # contains ' SHA='.
+      # A matching withdrawal acknowledgment also ends review or verdict.
+      # Review-only completion requires its explicit LANDING=NOT_REQUIRED field.
       # candidate_task clears last because every condition reads it.
       on_mcp_success:
         - server: gobby-agents
@@ -232,7 +270,12 @@ step_workflow:
             [fields for fields in [str(tool_input.get('content'))
               .partition('\n')[0].split(' ', 2) + ['', '']]
               if fields[1] == 'TASK=' + str(vars.get('candidate_task'))
-              and (fields[0] in ('EVENT=LANDED', 'EVENT=ALREADY_LANDED')
+              and (fields[0] in ('EVENT=LANDED', 'EVENT=ALREADY_LANDED',
+                  'EVENT=CANDIDATE_WITHDRAWN')
+                or (fields[0] == 'EVENT=REVIEW_COMPLETE'
+                  and fields[2].startswith('SHA=')
+                  and (fields[2].split(' ', 3) + ['', '', ''])[1] == 'VERDICT=LAND'
+                  and (fields[2].split(' ', 3) + ['', '', ''])[2] == 'LANDING=NOT_REQUIRED')
                 or (fields[0] == 'EVENT=CANDIDATE_VERDICT'
                   and ((' ' + fields[2]).partition(' SHA=')[2]
                     .split(' ', 2) + ['', ''])[1] == 'VERDICT=BOUNCE'))]
