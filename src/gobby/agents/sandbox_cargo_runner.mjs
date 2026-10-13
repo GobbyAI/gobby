@@ -25,7 +25,10 @@ for (let i = 0; i < cargoArgs.length; i++) {
 // Let Cargo validate malformed arguments and explicit target selections itself.
 const explicitTarget = cargoArgs.some(a => a === '--target-dir' || a.startsWith('--target-dir='));
 const env = { ...process.env };
-if (!explicitTarget && !manifest.includes(undefined) && !globalArgs.includes(undefined)) {
+const callerTarget = ['CARGO_TARGET_DIR', 'CARGO_BUILD_TARGET_DIR'].some(
+  key => env[key] && env[key] !== seatTarget,
+);
+if (!explicitTarget && !callerTarget && !manifest.includes(undefined) && !globalArgs.includes(undefined)) {
   const located = spawnSync(cargo, [
     ...toolchain, ...globalArgs, 'locate-project', '--workspace', '--message-format', 'plain', ...manifest,
   ], { encoding: 'utf8', env });

@@ -130,11 +130,17 @@ def cargo_release_dir(
     """
     values = os.environ if env is None else env
     configured = values.get("CARGO_TARGET_DIR", "").strip()
+    build_configured = values.get("CARGO_BUILD_TARGET_DIR", "").strip()
     # The sandbox's Cargo launcher routes reviewed checkouts beneath the seat's
     # writable target. Artifact readers must follow the same route after a build.
     sandbox_target = values.get("GOBBY_SANDBOX_CARGO_TARGET")
     sandbox_workspace = values.get("GOBBY_SANDBOX_CARGO_WORKSPACE")
-    if sandbox_target and sandbox_workspace:
+    if (
+        sandbox_target
+        and sandbox_workspace
+        and configured in ("", sandbox_target)
+        and build_configured in ("", sandbox_target)
+    ):
         checkout = workspace.resolve()
         checkout = next(
             (parent for parent in (checkout, *checkout.parents) if (parent / ".git").exists()),
@@ -145,6 +151,7 @@ def cargo_release_dir(
             path_hash = hashlib.sha256(os.fsencode(checkout)).hexdigest()
             target = target / "reviewed-checkouts" / path_hash
         return target / "release"
+    configured = configured or build_configured
     target = (cwd or Path.cwd()) / configured if configured else workspace / "target"
     return target / "release"
 

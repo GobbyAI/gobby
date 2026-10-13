@@ -60,7 +60,8 @@ if (args.includes('locate-project')) {
   const cwd = directory < 0 ? process.cwd() : args[directory + 1];
   console.log(index < 0 ? `${cwd}/Cargo.toml` : args[index + 1]);
 } else {
-  console.log(JSON.stringify({args, target: process.env.CARGO_TARGET_DIR}));
+  const target = process.env.CARGO_TARGET_DIR || process.env.CARGO_BUILD_TARGET_DIR;
+  console.log(JSON.stringify({args, target, target_directory: target}));
   if (args.includes('--fail')) process.exit(23);
 }
 """,
@@ -68,6 +69,8 @@ if (args.includes('locate-project')) {
     )
     fake_cargo.chmod(0o700)
     env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    env["CARGO_TARGET_DIR"] = str(target)
+    env.pop("CARGO_BUILD_TARGET_DIR", None)
     env.update(
         sandbox_cargo_environment(
             assets=assets,
@@ -205,6 +208,29 @@ def test_resume_replaces_previous_run_launcher(launcher: CargoLauncher, tmp_path
     assert launcher.run(["test"]).returncode == 0
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("variable", ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"])
+def test_caller_target_override_is_preserved(launcher: CargoLauncher, variable: str) -> None:
+    explicit = launcher.workspace / "caller-target"
+    launcher.env.pop("CARGO_TARGET_DIR", None)
+    launcher.env[variable] = str(explicit)
+    result = launcher.run(["metadata", "--no-deps", "--format-version", "1"])
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["target_directory"] == str(explicit)
+    assert cargo_release_dir(launcher.workspace, env=launcher.env) == explicit / "release"
+
+
+@pytest.mark.unit
+def test_build_target_override_preserves_cargo_target_precedence(launcher: CargoLauncher) -> None:
+    reviewed = launcher.workspace / "reviewed"
+    reviewed.mkdir()
+    launcher.env["CARGO_BUILD_TARGET_DIR"] = str(launcher.workspace / "caller-target")
+    result = launcher.run(["metadata"], cwd=reviewed)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["target_directory"] == str(launcher.target)
+    assert cargo_release_dir(reviewed, env=launcher.env) == launcher.target / "release"
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)
@@ -243,6 +269,7 @@ def test_real_cargo_stale_checkout_and_incremental_rebuild(tmp_path: Path) -> No
         "CARGO_BUILD_JOBS": "3",
         "TMPDIR": str(temp),
     }
+    env.pop("CARGO_BUILD_TARGET_DIR", None)
     args = ["test", "--offline", "--manifest-path"]
     old_first = subprocess.run(
         [cargo, *args, str(first_manifest)],
@@ -287,6 +314,24 @@ def test_real_cargo_stale_checkout_and_incremental_rebuild(tmp_path: Path) -> No
     print(f"unchanged reviewed checkout: {warm.stderr.strip()}")
     locks = list((target / "reviewed-checkouts").glob("*/debug/.cargo-build-lock"))
     assert len(locks) == 2
+    for variable in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
+        explicit = tmp_path / variable.lower()
+        launcher.env.pop("CARGO_TARGET_DIR", None)
+        launcher.env.pop("CARGO_BUILD_TARGET_DIR", None)
+        launcher.env[variable] = str(explicit)
+        metadata = launcher.run(
+            [
+                "metadata",
+                "--no-deps",
+                "--format-version",
+                "1",
+                "--manifest-path",
+                str(second_manifest),
+            ]
+        )
+        assert metadata.returncode == 0, metadata.stderr
+        assert json.loads(metadata.stdout)["target_directory"] == str(explicit)
+        assert cargo_release_dir(second_manifest.parent, env=launcher.env) == explicit / "release"
 
 
 @pytest.mark.integration
@@ -307,6 +352,7 @@ def test_reviewed_target_build_lock_is_writable(launcher: CargoLauncher, tmp_pat
         assets.mkdir()
         env = {
             **launcher.env,
+            "CARGO_TARGET_DIR": str(target),
             **sandbox_cargo_environment(
                 assets=assets,
                 node=launcher.node,
