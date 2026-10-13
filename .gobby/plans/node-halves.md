@@ -348,7 +348,8 @@ that extracts it.
   and hub-mode 2.2 covers none of them:
   1. Grok pending delivery
      (`src/gobby/hooks/grok_pending_context.py::handle_ack_pending_inbox_envelope`),
-     before the processed check and again after a 2xx. If the session's
+     before the processed check and again after a 2xx, only for an envelope
+     with an id at or above the floor. If the session's
      delivery variable names the envelope, it retains the file for
      `GROK_DELIVERY_RETENTION_SECONDS` (3,600) from the file's mtime, then
      requeues the briefing, unlinks the file and removes the marker.
@@ -393,8 +394,10 @@ that extracts it.
   `ReplayDecision` has `disposition` (`retain`, `requeued`, `unlink`,
   `archived`, `below_floor` or `execute`) and `detail`. Order, matching the
   drain's:
-  1. Grok pending check: `retain` inside retention, `requeued` after
-     requeueing.
+  1. Grok pending check, only for an envelope with an id at or above the
+     floor, as the drain gates it today (`src/gobby/hooks/inbox.py` lines
+     453-456): `retain` inside retention, `requeued` after requeueing. A
+     below-floor envelope skips it.
   2. `processed` true: `unlink`.
   3. `live` true for an envelope at or above the floor: `retain` with detail
      `live`.
@@ -448,7 +451,7 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.3.1 - `decide_replay` returns `retain`, `requeued`, `unlink`, `archived`, `below_floor` and `execute` in the drain's order for the matching hub state, with a live envelope at or above the floor retained after the processed check and before the fence. test: `tests/hooks/test_replay_decision.py::test_decision_order`.
+- 1.3.1 - `decide_replay` returns `retain`, `requeued`, `unlink`, `archived`, `below_floor` and `execute` in the drain's order for the matching hub state, with a live envelope at or above the floor retained after the processed check and before the fence, and a below-floor envelope with a matching Grok delivery answered `below_floor`. test: `tests/hooks/test_replay_decision.py::test_decision_order`.
 - 1.3.2 - With a machine id, a session row on another machine is treated as unknown by the Grok and fence lookups. test: `tests/hooks/test_replay_decision.py::test_foreign_rows_are_unknown`.
 - 1.3.3 - The local drain's outcomes are unchanged after the extraction, and a fresh live file still receives the Grok check and is not fenced. test: `tests/hooks/test_replay_decision.py::test_local_drain_unchanged`.
 - 1.3.4 - The replay route answers the decision for a node key, including the node's `live` flag, 403 `node_identity_required` without one, 403 `machine_is_local` for the hub's own key, and 422 for an unknown `v` or field. test: `tests/servers/test_node_hook_routes.py::test_replay_route`.
@@ -587,7 +590,7 @@ Verification planned:
 **Acceptance:**
 
 - 1.5.1 - A hook with an envelope id is claimed, forwarded with ghook's key, finalized with the hub's response, and answered with the hub's bytes. test: `crates/gdaemon/tests/node_hooks.rs::ingress_forwards_and_finalizes`.
-- 1.5.2 - A retry of a processed envelope replays the stored response without reaching the hub, and a retry during a forward that outlasts the 15-second lease still answers 409 `processing` because renewal runs alongside the forward. test: `crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries`.
+- 1.5.2 - A retry of a processed envelope replays the stored response without reaching the hub, and during a forward that outlasts the 15-second lease the marker's `lease_expires_at` moves forward before the forward returns and a retry answers 409 `processing`. test: `crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries`.
 - 1.5.3 - Hub 503 retry, hub 409 `processing` and relay failure release the claim and pass the hub's response through; hub 409 `processed` marks the envelope processed. test: `crates/gdaemon/tests/node_hooks.rs::ingress_failure_dispositions`.
 - 1.5.4 - Pending receipt acks reach the hub before the hook they precede. test: `crates/gdaemon/tests/node_hooks.rs::ingress_sweeps_receipts_first`.
 - 1.5.5 - A session start answered 2xx bumps the node's STOP epoch. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
@@ -1452,6 +1455,9 @@ deferral:
   record wins over an idempotent spawn (2.7); 2.3 owns the start-time
   removal retry; 1.5 depends on 1.1; and a `stale_report` notifies `changed`
   instead of re-entering `report_once` (2.8).
+- 2026-10-13: Consensus with Plan Adversary gobby#16791 after NH-9 (the Grok
+  check runs only at or above the response-capability floor, 1.3) and NH-10
+  (1.5.2 pins the lease renewal write).
 
 ## V2: Verification
 `kind: verification`
