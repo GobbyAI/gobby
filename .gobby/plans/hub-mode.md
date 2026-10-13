@@ -2330,6 +2330,12 @@ deferral:
     compact-continuation, and session-start identity lookups.
   - HM-F18: the node keeps a durable preparation record and retries removal
     until the path is gone.
+- 2026-10-13: Consensus on the HM-F14 to HM-F18 repair. Plan Adversary
+  gobby#16491 verified 41f2ac4a0f and Plan Writer gobby#16490 agrees that
+  HM-F14 to HM-F18 and 2.5's explicit `DaemonConfig` consumer inventory are
+  resolved, including the published revision kept across `take` and the
+  intervening-take schedule in 1.4.5. Standard validation is warning-free,
+  and no blocking finding remains.
 
 ## V2: Verification
 `kind: verification`
