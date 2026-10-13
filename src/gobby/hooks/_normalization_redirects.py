@@ -1,6 +1,8 @@
 """Shell redirection destinations, mutation policy and path extraction."""
 
 import re
+from collections.abc import Mapping
+from typing import Any
 
 from gobby.hooks._normalization_paths import _append_unique_path
 from gobby.hooks._normalization_shell import (
@@ -35,6 +37,152 @@ def is_benign_redirect_target(path: str) -> bool:
     return path in _BENIGN_REDIRECT_TARGETS
 
 
+def source_output_destinations(tokens: list[ShellToken]) -> dict[str, str]:
+    """Resolve inherited stdout/stderr destinations in shell redirection order."""
+    descriptors = {"1": "stdout", "2": "stderr"}
+    for index, token in enumerate(tokens):
+        if token.quoted:
+            continue
+        duplicate = re.fullmatch(r"(\d*)[<>]&(\d+|-)", token.value)
+        if duplicate:
+            fd, target = duplicate.groups()
+            fd = (fd.lstrip("0") or "0") if fd else ("0" if token.value.startswith("<") else "1")
+            descriptors[fd] = (
+                descriptors.get(target.lstrip("0") or "0", "unknown") if target != "-" else "closed"
+            )
+            continue
+        redirect = re.fullmatch(r"(\d*)(>|>>|>\||>&|<|<&)", token.value)
+        both = token.value in {"&>", "&>>", ">&"}
+        if not redirect and not both:
+            continue
+        target = tokens[index + 1].value if index + 1 < len(tokens) else ""
+        fd = (redirect[1].lstrip("0") or "0") if redirect and redirect[1] else "1"
+        if redirect and redirect[2].startswith("<") and not redirect[1]:
+            fd = "0"
+        split_duplicate = target == "&" and index + 2 < len(tokens)
+        if split_duplicate:
+            target = tokens[index + 2].value
+        if (
+            redirect
+            and (redirect[2] in {">&", "<&"} or split_duplicate)
+            and re.fullmatch(r"\d+|-", target)
+        ):
+            descriptors[fd] = (
+                descriptors.get(target.lstrip("0") or "0", "unknown") if target != "-" else "closed"
+            )
+            continue
+        if redirect and redirect[2].startswith("<"):
+            continue
+        if target in {"/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"}:
+            destination = descriptors.get("1", "unknown")
+        elif target in {"/dev/stderr", "/dev/fd/2", "/proc/self/fd/2"}:
+            destination = descriptors.get("2", "unknown")
+        elif target == "/dev/tty":
+            destination = "tty"
+        elif device := re.fullmatch(r"(?:/dev/fd/|/proc/self/fd/)(\d+)", target):
+            destination = descriptors.get(device[1].lstrip("0") or "0", "unknown")
+        elif (
+            not target
+            or _contains_unexpanded_shell_reference(target)
+            or (
+                index + 1 < len(tokens)
+                and not tokens[index + 1].quoted
+                and any(char in target for char in "~*?[{")
+            )
+        ):
+            destination = "unknown"
+        else:
+            destination = "file"
+        descriptors[fd] = destination
+        if both:
+            descriptors["2"] = destination
+    return {"stdout": descriptors["1"], "stderr": descriptors["2"]}
+
+
+def redirect_source_read_metadata(
+    extra: Mapping[str, Any] | None, tokens: list[ShellToken]
+) -> dict[str, Any] | None:
+    """Keep each source read only when its output can reach the caller."""
+    if not extra:
+        return None
+    result = dict(extra)
+    destinations = source_output_destinations(tokens)
+
+    def redirected(scope: Mapping[str, Any]) -> dict[str, Any] | None:
+        if scope.get("canonical_code_navigation_action") != "read":
+            return dict(scope)
+        channels = {
+            destinations.get(channel, channel)
+            for channel in scope.get("_canonical_source_read_output_channels", ("stdout",))
+        } - {"file", "closed"}
+        if not channels:
+            return None
+        return {**scope, "_canonical_source_read_output_channels": sorted(channels)}
+
+    if "canonical_code_navigation_segments" in result:
+        result["canonical_code_navigation_segments"] = [
+            mapped
+            for segment in result["canonical_code_navigation_segments"]
+            if (mapped := redirected(segment)) is not None
+        ]
+    deferred_key = "_canonical_deferred_source_read"
+    if deferred_key in result:
+        mapped = redirected(result[deferred_key])
+        if mapped is None:
+            result.pop(deferred_key)
+        else:
+            result[deferred_key] = mapped
+    if "_canonical_pending_source_reads" in result:
+        result["_canonical_pending_source_reads"] = [
+            {**record, "scope": mapped}
+            for record in result["_canonical_pending_source_reads"]
+            if (mapped := redirected(record["scope"])) is not None
+        ]
+    if result.get("canonical_code_navigation_action") == "read":
+        child_scopes = [
+            *result.get("canonical_code_navigation_segments", ()),
+            *(record["scope"] for record in result.get("_canonical_pending_source_reads", ())),
+        ]
+        if deferred := result.get("_canonical_deferred_source_read"):
+            child_scopes.append(deferred)
+        read_scopes = [
+            scope
+            for scope in child_scopes
+            if scope.get("canonical_code_navigation_action") == "read"
+        ]
+        has_children = any(
+            key in extra
+            for key in (
+                "canonical_code_navigation_segments",
+                "_canonical_pending_source_reads",
+                "_canonical_deferred_source_read",
+            )
+        )
+        mapped = redirected(result) if not has_children else None
+        if has_children and read_scopes:
+            mapped = {
+                **result,
+                "_canonical_source_read_output_channels": sorted(
+                    {
+                        channel
+                        for scope in read_scopes
+                        for channel in scope.get(
+                            "_canonical_source_read_output_channels", ("stdout",)
+                        )
+                    }
+                ),
+            }
+        if mapped is None:
+            for key in tuple(result):
+                if key != "canonical_code_navigation_segments" and key.startswith(
+                    ("canonical_code_navigation_", "canonical_source_", "canonical_narrow_")
+                ):
+                    result.pop(key)
+        else:
+            result.update(mapped)
+    return result
+
+
 def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
     """Return True when any output redirection may write somewhere other than a benign sink.
 
@@ -47,6 +195,8 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
         if idx + 1 >= len(tokens):
             return True
         candidate = tokens[idx + 1]
+        if re.fullmatch(r"\d*>&", token.value) and re.fullmatch(r"\d+|-", candidate.value):
+            continue
         if is_unquoted_shell_control_token(candidate):
             return True
         if not is_benign_redirect_target(candidate.value):
@@ -105,6 +255,8 @@ def extract_redirection_paths(tokens: list[ShellToken]) -> list[str]:
         if not is_shell_output_redirection_token(token):
             continue
         candidate = tokens[idx + 1]
+        if re.fullmatch(r"\d*>&", token.value) and re.fullmatch(r"\d+|-", candidate.value):
+            continue
         if is_unquoted_shell_control_token(candidate):
             continue
         if is_benign_redirect_target(candidate.value):

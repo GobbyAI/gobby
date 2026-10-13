@@ -121,6 +121,81 @@ def broad_read_blocked(repo: Path, command: str, variables: dict[str, Any] | Non
     return navigation_requires_index(event(repo, command), variables or {}, "read", broad_only=True)
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/long.py; do cat "$f"; done | head -n 10',
+        "{ cat src/long.py; grep foo src/short.py; } | head -n 10",
+        'for f in src/long.py; do cat "$f" | head -n 10; done',
+    ],
+)
+def test_compound_read_bounds_clear_broad_metadata(repo: Path, command: str) -> None:
+    data = event(repo, command)
+    assert not navigation_requires_index(data, {}, "read", broad_only=True)
+    if data.get("canonical_code_navigation_action") == "read":
+        assert not data.get("canonical_code_navigation_broad")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'for f in src/*.py; do cat "$f"; touch /tmp/x; done',
+        "cat `echo src/long.py`; touch /tmp/x",
+        "less src/long.py",
+        "awk 1 src/long.py",
+        "xargs cat < list",
+    ],
+)
+def test_additional_source_read_forms_require_index(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize("operand", ["src/long.py", '"$X"'])
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "( cat {operand} >&2 ) > /tmp/x",
+        "bash -c 'cat {operand} >&2' > /tmp/x",
+        "bash -c 'cat {operand} > /dev/tty' > /tmp/x",
+        "bash -c 'cat {operand} > /dev/stderr' > /tmp/x",
+        "bash -c 'cat {operand} | tee /dev/stderr' > /tmp/x",
+    ],
+)
+def test_wrapper_output_escape_requires_index(repo: Path, wrapper: str, operand: str) -> None:
+    assert broad_read_blocked(repo, wrapper.format(operand=operand))
+
+
+@pytest.mark.parametrize("command", ["echo X >& 2", "echo X > /dev/null >& 2"])
+def test_spaced_descriptor_duplication_is_not_a_file_write(repo: Path, command: str) -> None:
+    data = event(repo, command)
+    assert data["canonical_tool_kind"] == "execute"
+    assert not data.get("canonical_write_file_paths")
+
+
+def test_spaced_word_duplication_is_a_file_write(repo: Path) -> None:
+    data = event(repo, "echo X >& out.txt")
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == ["out.txt"]
+
+
+@pytest.mark.parametrize(
+    "command,blocked",
+    [
+        ("bash -c 'cat src/long.py >&2' > /tmp/x 2>&1", False),
+        ("bash -c 'cat src/long.py 2>/tmp/y >&2' > /tmp/x", False),
+        ("bash -c 'cat src/long.py | tee /dev/stderr' > /tmp/x 2>&1", False),
+        ("bash -c 'cat src/long.py >&2' | head -n 10", True),
+        ("{ cat src/long.py >&2; } | head -n 10", True),
+        ("( cat src/long.py >&2 ) | head -n 10", True),
+        ("cat src/long.py > /dev/fd/*", True),
+        ("bash -c '{ cat src/long.py; } | tee /dev/stderr' > /tmp/x", True),
+        ("bash -c 'cat src/long.py >&2' >& /tmp/x", False),
+    ],
+)
+def test_source_output_channel_routing(repo: Path, command: str, blocked: bool) -> None:
+    assert broad_read_blocked(repo, command) is blocked
+
+
 def test_typed_outage_opens_the_checkout_for_every_operation(repo: Path) -> None:
     variables = turn(
         repo,

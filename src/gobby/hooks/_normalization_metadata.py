@@ -91,6 +91,11 @@ def _resolve_pending_source_read(
         # A possible intervening rebind cannot inherit short-file/ignored-path exemptions.
         return {
             **navigation,
+            **{
+                key: scope[key]
+                for key in ("_canonical_source_read_output_channels",)
+                if key in scope
+            },
             "canonical_file_paths": paths if preserved else list(record["paths"]),
         }, None
     if unresolved:

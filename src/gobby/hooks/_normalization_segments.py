@@ -95,6 +95,49 @@ def _pipeline_filter_output_line_bound(parts: list[str]) -> int | None:
     return None
 
 
+def _compound_stage_start(segments: list[_ShellSegment], end: int) -> int:
+    """Find the opener of a compound stage ending immediately before a pipe."""
+    closers = {"done": {"for", "select", "while", "until"}, "fi": {"if"}, "}": {"{"}}
+    pending: list[str] = []
+    for index in range(end, -1, -1):
+        prefixes: list[str] = []
+        for token in segments[index].tokens:
+            if token.quoted or token.value not in {
+                *closers,
+                "for",
+                "select",
+                "while",
+                "until",
+                "if",
+                "{",
+                "do",
+                "then",
+                "else",
+            }:
+                break
+            prefixes.append(token.value)
+        for word in reversed(prefixes):
+            if word in closers:
+                pending.append(word)
+            elif pending and word in closers[pending[-1]]:
+                pending.pop()
+        if not pending:
+            return index
+    return end
+
+
+def _pipeline_read_indices(segments: list[_ShellSegment], index: int) -> list[int]:
+    prior = index - 1
+    indices: list[int] = []
+    while prior >= 0:
+        if segments[prior + 1].separator_before != "|":
+            break
+        start = _compound_stage_start(segments, prior)
+        indices.extend(range(start, prior + 1))
+        prior = start - 1
+    return indices
+
+
 def _bound_pipeline_reads(
     metadata: list[_ShellSegmentMetadata],
     segments: list[_ShellSegment],
@@ -108,19 +151,22 @@ def _bound_pipeline_reads(
     """
     if bound is None or bound > MAX_NARROW_SOURCE_LINES:
         return
-    for prior in range(filter_index - 1, -1, -1):
-        if segments[prior + 1].separator_before != "|":
-            break
+    for prior in _pipeline_read_indices(segments, filter_index):
         item = metadata[prior]
         if not item.extra:
             continue
         deferred = item.extra.get("_canonical_deferred_source_read")
         navigation = deferred if deferred else item.extra
         pending = item.extra.get("_canonical_pending_source_reads")
+        read_segments = item.extra.get("canonical_code_navigation_segments", ())
         if (
             navigation.get("canonical_code_navigation_action") == "read"
             and navigation.get("canonical_code_navigation_broad")
             or pending
+            or any(
+                segment.get("canonical_code_navigation_action") == "read"
+                for segment in read_segments
+            )
         ):
             narrowed = {
                 "canonical_code_navigation_broad": False,
@@ -128,18 +174,28 @@ def _bound_pipeline_reads(
                 "canonical_source_line_count": bound,
             }
             extra = dict(item.extra)
-            if deferred:
+            if deferred and deferred.get("_canonical_source_read_output_channels", ["stdout"]) == [
+                "stdout"
+            ]:
                 extra["_canonical_deferred_source_read"] = {**deferred, **narrowed}
-            elif navigation.get("canonical_code_navigation_action") == "read":
+            elif navigation.get("canonical_code_navigation_action") == "read" and navigation.get(
+                "_canonical_source_read_output_channels", ["stdout"]
+            ) == ["stdout"]:
                 extra.update(narrowed)
             if pending:
                 extra["_canonical_pending_source_reads"] = [
-                    {**record, "scope": {**record["scope"], **narrowed}} for record in pending
+                    {**record, "scope": {**record["scope"], **narrowed}}
+                    if record["scope"].get("_canonical_source_read_output_channels", ["stdout"])
+                    == ["stdout"]
+                    else record
+                    for record in pending
                 ]
             if "canonical_code_navigation_segments" in extra:
                 extra["canonical_code_navigation_segments"] = [
                     {**segment, **narrowed}
                     if segment.get("canonical_code_navigation_action") == "read"
+                    and segment.get("_canonical_source_read_output_channels", ["stdout"])
+                    == ["stdout"]
                     else segment
                     for segment in extra["canonical_code_navigation_segments"]
                 ]
@@ -147,3 +203,43 @@ def _bound_pipeline_reads(
                 item,
                 extra=extra,
             )
+
+
+def _mark_pipeline_read_escape(
+    metadata: list[_ShellSegmentMetadata],
+    segments: list[_ShellSegment],
+    index: int,
+    channels: set[str],
+) -> None:
+    """A tee copy can expose source independently of the pipeline's stdout."""
+    for prior in _pipeline_read_indices(segments, index):
+        item = metadata[prior]
+        if not item.extra:
+            continue
+        extra = dict(item.extra)
+
+        def exposed(scope: Mapping[str, Any]) -> dict[str, Any]:
+            outputs = set(scope.get("_canonical_source_read_output_channels", ("stdout",)))
+            if scope.get("canonical_code_navigation_action") == "read" and "stdout" in outputs:
+                return {
+                    **scope,
+                    "_canonical_source_read_output_channels": sorted(outputs | channels),
+                }
+            return dict(scope)
+
+        if extra.get("canonical_code_navigation_action") == "read":
+            extra = exposed(extra)
+        if "_canonical_deferred_source_read" in extra:
+            extra["_canonical_deferred_source_read"] = exposed(
+                extra["_canonical_deferred_source_read"]
+            )
+        if "_canonical_pending_source_reads" in extra:
+            extra["_canonical_pending_source_reads"] = [
+                {**record, "scope": exposed(record["scope"])}
+                for record in extra["_canonical_pending_source_reads"]
+            ]
+        if "canonical_code_navigation_segments" in extra:
+            extra["canonical_code_navigation_segments"] = [
+                exposed(scope) for scope in extra["canonical_code_navigation_segments"]
+            ]
+        metadata[prior] = replace(item, extra=extra)

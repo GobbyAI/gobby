@@ -332,6 +332,7 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
         )
         if (
             segment.get("canonical_code_navigation_action") == "read"
+            and resolved
             and segment.get("canonical_source_read_scope") == "full_file"
             and "canonical_source_line_count" not in segment
             and "canonical_source_byte_count" not in segment
