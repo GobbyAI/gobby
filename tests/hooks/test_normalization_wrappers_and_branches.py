@@ -158,6 +158,7 @@ def test_bash_script_startup_options_keep_pipeline_scope_unknown(
 
 
 @pytest.mark.parametrize("shell", ["bash", "sh"])
+@pytest.mark.parametrize("navigation", ["cd sub", "pushd sub", "pushd sub; popd"])
 @pytest.mark.parametrize(
     "stage",
     [
@@ -173,13 +174,76 @@ def test_bash_script_startup_options_keep_pipeline_scope_unknown(
         "until cd sub; do touch a.py; break; done",
         "for v in a; do cd sub; touch a.py; done",
         "select v in a; do cd sub; touch a.py; break; done",
+        "! case a in a) cd sub; touch a.py;; esac",
+        "time -p if cd sub; then touch a.py; fi",
+        "case a in a) if true; then { cd sub; touch a.py; }; fi;; esac",
+        "if true; then case a in a) cd sub; touch a.py;; esac; fi",
+        "! { cd sub; touch a.py; }",
+        "time { cd sub; touch a.py; }",
     ],
 )
 def test_compound_pipeline_directory_change_keeps_scope_unknown(
-    tmp_path: Path, shell: str, stage: str
+    tmp_path: Path, shell: str, navigation: str, stage: str
 ) -> None:
+    stage = stage.replace("cd sub", navigation)
     data = _metadata(f"{shell} -c 'echo x | {stage}; touch z.py'", tmp_path)
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh"])
+@pytest.mark.parametrize(
+    ("navigation", "directory"),
+    [("cd sub", "sub/"), ("pushd sub", "sub/"), ("pushd sub; popd", "")],
+)
+@pytest.mark.parametrize("before", [True, False], ids=["before-stage", "after-stage"])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "case a in a) touch a.py;; esac",
+        "if true; then touch a.py; fi",
+        "while false; do touch a.py; done",
+        "until true; do touch a.py; done",
+        "for v in a; do touch a.py; done",
+        "select v in a; do touch a.py; break; done",
+        "! { touch a.py; }",
+        "time { touch a.py; }",
+        "! case a in a) touch a.py;; esac",
+        "time -p if true; then touch a.py; fi",
+        "case a in a) if true; then { touch a.py; }; fi;; esac",
+    ],
+)
+def test_navigation_outside_pipeline_compound_keeps_scope_known(
+    tmp_path: Path, shell: str, navigation: str, directory: str, before: bool, stage: str
+) -> None:
+    command = (
+        f"{navigation}; echo x | {stage}; touch z.py"
+        if before
+        else f"echo x | {stage}; {navigation}; touch z.py"
+    )
+    data = _metadata(f"{shell} -c '{command}'", tmp_path)
+    assert data["canonical_write_file_paths"] == [
+        f"{directory}a.py" if before else "a.py",
+        f"{directory}z.py",
+    ]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("cd sub; echo x | case a in a) touch a.py;; esac", ["sub/a.py"]),
+        (
+            "echo x | case a in a) touch a.py;; esac; cd sub; touch z.py",
+            ["a.py", "sub/z.py"],
+        ),
+    ],
+)
+def test_reviewer_compound_pipeline_navigation_regressions(
+    tmp_path: Path, command: str, expected: list[str]
+) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_write_file_paths"] == expected
+    assert not data.get("canonical_repo_mutation_scope_unknown")
 
 
 @pytest.mark.parametrize("option", ["-qs", "-sq"])
