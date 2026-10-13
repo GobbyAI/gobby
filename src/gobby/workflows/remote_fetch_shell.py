@@ -374,21 +374,33 @@ def _output_files(tokens: list[ShellToken], words: list[str]) -> set[str]:
     return paths - {"-", "/dev/null"}
 
 
-def _function_definition(tokens: list[ShellToken]) -> bool:
-    if not tokens or tokens[0].quoted:
+def _function_definition(tokens: list[ShellToken], raw: dict[int, str]) -> bool:
+    if not tokens:
         return False
-    word = tokens[0].value.removeprefix("=")
-    return bool(
-        word == "function"
-        or word.startswith("()")
-        or re.match(r"[A-Za-z_]\w*\(", word)
-        or (
-            len(tokens) > 1
-            and _NAME.fullmatch(word)
-            and not tokens[1].quoted
-            and tokens[1].value.startswith("(")
-        )
-    )
+    word = raw[id(tokens[0])]
+    if _ASSIGNMENT.match(word):
+        return False
+    if word == "function" or word.startswith("()"):
+        return True
+    quote = ""
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if char == "\\" and quote != "'":
+            index += 2
+            continue
+        if not quote and opens_ansi_c_quote(word, index):
+            quote = "$'"
+            index += 2
+            continue
+        if char in "\"'" and (not quote or quote == char):
+            quote = char if not quote else ""
+        elif quote == "$'" and char == "'":
+            quote = ""
+        elif not quote and char == "(":
+            return index > 0
+        index += 1
+    return len(tokens) > 1 and raw[id(tokens[1])].startswith("(")
 
 
 def _stage_words(
@@ -396,19 +408,19 @@ def _stage_words(
 ) -> tuple[list[ShellToken], list[str], list[str]]:
     head = _command_tokens(strip_output_redirections(strip_input_redirections(tokens)))
     # Function definitions expose their body command without changing scanner tokens.
-    if _function_definition(head):
+    if _function_definition(head, raw):
         brace = next((index for index, token in enumerate(head[:4]) if token.value == "{"), None)
         if brace is not None:
             head = head[brace + 1 :]
     values = [token.value for token in head]
     # Resolve zsh EQUALS at each command position, including commands after wrappers.
-    # Arguments and quoted command words retain their literal spelling.
+    # Only the initial equals must be unquoted; suffix quoting does not prevent expansion.
     for _ in range(len(values)):
         words = _execution_words(values)
         if not words:
             break
         index = len(values) - len(words)
-        if head[index].quoted or not values[index].startswith("="):
+        if not raw[id(head[index])].startswith("=") or not values[index].startswith("="):
             break
         values[index] = values[index][1:]
         # Only one leading equals expands for this word; another is part of the name.

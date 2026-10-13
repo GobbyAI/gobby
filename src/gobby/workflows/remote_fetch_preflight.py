@@ -190,9 +190,7 @@ def _dynamic_command_word(word: str) -> bool:
             quote = char if not quote else ""
         elif quote == "$'" and char == "'":
             quote = ""
-        elif quote not in {"'", "$'"} and (
-            char == "`" or re.match(r"\$(?:[A-Za-z_0-9@*#?$!-]|\{|\()", word[index:])
-        ):
+        elif quote not in {"'", "$'"} and char in {"$", "`"}:
             return True
         index += 1
     return False
@@ -217,7 +215,7 @@ def _command_preflight(command: str, features: _Preflight, depth: int) -> None:
     for body in _preflight_segments(scan.tokens):
         for stage in _pipeline_stages(body):
             original = _command_tokens(strip_output_redirections(strip_input_redirections(stage)))
-            if _function_definition(original):
+            if _function_definition(original, raw):
                 features.deferred = True
             head, values, protected = _stage_words(stage, raw)
             words = _execution_words(protected)

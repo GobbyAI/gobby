@@ -1550,6 +1550,134 @@ def test_remote_fetch_spec3_data(
 
 
 @pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("suffix", ['"{}"', "\\{}"])
+@pytest.mark.parametrize("wrapper", ["", "command ", "x=1 ", "exec "])
+@pytest.mark.parametrize("capture", [False, True])
+def test_remote_fetch_zsh_quoted_equals(
+    manager: RuleDefinitionManager, fetcher: str, suffix: str, wrapper: str, capture: bool
+) -> None:
+    options = "-s" if fetcher == "curl" else "-qO-"
+    fetch = wrapper + "=" + fetcher[:2] + suffix.format(fetcher[2:]) + f" {options} url"
+    command = f'd=$({fetch}); eval "$d"' if capture else f"{fetch} | sh"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("shell", ['=ba"sh"', "=ba\\sh"])
+def test_remote_fetch_zsh_quoted_shell(
+    manager: RuleDefinitionManager, fetcher: str, shell: str
+) -> None:
+    command = f"{shell} -c '{fetcher} -s url | sh'"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("modifier", ["=", "^", "~"])
+def test_remote_fetch_zsh_parameter_modifier(
+    manager: RuleDefinitionManager, fetcher: str, modifier: str
+) -> None:
+    command = f"set -- trap; ${modifier}1 'eval \"$d\"' EXIT; d=$({fetcher} url)"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize("whole", [False, True])
+def test_remote_fetch_spec4_equals_quote_forms(
+    manager: RuleDefinitionManager, fetcher: str, whole: bool
+) -> None:
+    name = f'="{fetcher}"' if whole else "=" + fetcher[:2] + "'" + fetcher[2:] + "'"
+    assert _blocks(_get_rule(manager, "no-remote-exec"), f"{name} -s url | sh", evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        'set -- trap; "$=1" \'eval "$d"\' EXIT; d=$(FETCH url)',
+        'set -- trap; "$^1" \'eval "$d"\' EXIT; d=$(FETCH url)',
+        'set -- trap; "$~1" \'eval "$d"\' EXIT; d=$(FETCH url)',
+        "set -- trap; command $=1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "set -- trap; command $~1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "set -- trap; $==1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "set -- trap; $^^1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "set -- trap; $=~1 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "set -- trap 'eval \"$d\"' EXIT; $=@; d=$(FETCH url)",
+        "set -- trap 'eval \"$d\"' EXIT; $^@; d=$(FETCH url)",
+        "set -- trap 'eval \"$d\"' EXIT; $~*; d=$(FETCH url)",
+        "c=trap; $=c 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "c=trap; $~c 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        "c=trap; $^c 'eval \"$d\"' EXIT; d=$(FETCH url)",
+        '$"trap" \'eval "$d"\' EXIT; d=$(FETCH url)',
+    ],
+)
+def test_remote_fetch_spec4_dynamic_words(
+    manager: RuleDefinitionManager, fetcher: str, command: str
+) -> None:
+    assert _blocks(
+        _get_rule(manager, "no-remote-exec"), command.replace("FETCH", fetcher), evaluate_when=True
+    )
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "definition,invocation",
+    [
+        ("run-x()", "run-x"),
+        ("run.x()", "run.x"),
+        ("run:x()", "run:x"),
+        ("run-x ()", "run-x"),
+        ("'run'()", "run"),
+        ('"run"()', "run"),
+        (r"r\un()", "run"),
+    ],
+)
+def test_remote_fetch_spec4_function_names(
+    manager: RuleDefinitionManager, fetcher: str, definition: str, invocation: str
+) -> None:
+    command = f'{definition} {{ eval "$d"; }}; d=$({fetcher} url); {invocation}'
+    assert _blocks(_get_rule(manager, "no-remote-exec"), command, evaluate_when=True)
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        'a=(1 2); d=$(FETCH url); echo "$d"',
+        'echo "(x)"; d=$(FETCH url); echo "$d"',
+        '[ "(" = x ]; d=$(FETCH url); echo "$d"',
+        'echo =x; d=$(FETCH url); echo "$d"',
+        'echo "$1"; d=$(FETCH url); echo "$d"',
+        "echo '$1'; d=$(FETCH url); echo \"$d\"",
+        'printf \'%s\\n\' "$@"; d=$(FETCH url); jq -n "$d"',
+    ],
+)
+def test_remote_fetch_spec4_data_controls(
+    manager: RuleDefinitionManager, fetcher: str, command: str
+) -> None:
+    assert not _blocks(
+        _get_rule(manager, "no-remote-exec"), command.replace("FETCH", fetcher), evaluate_when=True
+    )
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        '"=FETCH" -s url | sh; d=$(FETCH url)',
+        r"\=FETCH -s url | sh; d=$(FETCH url)",
+        'echo =FETCH; d=$(FETCH url); echo "$d"',
+        'echo "$=1" "$^1" "$~1"; d=$(FETCH url); echo "$d"',
+    ],
+)
+def test_remote_fetch_zsh_literal_controls(
+    manager: RuleDefinitionManager, fetcher: str, command: str
+) -> None:
+    assert not _blocks(
+        _get_rule(manager, "no-remote-exec"), command.replace("FETCH", fetcher), evaluate_when=True
+    )
+
+
+@pytest.mark.parametrize("fetcher", ["curl", "wget"])
 def test_remote_fetch_spec3_ansi_literal_command(
     manager: RuleDefinitionManager, fetcher: str
 ) -> None:
