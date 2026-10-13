@@ -195,11 +195,23 @@ def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
     assert not renderer.should_run_step(step, context)
 
 
-def test_team_coordination_inbox_manager_defaults_to_sonnet_medium() -> None:
+def test_team_coordination_inbox_manager_uses_project_sonnet_medium_preset() -> None:
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / "team-coordination.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    for field in ("provider", "model", "reasoning_effort"):
+        assert inputs[f"inbox_manager_{field}"] is None
+    policy_path = Path(__file__).resolve().parents[2] / (
+        ".gobby/workflows/rules/project-operating-policy.yaml"
+    )
+    policy_rule = yaml.safe_load(policy_path.read_text())["rules"]["project-operating-policy"]
+    policy = next(
+        effect["value"]
+        for effect in policy_rule["effects"]
+        if effect.get("variable") == "project_policy"
+    )
+    inputs.update(policy["launch_defaults"]["team-coordination"])
     inputs.update(
         lane="pilot",
         seats="inbox-manager",
