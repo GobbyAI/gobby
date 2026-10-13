@@ -23,14 +23,39 @@ pub fn is_route(path: &str) -> bool {
     path == "/api/machines" || path.starts_with("/api/machines/")
 }
 
-pub async fn handle(native: NativeRoutes, request: Request<Body>) -> Response {
-    let mut router = Router::new()
+pub fn router(native: NativeRoutes) -> Router {
+    Router::new()
         .route("/api/machines", get(list))
         .route("/api/machines/{id}", get(item))
-        .with_state(native);
+        .fallback(route_not_found)
+        .method_not_allowed_fallback(method_not_allowed)
+        .with_state(native)
+}
+
+pub async fn handle(mut router: Router, request: Request<Body>) -> Response {
     match router.call(request).await {
         Ok(response) => response,
         Err(error) => match error {},
+    }
+}
+
+async fn route_not_found(headers: HeaderMap) -> Response {
+    if caller(&headers).is_none() {
+        missing_auth()
+    } else {
+        not_found()
+    }
+}
+
+async fn method_not_allowed(headers: HeaderMap) -> Response {
+    if caller(&headers).is_none() {
+        missing_auth()
+    } else {
+        error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "method_not_allowed",
+            "Method not allowed",
+        )
     }
 }
 
@@ -141,7 +166,11 @@ fn timestamp(row: &Row, column: &str) -> anyhow::Result<Option<String>> {
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {
-    crate::front_door::health::json_response(status, json!({"error": message, "code": code}), false)
+    crate::front_door::health::json_response(
+        status,
+        json!({"error": message, "code": code}),
+        status == StatusCode::SERVICE_UNAVAILABLE,
+    )
 }
 
 fn unavailable() -> Response {

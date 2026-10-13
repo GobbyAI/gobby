@@ -5069,6 +5069,22 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "terminal_host_epochs.epoch",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "terminal_host_epochs.exited_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "terminal_host_epochs.is_current",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "terminal_host_epochs.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "terminals.agent_run_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
@@ -7483,6 +7499,14 @@
       "definition": "CHECK (validation_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))"
     },
     {
+      "name": "terminal_host_epochs.terminal_host_epochs_check",
+      "definition": "CHECK (NOT is_current OR exited_at IS NULL)"
+    },
+    {
+      "name": "terminal_host_epochs.terminal_host_epochs_pkey",
+      "definition": "PRIMARY KEY (machine_id, epoch)"
+    },
+    {
       "name": "terminals.terminals_agent_run_id_fkey",
       "definition": "FOREIGN KEY (agent_run_id) REFERENCES agent_runs(id) ON DELETE SET NULL DEFERRABLE"
     },
@@ -9637,6 +9661,14 @@
     {
       "name": "tasks_search_bm25",
       "definition": "CREATE INDEX tasks_search_bm25 ON $schema.tasks USING bm25 (id, title, description) WITH (key_field=id)"
+    },
+    {
+      "name": "terminal_host_epochs_current_machine",
+      "definition": "CREATE UNIQUE INDEX terminal_host_epochs_current_machine ON $schema.terminal_host_epochs USING btree (machine_id) WHERE is_current"
+    },
+    {
+      "name": "terminal_host_epochs_pkey",
+      "definition": "CREATE UNIQUE INDEX terminal_host_epochs_pkey ON $schema.terminal_host_epochs USING btree (machine_id, epoch)"
     },
     {
       "name": "terminals_pkey",

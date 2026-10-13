@@ -14,8 +14,10 @@ from contextvars import ContextVar
 from typing import Any, Literal
 
 from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
+from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
 from gobby.hooks._normalization_shell import (
     ShellToken,
+    _contains_unexpanded_shell_reference,
     _get_command_text,
     is_fd_duplication_token,
     is_shell_input_redirection_token,
@@ -141,6 +143,50 @@ def _executable_words(tokens: list[ShellToken]) -> list[str]:
 
 def _separator(token: ShellToken) -> bool:
     return not token.quoted and token.value in {";", "|", "&", "&&", "||", "\n"}
+
+
+def _raw_executable_words(
+    command: str, tokens: list[ShellToken], spans: list[tuple[int, int]]
+) -> tuple[str, ...]:
+    return tuple(
+        _executable_words(
+            [
+                ShellToken(command[left:right], token.quoted)
+                for token, (left, right) in zip(tokens, spans, strict=True)
+            ]
+        )
+    )
+
+
+def _sed_launch(script: str, depth: int, dialect: ShellDialect) -> bool:
+    """Sed e bodies execute shell code; unresolved executable names fail closed."""
+    if _blocked(script, depth, dialect):
+        return True
+    prepared, expansions = _prepare(script, depth)
+    if any(_sed_launch(body, depth + 1, dialect) for body in expansions):
+        return True
+    scan = scan_shell_command(prepared, dialect=dialect)
+    start = 0
+    for end in range(len(scan.tokens) + 1):
+        if end < len(scan.tokens) and not _separator(scan.tokens[end]):
+            continue
+        segment = scan.tokens[start:end]
+        raw_words = _executable_words(segment)
+        words = _unwrap(raw_words)
+        if words:
+            raw_parts = _raw_executable_words(prepared, segment, scan.spans[start:end])
+            prefix = len(raw_words) - len(words)
+            literal = (
+                prefix >= 0
+                and raw_words[prefix:] == words
+                and _raw_shell_word_is_literal(raw_parts[prefix])
+            )
+            if (not literal and _contains_unexpanded_shell_reference(words[0])) or re.search(
+                r"__gobby_(?:expansion|process_input_[0-9]+)__", words[0]
+            ):
+                return True
+        start = end + 1
+    return False
 
 
 def _administration(args: list[str], provider: str) -> bool:
@@ -618,6 +664,7 @@ def _evaluate_blocked(
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
                 continue
             segment = scan.tokens[start:end]
+            segment_spans = scan.spans[start:end]
             incoming: list[ShellToken] = []
             if start > 0 and scan.tokens[start - 1].value == "|":
                 previous = start - 2
@@ -719,10 +766,27 @@ def _evaluate_blocked(
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
             if name in {"sed", "gsed"}:
-                operands = _sed_file_operands(words, None)
+                # Keep source quote provenance after literal wrappers are removed.
+                # This distinguishes a literal '$' in sed data from a dynamic program.
+                raw_parts = _raw_executable_words(prepared, segment, segment_spans)
+                prefix = len(raw_words) - len(words)
+                operands = _sed_file_operands(
+                    words,
+                    raw_parts[prefix:] if prefix >= 0 and raw_words[prefix:] == words else None,
+                )
+                # Program files are unread executable input, even for a literal path.
+                if (
+                    operands.unresolved
+                    or operands.script_files
+                    or any(
+                        re.search(r"__gobby_(?:process_input_[0-9]+|expansion)__", program)
+                        for program in operands.programs
+                    )
+                ):
+                    return True
                 executions = [sed_execution(program) for program in operands.programs]
                 if any(
-                    _blocked(script, depth + 1, dialect)
+                    _sed_launch(script, depth + 1, dialect)
                     for execution in executions
                     for script in execution.commands
                 ):

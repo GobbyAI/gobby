@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.20"
+version = "0.4.21"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -42,7 +42,7 @@ serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 num-bigint = "0.4"
 rand = "0.8"
 sha2 = "0.10"
-time = { version = "0.3", features = ["formatting", "parsing"] }
+time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring", "tls12"] }
 tower-service = "0.3"
@@ -52,6 +52,7 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 
 [dev-dependencies]
+time = { version = "0.3", features = ["parsing"] }
 assert_cmd = "2"
 tempfile = "3"
 tokio-postgres = "0.7.18"

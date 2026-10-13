@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from gobby.hooks import _normalization_canonical
+from gobby.hooks import _normalization_canonical, _normalization_compound
 from gobby.hooks._normalization_shell import ShellScan, scan_shell_command
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -398,11 +398,28 @@ def test_function_compound_context_reports_write(tmp_path: Path, command: str) -
         "f() \\\n(touch a.py); f",
         "f\\\n() (touch a.py); f",
         "f(\\\n) (touch a.py); f",
+        "f\\\n() { touch a.py; }; f",
+        "f (\\\n) { touch a.py; }; f",
         "function f\\\n() { touch a.py; }; f",
         "f\\\noo() (touch a.py); foo",
     ],
 )
 def test_function_header_continuation_reports_write(tmp_path: Path, command: str) -> None:
+    metadata = _metadata(command, tmp_path)
+    assert metadata["canonical_repo_mutation"] is True
+    assert metadata["canonical_file_paths"] == ["a.py"]
+
+
+def test_function_header_continuation_reuses_heredoc_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = "f\\\n() { touch a.py; }; f\ncat <<'EOF'\n'\\\ntext\nEOF"
+
+    def reject_rescan(subject: str) -> ShellScan:
+        assert subject != command, "function header detection rescanned the caller's command"
+        return scan_shell_command(subject)
+
+    monkeypatch.setattr(_normalization_compound, "scan_shell_command", reject_rescan)
     metadata = _metadata(command, tmp_path)
     assert metadata["canonical_repo_mutation"] is True
     assert metadata["canonical_file_paths"] == ["a.py"]
@@ -455,11 +472,9 @@ def test_nested_wrappers_with_many_functions_report_write(
     def bounded_scan(subject: str) -> ShellScan:
         nonlocal scanned_chars
         scanned_chars += len(subject)
-        # Bound real parser work, including recursive scans, independently of host load.
-        # Allow generous rescanning at eight levels; reject repeated function-body expansion.
-        assert scanned_chars <= 256 * len(command), (
-            "nested wrapper scan work exceeded linear budget"
-        )
+        # Bound cumulative input at this scanner entry point, independently of host load.
+        # Measured at e440595: 25.91x input; 32x leaves 23% headroom over that baseline.
+        assert scanned_chars <= 32 * len(command), "nested wrapper scan work exceeded linear budget"
         return scan_shell_command(subject)
 
     monkeypatch.setattr(_normalization_canonical, "scan_shell_command", bounded_scan)

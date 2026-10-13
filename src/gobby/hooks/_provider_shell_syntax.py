@@ -45,7 +45,12 @@ def _function_header(tokens: list[ShellToken], index: int) -> tuple[tuple[str, .
 
 def _group_spans(
     command: str,
-) -> tuple[dict[int, int], dict[int, tuple[int, int, int]], dict[int, tuple[tuple[str, ...], int]]]:
+) -> tuple[
+    dict[int, int],
+    dict[int, tuple[int, int, int]],
+    dict[int, tuple[tuple[str, ...], int]],
+    dict[int, int],
+]:
     """Match reserved group words only where the shell expects a command.
 
     Substitutions and heredoc payloads are already opaque scanner tokens.
@@ -55,6 +60,7 @@ def _group_spans(
     braces: dict[int, int] = {}
     compounds: dict[int, tuple[int, int, int]] = {}
     functions: dict[int, tuple[tuple[str, ...], int]] = {}
+    loop_lists: dict[int, int] = {}
     fallback_braces: set[int] = set()
     stack: list[tuple[str, int, int]] = []
     position = True
@@ -88,6 +94,15 @@ def _group_spans(
             position = True
             continue
         if position and not token.quoted:
+            if (
+                word in {"for", "foreach"}
+                and index + 2 < len(scan.tokens)
+                and scan.tokens[index + 1].value.isidentifier()
+                and scan.tokens[index + 2].value.startswith("(")
+                and not scan.tokens[index + 2].quoted
+            ):
+                begin, finish = scan.spans[index + 2]
+                loop_lists[begin] = finish
             header = _function_header(scan.tokens, index)
             if header is not None:
                 names, skip = header
@@ -122,7 +137,7 @@ def _group_spans(
     for opener, start, _ in stack:
         if opener == "{" and start not in fallback_braces:
             braces[start] = -1
-    return braces, compounds, functions
+    return braces, compounds, functions, loop_lists
 
 
 def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
@@ -136,7 +151,9 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
     quote = ""
     parameter_quotes: list[str] = []
     cases = CaseSyntax()
-    brace_ends, compounds, functions = ({}, {}, {}) if data else _group_spans(command)
+    brace_ends, compounds, functions, loop_lists = (
+        ({}, {}, {}, {}) if data else _group_spans(command)
+    )
     index = 0
     line_start = 0
     while index < len(command):
@@ -150,6 +167,13 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
         if index in functions and not quote:
             names, index = functions[index]
             output.append(" ".join(f"{name}()" for name in names))
+            continue
+        if index in loop_lists and not quote:
+            end = loop_lists[index]
+            _, substitutions = _prepare(command[index + 1 : end - 1], depth + 1)
+            expansions.extend(substitutions)
+            output.append("__gobby_loop_list__")
+            index = end
             continue
         if index in compounds and not quote:
             body, body_end, end = compounds[index]
@@ -192,6 +216,23 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append(char)
             index += 1
             continue
+        if quote not in {"'", "$"} and (
+            command.startswith("$((", index)
+            or (not data and not quote and command.startswith("((", index))
+        ):
+            # Arithmetic identifiers and semicolons are data, while command
+            # substitutions inside the expression still execute.
+            start = index + (2 if char == "$" else 1)
+            end = _substitution_end(command, start, False, depth)
+            inner_end = _substitution_end(command, start + 1, False, depth)
+            # Otherwise the shell falls back to nested subshells, even when
+            # another inner group happens to leave adjacent final parentheses.
+            if inner_end == end - 1:
+                _, substitutions = _prepare(command[start + 1 : inner_end], depth + 1, data=True)
+                expansions.extend(substitutions)
+                output.append("__gobby_arithmetic__")
+                index = end + 1
+                continue
         if quote not in {"'", "$"} and (
             command.startswith("$(", index)
             or char == "`"

@@ -150,7 +150,18 @@ Kev), OpenRouter (Jev), and Workers AI (Clef).
 - Coverage manifest (plan_hash af1af00c) regenerates after M1 and the
   leaves settle, under #24224.
 
-Outcome (2026-10-13):
+#24215 validation (2026-10-13): Plan Writer gobby#16490 ran the real
+validator in expansion mode on #24215's own M1-bearing bytes, extracted
+with `git show a4de350657:.gobby/plans/decision-classifier-path.md` to a
+scratch path: `uv run gobby plans validate <scratch path> -p
+/Users/josh/Projects/gobby --mode expansion`. It passed with no warning.
+Those bytes have SHA256 af1af00c6c361e64c769d5c0c6acfbdcf90d6f964a6134a2b3695fc960bb8947,
+and carry the M1 that Adversary gobby#16491 derived: manifest digest
+f78e50590cffd2551941507bcac1ba6c829526f162171ad65f63b47c4a8b2714 from
+source SHA256 150189448cd85a5171880b1aea5f77844ba307352ee50a8a9f864e89aebbe57b.
+16491 is asked to rerun the same check.
+
+#24253 outcome (2026-10-13):
 - The amendment was committed at 29ca7e26a7; standard validation passed.
 - Adversary gobby#16491 reached consensus with no blocking finding, and
   the V1 consensus entry was committed at b05ac770c8.

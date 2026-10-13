@@ -107,6 +107,42 @@ def _orphaned_row(manager: TerminalManager, project_id: str) -> Terminal:
     return orphaned
 
 
+@pytest.mark.usefixtures("_local_machine_identity")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("process", [None, {}, {"pgid": None}])
+async def test_reconcile_exits_pgidless_prior_epoch_orphan(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    process: dict[str, Any] | None,
+) -> None:
+    manager = TerminalManager(temp_db)
+    orphan = _orphaned_row(manager, sample_project["id"])
+    temp_db.execute(
+        "UPDATE terminals SET process = %s WHERE id = %s",
+        (Jsonb(process) if process is not None else None, orphan.id),
+    )
+    before = manager.get(orphan.id)
+    assert before is not None
+    assert before.state == "orphaned"
+    assert before.process == process
+
+    async def record_kill(host_terminal_id: str) -> None:
+        raise AssertionError(f"reconcile killed absent slot {host_terminal_id}")
+
+    await reconcile_host_inventory(
+        terminal_manager=manager,
+        machine_id=require_machine_id(),
+        host_epoch=CURRENT_EPOCH,
+        host_rows=[],
+        spawn_in_doubt_seconds=30.0,
+        run_manager=None,
+        kill=record_kill,
+    )
+    settled = manager.get(orphan.id)
+    assert settled is not None
+    assert settled.state == "exited"
+
+
 def _listed(terminal: Terminal, host_terminal_id: str, **process: Any) -> HostListRow:
     return HostListRow(
         terminal_id=terminal.id,

@@ -24,6 +24,102 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     "command",
     [
+        "((claude -p hi) )",
+        "((claude -p hi); (echo x))",
+        "echo $((claude -p hi) )",
+        "x=$((claude -p hi) )",
+        "if ((claude -p hi) ); then :; fi",
+        "while ((claude -p hi) ); do :; done",
+        "(( x )) ; ((claude -p hi) )",
+        "echo $((1)) $((claude -p hi) )",
+        "sed '1e ((claude -p hi) )' f",
+        "for i (1) claude -p hi",
+        "for i ( 1 ) claude -p hi",
+        "for i (1) { claude -p hi }",
+        "zsh -c 'for i (1) claude -p hi'",
+    ],
+)
+def test_nested_subshell_and_zsh_for_launches_are_blocked(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(( (a)+(b) ))",
+        "echo $(( (1)+(2) ))",
+        "echo $(((1)+(2)))",
+        "((claude))",
+        "echo $((claude+1))",
+        "for i (1) echo claude",
+        "for i (a b) echo $i",
+    ],
+)
+def test_arithmetic_and_zsh_for_data_stays_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set -- a; for i do claude -p hi; done",
+        "set -- a; for i do command claude -p hi; done",
+        "noglob claude -p hi",
+        "nocorrect claude -p hi",
+        "zsh -c 'noglob nocorrect claude -p hi'",
+        "foreach i (1) claude -p hi; end",
+        "foreach i ($(claude -p hi)) echo hi; end",
+        "for i ($(claude -p hi)) { echo hi; }",
+        "zsh -c 'foreach i (1) command claude -p hi; end'",
+        "sed -f <(echo '1e claude -p hi') f",
+        "sed --file=<(echo '1e claude -p hi') f",
+        'sed "1e $cmd" f',
+        "sed '1e $cmd' f",
+        "sed '1e $(echo claude) -p hi' f",
+        "sed '1e echo hi; $cmd' f",
+        "sed '1e if true; then $cmd; fi' f",
+        'sed -e "$program" f',
+        'sed --expression="$program" f',
+        'sed -f "$program_file" f',
+        "sed -f rules.sed f",
+        "sed 's/x/claude/' -f rules.sed f",
+        "for ((i=$(claude -p hi);i<1;i++)); do echo; done",
+        "for ((claude=0;claude<1;claude++)); do claude -p hi; done",
+    ],
+)
+def test_loop_precommand_and_unresolved_sed_launches_are_blocked(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "for ((claude=0;claude<1;claude++)); do echo; done",
+        "for ((claude=0;claude<1;claude++)); do echo 'claude -p hi'; done",
+        "set -- a; for i do echo 'claude -p hi'; done",
+        "foreach i (1) echo 'claude -p hi'; end",
+        "foreach i (claude) echo hi; end",
+        "foreach i ('$(claude -p hi)') echo hi; end",
+        "for i (claude) { echo hi; }",
+        "echo noglob nocorrect claude -p hi",
+        "sed 's/$cmd/claude/' f",
+        "command sed -e 's/$cmd/claude/' f",
+        'sed "s/\\$cmd/claude/" f',
+        "sed '1e echo $cmd' f",
+        r"""sed "1e '\$cmd'" f""",
+    ],
+)
+def test_loop_precommand_and_literal_sed_data_stays_allowed(command: str) -> None:
+    assert not blocks_direct_provider_launch("Bash", {"command": command})
+
+
+def test_append_assignment_blocks_provider_launch() -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": "X+=1 claude -p hi"})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         r"echo `echo \`claude\``",
         r'echo "`echo \`claude\``"',
         r"echo `echo \`echo \\\`claude\\\`\``",

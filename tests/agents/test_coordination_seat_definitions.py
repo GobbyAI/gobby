@@ -389,7 +389,7 @@ def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDat
     for row in manager.list_all():
         body = AgentDefinitionBody.model_validate(row.definition_json)
         assert body.operator_message_channels == (
-            ["gobby-telegram"] if row.name in {"reporter", "assistant"} else []
+            ["gobby-telegram"] if row.name in {"reporter", "assistant", "archivist"} else []
         ), row.name
 
 

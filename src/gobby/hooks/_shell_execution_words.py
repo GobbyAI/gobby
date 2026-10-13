@@ -1,9 +1,8 @@
 """Argument parsing for shell execution wrappers."""
 
-import re
 from collections.abc import Collection
 
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+from gobby.hooks._normalization_env import _ASSIGNMENT
 
 
 def option_word_count(
@@ -142,7 +141,19 @@ def _unwrap(words: list[str]) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     while words:
         name = words[0].rsplit("/", 1)[-1]
-        if _ASSIGNMENT.match(words[0]) or name in {
+        if (
+            name in {"for", "select"}
+            and len(words) >= 3
+            and words[1].isidentifier()
+            and (words[2] == "do" or (name == "for" and words[2] == "__gobby_loop_list__"))
+        ) or (
+            name == "foreach"
+            and len(words) >= 3
+            and words[1].isidentifier()
+            and words[2] == "__gobby_loop_list__"
+        ):
+            words = words[3:]
+        elif _ASSIGNMENT.match(words[0]) or name in {
             "!",
             "{",
             "then",
@@ -153,6 +164,8 @@ def _unwrap(words: list[str]) -> list[str]:
             "while",
             "until",
             "coproc",
+            "noglob",
+            "nocorrect",
         }:
             words = words[1:]
         elif name in {
