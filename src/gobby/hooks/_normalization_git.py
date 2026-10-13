@@ -250,7 +250,7 @@ def classify_git_mutation(
         path_checkout = any(Path(path).exists() for path in positional_paths)
         return _ShellSegmentMetadata(
             "write" if path_checkout else "execute",
-            paths=positional_paths if path_checkout and not forced else (str(root),),
+            paths=positional_paths if path_checkout else (str(root),),
             repo_mutation=forced or checked_paths,
             extra=extra,
         )

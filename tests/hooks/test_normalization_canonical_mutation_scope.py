@@ -1361,7 +1361,10 @@ def test_git_branch_checkout_resolves_worktree_scope(
     assert data.get("canonical_repo_mutation_scope_unknown") is None
 
 
-@pytest.mark.parametrize("operand", ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py"])
+@pytest.mark.parametrize(
+    "operand",
+    ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py", "-f a.py", "--force a.py", "-f HEAD a.py"],
+)
 @pytest.mark.parametrize("directory_form", ["cwd", "git_option", "cd"])
 @pytest.mark.parametrize("subdirectory", [False, True])
 def test_git_checkout_positional_operands_have_checked_scope(
@@ -1385,6 +1388,8 @@ def test_git_checkout_positional_operands_have_checked_scope(
     assert (
         str(directory / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
     )
+    if "-f" in operand.split() or "--force" in operand.split():
+        assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
 
 
 @pytest.mark.parametrize(
