@@ -1,5 +1,6 @@
 //! Hub-owned node channels and the reconnecting node client.
 pub mod channel;
+pub mod machines_api;
 pub mod registry;
 
 use channel::ChannelTiming;
@@ -13,9 +14,14 @@ pub struct HubNodes {
     pub timing: ChannelTiming,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum NativeRoutes {
-    #[default]
-    Standalone,
+    Standalone(Option<Arc<Pool>>),
     Hub(Arc<HubNodes>),
+}
+
+impl Default for NativeRoutes {
+    fn default() -> Self {
+        Self::Standalone(None)
+    }
 }

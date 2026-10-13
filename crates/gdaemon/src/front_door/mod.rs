@@ -175,6 +175,9 @@ impl FrontDoor {
         {
             return crate::nodes::channel::handle(nodes.clone(), request).await;
         }
+        if crate::nodes::machines_api::is_route(request.uri().path()) {
+            return crate::nodes::machines_api::handle(state.native.clone(), request).await;
+        }
         if ws::is_upgrade(request.headers()) {
             ws::splice(&state, request).await
         } else {

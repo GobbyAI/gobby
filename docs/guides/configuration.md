@@ -78,9 +78,9 @@ ui_port: 60889
 
 `database_url` is the sole PostgreSQL selector and the required connection
 string for Gobby's Docker-managed container. PostgreSQL is the only runtime
-hub. In `datastore_mode: local`, the host must be local or loopback. Remote mode
-requires the datastore hub's non-loopback hostname and explicit database
-credentials; it must not target localhost.
+hub. In `datastore_mode: local`, the host must be local or loopback. A remote
+node uses `hub_daemon_url` and its machine-bound API key; it holds no
+`database_url` (see [Nodes](#nodes)).
 Local mode requires `files_home`, the owner directory for file storage: replace
 the example with an absolute non-root path; `~` is rejected. Remote
 mode instead requires `hub_daemon_url`, the owning hub's HTTP origin, and rejects
@@ -265,6 +265,59 @@ The file-loading helper `expand_env_vars` in `src/gobby/config/_loading.py` supp
 document services do not call that helper. Do not transfer its syntax to these APIs.
 Public reads and YAML exports preserve secrecy through masks and `secret_set`
 metadata. The authenticated effective route resolves only the active reference.
+
+## Nodes
+
+Enroll a machine with `gobby auth login` using the
+[shared-stack client setup](./shared-stack.md). Login writes the machine-bound
+`api_key`, `api_key_id`, and pinned `hub_cert` into the node's bootstrap.
+The node selects its hub with these fields:
+
+```yaml
+datastore_mode: remote
+hub_daemon_url: "https://hub.example:60887"
+api_key: "<machine-bound key from gobby auth login>"
+api_key_id: "<key UUID from gobby auth login>"
+hub_cert: "/absolute/path/to/pinned-hub-cert.pem"
+```
+
+Run `gdaemon serve` on the node. It takes the local PID claim, launches no Python
+backend, and holds no `database_url`. Its front door relays HTTP requests to
+`hub_daemon_url`. The native `POST /api/runtime/handshake/challenge` is answered
+locally with the node's key before forwarding. WebSocket connections on the
+node's WebSocket listener target the hub's `/ws`, preserving the query string.
+An HTTPS hub requires the pinned certificate; an HTTP hub ignores `hub_cert`.
+These paths are implemented by `NodeServices::prepare` in
+`crates/gdaemon/src/state.rs` and `FrontDoor::handle` in
+`crates/gdaemon/src/front_door/mod.rs`.
+
+The node also opens an authenticated `/api/nodes/channel` WebSocket, sends its
+version in a hello, and waits for the hub's acknowledgement. It sends a Ping
+every 30 seconds and reconnects with exponential backoff from 1 to 60 seconds.
+The hub updates the machine's heartbeat at admission and at most once per
+60 seconds of Ping traffic. It rechecks key revocation every 25 seconds with a
+four-second deadline, independent of incoming frames. Both ends use a
+90-second idle deadline. Close codes in `crates/gdaemon/src/nodes/channel.rs` are:
+
+| Code | Meaning |
+| --- | --- |
+| `1008` | Invalid hello |
+| `1011` | Hello, admission, or pre-acknowledgement database check failed or timed out |
+| `4401` | API key revoked |
+| `4408` | Channel idle deadline expired |
+| `4409` | A newer channel replaced this machine's connection |
+
+With a valid API key, `GET /api/machines` returns `{"machines": [...]}` containing
+only the caller's machines, ordered by `first_seen`, then `id`.
+`GET /api/machines/{id}` returns one unwrapped machine object. Both expose `id`,
+`ref`, `hostname`, `os`, `label`, `tailscale_name`, `first_seen`, `last_seen`,
+`last_heartbeat_at`, `node_version`, and `connected`. Timestamps use RFC 3339;
+nullable values remain `null`. `connected` is true only while the hub holds an
+acknowledged live channel; standalone doors always report false. Missing key
+identity returns `401 missing_auth`; malformed, missing, or foreign machine IDs
+return `404 machine_not_found`; unavailable machine storage returns
+`503 machines_unavailable`. The implementation is
+`crates/gdaemon/src/nodes/machines_api.rs`.
 
 ## Core Runtime Sections
 
@@ -829,4 +882,4 @@ or global scope, `enabled: true`, and that secret parameters resolve
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-10-10_
+_Last verified: 2026-10-12_
