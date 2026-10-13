@@ -1270,6 +1270,46 @@ def test_argument_content_rules_match_substitution_command_text(
             True,
             id="fixspec-parameter-nested-executed-data",
         ),
+        pytest.param("bash /dev/fd/3 3< <({fetcher} url)", True, id="spec2-fd-program"),
+        pytest.param("exec 3< <({fetcher} url); bash /dev/fd/3", True, id="spec2-fd-later-program"),
+        pytest.param("source /dev/fd/3 3< <({fetcher} url)", True, id="spec2-fd-source"),
+        pytest.param("exec 3< <({fetcher} url); sh <& 3", True, id="spec2-fd-spaced-dup"),
+        pytest.param("exec 3< <({fetcher} url); sh <&3-", True, id="spec2-fd-move"),
+        pytest.param("cat /dev/fd/3 3< <({fetcher} url)", False, id="spec2-fd-data"),
+        pytest.param(
+            'printf -vd %s "$({fetcher} url)"; eval "$d"', True, id="spec2-printf-combined-v"
+        ),
+        pytest.param(r'd=$({fetcher} url); n=d; eval "\$$n"', True, id="spec2-escaped-indirection"),
+        pytest.param('d=$({fetcher} url); n=d; eval "${{(P)n}}"', True, id="spec2-zsh-indirection"),
+        pytest.param('d=$({fetcher} url); declare -n r=d; eval "$r"', True, id="spec2-nameref"),
+        pytest.param(
+            "set -a; d=$({fetcher} url); python3 -c 'import os;exec(os.environ[\"d\"])'",
+            True,
+            id="spec2-allexport-short",
+        ),
+        pytest.param(
+            "set -o allexport; d=$({fetcher} url); python3 -c 'import os;exec(os.environ[\"d\"])'",
+            True,
+            id="spec2-allexport-long",
+        ),
+        pytest.param(
+            "set -ea; d=$({fetcher} url); python3 -c pass", True, id="spec2-allexport-combined"
+        ),
+        pytest.param('set -a; d=$({fetcher} url); echo "$d"', False, id="spec2-allexport-data"),
+        pytest.param("d=$({fetcher} url); echo $[d]", True, id="spec2-legacy-arithmetic"),
+        pytest.param(
+            "set -a; set +a; d=$({fetcher} url); python3 -c pass",
+            False,
+            id="spec2-allexport-clear-short",
+        ),
+        pytest.param(
+            "set -a; set +o allexport; d=$({fetcher} url); python3 -c pass",
+            False,
+            id="spec2-allexport-clear-long",
+        ),
+        pytest.param("data=${{x:-$({fetcher} url)}}", False, id="spec2-parameter-data-assignment"),
+        pytest.param('echo "${{x:-$({fetcher} url)}}"', False, id="spec2-parameter-data-echo"),
+        pytest.param('d=$({fetcher} url); jq -n "$d"', False, id="spec2-jq-data"),
     ],
 )
 async def test_remote_fetch_capture_and_execution(

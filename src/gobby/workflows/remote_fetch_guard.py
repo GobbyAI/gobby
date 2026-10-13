@@ -92,6 +92,7 @@ class _State:
     exported: set[str] = field(default_factory=set)
     restricted: set[str] = field(default_factory=set)
     fds: set[str] = field(default_factory=set)
+    allexport: bool = False
 
     def fork(self) -> _State:
         return _State(
@@ -100,6 +101,7 @@ class _State:
             self.exported.copy(),
             self.restricted.copy(),
             self.fds.copy(),
+            self.allexport,
         )
 
 
@@ -141,6 +143,11 @@ def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
             index = end
             continue
         char = command[index]
+        # Keep fd duplication in one input redirection before the scanner splits '&'.
+        if not quote and (duplicate := re.match(r"<&\s*(\d+)-?(?=$|[\s;|&])", command[index:])):
+            out.append(f"< /dev/fd/{duplicate[1]}")
+            index += duplicate.end()
+            continue
         if char == "\\" and quote != "'":
             out.append(command[index : index + 2])
             index += 2
@@ -159,6 +166,15 @@ def _capture_words(command: str) -> tuple[str, dict[str, _Capture]]:
         opening = command.startswith("$(", index) or (
             not quote and command[index : index + 2] in {"<(", ">("}
         )
+        if quote not in {"'", "$"} and command.startswith("$[", index):
+            end = command.find("]", index + 2)
+            if end < 0:
+                raise ValueError("Unclosed shell arithmetic")
+            marker = f"{prefix}{len(captures)}__"
+            captures[marker] = _Capture(command[index + 2 : end], arithmetic=True)
+            out.append(marker)
+            index = end + 1
+            continue
         if quote not in {"'", "$"} and (opening or char == "`"):
             tick = char == "`"
             start = index + (1 if tick else 2)
@@ -208,8 +224,12 @@ def _data_consumer(words: list[str]) -> bool:
     if not words or not _standard_word(words[0]):
         return False
     name = shell_command_name(words[0])
-    if name == "printf" and "-v" in words[1:]:
-        return False
+    if name == "printf":
+        for word in words[1:]:
+            if word == "--" or not word.startswith("-"):
+                break
+            if re.match(r"^-[a-zA-Z]*v", word):
+                return False
     if name in {"python", "python3"}:
         return words[1:] == ["-m", "json.tool"]
     if name in {"tar", "unzip"}:
@@ -364,7 +384,7 @@ def _capture_result(capture: _Capture, state: _State, depth: int) -> _Result:
         return _Result(
             remote_output,
             blocked=bool(names & state.variables)
-            or (capture.body.startswith("!") and bool(state.variables)),
+            or (capture.body.startswith(("!", "(")) and bool(state.variables)),
         )
     result = _analyze(capture.body, state.fork(), depth + 1)
     if capture.arithmetic and (result.output or set(_NAME.findall(capture.body)) & state.variables):
@@ -413,6 +433,28 @@ def _stage(
     offset = len(values) - len(words)
     name = shell_command_name(words[0]) if words else ""
     remote = name in _FETCHERS
+    if name == "set":
+        for index, word in enumerate(words[1:], 1):
+            if word in {"-o", "+o"}:
+                if words[index + 1 : index + 2] == ["allexport"]:
+                    state.allexport = word == "-o"
+            elif re.fullmatch(r"[-+][a-zA-Z]+", word) and "a" in word:
+                state.allexport = word.startswith("-")
+            elif word == "--":
+                break
+    if (
+        state.variables
+        and any(word in {"eval", "source", "."} for word in protected[: max(offset + 1, 1)])
+        and any(r"\$" in raw[id(token)] for token in head)
+    ):
+        return _Result(blocked=True)
+    if name in {"declare", "typeset", "local"} and any(
+        re.fullmatch(r"-[a-zA-Z]*n[a-zA-Z]*", word) for word in words[1:]
+    ):
+        for word in words[1:]:
+            alias, separator, target = word.partition("=")
+            if separator and _NAME.fullmatch(alias) and target in state.variables:
+                state.variables.add(alias)
     if name == "export" or (
         name in _DECLARATIONS and any(word.startswith("-") and "x" in word for word in words[1:])
     ):
@@ -434,9 +476,16 @@ def _stage(
     for index, token in enumerate(tokens):
         if token.quoted:
             continue
-        if duplicate := re.fullmatch(r"(\d*)<&(\d+)", token.value):
+        duplication = token.value
+        if re.fullmatch(r"\d*<&", duplication) and index + 1 < len(tokens):
+            duplication += tokens[index + 1].value
+        if duplicate := re.fullmatch(r"(\d*)<&(\d+)-?", duplication):
             if duplicate[2] in state.fds:
-                state.fds.add(duplicate[1] or "0")
+                descriptor = duplicate[1] or "0"
+                state.fds.add(descriptor)
+                state.files.add(f"/dev/fd/{descriptor}")
+                if descriptor == "0":
+                    state.files.add("/dev/stdin")
                 stdin_remote |= not duplicate[1] or duplicate[1] == "0"
         redirection = _REDIRECTION.fullmatch(token.value)
         if not redirection or index + 1 == len(tokens):
@@ -445,7 +494,11 @@ def _stage(
         supplied = any(result.output for marker, result in results.items() if marker in operand)
         supplied |= _file_key(operand) in state.files
         if redirection[2] in {"<", "<<<", "<>"} and supplied:
-            state.fds.add(redirection[1] or "0")
+            descriptor = redirection[1] or "0"
+            state.fds.add(descriptor)
+            state.files.add(f"/dev/fd/{descriptor}")
+            if descriptor == "0":
+                state.files.add("/dev/stdin")
             stdin_remote |= not redirection[1] or redirection[1] == "0"
     if stdin_remote:
         if not _data_consumer(words):
@@ -526,6 +579,9 @@ def _stage(
             )
             if token_remote:
                 variables.add(assignment[1])
+                if state.allexport:
+                    state.exported.add(assignment[1])
+                    command_exported.add(assignment[1])
                 if index < offset:
                     command_exported.add(assignment[1])
                 elif name == "export" or (
