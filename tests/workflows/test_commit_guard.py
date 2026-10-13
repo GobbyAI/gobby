@@ -1579,6 +1579,71 @@ async def test_positional_owned_path_preserves_pattern_message_data(
     assert not invocations[0].cwd_unverified
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "export GIT_ICASE_PATHSPECS=1;",
+        "export GIT_ICASE_PATHSPECS=1 &&",
+        "set -a; GIT_ICASE_PATHSPECS=1;",
+        "declare -x GIT_ICASE_PATHSPECS=1;",
+    ],
+)
+async def test_exported_pathspec_mode_refuses_foreign_capture(
+    guard_harness: GuardHarness, setup: str
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    command = f"{setup} git commit --only -m x -- FOREIGN.TXT"
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    subprocess.run(["bash", "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
+    assert response.decision == "block"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "export GIT_EDITOR=true; git commit -m x -- owned.txt",
+        "GIT_AUTHOR_DATE=2026-01-01T00:00:00 git commit -m x owned.txt",
+    ],
+)
+async def test_unrelated_git_environment_preserves_owned_only_commit(
+    guard_harness: GuardHarness, command: str
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    (guard_harness.repo / "owned.txt").write_text("owned change\n", encoding="utf-8")
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    assert response.decision == "allow"
+    subprocess.run(["bash", "-c", command], cwd=guard_harness.repo, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "owned.txt"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", ["inline", "exported", "options", "chdir"])
+async def test_linked_worktree_selector_refuses_foreign_capture(
+    guard_harness: GuardHarness, tmp_path: Path, selection: str
+) -> None:
+    linked = tmp_path / "linked"
+    _git(guard_harness.repo, "worktree", "add", "--detach", str(linked))
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    root = shlex.quote(str(guard_harness.repo))
+    git_dir = shlex.quote(str(guard_harness.repo / ".git"))
+    prefixes = {
+        "inline": f"GIT_DIR={git_dir} GIT_WORK_TREE={root} git",
+        "exported": f"export GIT_DIR={git_dir} GIT_WORK_TREE={root}; git",
+        "options": f"git --git-dir={git_dir} --work-tree={root}",
+        "chdir": f"git -C {root}",
+    }
+    command = f"{prefixes[selection]} commit -a -m x"
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(command, workdir=linked)
+    )
+    subprocess.run(["bash", "-c", command], cwd=linked, capture_output=True, check=True)
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
+    assert response.decision == "block"
+
+
 @pytest.mark.parametrize(
     "option",
     [

@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.hooks._normalization_git import GIT_SELECTOR_ENV_VARS, git_selector_setup
 from gobby.hooks._normalization_segments import _split_shell_segments
 from gobby.hooks._normalization_shell import (
     _MAX_SUBSTITUTION_DEPTH,
@@ -77,6 +78,7 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
         invocations.append(GitCommitInvocation(pathspecs=(), cwd_unverified=True))
     shell_chdir: str | None = None
     conditional_chdir = False
+    selector_set = False
     segments = _split_shell_segments(_without_shell_comments(shell_tokens))
     for segment_index, segment in enumerate(segments):
         tokens = shell_token_values(
@@ -84,6 +86,7 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
         )
         if not tokens:
             continue
+        selector_set |= git_selector_setup(tokens, _strip_shell_wrappers(tokens))
         next_separator = (
             segments[segment_index + 1].separator_before
             if segment_index + 1 < len(segments)
@@ -154,16 +157,11 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
                     include_staged=include_staged,
                     all_tracked=all_tracked,
                     cwd_unverified=cwd_unverified
+                    or selector_set
                     or arguments_unverified
                     or "--icase-pathspecs" in tokens[index + 1 : commit_index]
                     or any(
-                        word.partition("=")[0]
-                        in {
-                            "GIT_ICASE_PATHSPECS",
-                            "GIT_GLOB_PATHSPECS",
-                            "GIT_NOGLOB_PATHSPECS",
-                            "GIT_LITERAL_PATHSPECS",
-                        }
+                        word.partition("=")[0].removesuffix("+") in GIT_SELECTOR_ENV_VARS
                         for word in tokens[:index]
                         if "=" in word
                     )
