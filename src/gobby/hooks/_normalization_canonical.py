@@ -98,6 +98,7 @@ from gobby.hooks._normalization_shell import (
     strip_input_redirections,
     strip_output_redirections,
 )
+from gobby.hooks._normalization_shell_stdin import shell_stdin_arguments
 from gobby.hooks._path_scope import (
     resolve_tool_path,
 )
@@ -487,18 +488,21 @@ def _classify_shell_command(
                 )
             continue
 
+        stdin_tokens, stdin_parts, stdin_raw = shell_stdin_arguments(
+            segment, segments[index - 1] if index else None, scan, raw_by_token
+        )
         metadata.append(
             replace(
                 _classify_shell_segment(
-                    segment.tokens,
-                    parts,
+                    stdin_tokens,
+                    stdin_parts,
                     directory.redirect_cwd(),
                     depth=depth,
                     piped_stdin=segment.separator_before == "|",
                     base_cwd=segment_base,
                     invocation_cwd=segment_cwd,
                     search_base_cwd=base_cwd,
-                    raw_by_token=raw_by_token,
+                    raw_by_token=stdin_raw,
                 ),
                 shell_words=tuple(raw_parts),
                 shell_raw_words=source_parts,
