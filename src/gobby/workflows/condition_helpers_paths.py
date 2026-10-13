@@ -60,10 +60,16 @@ def write_paths_match(
     """True when every resolved absolute write path fullmatches `pattern`.
 
     A leading `~/` anchors the pattern at the current user's resolved home, so
-    shipped rules never name one machine's home directory.
+    shipped rules never name one machine's home directory. A leading `./`
+    anchors it at the resolved project root, independently of the tool cwd.
     """
     if pattern.startswith("~/"):
         pattern = re.escape(str(Path.home().resolve())) + pattern[1:]
+    elif pattern.startswith("./"):
+        root = current_project_root(event_data or {})
+        if root is None:
+            return False
+        pattern = re.escape(str(root)) + pattern[1:]
     paths = _resolved_write_paths(event_data, tool_input)
     return bool(paths) and all(re.fullmatch(pattern, str(path)) for path in paths)
 
