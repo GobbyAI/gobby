@@ -18,6 +18,13 @@ from gobby.agents.trust import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_claude_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_CUSTOM_OAUTH_URL", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+
 class TestEncodePath:
     @pytest.mark.parametrize(
         "directory,expected",
