@@ -2386,3 +2386,8 @@ available with the configured model. With the server stopped, a
     reason, and the research note records the exact requests. The
     llama.cpp `/v1/systemone` documentation is cited as an upstream
     reference, and every runtime surface stays unverified.
+- 2026-10-12: Consensus with Plan Adversary gobby#16491 on d618279, which
+  rechecked LM-F1 and LM-F2 as resolved and found no remaining finding.
+  The upstream references keep the runtime uncertainty and every
+  activation gate. The Orchestrator gobby#15977's join ruling stands, and
+  the routing of all seven deliverables is unchanged.
