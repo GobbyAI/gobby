@@ -15,3 +15,5 @@ rules:
         reason: >-
           Shell write blocked because Gobby cannot resolve its target scope. Use literal path
           operands or a structured Write/Edit tool, then retry.
+          For source/. commands, use uv run or run the script directly by a literal script path
+          under an active task claim.
