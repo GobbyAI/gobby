@@ -323,7 +323,7 @@ begin. The naming switch and the Python retirement follow it.
 
 Edges: `S4` ← `S1`; `S4.1b` ← `S2.7 node` #24148, `S2.11 node` #24150,
 S2.8 M1 #23205, #21549 machine-scoped terminals;
-`S4.2` ← `S1.2`; `S4.4` ← `S1.4`.
+`S4.2` ← `S1.2`, #24090; `S4.4` ← `S1.4`.
 
 **Story B is testable when Stage 1, S4.2, and S4.1b close.** S4.2's mode gate
 landed right after S1.2 (#23111), so the first hub-node pair test in S1.4 has a
