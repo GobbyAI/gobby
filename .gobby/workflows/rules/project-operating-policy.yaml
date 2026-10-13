@@ -27,9 +27,9 @@ rules:
           - Integration branch: `0.5.0`. Authorized pushes run `git push origin <sha>:refs/heads/0.5.0`.
           - Lanes, in priority order. Each lane's open epic carries the `lane` label; `gobby-tasks:list_tasks(label="lane")` is the current list.
             1. Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed.
-            2. Rust front door, Stage 1 (#21543), except #21555, which is Lane 3. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
+            2. 1.0 Rust port (#21542): the Stage 1 front door (#21543), then Stage 2 and the multi-machine path, except #21555, which is Lane 3, and hub mode (#21575), which is Lane 5. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed.
             3. API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed.
-            4. Rust (#22801). Staffed by its Lane Manager and one developer.
+            4. Rust (#22801): non-1.0 Rust work, including Graphify parity (#22948) and the Jev decision classifier it needs. Staffed by its Lane Manager and one developer.
             5. Hub mode (#21575). Staffed by its Lane Manager, one developer and one code reviewer; implementation waits for the operator's plan approval.
             6. Everything else (#23378): backlog consolidation and triage. The Consolidator proposes and the Orchestrator applies every task edit. Never sweep the #22978 triage subtree or plan-expanded epics.
             7. Stability and restart reliability (#24093).
