@@ -936,6 +936,15 @@ def _contains_unexpanded_shell_reference(path: str) -> bool:
     return _UNEXPANDED_SHELL_REFERENCE.search(path) is not None
 
 
+def is_dynamic_program_word(word: str) -> bool:
+    """Recognize opaque command names while excluding compound comparisons."""
+    return (
+        not word.startswith("(")
+        and not re.match(r"\[\[\s", word)
+        and (_contains_unexpanded_shell_reference(word) or "`" in word)
+    )
+
+
 def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
     """Return literal-looking paths read through stdin redirection."""
     paths: list[str] = []

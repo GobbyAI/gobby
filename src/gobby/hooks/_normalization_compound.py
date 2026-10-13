@@ -180,7 +180,9 @@ def command_substitution_bodies(
                 end = _substitution_end(text, start, char == "`", depth + 1)
                 body = text[start:end]
                 bodies.append((index, backtick_body(body) if char == "`" else body))
-                masked[start:end] = " " * (end - start)
+                # Keep an unquoted substitution inside one shell word. Spaces
+                # would split assignment prefixes into `x=$(` and `)` tokens.
+                masked[start:end] = "_" * (end - start)
                 index = end + 1
                 continue
             if char in "\"'":

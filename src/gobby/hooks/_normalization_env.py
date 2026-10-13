@@ -67,7 +67,7 @@ def _utility_command(parts: list[str]) -> list[str]:
     if not parts:
         return parts
     name = parts[0].rsplit("/", 1)[-1]
-    if name not in {"nohup", "timeout", "nice", "time"}:
+    if name not in {"nohup", "timeout", "nice", "time", "stdbuf"}:
         return parts
     index = 1
     while index < len(parts):
@@ -95,6 +95,14 @@ def _utility_command(parts: list[str]) -> list[str]:
             re.fullmatch(r"[+-]\d+", word)
             or re.fullmatch(r"-n[+-]?\d+", word)
             or re.fullmatch(r"--adjustment=[+-]?\d+", word)
+        ):
+            index += 1
+        elif name == "stdbuf" and word in {"-i", "-o", "-e", "--input", "--output", "--error"}:
+            if index + 1 >= len(parts):
+                return [UNRESOLVED_WRAPPER]
+            index += 2
+        elif name == "stdbuf" and word.startswith(
+            ("-i", "-o", "-e", "--input=", "--output=", "--error=")
         ):
             index += 1
         elif word.startswith("-"):

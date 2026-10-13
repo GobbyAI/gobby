@@ -1,6 +1,5 @@
 """Canonical tool metadata inference."""
 
-import re
 from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
@@ -69,6 +68,7 @@ from gobby.hooks._normalization_redirects import (
     extract_redirection_paths,
     has_mutating_output_redirection,
     redirect_source_read_metadata,
+    source_output_destinations,
     tee_output_channels,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
@@ -92,6 +92,7 @@ from gobby.hooks._normalization_shell import (
     _shell_positional_args,
     _strip_shell_wrappers,
     has_shell_input_redirection,
+    is_dynamic_program_word,
     scan_shell_command,
     shell_token_values,
     strip_input_redirections,
@@ -107,6 +108,7 @@ from gobby.hooks._python_pipeline_classifier import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import (
+    MAX_NARROW_SOURCE_LINES,
     count_option_byte_count,
     count_option_line_count,
     find_navigation_metadata,
@@ -434,20 +436,39 @@ def _classify_shell_command(
             )
             continue
 
-        if segment.separator_before == "|" and parts[0].rsplit("/", 1)[-1] == "tee":
-            channels = tee_output_channels(parts[1:], segment.tokens)
-            if channels:
-                _mark_pipeline_read_escape(
-                    metadata, segments, segment_metadata_positions, index, channels
-                )
-
-        if segment.separator_before == "|" and _is_read_only_pipeline_stage(
+        pipeline_filter = segment.separator_before == "|" and _is_read_only_pipeline_stage(
             segment.tokens,
             parts,
             raw_parts=source_parts[-len(parts) :],
             cwd=segment_cwd,
             base_cwd=segment_base,
-        ):
+        )
+        final_pipeline_stage = (
+            index + 1 >= len(segments) or segments[index + 1].separator_before != "|"
+        )
+        output_bound = _pipeline_filter_output_line_bound(parts) if pipeline_filter else None
+        if segment.separator_before == "|":
+            channels: set[str] = set()
+            # A final bounded filter exposes only its limited output, even on stderr.
+            if not (
+                final_pipeline_stage
+                and output_bound is not None
+                and output_bound <= MAX_NARROW_SOURCE_LINES
+            ):
+                channels = {source_output_destinations(segment.tokens)["stdout"]} - {
+                    "stdout",
+                    "file",
+                    "closed",
+                    "null",
+                }
+            if parts[0].rsplit("/", 1)[-1] == "tee":
+                channels |= tee_output_channels(parts[1:], arm_tokens)
+            if channels:
+                _mark_pipeline_read_escape(
+                    metadata, segments, segment_metadata_positions, index, channels
+                )
+
+        if pipeline_filter:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
@@ -456,13 +477,13 @@ def _classify_shell_command(
                     shell_raw_words=source_parts,
                 )
             )
-            if index + 1 >= len(segments) or segments[index + 1].separator_before != "|":
+            if final_pipeline_stage:
                 _bound_pipeline_reads(
                     metadata,
                     segments,
                     segment_metadata_positions,
                     index,
-                    _pipeline_filter_output_line_bound(parts),
+                    output_bound,
                 )
             continue
 
@@ -784,12 +805,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     unwrapped = _unwrap(parts)
-    if (
-        unwrapped
-        and not unwrapped[0].startswith("((")
-        and not re.match(r"\[\[\s", unwrapped[0])
-        and (_contains_unexpanded_shell_reference(unwrapped[0]) or "`" in unwrapped[0])
-    ):
+    if unwrapped and is_dynamic_program_word(unwrapped[0]):
         return _ShellSegmentMetadata(
             "execute", confidence="low", extra={"canonical_script_execution": True}
         )
@@ -925,7 +941,7 @@ def _classify_shell_segment_without_redirection(
     if cmd in {"rg", "grep", "git"}:
         return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
 
-    if cmd == "xargs" and parts[1:2] == ["cat"]:
+    if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {
             "canonical_code_navigation_action": "read",

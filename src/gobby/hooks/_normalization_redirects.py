@@ -6,15 +6,15 @@ from typing import Any
 
 from gobby.hooks._normalization_paths import _append_unique_path
 from gobby.hooks._normalization_shell import (
-    _COMMAND_SUBSTITUTION,
     _FD_OUTPUT_REDIRECTION_RE,
     _SHELL_OUTPUT_REDIRECTION_TOKENS,
     ShellToken,
     _contains_unexpanded_shell_reference,
     _looks_path_target,
-    is_fd_duplication_token,
+    _strip_shell_wrappers,
     is_shell_output_redirection_token,
     is_unquoted_shell_control_token,
+    scan_shell_command,
 )
 
 # Output sinks that never mutate files; redirecting to them is not a write.
@@ -79,6 +79,8 @@ def source_output_destinations(tokens: list[ShellToken]) -> dict[str, str]:
             destination = descriptors.get("2", "unknown")
         elif target == "/dev/tty":
             destination = "tty"
+        elif target == "/dev/null":
+            destination = "null"
         elif device := re.fullmatch(r"(?:/dev/fd/|/proc/self/fd/)(\d+)", target):
             destination = descriptors.get(device[1].lstrip("0") or "0", "unknown")
         elif (
@@ -96,7 +98,7 @@ def source_output_destinations(tokens: list[ShellToken]) -> dict[str, str]:
         descriptors[fd] = destination
         if both:
             descriptors["2"] = destination
-    return {"stdout": descriptors["1"], "stderr": descriptors["2"]}
+    return {**descriptors, "stdout": descriptors["1"], "stderr": descriptors["2"]}
 
 
 def tee_output_channels(paths: list[str], tokens: list[ShellToken]) -> set[str]:
@@ -108,10 +110,36 @@ def tee_output_channels(paths: list[str], tokens: list[ShellToken]) -> set[str]:
             channels.add("tty")
         elif path == "/dev/stderr":
             channels.add(destinations["stderr"])
+        elif path == "/dev/stdout":
+            channels.add(destinations["stdout"])
         elif match := re.fullmatch(r"(?:/dev/fd/|/proc/self/fd/)(\d+)", path):
-            if (match[1].lstrip("0") or "0") == "2":
-                channels.add(destinations["stderr"])
-    return channels - {"file", "closed"}
+            channels.add(destinations.get(match[1].lstrip("0") or "0", "unknown"))
+    for index, token in enumerate(tokens[:-1]):
+        following = tokens[index + 1]
+        if (
+            not token.quoted
+            and token.value == ">"
+            and not following.quoted
+            and following.value.startswith("(")
+        ):
+            try:
+                body = scan_shell_command(following.value[1:-1]).tokens
+                words = _strip_shell_wrappers([part.value for part in body])
+                # A single cat forwards stdin to its resolved stdout. Compound
+                # consumers and other programs may expose it by another route.
+                opaque = (
+                    not words
+                    or words[0].rsplit("/", 1)[-1] != "cat"
+                    or any(
+                        not part.quoted and part.value in {";", "&&", "||", "|", "&", "\n"}
+                        for part in body
+                    )
+                )
+                channel = "unknown" if opaque else source_output_destinations(body)["stdout"]
+                channels.add(destinations.get(channel, channel))
+            except ValueError:
+                channels.add("unknown")
+    return channels - {"stdout", "file", "closed", "null"}
 
 
 def redirect_source_read_metadata(
@@ -129,7 +157,7 @@ def redirect_source_read_metadata(
         channels = {
             destinations.get(channel, channel)
             for channel in scope.get("_canonical_source_read_output_channels", ("stdout",))
-        } - {"file", "closed"}
+        } - {"file", "closed", "null"}
         if not channels:
             return None
         return {**scope, "_canonical_source_read_output_channels": sorted(channels)}
@@ -193,6 +221,8 @@ def redirect_source_read_metadata(
                     ("canonical_code_navigation_", "canonical_source_", "canonical_narrow_")
                 ):
                     result.pop(key)
+            # A discarded read must not be reconstructed by the read-kind fallback.
+            result["canonical_code_navigation_broad"] = False
         else:
             result.update(mapped)
     return result
@@ -217,50 +247,6 @@ def has_mutating_output_redirection(tokens: list[ShellToken]) -> bool:
         if not is_benign_redirect_target(candidate.value):
             return True
     return False
-
-
-def redirects_stdout_to_file(tokens: list[ShellToken]) -> bool:
-    """Prove stdout's final destination is a literal, non-benign file."""
-    file_redirected = False
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        index += 1
-        if is_fd_duplication_token(token):
-            fd = re.match(r"\d+", token.value)
-            target_fd = (
-                fd.group().lstrip("0") if fd else ("1" if token.value.startswith(">") else "0")
-            )
-            if target_fd == "1":
-                file_redirected = False
-            continue
-        if token.quoted:
-            continue
-        target = tokens[index] if index < len(tokens) else None
-        fd_redirect = re.fullmatch(r"(\d+)(?:<|>|>>)", token.value)
-        if fd_redirect and fd_redirect.group(1).lstrip("0") == "1" and target is not None:
-            if not target.quoted and target.value == "&":
-                file_redirected = False
-                continue
-        if token.value not in {">", ">>", "1>", "1>>", "&>", "&>>", ">&", "1>&", ">|"}:
-            continue
-        if target is None:
-            file_redirected = False
-            continue
-        if token.value in {">&", "1>&"}:
-            if re.fullmatch(r"\d+|-", target.value):
-                file_redirected = False
-                index += 1
-                continue
-        file_redirected = (
-            not is_unquoted_shell_control_token(target)
-            and not is_benign_redirect_target(target.value)
-            and not target.value.startswith(("/dev/fd/", "/proc/self/fd/"))
-            and not _contains_unexpanded_shell_reference(target.value)
-            and not _COMMAND_SUBSTITUTION.search(target.value)
-            and (target.quoted or not any(char in target.value for char in "~*?[{"))
-        )
-    return file_redirected
 
 
 def extract_redirection_paths(tokens: list[ShellToken]) -> list[str]:
