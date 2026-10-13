@@ -236,7 +236,8 @@ def classify_git_mutation(
         if forced:
             extra["canonical_git_force_checkout_roots"] = [str(root)]
         # A positional checkout operand can be either a revision or a path,
-        # even a tracked file deleted on disk. Check every operand rather than guess.
+        # even a tracked file deleted on disk. Retain checkout ownership checks
+        # when only the containing worktree root can be proven.
         checked_paths = (
             operation == "checkout"
             and bool(operands)
@@ -245,11 +246,11 @@ def classify_git_mutation(
         )
         if forced or checked_paths:
             extra["canonical_git_checkout_mutation"] = True
+        positional_paths = tuple(_rebase_shell_paths(operands, git_cwd)) if checked_paths else ()
+        path_checkout = any(Path(path).exists() for path in positional_paths)
         return _ShellSegmentMetadata(
-            "execute",
-            paths=tuple(_rebase_shell_paths(operands, git_cwd))
-            if checked_paths and not forced
-            else (str(root),),
+            "write" if path_checkout else "execute",
+            paths=positional_paths if path_checkout and not forced else (str(root),),
             repo_mutation=forced or checked_paths,
             extra=extra,
         )

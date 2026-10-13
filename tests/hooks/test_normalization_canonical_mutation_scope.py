@@ -1355,23 +1355,35 @@ def test_git_branch_checkout_resolves_worktree_scope(
     data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
 
     assert data["canonical_tool_kind"] == "execute"
-    expected_scope = target / "feature" if operation == "checkout feature" else target
-    if operation == "checkout feature" and subdirectory:
-        expected_scope = nested / "feature"
-    assert data["canonical_file_paths"] == [str(expected_scope)]
+    assert data["canonical_file_paths"] == [str(target)]
     assert data["canonical_edit_file_paths"] == []
     assert not data.get("canonical_write_file_paths")
     assert data.get("canonical_repo_mutation_scope_unknown") is None
 
 
 @pytest.mark.parametrize("operand", ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py"])
-def test_git_checkout_positional_operands_have_checked_scope(tmp_path: Path, operand: str) -> None:
+@pytest.mark.parametrize("directory_form", ["cwd", "git_option", "cd"])
+@pytest.mark.parametrize("subdirectory", [False, True])
+def test_git_checkout_positional_operands_have_checked_scope(
+    tmp_path: Path, operand: str, directory_form: str, subdirectory: bool
+) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    directory = tmp_path / "sub" if subdirectory else tmp_path
+    directory.mkdir(exist_ok=True)
+    (directory / "a.py").write_text("value = 1\n")
+    prefix = {
+        "cwd": "git",
+        "git_option": f"git -C {directory}",
+        "cd": f"cd {directory} && git",
+    }[directory_form]
+    data = _invocation_metadata(
+        f"{prefix} checkout {operand}", tool_cwd=directory, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_edit_file_paths"] == []
     assert (
-        str(tmp_path / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
+        str(directory / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
     )
 
 

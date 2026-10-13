@@ -1125,8 +1125,6 @@ class TestToolHandlerEdgeCases:
         assert bool(event.data.get("canonical_repo_mutation")) is (guarded_scope or copy_file)
         copied = str(target / "copied.py")
         scope = target if operation == "revert --quit" else tmp_path
-        if operation == "checkout feature":
-            scope = target / "feature"
         scope_paths = [str(scope)] if guarded_scope or not copy_file else []
         assert event.data["canonical_file_paths"] == (
             scope_paths + [copied] if copy_file else scope_paths
