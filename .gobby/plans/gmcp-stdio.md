@@ -1416,6 +1416,20 @@ root is #23275. Drafting creates no tasks, labels, or edges.
   - New acceptance items left the M1 manifest stale. The whole
     `## M1 Task Manifest` block is withdrawn; its bytes stay in Git history at
     `208d6318fe`. The Adversary derives a fresh M1 after delta review.
+- 2026-10-13: Renewed consensus between the Plan Writer gobby#16770 and the
+  Plan Adversary gobby#16491 on the refresh at `86ab1cd19d`.
+  - The Orchestrator gobby#15977 moved the delta review to gobby#16491,
+    because gobby#16771 could not be resumed.
+  - The Adversary raised no findings. It verified the following:
+    - the D4 withdrawal, and 1.5.5's node fixtures and credential resolution;
+    - the new revival, envelope, reference-audit, parity-ledger, guidance,
+      tmux, and sandbox consumers;
+    - shared-file ordering;
+    - the deferral owners and D2's Finalization;
+    - every leaf's acceptance, atomicity, and proportionality.
+  - The leaf routing from the previous M1 is kept. The Adversary derives and
+    applies a fresh M1 from this commit.
+  - No disagreement went to the Orchestrator.
 
 ## V2: Verification
 `kind: verification`
