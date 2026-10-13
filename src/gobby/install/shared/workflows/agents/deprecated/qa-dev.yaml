@@ -43,7 +43,7 @@ prompts:
     - Finish by calling end_agent_run so the daemon records the run as complete.
     - Run Python through `uv run`; the system Python lacks the project deps.
     - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
-provider: claude
+provider: inherit
 checkout_mode: clone
 
 workflows:

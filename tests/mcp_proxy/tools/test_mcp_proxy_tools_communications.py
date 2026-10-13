@@ -98,7 +98,7 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
     ("permitted", "delivery_status"), [(True, "sent"), (False, "sent"), (True, "failed")]
 )
 @pytest.mark.parametrize("tool_name", ["send_operator_message", "send_operator_attachment"])
-async def test_send_operator_message_requires_installed_channel_grant(
+async def test_send_operator_message_requires_installed_operator_grant(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     mock_manager: MagicMock,
@@ -117,7 +117,7 @@ async def test_send_operator_message_requires_installed_channel_grant(
             "name": agent_type,
             "prompts": {"agent": "Report status."},
             "workflows": {"rule_selectors": {"include": []}},
-            "operator_message_channels": ["gobby-telegram"] if permitted else [],
+            "operator_messaging": permitted,
         },
         source="custom",
     )
@@ -150,16 +150,16 @@ async def test_send_operator_message_requires_installed_channel_grant(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
     ):
         if tool_name == "send_operator_attachment":
-            result = await handler(channel="gobby-telegram", file_path=str(report))
+            result = await handler(channel="operator-status", file_path=str(report))
         else:
-            result = await handler(channel="gobby-telegram", content="**Systems nominal**")
+            result = await handler(channel="operator-status", content="**Systems nominal**")
 
     if permitted:
         if tool_name == "send_operator_attachment":
             assert result["success"] is (delivery_status == "sent")
-            mock_manager.resolve_operator_conversation.assert_called_once_with("gobby-telegram")
+            mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
             mock_manager.send_attachment.assert_awaited_once_with(
-                channel_name="gobby-telegram",
+                channel_name="operator-status",
                 file_path=report.resolve(),
                 filename=None,
                 content_type="text/markdown",
@@ -174,9 +174,9 @@ async def test_send_operator_message_requires_installed_channel_grant(
             "message_id": "delivered",
             "error": delivery_error,
         }
-        mock_manager.resolve_operator_conversation.assert_called_once_with("gobby-telegram")
+        mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
         mock_manager.send_message.assert_awaited_once_with(
-            channel_name="gobby-telegram",
+            channel_name="operator-status",
             content="**Systems nominal**",
             session_id=caller.id,
             metadata={

@@ -41,39 +41,39 @@ inputs:
     description: "Live operator session ref for readiness, blockers and unassigned waits"
   archivist_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   archivist_model:
     type: string
-    default: claude-opus-5-5
+    default: null
     description: "Seat model; override to change the default"
   archivist_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
   log_monitor_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   log_monitor_model:
     type: string
-    default: claude-sonnet-5-5
+    default: null
     description: "Seat model; override to change the default"
   log_monitor_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
   metrics_monitor_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   metrics_monitor_model:
     type: string
-    default: claude-sonnet-5-5
+    default: null
     description: "Seat model; override to change the default"
   metrics_monitor_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
   metrics_monitor_log_monitor:
     type: string
@@ -81,52 +81,52 @@ inputs:
     description: "Live Log Monitor session ref; when omitted the metrics seat requests it from report_to"
   release_manager_provider:
     type: string
-    default: codex
+    default: null
     description: "Seat provider; override to change the default"
   release_manager_model:
     type: string
-    default: gpt-6.1-sol
+    default: null
     description: "Seat model; override to change the default"
   release_manager_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
   inbox_manager_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   inbox_manager_model:
     type: string
-    default: claude-opus-5-5
+    default: null
     description: "Seat model; override to change the default"
   inbox_manager_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
   recovery_steward_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   recovery_steward_model:
     type: string
-    default: claude-opus-5-5
+    default: null
     description: "Seat model; override to change the default"
   recovery_steward_reasoning_effort:
     type: string
-    default: high
+    default: null
     description: "Seat reasoning effort; override to change the default"
 
   consolidator_provider:
     type: string
-    default: claude
+    default: null
     description: "Seat provider; override to change the default"
   consolidator_model:
     type: string
-    default: claude-opus-5-5
+    default: null
     description: "Seat model; override to change the default"
   consolidator_reasoning_effort:
     type: string
-    default: medium
+    default: null
     description: "Seat reasoning effort; override to change the default"
 
 steps:

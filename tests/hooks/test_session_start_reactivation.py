@@ -37,6 +37,43 @@ from tests.mcp_proxy.tools.test_apply_agent_definition import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("spawned", [False, True])
+def test_instruction_injection_renders_launch_assignment_and_project_policy(
+    temp_db: HubDatabase, session_id: str, spawned: bool
+) -> None:
+    from gobby.hooks.event_handlers._agent import AgentEventHandlerMixin
+
+    prompt = "Lane {{ seat_context.lane }} targets {{ project_policy.integration_branch }}."
+    body = make_agent_definition(
+        name="assigned-seat",
+        surfaces=["persona", "spawn"],
+        prompts={"persona": prompt, "agent": prompt},
+    )
+    AgentDefinitionManager(temp_db).create(name=body.name, definition_json=body.model_dump_json())
+    SessionVariableManager(temp_db).merge_variables(
+        session_id,
+        {
+            "_agent_type": body.name,
+            "_agent_identity_reinject": True,
+            "is_spawned_agent": spawned,
+            "seat_context": {"lane": "custom"},
+            "project_policy": {"integration_branch": "integration"},
+        },
+    )
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=session_id,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+    )
+    response = HookResponse(decision="allow")
+    AgentEventHandlerMixin._inject_agent_instructions_if_needed(
+        activation_handler(temp_db), event, session_id, response
+    )
+    assert response.context == "Lane custom targets integration."
+
+
 @pytest.fixture
 def session_id(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:
     return register_session(temp_db, monkeypatch)

@@ -24,6 +24,14 @@ inputs:
     type: string
     required: true
     description: "Lane for the tab and seat titles; the lane manager, pane and worktree are inferred from it"
+  lane_epic:
+    type: string
+    default: null
+    description: "Project lane epic assignment, supplied by the coordinator"
+  first_job:
+    type: string
+    default: null
+    description: "Initial task or sweep assignment; omitted means wait for assignment"
   workspace:
     type: string
     default: null
@@ -46,40 +54,40 @@ inputs:
     description: "Live report target override; otherwise the lane manager recorded for the lane"
   developer_provider:
     type: string
-    default: codex
+    default: null
   developer_model:
     type: string
-    default: gpt-6.1-sol
+    default: null
   developer_reasoning_effort:
     type: string
-    default: medium
+    default: null
   reviewer_provider:
     type: string
-    default: claude
+    default: null
   reviewer_model:
     type: string
-    default: claude-opus-5-5
+    default: null
   reviewer_reasoning_effort:
     type: string
-    default: xhigh
+    default: null
   researcher_provider:
     type: string
-    default: codex
+    default: null
   researcher_model:
     type: string
-    default: gpt-6.1-sol
+    default: null
   researcher_reasoning_effort:
     type: string
-    default: medium
+    default: null
   manager_provider:
     type: string
-    default: claude
+    default: null
   manager_model:
     type: string
-    default: claude-sonnet-5-5
+    default: null
   manager_reasoning_effort:
     type: string
-    default: medium
+    default: null
 
 steps:
   - id: guard
@@ -117,6 +125,11 @@ steps:
       tool: spawn_agent
       arguments:
         agent: developer
+        seat_context:
+          lane: "${{ inputs.lane }}"
+          lane_epic: "${{ inputs.lane_epic }}"
+          worktree: "${{ steps.guard.output.worktree }}"
+          first_job: "${{ inputs.first_job }}"
         title: "${{ 'Lane ' + inputs.lane + ' developer' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.developer_provider }}"
@@ -139,6 +152,11 @@ steps:
       tool: spawn_agent
       arguments:
         agent: code-reviewer
+        seat_context:
+          lane: "${{ inputs.lane }}"
+          lane_epic: "${{ inputs.lane_epic }}"
+          worktree: "${{ steps.guard.output.worktree }}"
+          first_job: "${{ inputs.first_job }}"
         title: "${{ 'Lane ' + inputs.lane + ' code reviewer' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.reviewer_provider }}"
@@ -161,6 +179,11 @@ steps:
       tool: spawn_agent
       arguments:
         agent: researcher
+        seat_context:
+          lane: "${{ inputs.lane }}"
+          lane_epic: "${{ inputs.lane_epic }}"
+          worktree: "${{ steps.guard.output.worktree }}"
+          first_job: "${{ inputs.first_job }}"
         title: "${{ 'Lane ' + inputs.lane + ' researcher' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.researcher_provider }}"
@@ -183,6 +206,11 @@ steps:
       tool: spawn_agent
       arguments:
         agent: lane-manager
+        seat_context:
+          lane: "${{ inputs.lane }}"
+          lane_epic: "${{ inputs.lane_epic }}"
+          worktree: "${{ steps.guard.output.worktree }}"
+          first_job: "${{ inputs.first_job }}"
         title: "${{ 'Lane ' + inputs.lane + ' manager' }}"
         lane: "${{ inputs.lane }}"
         provider: "${{ inputs.manager_provider }}"

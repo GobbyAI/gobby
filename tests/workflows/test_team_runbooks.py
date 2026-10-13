@@ -116,6 +116,8 @@ def test_team_lane_contains_only_approved_seats() -> None:
         "lane_columns",
         "lane_rows",
         "lane",
+        "lane_epic",
+        "first_job",
         "workspace",
         "lane_pane",
         "worktree",
@@ -137,15 +139,15 @@ def test_team_lane_contains_only_approved_seats() -> None:
     assert [
         definition.inputs[f"reviewer_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["claude", "claude-opus-5-5", "xhigh"]
+    ] == [None, None, None]
     assert [
         definition.inputs[f"researcher_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["codex", "gpt-6.1-sol", "medium"]
+    ] == [None, None, None]
     assert [
         definition.inputs[f"manager_{name}"]["default"]
         for name in ("provider", "model", "reasoning_effort")
-    ] == ["claude", "claude-sonnet-5-5", "medium"]
+    ] == [None, None, None]
 
 
 def test_team_lane_passes_lane_to_every_seat() -> None:

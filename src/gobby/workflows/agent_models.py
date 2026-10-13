@@ -166,8 +166,8 @@ class AgentDefinitionBody(BaseModel):
     # send_message target modes a spawned agent of this type may use, enforced by
     # the bundled rule scope-spawned-agent-send-message
     send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
-    # Explicit grants for the enrolled-operator DM tool; no agent gets one by default.
-    operator_message_channels: list[StrictStr] = Field(default_factory=list)
+    # Grants only the configured, enrolled operator destination, never arbitrary recipients.
+    operator_messaging: StrictBool = False
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")
@@ -270,7 +270,12 @@ class AgentDefinitionBody(BaseModel):
         """Return True when the definition explicitly supports the requested usage surface."""
         return surface in self.surfaces
 
-    def prompt_for(self, surface: Literal["persona", "agent"]) -> str:
+    def prompt_for(
+        self,
+        surface: Literal["persona", "agent"],
+        *,
+        variables: dict[str, Any] | None = None,
+    ) -> str:
         """Return the complete preamble owned by the requested prompt surface."""
         definition_surface: Literal["persona", "spawn"] = (
             "persona" if surface == "persona" else "spawn"
@@ -283,4 +288,12 @@ class AgentDefinitionBody(BaseModel):
         prompt = self.prompts.persona if surface == "persona" else self.prompts.agent
         if prompt is None:  # Defensive guard for model_construct() and mock boundaries.
             raise ValueError(f"Agent definition '{self.name}' has no prompts.{surface} block")
-        return prompt
+        if "{{" not in prompt and "{%" not in prompt:
+            return prompt
+        from gobby.workflows.templates import TemplateEngine
+
+        context = {"seat_context": {}, "project_policy": {}, **(variables or {})}
+        for name in ("seat_context", "project_policy"):
+            if context[name] is None:
+                context[name] = {}
+        return TemplateEngine().render(prompt, context)
