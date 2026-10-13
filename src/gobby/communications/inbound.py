@@ -14,6 +14,7 @@ from gobby.communications.telegram_decisions import (
 )
 from gobby.communications.voice import apply_voice_transcription
 from gobby.communications.webhook_verification import verify_webhook_with_timeout
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -183,9 +184,16 @@ class InboundCommunications:
                         platform_destination=chat_id,
                     )
                     if source is not None and source.direction == "outbound" and source.session_id:
-                        message.session_id = source.session_id
-                        message.metadata_json["session_route"] = "reply"
-                        reply_routed = True
+                        source_session = await asyncio.to_thread(
+                            manager._session_store.get, source.session_id
+                        )
+                        if (
+                            source_session is not None
+                            and source_session.status in LIVE_SESSION_STATUSES
+                        ):
+                            message.session_id = source.session_id
+                            message.metadata_json["session_route"] = "reply"
+                            reply_routed = True
 
                 if (
                     channel.channel_type == "telegram"

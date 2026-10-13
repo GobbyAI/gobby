@@ -3818,7 +3818,19 @@ async def test_group_allowlist_rejection_happens_before_identity_or_persistence(
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_telegram_reply_targets_originating_session_with_shared_chat() -> None:
+@pytest.mark.parametrize(
+    ("source_status", "expected_session", "expected_route"),
+    [
+        ("active", "session-a", "reply"),
+        ("paused", "session-a", "reply"),
+        ("completed", "session-b", "attached"),
+        ("expired", "session-b", "attached"),
+        (None, "session-b", "attached"),
+    ],
+)
+async def test_telegram_reply_targets_live_origin_or_attached_session_with_shared_chat(
+    source_status: str | None, expected_session: str, expected_route: str
+) -> None:
     channel = make_channel(
         channel_type="telegram",
         config_json={"allow_from": ["1111111"]},
@@ -3859,7 +3871,17 @@ async def test_telegram_reply_targets_originating_session_with_shared_chat() -> 
         return outbound_by_platform_id.get(platform_message_id)
 
     store.get_message_by_platform_id.side_effect = get_message_by_platform_id
-    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    sessions = MagicMock()
+    source_session = (
+        MagicMock(id="session-a", status=source_status, source="claude")
+        if source_status is not None
+        else None
+    )
+    attached_session = MagicMock(id="session-b", status="active", source="codex")
+    sessions.get.side_effect = lambda session_id: (
+        source_session if session_id == "session-a" else attached_session
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     identity = CommsIdentity(
         id="identity-1",
         channel_id=channel.id,
@@ -3882,6 +3904,7 @@ async def test_telegram_reply_targets_originating_session_with_shared_chat() -> 
     ):
         await manager.start()
 
+    manager.attach_conversation(channel.name, "dm:2222222", attached_session.id)
     inbound = TelegramAdapter().parse_webhook(
         {
             "update_id": 10001,
@@ -3902,8 +3925,8 @@ async def test_telegram_reply_targets_originating_session_with_shared_chat() -> 
     assert stored[0].content == "Reply for session A"
     assert stored[0].metadata_json["reply_to_message_id"] == "1001"
     assert stored[0].identity_id == identity.id
-    assert stored[0].session_id == "session-a"
-    assert stored[0].metadata_json["session_route"] == "reply"
+    assert stored[0].session_id == expected_session
+    assert stored[0].metadata_json["session_route"] == expected_route
     store.get_message_by_platform_id.assert_any_call(
         channel.name,
         "1001",
