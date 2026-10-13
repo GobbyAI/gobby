@@ -2672,3 +2672,9 @@ available with the configured model. With the server stopped, a
     Clef forms are unchanged, so Josh's list of proceeding wires holds.
   - Routing of every deliverable is unchanged. The stamped M1 was withdrawn
     for re-derivation.
+- 2026-10-13: Consensus with Plan Adversary gobby#16491 on the #24253
+  amendment at 29ca7e26a7, with no blocking finding. D1 preserves every
+  removed OpenAI obligation: the wire, its fixtures, the refusal outcome,
+  the evaluation price, the guide, and LM Studio's `/v1/decisions` facts.
+  Active scope stays the three keyed wires. Routing of the seven
+  deliverables and their heading dependencies is unchanged.
