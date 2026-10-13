@@ -162,11 +162,11 @@ def _bound_pipeline_reads(
         pending = item.extra.get("_canonical_pending_source_reads")
         read_segments = item.extra.get("canonical_code_navigation_segments", ())
         if (
-            navigation.get("canonical_code_navigation_action") == "read"
+            navigation.get("canonical_code_navigation_action") in {"read", "search"}
             and navigation.get("canonical_code_navigation_broad")
             or pending
             or any(
-                segment.get("canonical_code_navigation_action") == "read"
+                segment.get("canonical_code_navigation_action") in {"read", "search"}
                 for segment in read_segments
             )
         ):
@@ -180,9 +180,12 @@ def _bound_pipeline_reads(
                 "stdout"
             ]:
                 extra["_canonical_deferred_source_read"] = {**deferred, **narrowed}
-            elif navigation.get("canonical_code_navigation_action") == "read" and navigation.get(
-                "_canonical_source_read_output_channels", ["stdout"]
-            ) == ["stdout"]:
+            elif navigation.get("canonical_code_navigation_action") in {
+                "read",
+                "search",
+            } and navigation.get("_canonical_source_read_output_channels", ["stdout"]) == [
+                "stdout"
+            ]:
                 extra.update(narrowed)
             if pending:
                 extra["_canonical_pending_source_reads"] = [
@@ -195,7 +198,7 @@ def _bound_pipeline_reads(
             if "canonical_code_navigation_segments" in extra:
                 extra["canonical_code_navigation_segments"] = [
                     {**segment, **narrowed}
-                    if segment.get("canonical_code_navigation_action") == "read"
+                    if segment.get("canonical_code_navigation_action") in {"read", "search"}
                     and segment.get("_canonical_source_read_output_channels", ["stdout"])
                     == ["stdout"]
                     else segment

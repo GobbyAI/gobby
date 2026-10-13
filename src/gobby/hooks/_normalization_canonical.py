@@ -1,6 +1,5 @@
 """Canonical tool metadata inference."""
 
-import re
 from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
@@ -69,6 +68,7 @@ from gobby.hooks._normalization_redirects import (
     extract_redirection_paths,
     has_mutating_output_redirection,
     redirect_source_read_metadata,
+    source_output_destinations,
     tee_output_channels,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
@@ -92,6 +92,7 @@ from gobby.hooks._normalization_shell import (
     _shell_positional_args,
     _strip_shell_wrappers,
     has_shell_input_redirection,
+    is_dynamic_program_word,
     scan_shell_command,
     shell_token_values,
     strip_input_redirections,
@@ -434,8 +435,15 @@ def _classify_shell_command(
             )
             continue
 
-        if segment.separator_before == "|" and parts[0].rsplit("/", 1)[-1] == "tee":
-            channels = tee_output_channels(parts[1:], segment.tokens)
+        if segment.separator_before == "|":
+            channels = {source_output_destinations(segment.tokens)["stdout"]} - {
+                "stdout",
+                "file",
+                "closed",
+                "null",
+            }
+            if parts[0].rsplit("/", 1)[-1] == "tee":
+                channels |= tee_output_channels(parts[1:], arm_tokens)
             if channels:
                 _mark_pipeline_read_escape(
                     metadata, segments, segment_metadata_positions, index, channels
@@ -784,12 +792,7 @@ def _classify_shell_segment_without_redirection(
         )
 
     unwrapped = _unwrap(parts)
-    if (
-        unwrapped
-        and not unwrapped[0].startswith("((")
-        and not re.match(r"\[\[\s", unwrapped[0])
-        and (_contains_unexpanded_shell_reference(unwrapped[0]) or "`" in unwrapped[0])
-    ):
+    if unwrapped and is_dynamic_program_word(unwrapped[0]):
         return _ShellSegmentMetadata(
             "execute", confidence="low", extra={"canonical_script_execution": True}
         )
@@ -925,7 +928,7 @@ def _classify_shell_segment_without_redirection(
     if cmd in {"rg", "grep", "git"}:
         return classify_search_segment(cmd, parts, cwd, base_cwd, shell_stdin=shell_stdin)
 
-    if cmd == "xargs" and parts[1:2] == ["cat"]:
+    if cmd == "xargs" and _unwrap(parts)[:1] == ["cat"]:
         # Stdin supplies file operands, not source contents; their scope is unknown.
         navigation = {
             "canonical_code_navigation_action": "read",
