@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.workflows.condition_helpers_paths import write_paths_match, write_paths_within
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -13,6 +15,43 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condit
 pytestmark = pytest.mark.unit
 
 DIGEST = r"/digests/gobby-digest-\d{4}-\d{2}-\d{2}\.md"
+
+
+@pytest.mark.parametrize(
+    "relative,allowed",
+    [
+        (".gobby/reports/gobby-digest-2026-10-12.md", True),
+        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345abcdef", True),
+        (".gobby/reports/gobby-digest-2026-10-12.md.bak", False),
+        (".gobby/reports/gobby-digest-2026-1-12.md", False),
+        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345abcdeg", False),
+        (".gobby/reports/gobby-digest-2026-10-12.md.tmp.123.012345ABCDEF", False),
+        (".gobby/reports/notes.md", False),
+        (".gobby/reports-other/gobby-digest-2026-10-12.md", False),
+        (".gobby/other/gobby-digest-2026-10-12.md", False),
+        (".gobby/reports/nested/gobby-digest-2026-10-12.md", False),
+        (".gobby/reports/nested/.gobby/reports/gobby-digest-2026-10-12.md", False),
+        ("../other/.gobby/reports/gobby-digest-2026-10-12.md", False),
+    ],
+)
+def test_archivist_rule_allows_only_workspace_report_names(
+    project: Path, relative: str, allowed: bool
+) -> None:
+    rule_path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml"
+    )
+    rule = yaml.safe_load(rule_path.read_text())["rules"]["archivist-write-scope"]
+    data = _write(project, str(project / relative), cwd=project / "docs")
+    evaluator = SafeExpressionEvaluator(
+        {
+            "event": SimpleNamespace(data=data),
+            "tool_input": {},
+            "variables": {"_agent_type": "archivist"},
+        },
+        build_condition_helpers(),
+    )
+    assert evaluator.evaluate(rule["when"]) is (not allowed)
 
 
 def _write(project: Path, path: str, *, cwd: Path | None = None) -> dict[str, Any]:
@@ -23,6 +62,20 @@ def _write(project: Path, path: str, *, cwd: Path | None = None) -> dict[str, An
         "cwd": str(cwd or project),
         "project_path": str(project),
     }
+
+
+def test_project_pattern_escapes_root_and_rejects_missing_scope(tmp_path: Path) -> None:
+    root = tmp_path / "checkout[one]"
+    root.mkdir()
+    target = root / ".gobby/reports/gobby-digest-2026-10-12.md"
+    pattern = r"./\.gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md"
+    assert write_paths_match(_write(root, str(target)), {}, pattern)
+    assert not write_paths_match({"canonical_file_paths": [str(target)]}, {}, pattern)
+    (root / ".gobby").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / ".gobby/reports").symlink_to(outside, target_is_directory=True)
+    assert not write_paths_match(_write(root, str(target)), {}, pattern)
 
 
 @pytest.fixture

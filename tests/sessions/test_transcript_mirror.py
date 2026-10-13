@@ -21,9 +21,52 @@ from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.integration
 TS = datetime(2026, 10, 10, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "agent_type,definition_title,seat",
+    [
+        ("archivist", None, "Archivist"),
+        ("lane-manager", None, "Lane Manager"),
+        ("code-reviewer", None, "Code Reviewer"),
+        ("developer", "Lane 1 Developer", "Lane 1 Developer"),
+    ],
+)
+async def test_telegram_provisional_title_uses_persisted_seat(
+    attached: tuple[CommunicationsManager, str, AsyncMock],
+    temp_db: HubDatabase,
+    agent_type: str,
+    definition_title: str | None,
+    seat: str,
+) -> None:
+    manager, session_id, _ = attached
+    session = SessionManager(temp_db).get(session_id)
+    assert session is not None
+    assert session.title_source == "provisional"
+    SessionVariableManager(temp_db).set_variable(session_id, "_agent_type", agent_type)
+    if definition_title is not None:
+        SessionVariableManager(temp_db).set_variable(
+            session_id, "_definition_title", definition_title
+        )
+    payloads: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content)["text"])
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(payloads)}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        adapter = TelegramAdapter()
+        adapter._client = client
+        adapter._api_base = "https://telegram.test"
+        manager._adapters["mirror-test"] = adapter
+        await manager.send_message("mirror-test", "explicit", session_id=session_id)
+        await manager.mirror_session_message(session_id, "reply", "mirrored")
+    prefix = f"<b>{seat} ({session.ref}):</b>\n"
+    assert payloads == [prefix + "explicit", prefix + "mirrored"]
 
 
 @pytest.fixture

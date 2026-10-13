@@ -40,7 +40,7 @@ def agent_menu_labels(sessions: Sequence[Session]) -> dict[str, str]:
     return labels
 
 
-def telegram_agent_label(session: Session | None) -> str:
+def telegram_agent_label(session: Session | None, seat_label: str | None = None) -> str:
     """Identify seats or stable responder/system roles without exposing identity titles."""
     if session is None:
         return "System (gobby)"
@@ -49,5 +49,5 @@ def telegram_agent_label(session: Session | None) -> str:
     elif session.source == "system":
         seat = "System"
     else:
-        seat = " ".join(agent_label(session).split())[:80]
+        seat = " ".join((seat_label or agent_label(session)).split())[:80]
     return f"{seat} ({session.ref})"

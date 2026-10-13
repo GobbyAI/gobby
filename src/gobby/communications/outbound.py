@@ -409,6 +409,13 @@ class OutboundCommunications:
         if session_id:
             platform_thread_id = manager._get_thread_id(channel.id, session_id)
 
+        effective_metadata = await self.enrich_metadata(channel, channel_name, session_id, metadata)
+        explicit_thread_id = effective_metadata.get("thread_id")
+        if "thread_id" in effective_metadata:
+            platform_thread_id = (
+                explicit_thread_id.strip() or None if isinstance(explicit_thread_id, str) else None
+            )
+
         message = CommsMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
@@ -418,7 +425,7 @@ class OutboundCommunications:
             session_id=session_id,
             status="pending",
             platform_thread_id=platform_thread_id,
-            metadata_json=await self.enrich_metadata(channel, channel_name, session_id, metadata),
+            metadata_json=effective_metadata,
             created_at=datetime.now(UTC),
         )
 

@@ -462,7 +462,21 @@ class CommunicationsManager:
         if channel.channel_type != "telegram":
             return None
         session = self._session_store.get(session_id) if session_id is not None else None
-        return telegram_agent_label(session)
+        seat_label = None
+        if session is not None:
+            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            variables = SessionVariableManager(self._store.db).get_variable_subset(
+                session.id, (DEFINITION_TITLE_VARIABLE, "_agent_type")
+            )
+            definition_title = variables.get(DEFINITION_TITLE_VARIABLE)
+            agent_type = variables.get("_agent_type")
+            if isinstance(definition_title, str) and definition_title.strip():
+                seat_label = definition_title.strip()
+            elif isinstance(agent_type, str) and agent_type.strip() and agent_type != "default":
+                seat_label = agent_type.strip().replace("-", " ").replace("_", " ").title()
+        return telegram_agent_label(session, seat_label)
 
     async def send_attachment(
         self,

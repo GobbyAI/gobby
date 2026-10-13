@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_name", ["archivist", "developer", "log-monitor", None])
-async def test_spawn_grants_only_archivist_dated_digests(
+async def test_spawn_never_grants_desktop_digests(
     agent_name: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -62,7 +62,7 @@ async def test_spawn_grants_only_archivist_dated_digests(
     )
     writes = render_srt_settings(paths)["filesystem"]["allowWrite"]
     digest_glob = str(home / "Desktop/gobby-digest-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md")
-    assert (digest_glob in writes) is (agent_name == "archivist")
+    assert digest_glob not in writes
     assert str(home / "Desktop") not in writes
     for filename in (
         "gobby-digest-2026-10-10.md",
@@ -72,7 +72,7 @@ async def test_spawn_grants_only_archivist_dated_digests(
         "gobby-digest-2026-10-11.md.tmp.2147483647.012345abcdef",
     ):
         path = str(home / "Desktop" / filename)
-        assert any(fnmatchcase(path, pattern) for pattern in writes) is (agent_name == "archivist")
+        assert not any(fnmatchcase(path, pattern) for pattern in writes)
     for filename in (
         "notes.md",
         "gobby-digest.md",

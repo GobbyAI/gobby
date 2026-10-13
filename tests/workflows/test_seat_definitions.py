@@ -309,6 +309,16 @@ def test_seat_catalogue_is_exact() -> None:
         assert "seat" not in (_bundled()[name].get("tags") or []), name
 
 
+def test_archivist_sends_workspace_digest_as_attachment() -> None:
+    prompt = _prompt(_bundled()["archivist"])
+    assert "<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md" in prompt
+    assert "literal absolute path" in prompt
+    assert "gobby-communications:send_operator_attachment" in prompt
+    assert "channel `gobby-telegram`" in prompt
+    assert _bundled()["archivist"]["operator_message_channels"] == ["gobby-telegram"]
+    assert "at most a one-line caption" in prompt
+
+
 def test_developer_routes_skills_by_task() -> None:
     prompt = _prompt(_bundled()["developer"])
     assert CANDIDATE_EVENT_LINE in _section(prompt, "Role")
