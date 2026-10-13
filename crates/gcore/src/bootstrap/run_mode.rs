@@ -3,9 +3,19 @@ use super::{FilesHomeError, RunMode, front_door::yaml_bool};
 pub(super) const LOCAL_HUB_URL_REFUSAL: &str =
     "hub_daemon_url is not allowed on a local bootstrap; this process is the owner";
 
+pub(super) fn python_strip(value: &str) -> &str {
+    // Python str.strip() also treats the four ASCII separators as whitespace.
+    value.trim_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '\u{1c}'..='\u{1f}')
+    })
+}
+
 pub(super) fn configured_value(map: &serde_yaml::Mapping, name: &str) -> bool {
     map.get(name).is_some_and(|value| {
-        !value.is_null() && value.as_str().is_none_or(|text| !text.trim().is_empty())
+        !value.is_null()
+            && value
+                .as_str()
+                .is_none_or(|text| !python_strip(text).is_empty())
     })
 }
 
@@ -16,7 +26,7 @@ pub(super) fn hub_daemon_url(map: &serde_yaml::Mapping) -> anyhow::Result<Option
     let text = map["hub_daemon_url"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("hub_daemon_url must be a string"))?;
-    Ok(Some(text.trim().to_owned()))
+    Ok(Some(python_strip(text).to_owned()))
 }
 
 pub(super) fn hub_flag(map: &serde_yaml::Mapping) -> anyhow::Result<bool> {
@@ -86,8 +96,7 @@ pub(super) fn parse_hub_origin(value: &str) -> Result<String, FilesHomeError> {
         )
     };
     let value = value.replace(['\t', '\r', '\n'], "");
-    let (scheme, rest) = value
-        .trim()
+    let (scheme, rest) = python_strip(&value)
         .trim_start_matches(|character: char| character <= '\u{20}')
         .split_once("://")
         .ok_or_else(invalid)?;

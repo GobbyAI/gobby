@@ -350,7 +350,7 @@ pub fn parse_files_home_view(contents: &str) -> Result<FilesHomeView, FilesHomeE
                 .ok_or_else(|| FilesHomeError::Invalid("files_home must be a string".to_owned()))?;
             Ok(FilesHomeView {
                 datastore_mode,
-                files_home: Some(parse_absolute_files_home(raw.trim())?),
+                files_home: Some(parse_absolute_files_home(run_mode::python_strip(raw))?),
                 hub_daemon_url: None,
             })
         }

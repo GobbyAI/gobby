@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gobby_core::bootstrap::{RunMode, parse_hub_database_bootstrap};
+use gobby_core::bootstrap::{RunMode, parse_files_home_view, parse_hub_database_bootstrap};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -15,6 +15,7 @@ struct Case {
     mode: Option<String>,
     hub_daemon_url: Option<String>,
     hub_cert: Option<String>,
+    files_home: Option<String>,
     error: Option<String>,
 }
 
@@ -64,6 +65,18 @@ fn shared_vectors_match_python() -> Result<()> {
                 "{}: expected {expected:?}, got {actual:?}",
                 case.name
             ));
+        }
+        if let Some(expected_path) = case.files_home {
+            let view = parse_files_home_view(&yaml)?;
+            let actual_path = view
+                .files_home
+                .and_then(|path| path.to_str().map(str::to_owned));
+            if actual_path.as_deref() != Some(expected_path.as_str()) {
+                mismatches.push(format!(
+                    "{}: expected files_home {expected_path:?}, got {actual_path:?}",
+                    case.name
+                ));
+            }
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
