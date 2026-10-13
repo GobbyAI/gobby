@@ -17,6 +17,8 @@ class ModeCase(TypedDict, total=False):
     hub_cert: str | None
     database_url: str | None
     api_key: str | None
+    api_key_id: str | None
+    daemon_url: str | None
     files_home: str
     error: str
 
@@ -38,6 +40,8 @@ def test_shared_vectors_match_rust(case: ModeCase) -> None:
         assert config.hub_cert == case.get("hub_cert")
         assert config.database_url == case.get("database_url")
         assert config.api_key == case.get("api_key")
+        assert config.api_key_id == case.get("api_key_id")
+        assert config.daemon_url == case.get("daemon_url")
         if "files_home" in case:
             assert config.files_home == case["files_home"]
 

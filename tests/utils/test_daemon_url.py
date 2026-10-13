@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.utils.daemon_url import (
     DaemonUrlError,
@@ -179,11 +180,12 @@ def test_invalid_bootstrap_daemon_url_raises(tmp_path: Path) -> None:
         resolve_daemon_url(path, env={})
 
 
-def test_blank_bootstrap_daemon_url_raises(tmp_path: Path) -> None:
-    path = _write_bootstrap(tmp_path / "bootstrap.yaml", "daemon_url: ' '\n")
+@pytest.mark.parametrize("value", ["", " \t\r\n ", "\x1c", "\x1d", "\x1e", "\x1f"])
+def test_blank_bootstrap_daemon_url_falls_back(tmp_path: Path, value: str) -> None:
+    contents = yaml.safe_dump({"daemon_url": value, "bind_host": "localhost", "daemon_port": 61234})
+    path = _write_bootstrap(tmp_path / "bootstrap.yaml", contents)
 
-    with pytest.raises(DaemonUrlError):
-        resolve_daemon_url(path, env={})
+    assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:61234"
 
 
 def test_daemon_url_uses_current_environment(
