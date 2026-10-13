@@ -16,6 +16,7 @@ from gobby.terminals.composer_ledger import (
     ComposerReleaseError,
     LedgerRead,
     WaitOutcome,
+    WriteOrigin,
     composer_drain_keys,
     load_ledger,
     persist_ledger,
@@ -145,6 +146,47 @@ def test_operator_writes_are_human_input_and_enter_flags_their_submit() -> None:
     ledger.observe_write("t1", origin="attention", kind="key", payload="enter")
     ledger.record_submit("t1")
     assert ledger.read("t1") == _EMPTY
+
+
+@pytest.mark.parametrize("origin", ["operator", "attention"])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "\x1b[I",
+        "\x1b[O",
+        "\x1b[<0;12;8M",
+        "\x1b[<0;12;8m",
+        "\x1b[<64;12;8M",
+        "\x1b[<65;12;8M",
+        "\x1b[M !!",
+        "\x1b[M`!!",
+        "\x1b[M \r!",
+        "\x1b[A",
+        "\x1b[B",
+        "\x1b[C",
+        "\x1b[D",
+        "\x1bOA",
+        "\x1bOB",
+        "\x1bOC",
+        "\x1bOD",
+        "\x1b[1;5C",
+    ],
+)
+def test_non_text_human_input_preserves_composer_state(origin: WriteOrigin, payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin=origin, kind="input", payload=payload)
+    assert ledger.read("t1") == _EMPTY
+    ledger.observe_write("t1", origin="operator", kind="text", payload="draft")
+    ledger.observe_write("t1", origin=origin, kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+
+
+@pytest.mark.parametrize("payload", ["typed", "é", "\x1b[Atyped", "\x1b[200~paste\r\x1b[201~"])
+def test_text_and_bracketed_paste_remain_drafts(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _DRAFT
 
 
 def test_operator_raw_input_with_carriage_return_flags_submit() -> None:

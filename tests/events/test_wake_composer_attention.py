@@ -16,7 +16,7 @@ from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
+from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead, WriteKind
 from tests.events.test_wake import FakeSession
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
@@ -158,6 +158,46 @@ async def test_repeated_withheld_wakes_keep_one_attention_item(
     assert current.fingerprint == f"composer_blocked:{block}"
     assert current.attention_id == first.attention_id
     assert len(seat.notifications) == 1
+    seat.pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "\x1b[I",
+        "\x1b[O",
+        "\x1b[<0;12;8M",
+        "\x1b[<64;12;8M",
+        "\x1b[M !!",
+        "\x1b[M`!!",
+        "\x1b[A",
+        "\x1bOD",
+    ],
+)
+async def test_non_text_input_allows_following_wake(
+    seat: Seat, composer_ledger: ComposerLedger, payload: str
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [("input", "typed"), ("input", "\x1b[200~paste\x1b[201~"), ("paste", "paste")],
+)
+async def test_text_input_still_withholds_wake(
+    seat: Seat, composer_ledger: ComposerLedger, kind: WriteKind, payload: str
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind=kind, payload=payload)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is False
+    assert result["skipped"] == "composer_occupied"
     seat.pane_sender.assert_not_awaited()
 
 
