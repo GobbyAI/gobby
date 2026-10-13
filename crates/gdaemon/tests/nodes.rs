@@ -198,6 +198,17 @@ async fn node(origin: &str, pin: Option<&Path>, ws_listener: bool) -> Node {
 }
 
 async fn send(addr: SocketAddr, request: Request<Full<Bytes>>) -> (StatusCode, serde_json::Value) {
+    let (status, _, body) = send_response(addr, request).await;
+    (
+        status,
+        serde_json::from_slice(&body).expect("response JSON"),
+    )
+}
+
+async fn send_response(
+    addr: SocketAddr,
+    request: Request<Full<Bytes>>,
+) -> (StatusCode, hyper::HeaderMap, Bytes) {
     tokio::time::timeout(TIMEOUT, async {
         let stream = TcpStream::connect(addr).await.expect("connect node");
         let (mut client, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
@@ -206,6 +217,7 @@ async fn send(addr: SocketAddr, request: Request<Full<Bytes>>) -> (StatusCode, s
         let task = tokio::spawn(connection);
         let response = client.send_request(request).await.expect("node response");
         let status = response.status();
+        let headers = response.headers().clone();
         let body = response
             .into_body()
             .collect()
@@ -213,10 +225,7 @@ async fn send(addr: SocketAddr, request: Request<Full<Bytes>>) -> (StatusCode, s
             .expect("response body")
             .to_bytes();
         task.abort();
-        (
-            status,
-            serde_json::from_slice(&body).expect("response JSON"),
-        )
+        (status, headers, body)
     })
     .await
     .expect("request deadline")
@@ -981,6 +990,127 @@ async fn machines_api_lists_rows_with_connection_state() -> Result<()> {
             send(hub.addr, get(&machine_path)).await.1["connected"],
             false
         );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn machines_api_unknown_paths_use_error_contract() -> Result<()> {
+    channel_database(async |db| {
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(db, channel_timing(), Some(NativeRoutes::default())).await?;
+        for addr in [hub.addr, standalone.addr] {
+            for path in ["/api/machines/", "/api/machines/unknown/deeper"] {
+                let (status, headers, body) = send_response(addr, get(path)).await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+                assert_eq!(headers["content-type"], "application/json", "{path}");
+                let body: serde_json::Value = serde_json::from_slice(&body)?;
+                assert_eq!(body["code"], "machine_not_found", "{path}");
+                assert!(body["error"].is_string(), "{path}: {body}");
+                assert_eq!(body.as_object().context("error object")?.len(), 2);
+                let mut request = get(path);
+                request.headers_mut().remove("authorization");
+                let (status, body) = send(addr, request).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+                assert_eq!(body["code"], "missing_auth", "{path}");
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn machines_api_unsupported_methods_use_error_contract() -> Result<()> {
+    channel_database(async |db| {
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(db, channel_timing(), Some(NativeRoutes::default())).await?;
+        for addr in [hub.addr, standalone.addr] {
+            for path in [
+                "/api/machines".to_string(),
+                format!("/api/machines/{}", db.machine),
+            ] {
+                for method in ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+                    let mut request = get(&path);
+                    *request.method_mut() = method.parse()?;
+                    let (status, headers, body) = send_response(addr, request).await;
+                    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+                    assert_eq!(
+                        headers["content-type"], "application/json",
+                        "{method} {path}"
+                    );
+                    assert_eq!(headers["allow"], "GET,HEAD", "{method} {path}");
+                    let body: serde_json::Value = serde_json::from_slice(&body)?;
+                    assert_eq!(body["code"], "method_not_allowed", "{method} {path}");
+                    assert!(body["error"].is_string(), "{method} {path}: {body}");
+                    assert_eq!(body.as_object().context("error object")?.len(), 2);
+                    let mut request = get(&path);
+                    *request.method_mut() = method.parse()?;
+                    request.headers_mut().remove("authorization");
+                    let (status, body) = send(addr, request).await;
+                    assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {path}");
+                    assert_eq!(body["code"], "missing_auth", "{method} {path}");
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn machines_api_unavailable_advertises_retry() -> Result<()> {
+    channel_database(async |db| {
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(db, channel_timing(), Some(NativeRoutes::default())).await?;
+        let paths = [
+            "/api/machines".to_string(),
+            format!("/api/machines/{}", db.machine),
+        ];
+        let check_retry = async |addr| -> Result<()> {
+            for path in &paths {
+                let (status, headers, body) = send_response(addr, get(path)).await;
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+                assert_eq!(
+                    headers
+                        .get("retry-after")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("1"),
+                    "{path}"
+                );
+                let body: serde_json::Value = serde_json::from_slice(&body)?;
+                assert_eq!(body["code"], "machines_unavailable", "{path}");
+                assert!(body["error"].is_string(), "{path}: {body}");
+                assert_eq!(body.as_object().context("error object")?.len(), 2);
+            }
+            Ok(())
+        };
+        for (addr, expected_status) in [
+            (hub.addr, StatusCode::OK),
+            (standalone.addr, StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let mut request = get("/api/machines");
+            *request.method_mut() = hyper::Method::HEAD;
+            let (status, headers, body) = send_response(addr, request).await;
+            assert_eq!(status, expected_status);
+            assert_eq!(headers["content-type"], "application/json");
+            assert!(body.is_empty(), "HEAD must omit the response body");
+        }
+        check_retry(standalone.addr).await?;
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(hub.nodes.db.get().await?);
+        }
+        check_retry(hub.addr).await?;
+        drop(held);
+        db.admin
+            .batch_execute(&format!(
+                "ALTER TABLE {}.machines DROP COLUMN ref",
+                db.schema
+            ))
+            .await?;
+        check_retry(hub.addr).await?;
         Ok(())
     })
     .await
