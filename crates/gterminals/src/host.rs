@@ -1,4 +1,6 @@
 //! Authenticated, single-owner lifecycle for the persistent gterm host.
+mod epochs;
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -169,6 +171,45 @@ pub trait EpochAuthority: Send + Sync {
         &'a self,
         epoch: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<EpochBinding>, HostFailure>> + Send + 'a>>;
+
+    fn observe_epoch<'a>(
+        &'a self,
+        _machine: uuid::Uuid,
+        _epoch: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), HostFailure>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn observe_exit<'a>(
+        &'a self,
+        _machine: uuid::Uuid,
+        _epoch: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), HostFailure>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn epoch_snapshot(
+        &self,
+        machine: uuid::Uuid,
+    ) -> Pin<Box<dyn Future<Output = Result<EpochSnapshot, HostFailure>> + Send + '_>> {
+        Box::pin(async move {
+            Ok(EpochSnapshot {
+                machine_id: machine,
+                current_epoch: None,
+                exited_epochs: BTreeSet::new(),
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A coherent durable view. Consumers must verify the current host is still live
+/// and matches `current_epoch` before reconciling; a snapshot grants no authority
+/// to settle an epoch that has not been observed exiting.
+pub struct EpochSnapshot {
+    pub machine_id: uuid::Uuid,
+    pub current_epoch: Option<String>,
+    pub exited_epochs: BTreeSet<String>,
 }
 
 pub struct PostgresEpochAuthority {
@@ -182,6 +223,29 @@ impl PostgresEpochAuthority {
 }
 
 impl EpochAuthority for PostgresEpochAuthority {
+    fn observe_epoch<'a>(
+        &'a self,
+        machine: uuid::Uuid,
+        epoch: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), HostFailure>> + Send + 'a>> {
+        Box::pin(epochs::observe(&self.pool, machine, epoch, false))
+    }
+
+    fn observe_exit<'a>(
+        &'a self,
+        machine: uuid::Uuid,
+        epoch: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), HostFailure>> + Send + 'a>> {
+        Box::pin(epochs::observe(&self.pool, machine, epoch, true))
+    }
+
+    fn epoch_snapshot(
+        &self,
+        machine: uuid::Uuid,
+    ) -> Pin<Box<dyn Future<Output = Result<EpochSnapshot, HostFailure>> + Send + '_>> {
+        Box::pin(epochs::snapshot(&self.pool, machine))
+    }
+
     fn bindings<'a>(
         &'a self,
         epoch: &'a str,
@@ -263,6 +327,7 @@ struct Inner {
     stopped: AtomicBool,
     retry_armed: AtomicBool,
     task: Mutex<Option<JoinHandle<()>>>,
+    last_host: Mutex<Option<HostInfo>>,
 }
 
 pub struct HostSupervisor {
@@ -280,6 +345,7 @@ impl HostSupervisor {
                 stopped: AtomicBool::new(false),
                 retry_armed: AtomicBool::new(false),
                 task: Mutex::new(None),
+                last_host: Mutex::new(None),
             }),
         }
     }
@@ -323,6 +389,12 @@ impl HostSupervisor {
         self.inner.status.subscribe()
     }
 
+    pub async fn epoch_snapshot(&self) -> Result<EpochSnapshot, HostFailure> {
+        let machine =
+            uuid::Uuid::parse_str(&self.inner.options.machine_id).map_err(authority_failure)?;
+        self.inner.authority.epoch_snapshot(machine).await
+    }
+
     pub async fn stop(&self) {
         let task = {
             let mut task = self
@@ -353,12 +425,17 @@ impl HostSupervisor {
             .shutdown_grace
             .saturating_mul(3)
             .saturating_add(Duration::from_secs(4));
-        timeout(budget, self.drain_host())
-            .await
-            .map_err(|_| HostFailure::PostAdoptionIo("drain deadline exceeded".into()))?
+        timeout(budget, async {
+            if let Some(pid) = self.drain_host().await? {
+                epochs::record_confirmed_exit(&self.inner, pid).await?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| HostFailure::PostAdoptionIo("drain deadline exceeded".into()))?
     }
 
-    async fn drain_host(&self) -> Result<(), HostFailure> {
+    async fn drain_host(&self) -> Result<Option<u32>, HostFailure> {
         let handshake = timeout(READY_DEADLINE, async {
             let Some(stream) = connect(&self.inner.options).await? else {
                 return Ok(None);
@@ -372,6 +449,11 @@ impl HostSupervisor {
         let grace_ms = u64::try_from(grace.as_millis()).unwrap_or(u64::MAX);
         // Explicit drain must work even when the live host cannot be adopted.
         let pid = if let Ok(Ok(Some((Some(mut client), info)))) = handshake {
+            *self
+                .inner
+                .last_host
+                .lock()
+                .expect("host observation lock poisoned") = Some(info.clone());
             // A lost reply can mean the host exited. Prove the boundary next.
             let _ = timeout(grace + READY_DEADLINE, client.host_shutdown(grace_ms)).await;
             info.pid
@@ -385,7 +467,7 @@ impl HostSupervisor {
                     .await
                     .map_err(pre_io)?
                     {
-                        Ok(())
+                        Ok(None)
                     } else {
                         Err(post_adoption_failure(error))
                     };
@@ -393,7 +475,7 @@ impl HostSupervisor {
             }
         };
         if await_host_exit(pid, grace).await? {
-            return Ok(());
+            return Ok(Some(pid));
         }
         for signal in ["-TERM", "-KILL"] {
             // Never signal a PID whose installed host identity no longer matches.
@@ -406,7 +488,7 @@ impl HostSupervisor {
                 // The host unlinks its identity before its final process grace.
                 // Prove exit even if the pidfile vanished during verification.
                 return if await_host_exit(pid, READY_DEADLINE).await? {
-                    Ok(())
+                    Ok(Some(pid))
                 } else {
                     Err(post_adoption_failure(error))
                 };
@@ -423,10 +505,10 @@ impl HostSupervisor {
             if !result.status.success()
                 && !process_is_host(pid).await.map_err(post_adoption_failure)?
             {
-                return Ok(());
+                return Ok(Some(pid));
             }
             if await_host_exit(pid, grace.max(Duration::from_millis(100))).await? {
-                return Ok(());
+                return Ok(Some(pid));
             }
         }
         Err(HostFailure::PostAdoptionIo(format!(
@@ -475,12 +557,19 @@ async fn supervise(inner: Arc<Inner>) {
     let mut client = None;
     let mut adopted = true;
     let mut child: Option<Child> = None;
+    let mut known: Option<epochs::ObservedHost> = None;
     let mut backoff = Duration::from_secs(1);
     loop {
         if inner.stopped.load(Ordering::Acquire) {
             return;
         }
-        let result = if let Some(active) = client.as_mut() {
+        let observed_exit = epochs::observe_process_exit(&inner, &mut known, &mut child).await;
+        if observed_exit.is_ok() && known.is_none() {
+            client = None;
+        }
+        let result = if let Err(error) = observed_exit {
+            Err(error)
+        } else if let Some(active) = client.as_mut() {
             timeout(READY_DEADLINE, health(active, &inner.options, adopted))
                 .await
                 .unwrap_or_else(|_| {
@@ -492,6 +581,25 @@ async fn supervise(inner: Arc<Inner>) {
             timeout(READY_DEADLINE, adopt_or_spawn(&inner, &mut child))
                 .await
                 .unwrap_or(Err(HostFailure::HostStartTimeout))
+        };
+        let result = match result {
+            Ok((connected, info)) => {
+                known = Some(info.clone().into());
+                *inner
+                    .last_host
+                    .lock()
+                    .expect("host observation lock poisoned") = Some(info.clone());
+                match uuid::Uuid::parse_str(&inner.options.machine_id) {
+                    Ok(machine) => {
+                        match inner.authority.observe_epoch(machine, &info.epoch).await {
+                            Ok(()) => Ok((connected, info)),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    Err(error) => Err(authority_failure(error)),
+                }
+            }
+            Err(error) => Err(error),
         };
         let delay = {
             let _task = inner.task.lock().expect("lifecycle task lock poisoned");
@@ -552,11 +660,6 @@ async fn health(
 }
 
 async fn adopt_or_spawn(inner: &Inner, child: &mut Option<Child>) -> Result<Adoption, HostFailure> {
-    if let Some(process) = child.as_mut()
-        && process.try_wait().map_err(pre_io)?.is_some()
-    {
-        *child = None;
-    }
     match connect(&inner.options).await? {
         Some(stream) => {
             let owned_pid = child.as_ref().and_then(Child::id);
@@ -699,11 +802,20 @@ async fn process_is_host(pid: u32) -> Result<bool, HostFailure> {
         .await
         .map_err(pre_io)?;
     let identity = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        return if epochs::process_exited(pid)? {
+            Ok(false)
+        } else {
+            Err(HostFailure::PreAdoptionIo(format!(
+                "process identity inspection failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )))
+        };
+    }
     let Some((state, name)) = identity.trim().split_once(char::is_whitespace) else {
-        return Ok(false);
+        return Err(HostFailure::PidMismatch);
     };
-    Ok(output.status.success()
-        && !state.starts_with('Z')
+    Ok(!state.starts_with('Z')
         && std::path::Path::new(name.trim())
             .file_name()
             .is_some_and(|name| name == "gterm"))

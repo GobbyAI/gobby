@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use gobby_core::postgres_pool::{Pool, PoolSettings};
+use gobby_terminals::host::{EpochAuthority, HostOptions, HostSupervisor, PostgresEpochAuthority};
 use gobby_terminals::reconcile::{self, Effects, Observation, Options, ProcessStatus};
 use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};
 use serde_json::json;
@@ -66,6 +67,8 @@ impl Hub {
                  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {owned_schema}
                     TO gobby_daemon_runtime;"
             ))?;
+            let epochs = include_str!("../../gcore/assets/schema/migrations/468_terminal_host_epochs.sql");
+            admin.batch_execute(&epochs.replace("public.", &format!("{owned_schema}.")))?;
             anyhow::Ok(())
         })
         .await??;
@@ -78,6 +81,18 @@ impl Hub {
             },
         )?;
         Ok(Self { url, schema, pool })
+    }
+
+    fn epoch_authority(&self) -> anyhow::Result<PostgresEpochAuthority> {
+        let pool = Pool::build(
+            &format!("{}?options=-c%20search_path%3D{}", self.url, self.schema),
+            PoolSettings {
+                max_size: 2,
+                application_name: "gobby-gdaemon-terminal-epoch-test".into(),
+                acquire_timeout: Duration::from_secs(5),
+            },
+        )?;
+        Ok(PostgresEpochAuthority::new(pool))
     }
 
     async fn insert(&self, terminal: &Terminal) -> anyhow::Result<()> {
@@ -286,6 +301,106 @@ fn options() -> Options {
         settle_indeterminate: false,
         dead_host_epochs: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn host_exit_evidence_is_durable_and_machine_scoped() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let machine = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    let authority = std::sync::Arc::new(hub.epoch_authority()?);
+    authority.observe_epoch(machine, "opaque-old").await?;
+    authority.observe_exit(machine, "opaque-old").await?;
+    authority.observe_epoch(machine, "opaque-current").await?;
+    authority.observe_epoch(foreign, "foreign-old").await?;
+    authority.observe_exit(foreign, "foreign-old").await?;
+
+    let supervisor = HostSupervisor::new(
+        HostOptions {
+            machine_id: machine.to_string(),
+            ..HostOptions::default()
+        },
+        authority,
+    );
+    let snapshot = supervisor.epoch_snapshot().await?;
+    assert_eq!(snapshot.machine_id, machine);
+    assert_eq!(snapshot.current_epoch.as_deref(), Some("opaque-current"));
+    assert_eq!(snapshot.exited_epochs, ["opaque-old".to_owned()].into());
+    drop(supervisor);
+
+    let restarted = HostSupervisor::new(
+        HostOptions {
+            machine_id: machine.to_string(),
+            ..HostOptions::default()
+        },
+        std::sync::Arc::new(hub.epoch_authority()?),
+    );
+    assert_eq!(restarted.epoch_snapshot().await?, snapshot);
+    Ok(())
+}
+
+#[tokio::test]
+async fn exited_epoch_cannot_be_revived_or_clear_a_new_current_epoch() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let machine = Uuid::new_v4();
+    let authority = hub.epoch_authority()?;
+    authority.observe_epoch(machine, "old").await?;
+    authority.observe_exit(machine, "old").await?;
+    authority.observe_epoch(machine, "current").await?;
+    authority.observe_exit(machine, "old").await?;
+    assert!(authority.observe_epoch(machine, "old").await.is_err());
+    let snapshot = authority.epoch_snapshot(machine).await?;
+    assert_eq!(snapshot.current_epoch.as_deref(), Some("current"));
+    assert_eq!(snapshot.exited_epochs, ["old".to_owned()].into());
+    Ok(())
+}
+
+#[tokio::test]
+async fn pgidless_absent_rows_exit_instead_of_remaining_unknown() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    for process in [None, Some(json!({})), Some(json!({"pgid": null}))] {
+        for state in [State::Live, State::Orphaned] {
+            let mut row = live(terminal(), "dead");
+            row.state = state;
+            row.process = process.clone();
+            hub.insert(&row).await?;
+            seed_run(&hub, &row).await?;
+            let runtime = Runtime {
+                process: ProcessStatus::Unknown,
+                ..Runtime::default()
+            };
+            let mut settings = options();
+            settings.dead_host_epochs.insert("dead".into());
+            let observed = gobby_terminals::control::Inventory {
+                epoch: "current".into(),
+                ..Default::default()
+            };
+            // The first pass preserves the old epoch's Live -> Orphaned contract.
+            reconcile::reconcile(
+                &hub.pool,
+                row.machine_id,
+                Observation::Accepted(&observed),
+                &settings,
+                &runtime,
+            )
+            .await?;
+            reconcile::reconcile(
+                &hub.pool,
+                row.machine_id,
+                Observation::Accepted(&observed),
+                &settings,
+                &runtime,
+            )
+            .await?;
+            assert_eq!(
+                hub.get(row.id).await?.state,
+                State::Exited,
+                "{state:?}/{process:?}"
+            );
+            assert_eq!(run_status(&hub, &row).await?, "cancelled");
+        }
+    }
+    Ok(())
 }
 
 #[tokio::test]
