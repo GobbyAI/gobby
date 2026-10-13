@@ -205,7 +205,7 @@ def _tar_extract_paths(parts: list[str], cwd: str | None) -> tuple[bool, list[st
                         break
                 elif option not in "xvzjJZpkmUoOPB":
                     unmodelled = True
-        elif not word.startswith("-") and extracts:
+        elif not word.startswith("-"):
             # A member named before a later -C extracts in the earlier directory.
             directories.extend(_rebase_shell_paths(["."], directory))
         index += 1
