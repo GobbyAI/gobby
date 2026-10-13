@@ -247,6 +247,9 @@ def classify_git_mutation(
         if forced or checked_paths:
             extra["canonical_git_checkout_mutation"] = True
         positional_paths = tuple(_rebase_shell_paths(operands, git_cwd)) if checked_paths else ()
+        # Branch scope is the worktree root, but non-force ownership checks
+        # retain the literal operands so Git can handle branch conflicts.
+        extra["canonical_dirty_edit_paths"] = list(positional_paths)
         path_checkout = any(Path(path).exists() for path in positional_paths)
         return _ShellSegmentMetadata(
             "write" if path_checkout else "execute",

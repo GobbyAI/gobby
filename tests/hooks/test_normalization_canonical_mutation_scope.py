@@ -1385,11 +1385,34 @@ def test_git_checkout_positional_operands_have_checked_scope(
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_edit_file_paths"] == []
+    assert data["canonical_dirty_edit_paths"] == data["canonical_file_paths"]
     assert (
         str(directory / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
     )
     if "-f" in operand.split() or "--force" in operand.split():
         assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout HEAD~0; touch foreign.txt",
+        "touch foreign.txt; git checkout HEAD~0",
+        'git checkout HEAD~0; for f in foreign.txt; do touch "$f"; done',
+        'for f in foreign.txt; do touch "$f"; done; git checkout HEAD~0',
+        "bash -c 'git checkout HEAD~0; touch foreign.txt'",
+    ],
+)
+def test_checkout_dirty_edit_scope_preserves_sibling_writes(tmp_path: Path, command: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    if data.get("canonical_repo_mutation_scope_unknown"):
+        assert data["canonical_tool_kind"] == "write"
+    else:
+        paths = {(tmp_path / path).resolve() for path in data["canonical_dirty_edit_paths"]}
+        assert tmp_path / "foreign.txt" in paths
+        assert tmp_path not in paths
 
 
 @pytest.mark.parametrize(

@@ -438,12 +438,24 @@ def test_dirty_edit_reason_lists_one_reclaim_hint_per_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_normalized_bash_dirty_foreign_edit_blocks(guard_harness: GuardHarness) -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf changed > foreign.txt",
+        "git checkout HEAD~0; touch foreign.txt",
+        "touch foreign.txt; git checkout HEAD~0",
+        'git checkout HEAD~0; for f in foreign.txt; do touch "$f"; done',
+        "bash -c 'git checkout HEAD~0; touch foreign.txt'",
+    ],
+)
+async def test_normalized_bash_dirty_foreign_edit_blocks(
+    guard_harness: GuardHarness, command: str
+) -> None:
     (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
-    event = guard_harness.event("printf changed > foreign.txt")
+    event = guard_harness.event(command)
     event.data = {
         "tool_name": "Bash",
-        "tool_input": {"command": "printf changed > foreign.txt"},
+        "tool_input": {"command": command},
     }
 
     response = await guard_harness.handler._evaluate_rules(event)
@@ -527,7 +539,6 @@ async def test_nonforce_branch_change_keeps_git_conflict_handling(
 @pytest.mark.parametrize("deleted", [False, True])
 async def test_checkout_positional_paths_check_foreign_ownership(
     guard_harness: GuardHarness,
-    tmp_path: Path,
     directory_form: str,
     operation: str,
     deleted: bool,
@@ -536,7 +547,9 @@ async def test_checkout_positional_paths_check_foreign_ownership(
     harness = guard_harness
     target = harness.repo
     if foreign_worktree:
-        target = tmp_path / "other"
+        # Keep this fixture under the managed project, rather than the
+        # intentionally exempt temporary scratchpad boundary outside it.
+        target = harness.repo / "other"
         _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
         SessionVariableManager(harness.db).merge_variables(
             harness.foreign_session.id,
@@ -552,7 +565,7 @@ async def test_checkout_positional_paths_check_foreign_ownership(
     else:
         path.write_text("foreign change\n", encoding="utf-8")
     prefix = f"git -C {target}" if directory_form == "git_option" else "git"
-    event = harness.event(f"{prefix} {operation}", workdir=target)
+    event = harness.event(f"{prefix} {operation}", checkout=target, workdir=target)
     response = await harness.handler._evaluate_rules(event)
     assert response.decision == "block", response.reason
     assert response.reason is not None
