@@ -71,6 +71,12 @@ def classify_search_segment(
 
 def git_selector_setup(raw_parts: list[str], parts: list[str]) -> bool:
     """Fail closed after shell-level selector assignments or declarations."""
+    if parts[:1] == ["set"]:
+        return any(
+            word == "allexport"
+            or (word.startswith("-") and not word.startswith("--") and "a" in word[1:])
+            for word in parts[1:]
+        )
     if parts[:1] == ["eval"]:
         try:
             tokens = scan_shell_command(" ".join(parts[1:])).tokens

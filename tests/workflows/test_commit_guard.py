@@ -1587,6 +1587,12 @@ async def test_positional_owned_path_preserves_pattern_message_data(
         "export GIT_ICASE_PATHSPECS=1 &&",
         "set -a; GIT_ICASE_PATHSPECS=1;",
         "declare -x GIT_ICASE_PATHSPECS=1;",
+        "! export GIT_ICASE_PATHSPECS=1;",
+        "set -a; read GIT_ICASE_PATHSPECS <<< 1;",
+        "set -a; printf -v GIT_ICASE_PATHSPECS 1;",
+        "set -a; let GIT_ICASE_PATHSPECS=1;",
+        'set -a; : "${GIT_ICASE_PATHSPECS:=1}";',
+        "set -o allexport; read GIT_ICASE_PATHSPECS <<< 1;",
     ],
 )
 async def test_exported_pathspec_mode_refuses_foreign_capture(
@@ -1606,6 +1612,9 @@ async def test_exported_pathspec_mode_refuses_foreign_capture(
     [
         "export GIT_EDITOR=true; git commit -m x -- owned.txt",
         "GIT_AUTHOR_DATE=2026-01-01T00:00:00 git commit -m x owned.txt",
+        "! true; git commit -m x owned.txt",
+        "set -e; git commit -m x owned.txt",
+        "set -euo pipefail; git commit -m x owned.txt",
     ],
 )
 async def test_unrelated_git_environment_preserves_owned_only_commit(
@@ -1620,7 +1629,7 @@ async def test_unrelated_git_environment_preserves_owned_only_commit(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("selection", ["inline", "exported", "options", "chdir"])
+@pytest.mark.parametrize("selection", ["inline", "exported", "options", "chdir", "negated"])
 async def test_linked_worktree_selector_refuses_foreign_capture(
     guard_harness: GuardHarness, tmp_path: Path, selection: str
 ) -> None:
@@ -1632,6 +1641,7 @@ async def test_linked_worktree_selector_refuses_foreign_capture(
     prefixes = {
         "inline": f"GIT_DIR={git_dir} GIT_WORK_TREE={root} git",
         "exported": f"export GIT_DIR={git_dir} GIT_WORK_TREE={root}; git",
+        "negated": f"! export GIT_DIR={git_dir} GIT_WORK_TREE={root}; git",
         "options": f"git --git-dir={git_dir} --work-tree={root}",
         "chdir": f"git -C {root}",
     }

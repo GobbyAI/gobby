@@ -109,7 +109,7 @@ def _utility_command(parts: list[str]) -> list[str]:
 
 
 def _prefix(parts: list[str]) -> tuple[list[str], tuple[str, ...]]:
-    if parts and (_ASSIGNMENT.match(parts[0]) or parts[0] in {"do", "then", "else"}):
+    if parts and (_ASSIGNMENT.match(parts[0]) or parts[0] in {"do", "then", "else", "!"}):
         return parts[1:], ()
     if parts and parts[0] in {"command", "builtin"}:
         index = 1
