@@ -9,8 +9,10 @@ and everything else fails closed.
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.hooks import _normalization_compound
 from gobby.hooks._ansi_c import ShellDialect
@@ -24,6 +26,17 @@ from gobby.workflows.engine.command_matching import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_stderr_pipeline_preserves_bundled_truncate_guard() -> None:
+    rule_path = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/workflows/rules/worker-safety/no-destructive-shell.yaml"
+    )
+    definition = yaml.safe_load(rule_path.read_text())
+    pattern = definition["rules"]["no-truncate"]["effects"][0]["command_pattern"]
+    assert isinstance(pattern, str)
+    assert command_patterns_match("true |& truncate -s0 a.py", pattern=pattern)
 
 
 @pytest.mark.parametrize(
