@@ -1042,3 +1042,275 @@ installed binaries:
   `TBD-at-expansion` ledgers with their own items D1.1, D1.2 and D2.1 (PA-5); and
   4.1.5 names `config_effective.json` (PA-6). No enhancer edits were received
   before consensus.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`RouteFamily` seam in gcore with per-request claims'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck` behind
+    `route-family`, with defaults `claims = true` and `check_proxied = Skipped`, and
+    `cargo tree -p gobby-hooks -i axum` is empty. file: `crates/gcore/src/route_family.rs`.
+
+    1.1.2: Under a `Native` or `Compare` backend, a request the family does not claim
+    reaches the proxy unchanged and never the family router. test: `crates/gdaemon/src/front_door/routes.rs::unclaimed_requests_are_proxied_under_every_backend`.
+
+    1.1.3: The existing routing behaviors still hold. test: `crates/gdaemon/src/front_door/routes.rs::health_family_honors_proxy_native_and_compare`.
+
+    1.1.4: The corpus parity precheck compiles against the generic trait and passes.
+    test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.'
+  labels:
+  - covers:gdaemon-runtime-family:1.1:1.1.1
+  - covers:gdaemon-runtime-family:1.1:1.1.2
+  - covers:gdaemon-runtime-family:1.1:1.1.3
+  - covers:gdaemon-runtime-family:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: One gdaemon pool for key resolution, the lease and hub node routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `serve::run` builds exactly one pool, used by the resolver,
+    the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs` calls
+    `Pool::build`. file: `crates/gdaemon/src/serve.rs`.
+
+    1.2.2: The lease still holds a dedicated advisory-lock session that drop and failed
+    transactions release. test: `crates/gdaemon/tests/lease.rs::failed_transaction_and_drop_release_the_dedicated_session`.
+
+    1.2.3: Epoch and signing secret still rotate together on acquisition. test: `crates/gdaemon/tests/lease.rs::epoch_and_secret_rotate_together`.
+
+    1.2.4: A resolver on an unreachable pool fails closed. test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.'
+  labels:
+  - covers:gdaemon-runtime-family:1.2:1.2.1
+  - covers:gdaemon-runtime-family:1.2:1.2.2
+  - covers:gdaemon-runtime-family:1.2:1.2.3
+  - covers:gdaemon-runtime-family:1.2:1.2.4
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Compare policy, compare log and `gdaemon compare-report`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: A claimed GET in Compare mode returns the proxied response
+    and records `match`, or `diff` with a pointer and no values. test: `crates/gdaemon/tests/compare.rs::get_compare_records_match_and_diff_without_values`.
+
+    2.1.2: JSON bodies that differ only in key order record `match`. test: `crates/gdaemon/tests/compare.rs::json_bodies_compare_by_value`.
+
+    2.1.3: A claimed POST in Compare mode never reaches the native router, the backend
+    and `check_proxied` both receive the original request bytes, and the family check''s
+    outcome is recorded. test: `crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg`.
+
+    2.1.4: A failing native leg records `native_error` and the caller still receives
+    the proxied response. test: `crates/gdaemon/tests/compare.rs::native_failure_returns_the_proxied_response`.
+
+    2.1.5: The report counts per family within `--since` and fails on any diff, native_error
+    or mismatch, and on an empty window. test: `crates/gdaemon/tests/compare.rs::report_fails_on_mismatch_and_empty_window`.'
+  labels:
+  - covers:gdaemon-runtime-family:2.1:2.1.1
+  - covers:gdaemon-runtime-family:2.1:2.1.2
+  - covers:gdaemon-runtime-family:2.1:2.1.3
+  - covers:gdaemon-runtime-family:2.1:2.1.4
+  - covers:gdaemon-runtime-family:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: '`gobby-runtime` crate and native `GET /api/config/effective`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "3.1.1: `crates/gruntime` builds as workspace member `gobby-runtime`\
+    \ (publish false, workspace version) and gdaemon links it. file: `crates/gruntime/Cargo.toml`.\n\
+    3.1.2: `GET /api/config/effective` with an API-key identity returns Python's projection\
+    \ of the desired configuration with `no-store`. test: `crates/gruntime/tests/config.rs::effective_config_matches_python_projection`.\n\
+    3.1.3: Under `/api/config` the family claims only identified `GET /api/config/effective`;\
+    \ every other `/api/config` path or method, and an unidentified caller on any\
+    \ path, is forwarded. test: `crates/gruntime/tests/config.rs::only_identified_effective_reads_are_claimed`.\n\
+    3.1.5: With an empty `config_store` the snapshot is the revision plus contract\
+    \ defaults, and a missing `config_state` row returns 500. test: `crates/gruntime/tests/config.rs::empty_store_serves_defaults_and_missing_state_fails`.\n\
+    3.1.4: Values that still hold `$secret:` or `${\u2026}` after expansion are omitted.\
+    \ test: `crates/gruntime/tests/config.rs::unresolved_values_are_omitted`."
+  labels:
+  - covers:gdaemon-runtime-family:3.1:3.1.1
+  - covers:gdaemon-runtime-family:3.1:3.1.2
+  - covers:gdaemon-runtime-family:3.1:3.1.3
+  - covers:gdaemon-runtime-family:3.1:3.1.5
+  - covers:gdaemon-runtime-family:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Grant signing and presentation in gcore; native `GET /api/runtime/config`
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: `sign_grant` reproduces a Python-signed grant''s checksum
+    and signature byte for byte, and `signature_matches` accepts it. test: `crates/gcore/src/grant/presentation/tests.rs::signature_matches_python_vector`.
+
+    3.2.2: Each rejection code maps to its status and `{code, error, message}` body.
+    test: `crates/gcore/src/grant/presentation/tests.rs::rejection_matrix_maps_codes_to_statuses`.
+
+    3.2.3: `verify_static` reports the first failing check in Python''s order. test:
+    `crates/gcore/src/grant/presentation/tests.rs::checks_run_in_python_order`.
+
+    3.2.4: `GET /api/runtime/config` with a valid interactive grant returns `{config_revision,
+    settings}`, a stale epoch returns 409, and a revoked generation returns 403 `revoked`.
+    test: `crates/gruntime/tests/grant.rs::runtime_config_presents_interactive_grants`.
+
+    3.2.5: Managed-principal grants, undecodable headers and missing headers are not
+    claimed. test: `crates/gruntime/tests/grant.rs::managed_and_malformed_grants_are_not_claimed`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.2:3.2.1
+  - covers:gdaemon-runtime-family:3.2:3.2.2
+  - covers:gdaemon-runtime-family:3.2:3.2.3
+  - covers:gdaemon-runtime-family:3.2:3.2.4
+  - covers:gdaemon-runtime-family:3.2:3.2.5
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: 'Secret-store port: envelope, secret reads and credential sealing'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Rust opens the Python-sealed token and decrypts the
+    Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_python_sealed_vector`.
+
+    3.3.2: Python opens the Rust-sealed token from the committed vector. test: `tests/storage/test_secret_seal_vector.py::test_python_opens_rust_sealed_vector`.
+
+    3.3.3: DEK unwrap works for the key-file and scrypt postures against Python-written
+    rows. test: `crates/gruntime/tests/secrets.rs::unwraps_both_postures`.
+
+    3.3.4: Two concurrent key-file initializations converge on one DEK and a 0600
+    KEK file. test: `crates/gruntime/tests/secrets.rs::concurrent_envelope_initialization_converges`.
+
+    3.3.5: A wrong AAD or a truncated token fails to open. test: `crates/gruntime/tests/secrets.rs::open_rejects_wrong_aad_and_truncation`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.3:3.3.1
+  - covers:gdaemon-runtime-family:3.3:3.3.2
+  - covers:gdaemon-runtime-family:3.3:3.3.3
+  - covers:gdaemon-runtime-family:3.3:3.3.4
+  - covers:gdaemon-runtime-family:3.3:3.3.5
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Native interactive handshake and grant capabilities
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: An identified operator handshake returns a signed interactive
+    grant whose payload fields equal Python''s for the same database state. test:
+    `crates/gruntime/tests/handshake.rs::interactive_handshake_issues_signed_grant`.
+
+    3.4.2: A repeat handshake reuses the principal and returns the stored password,
+    and a fresh issuance stores material that Python opens. test: `crates/gruntime/tests/handshake.rs::reused_principal_returns_the_sealed_password`.
+
+    3.4.3: A machine mismatch, an unadmitted project and a bad overlay return 403
+    `claims_mismatch`, and other issuance failures return 403 `credential_issuance_failed`.
+    test: `crates/gruntime/tests/handshake.rs::handshake_rejections_match_python_codes`.
+
+    3.4.4: Agent-bearer, cookie-only and unauthenticated handshakes and the managed
+    challenge are not claimed and reach Python unchanged. test: `crates/gruntime/tests/handshake.rs::non_operator_handshakes_are_not_claimed`.
+
+    3.4.5: The Rust capability port matches every Python-generated vector. test: `crates/gruntime/tests/capabilities.rs::capabilities_match_python_vectors`.
+
+    3.4.6: The committed vectors still match Python''s `capabilities_from_snapshot`.
+    test: `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.4:3.4.1
+  - covers:gdaemon-runtime-family:3.4:3.4.2
+  - covers:gdaemon-runtime-family:3.4:3.4.3
+  - covers:gdaemon-runtime-family:3.4:3.4.4
+  - covers:gdaemon-runtime-family:3.4:3.4.5
+  - covers:gdaemon-runtime-family:3.4:3.4.6
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Compare check for proxied handshake grants
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: A Python-issued grant for the request records `verified`.
+    test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+
+    3.5.2: A tampered capability, a wrong epoch, a bad signature or a principal mismatch
+    records `mismatch` with the field pointer and no values. test: `crates/gruntime/tests/verify.rs::mismatches_name_the_field_without_values`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.5:3.5.1
+  - covers:gdaemon-runtime-family:3.5:3.5.2
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: 'Corpus: `runtime` family cases replayed natively'
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '4.1.1: The manifest declares `runtime` native with origin
+    python, owns the handshake, config and new cases, and no longer lists `config`
+    or `runtime_handshake`. file: `tests/contracts/http/manifest.json`.
+
+    4.1.2: `runtime_config` is recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
+
+    4.1.3: Every corpus case replays equal against the e2e daemon with `runtime: native`.
+    test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    4.1.4: The Rust parity precheck passes with `runtime` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+
+    4.1.5: `config_effective` is recorded from Python and committed. file: `tests/contracts/http/config_effective.json`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.1:4.1.1
+  - covers:gdaemon-runtime-family:4.1:4.1.2
+  - covers:gdaemon-runtime-family:4.1:4.1.3
+  - covers:gdaemon-runtime-family:4.1:4.1.4
+  - covers:gdaemon-runtime-family:4.1:4.1.5
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: developer
+- title: 'E2E: compare smoke, backend-kill fallback, flip and rollback'
+  category: test
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Compare mode serves Python''s responses and records
+    `match` and `verified` outcomes with zero mismatches, and `compare-report` exits
+    0. test: `tests/e2e/test_runtime_family.py::test_compare_mode_records_zero_mismatches`.
+
+    4.2.2: With `runtime: native`, the runtime routes serve 200 while the backend
+    is killed, and proxied routes return the typed 503. test: `tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill`.
+
+    4.2.3: Flip and rollback take only a bootstrap edit and a gdaemon restart with
+    the same binaries. test: `tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.2:4.2.1
+  - covers:gdaemon-runtime-family:4.2:4.2.2
+  - covers:gdaemon-runtime-family:4.2:4.2.3
+  tdd: false
+  source_section: '4.2'
+  assigned_agent: developer
+- title: 'Docs: family-crate template and the flip runbook'
+  category: docs
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: "Daemon family crates" documents the seam, the claims
+    and proxied-check hooks, the compare log and the corpus split. file: `crates/AGENTS.md`.
+
+    4.3.2: The configuration guide documents the `runtime` route values and the compare,
+    soak, flip and rollback runbook with `compare-report`. file: `docs/guides/configuration.md`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.3:4.3.1
+  - covers:gdaemon-runtime-family:4.3:4.3.2
+  tdd: false
+  source_section: '4.3'
+  assigned_agent: tech-writer
+```
