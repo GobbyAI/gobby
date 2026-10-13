@@ -66,7 +66,7 @@ class TestPreApproveClaude:
         "config_variant", ["default", "custom", "legacy", "custom-legacy", "oauth", "custom-oauth"]
     )
     def test_seeds_persisted_trust_for_workspace_and_resolved_path(
-        self, tmp_path: Path, config_variant: str
+        self, tmp_path: Path, config_variant: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -95,15 +95,15 @@ class TestPreApproveClaude:
         # An existing transcript directory must not skip persisted acceptance.
         (config_dir / "projects" / encode_claude_project_path(alias)).mkdir(parents=True)
 
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        selectors = {
+            "CLAUDE_CODE_CUSTOM_OAUTH_URL": "https://example.invalid" if oauth else "",
+        }
+        if custom_config:
+            selectors["CLAUDE_CONFIG_DIR"] = str(config_dir)
         with (
             patch("gobby.agents.trust.Path.home", return_value=tmp_path),
-            patch.dict(
-                os.environ,
-                {
-                    "CLAUDE_CONFIG_DIR": str(config_dir) if custom_config else "",
-                    "CLAUDE_CODE_CUSTOM_OAUTH_URL": "https://example.invalid" if oauth else "",
-                },
-            ),
+            patch.dict(os.environ, selectors),
         ):
             pre_approve_directory("claude", alias)
 
@@ -180,19 +180,18 @@ class TestPreApproveClaude:
         assert expected.is_dir()
 
     def test_resolves_symlinks(self, tmp_path: Path) -> None:
-        """On macOS /tmp -> /private/tmp; both paths should get trust entries."""
-        clone_dir = "/tmp/gobby-clones/symlink-test"
-        resolved_dir = "/private/tmp/gobby-clones/symlink-test"
+        """A workspace symlink and its resolved target both get trust entries."""
+        resolved_dir = tmp_path / "workspace"
+        resolved_dir.mkdir()
+        clone_dir = tmp_path / "alias"
+        clone_dir.symlink_to(resolved_dir, target_is_directory=True)
 
-        with (
-            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
-            patch("gobby.agents.trust.os.path.realpath", return_value=resolved_dir),
-        ):
+        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
             pre_approve_directory("claude", clone_dir)
 
         projects = tmp_path / ".claude" / "projects"
-        assert (projects / "-tmp-gobby-clones-symlink-test").is_dir()
-        assert (projects / "-private-tmp-gobby-clones-symlink-test").is_dir()
+        assert (projects / encode_claude_project_path(clone_dir)).is_dir()
+        assert (projects / encode_claude_project_path(resolved_dir.resolve())).is_dir()
 
     def test_install_trust_creates_gobby_home_project_directory(self, tmp_path: Path) -> None:
         gobby_home = tmp_path / ".gobby"

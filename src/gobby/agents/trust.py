@@ -30,6 +30,7 @@ import tomlkit
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
+from gobby.claude_config import claude_config_home, claude_config_path, update_claude_config
 from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
@@ -213,34 +214,27 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
     directory existence does not imply trust on current Claude versions.
     """
     directory_text = os.fspath(directory)
-    configured_home = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    claude_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".claude"
-    legacy_config = claude_home / ".config.json"
-    suffix = "-custom-oauth" if os.environ.get("CLAUDE_CODE_CUSTOM_OAUTH_URL") else ""
-    config_path = (
-        legacy_config
-        if legacy_config.exists() or legacy_config.is_symlink()
-        else (claude_home if configured_home else Path.home()) / f".claude{suffix}.json"
-    )
+    claude_home = claude_config_home()
+    config_path = claude_config_path()
     encoded = encode_claude_project_path(directory_text)
     project_dir = claude_home / "projects" / encoded
 
     try:
-        if claude_home.is_symlink() or config_path.is_symlink():
-            raise ValueError("Claude trust configuration must not be redirected by symlinks")
-        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-        if not isinstance(config, dict):
-            raise ValueError("Claude global configuration must be an object")
-        projects = config.setdefault("projects", {})
-        if not isinstance(projects, dict):
-            raise ValueError("Claude projects configuration must be an object")
-        project = projects.setdefault(directory_text, {})
-        if not isinstance(project, dict):
-            raise ValueError("Claude workspace configuration must be an object")
-        changed = project.get("hasTrustDialogAccepted") is not True
-        if changed:
+
+        def approve(config: dict[str, Any]) -> bool:
+            projects = config.setdefault("projects", {})
+            if not isinstance(projects, dict):
+                raise ValueError("Claude projects configuration must be an object")
+            project = projects.setdefault(directory_text, {})
+            if not isinstance(project, dict):
+                raise ValueError("Claude workspace configuration must be an object")
+            if project.get("hasTrustDialogAccepted") is True:
+                return False
             project["hasTrustDialogAccepted"] = True
-            _atomic_write_text(config_path, json.dumps(config, indent=2) + "\n")
+            return True
+
+        changed = update_claude_config(config_path, approve)
+        if changed:
             if result is not None:
                 result.add_file_written(config_path)
 
@@ -263,8 +257,8 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
         if result is not None:
             result.add_error(message)
             result.add_entry(
-                store="claude_projects",
-                target=os.fspath(project_dir),
+                store="claude_config",
+                target=os.fspath(config_path),
                 status="error",
                 message=str(exc),
             )
