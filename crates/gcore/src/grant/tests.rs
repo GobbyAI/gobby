@@ -241,6 +241,33 @@ fn acquire_with_ignores_process_environment() {
 }
 
 #[test]
+fn from_process_treats_blank_agent_token_as_absent() {
+    let harness = Harness::new();
+    let _env = PoisonedEnv::apply(&harness.home.join("unused-bootstrap.json"));
+    for token in [
+        None,
+        Some(""),
+        Some(" \t\n"),
+        Some("token"),
+        Some(" token "),
+    ] {
+        // SAFETY: PoisonedEnv holds TEST_ENV_LOCK and restores the token on drop.
+        unsafe {
+            match token {
+                Some(value) => std::env::set_var(crate::local_token::AGENT_API_TOKEN_ENV, value),
+                None => std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV),
+            }
+        }
+        let request = AcquireRequest::from_process(&harness.project_root);
+        assert_eq!(
+            request.managed_envelope.as_deref(),
+            token.filter(|value| !value.trim().is_empty()),
+            "blank tokens must be absent and nonblank tokens preserved"
+        );
+    }
+}
+
+#[test]
 fn acquire_with_explicit_project_id_needs_no_project_root() {
     let harness = Harness::new();
     let grant = fixture_grant(PrincipalKind::Interactive);
@@ -1025,6 +1052,9 @@ fn managed_without_bootstrap_rejects_interactive_cache_hit() {
             let mut request = harness.request(None);
             let interactive = acquire_with(&request).expect("interactive cache control");
             assert_eq!(interactive.source, GrantSource::Cache);
+            // A directory at the lock-file path makes any lock attempt fail.
+            let lock_blocker = harness.home.join("grants/.acquire.lock");
+            fs::create_dir(&lock_blocker).expect("lock blocker");
             request.expected_execution_id = execution_id.then(|| "exec-1".into());
             request.managed_envelope = envelope.then(|| envelope_token(NOW + 60, PROJECT));
 
@@ -1034,7 +1064,7 @@ fn managed_without_bootstrap_rejects_interactive_cache_hit() {
                 "managed request must not consume interactive cache"
             );
             assert_eq!(fs::read(&path).expect("unchanged cache"), before);
-            assert!(!harness.home.join("grants/.acquire.lock").exists());
+            assert!(lock_blocker.is_dir());
         }
     }
 }
