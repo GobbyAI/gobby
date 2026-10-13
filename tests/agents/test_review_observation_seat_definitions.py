@@ -153,6 +153,14 @@ def _matches(condition: str, content: str, **variables: Any) -> bool:
     return bool(evaluator.evaluate(condition))
 
 
+def _code_reviewer_completion_when() -> str:
+    return next(
+        str(handler["when"])
+        for handler in _steps("code-reviewer")["verdict"].on_mcp_success
+        if handler.get("variable") == "_unit_done" and handler.get("value") is True
+    )
+
+
 @pytest.mark.parametrize("name", SEATS)
 def test_seat_carries_the_common_seat_shape(name: str) -> None:
     raw = _raw(name)
@@ -451,7 +459,10 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     assert variables["candidate_task"] is None
     assert list(steps) == ["load_skills", "await", "review", "verdict"]
     assert _transitions(steps["load_skills"]) == [("await", LOAD_SKILLS_WHEN)]
-    assert _transitions(steps["await"]) == [("review", "vars.candidate_received")]
+    assert _transitions(steps["await"]) == [
+        ("verdict", "vars.candidate_received and vars.verdict_ready"),
+        ("review", "vars.candidate_received"),
+    ]
     assert _transitions(steps["review"]) == [
         ("await", "not vars.candidate_received"),
         ("verdict", "vars.verdict_ready"),
@@ -465,7 +476,7 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     assert "gobby-agents:send_message" in _allowed_mcp_tools(steps["review"])
     assert 'set_variable(name="candidate_task"' in prompt
     assert 'scope="step"' in prompt
-    assert "against the current `0.5.0` head" in prompt
+    assert "integration branch named by the injected project policy" in prompt
     assert "EVENT=CANDIDATE_VERDICT TASK=#NNNNN" in prompt
     assert "VERDICT=LAND|BOUNCE" in prompt
     assert "HIGH, MEDIUM or LOW" in prompt
@@ -505,6 +516,7 @@ async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_
     variables = {
         **body.step_workflow.variables,
         "candidate_task": candidate,
+        "candidate_sha": "a" * 40,
         "candidate_received": True,
         "verdict_ready": step_name == "verdict",
     }
@@ -541,6 +553,7 @@ async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_
         assert notice is not None and notice.startswith(f"Step transition: {step_name} -> await")
         assert instance.current_step == "await"
         assert instance.variables["candidate_task"] is None
+        assert instance.variables["candidate_sha"] is None
         assert instance.variables["candidate_received"] is False
         assert instance.variables["verdict_ready"] is False
     else:
@@ -583,7 +596,7 @@ def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
     ("content", "resets"),
     [
         (
-            "EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED NOTE=mapping",
+            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'a' * 40} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=mapping",
             True,
         ),
         ("EVENT=REVIEW_COMPLETE TASK=#43 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED", False),
@@ -591,13 +604,37 @@ def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
         ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=REQUIRED", False),
         ("EVENT=REVIEW_COMPLETE TASK=#42 NOTE=VERDICT=LAND LANDING=NOT_REQUIRED", False),
         ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA= VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=def VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        (
+            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'b' * 40} VERDICT=LAND LANDING=NOT_REQUIRED",
+            False,
+        ),
     ],
 )
 def test_review_only_land_requires_explicit_matching_completion(content: str, resets: bool) -> None:
-    handlers = _send_message_resets(_steps("code-reviewer")["verdict"])
-    assert set(handlers) == {"candidate_received", "verdict_ready", "candidate_task"}
-    for handler in handlers.values():
-        assert _matches(handler["when"], content, candidate_task="#42") is resets
+    assert (
+        _matches(
+            _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha="a" * 40
+        )
+        is resets
+    )
+
+
+def test_code_reviewer_requests_review_only_confirmation_for_unmarked_no_change_land() -> None:
+    prompt = _prompt("code-reviewer")
+    assert "EVENT=REVIEW_ONLY_REQUIRED" in prompt
+    assert "REASON=review_only" in prompt
+
+
+@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
+def test_review_only_land_rejects_malformed_bound_sha(candidate_sha: str | None) -> None:
+    content = (
+        f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={candidate_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+    )
+    assert not _matches(
+        _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha=candidate_sha
+    )
 
 
 def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
@@ -684,13 +721,16 @@ def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
 ) -> None:
     handlers = _send_message_resets(_steps("code-reviewer")["verdict"])
 
-    assert {variable: handler["value"] for variable, handler in handlers.items()} == {
+    assert {
+        variable: handlers[variable]["value"]
+        for variable in ("candidate_received", "verdict_ready", "candidate_task", "candidate_sha")
+    } == {
         "candidate_received": False,
         "verdict_ready": False,
         "candidate_task": None,
+        "candidate_sha": None,
     }
-    for handler in handlers.values():
-        assert _matches(handler["when"], content, candidate_task="#42") is resets
+    assert _matches(_code_reviewer_completion_when(), content, candidate_task="#42") is resets
 
 
 def test_archivist_writes_only_the_workspace_digest() -> None:

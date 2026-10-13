@@ -1,0 +1,4 @@
+{
+  "HTTP GET /api/tasks": "proxied",
+  "MCP gobby-tasks:get_task": "proxied"
+}

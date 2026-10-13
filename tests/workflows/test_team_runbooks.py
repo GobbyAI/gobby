@@ -18,9 +18,65 @@ PIPELINES = ROOT / "src/gobby/install/shared/workflows/pipelines"
 ROLE_NAMES = {
     "developer": "developer",
     "code-reviewer": "code reviewer",
+    "security-reviewer": "security reviewer",
     "researcher": "researcher",
     "lane-manager": "lane manager",
 }
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_team_lane_renders_security_reviewer(override: bool) -> None:
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((PIPELINES / "team-lane.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(lane="3", seats="security-reviewer")
+    expected: tuple[str | None, str | None, str | None] = (None, None, None)
+    if override:
+        expected = ("codex", "gpt-6.1-sol", "high")
+        for name, value in zip(("provider", "model", "reasoning_effort"), expected, strict=True):
+            inputs[f"security_reviewer_{name}"] = value
+    context = _render_context(definition, inputs)
+    context["steps"]["guard"] = {
+        "output": {
+            "project_path": "/pilot/worktree",
+            "worktree": "pilot-worktree",
+            "report_to": "gobby#14972",
+            "lane_pane": "pilot:lane",
+            "lane_columns": 160,
+            "lane_rows": 100,
+        }
+    }
+    renderer = StepRenderer(TemplateEngine())
+    guard = definition.steps[0].mcp
+    assert guard is not None and guard.arguments is not None
+    catalogue = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)["catalogue"]
+    assert {
+        "name": "security-reviewer",
+        "title": "Lane 3 security reviewer",
+        "agent": "security-reviewer",
+    } in catalogue
+    step = next(step for step in definition.steps if step.id == "security-reviewer")
+    assert renderer.should_run_step(step, context)
+    assert step.mcp is not None and step.mcp.tool == "spawn_agent"
+    assert step.mcp.arguments is not None
+    args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+    assert args["agent"] == "security-reviewer"
+    assert (args.get("provider"), args.get("model"), args.get("reasoning_effort")) == expected
+    assert args["checkout_mode"] == "none" and args["project_path"] == "/pilot/worktree"
+    assert args["execution_mode"] == "interactive"
+    assert args["reserved_run_id"] == "pilot-run"
+    assert args["placement"]["split"] == {
+        "pane": "pilot:lane",
+        "axis": "balanced",
+        "columns": 160,
+        "rows": 100,
+        "title": "Lane 3 security reviewer",
+    }
+    assert 'target="session", target_id="gobby#14972"' in args["prompt"]
+    assert 'owner_session="gobby#14972"' in args["prompt"]
+    inputs["seats"] = "code-reviewer"
+    assert not renderer.should_run_step(step, context)
 
 
 @pytest.mark.parametrize(
@@ -79,6 +135,7 @@ def test_team_lane_contains_only_approved_seats() -> None:
         "guard",
         "developer",
         "code-reviewer",
+        "security-reviewer",
         "researcher",
         "lane-manager",
     ]
@@ -95,6 +152,11 @@ def test_team_lane_contains_only_approved_seats() -> None:
             "name": "code-reviewer",
             "title": "${{ 'Lane ' + inputs.lane + ' code reviewer' }}",
             "agent": "code-reviewer",
+        },
+        {
+            "name": "security-reviewer",
+            "title": "${{ 'Lane ' + inputs.lane + ' security reviewer' }}",
+            "agent": "security-reviewer",
         },
         {
             "name": "researcher",
@@ -129,6 +191,9 @@ def test_team_lane_contains_only_approved_seats() -> None:
         "reviewer_provider",
         "reviewer_model",
         "reviewer_reasoning_effort",
+        "security_reviewer_provider",
+        "security_reviewer_model",
+        "security_reviewer_reasoning_effort",
         "researcher_provider",
         "researcher_model",
         "researcher_reasoning_effort",
@@ -158,6 +223,7 @@ def test_team_lane_passes_lane_to_every_seat() -> None:
     assert [step.id for step in seat_steps] == [
         "developer",
         "code-reviewer",
+        "security-reviewer",
         "researcher",
         "lane-manager",
     ]
@@ -174,6 +240,24 @@ def test_team_lane_passes_lane_to_every_seat() -> None:
         ("developer", "developer", "developer", "6", "claude", "claude-opus-5-5", "xhigh"),
         ("code-reviewer", "reviewer", "code reviewer", "3", "claude", "claude-opus-5-5", "xhigh"),
         ("code-reviewer", "reviewer", "code reviewer", "6", "codex", "gpt-6.1-sol", "high"),
+        (
+            "security-reviewer",
+            "security_reviewer",
+            "security reviewer",
+            "3",
+            "grok",
+            "grok-4.7",
+            "xhigh",
+        ),
+        (
+            "security-reviewer",
+            "security_reviewer",
+            "security reviewer",
+            "6",
+            "codex",
+            "gpt-6.1-sol",
+            "high",
+        ),
         ("researcher", "researcher", "researcher", "3", "codex", "gpt-6.1-sol", "medium"),
         ("researcher", "researcher", "researcher", "6", "claude", "claude-opus-5-5", "high"),
         ("lane-manager", "manager", "manager", "3", "claude", "claude-sonnet-5-5", "medium"),
@@ -271,12 +355,14 @@ def test_team_lane_renders_operator_inputs(
     [
         ("developer", ["developer"]),
         ("researcher", ["researcher"]),
+        ("security-reviewer", ["security-reviewer"]),
+        ("security-reviewer,code-reviewer", ["code-reviewer", "security-reviewer"]),
         ("code-reviewer,researcher", ["code-reviewer", "researcher"]),
         ("code-reviewer,lane-manager", ["code-reviewer", "lane-manager"]),
         ("developer,code-reviewer,lane-manager", ["developer", "code-reviewer", "lane-manager"]),
         (
-            "developer,code-reviewer,researcher,lane-manager",
-            ["developer", "code-reviewer", "researcher", "lane-manager"],
+            "developer,code-reviewer,security-reviewer,researcher,lane-manager",
+            ["developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"],
         ),
     ],
 )
@@ -297,9 +383,9 @@ def test_team_lane_selects_only_requested_seats(requested: str, expected: list[s
     "seats",
     [
         subset
-        for size in range(1, 5)
+        for size in range(1, 6)
         for subset in combinations(
-            ("developer", "code-reviewer", "researcher", "lane-manager"), size
+            ("developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"), size
         )
     ],
 )
@@ -335,6 +421,7 @@ def test_team_lane_keeps_selected_seats_in_one_tab(
     titles = {
         "developer": "developer",
         "code-reviewer": "code reviewer",
+        "security-reviewer": "security reviewer",
         "researcher": "researcher",
         "lane-manager": "manager",
     }

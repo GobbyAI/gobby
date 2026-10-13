@@ -72,7 +72,9 @@ def test_reporter_renders_every_lane_from_policy(lane_count: int) -> None:
     assert "{{" not in rendered
 
 
-@pytest.mark.parametrize("name", ["developer", "code-reviewer", "researcher", "lane-manager"])
+@pytest.mark.parametrize(
+    "name", ["developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"]
+)
 def test_launch_assignment_is_rendered_in_the_seat_definition(name: str) -> None:
     assignment = {
         "lane": "verification",
@@ -110,7 +112,7 @@ def test_team_lane_passes_assignment_inputs_to_each_spawn() -> None:
     }
     renderer = StepRenderer(TemplateEngine())
     spawns = [step.mcp for step in definition.steps if step.mcp and step.mcp.tool == "spawn_agent"]
-    assert len(spawns) == 4
+    assert len(spawns) == 5
     for spawn in spawns:
         assert spawn is not None and spawn.arguments is not None
         rendered = renderer.render_mcp_arguments(
