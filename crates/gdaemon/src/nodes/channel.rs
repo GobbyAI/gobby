@@ -409,7 +409,7 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
         } else if let Err(error) = attempt
             && !failure_reported
         {
-            eprintln!("node channel connection failed; retrying with backoff: {error}");
+            eprintln!("node channel connection failed; retrying with backoff: {error:#}");
             failure_reported = true;
         }
         tokio::time::sleep(backoff).await;

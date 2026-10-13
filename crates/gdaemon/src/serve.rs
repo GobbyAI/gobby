@@ -129,25 +129,26 @@ pub fn run() -> Result<()> {
             );
             return Ok(());
         };
+        use gobby_core::postgres_pool::{Pool, PoolSettings};
+        let pool = Pool::build(
+            bootstrap
+                .database_url
+                .as_deref()
+                .context("backend requires database_url")?,
+            PoolSettings {
+                max_size: 4,
+                application_name: "gobby-gdaemon-nodes".into(),
+                acquire_timeout: Duration::from_secs(2),
+            },
+        )?;
         let native_routes = if bootstrap.mode == RunMode::Hub {
-            use gobby_core::postgres_pool::{Pool, PoolSettings};
             NativeRoutes::Hub(Arc::new(crate::nodes::HubNodes {
-                db: Pool::build(
-                    bootstrap
-                        .database_url
-                        .as_deref()
-                        .context("hub requires database_url")?,
-                    PoolSettings {
-                        max_size: 4,
-                        application_name: "gobby-gdaemon-nodes".into(),
-                        acquire_timeout: Duration::from_secs(2),
-                    },
-                )?,
+                db: pool,
                 registry: Default::default(),
                 timing: Default::default(),
             }))
         } else {
-            NativeRoutes::default()
+            NativeRoutes::Standalone(Some(Arc::new(pool)))
         };
         let mut listeners = bind(&bootstrap.bind_host, bootstrap.daemon_port, backend_http).await?;
         listeners.extend(bind(&bootstrap.bind_host, bootstrap.websocket_port, backend_ws).await?);

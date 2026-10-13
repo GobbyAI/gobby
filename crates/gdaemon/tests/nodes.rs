@@ -610,7 +610,9 @@ async fn channel_database(case: impl AsyncFnOnce(&ChannelDb) -> Result<()>) -> R
     admin
         .batch_execute(&format!(
             "CREATE SCHEMA {schema}; GRANT USAGE ON SCHEMA {schema} TO gobby_daemon_runtime; \
-         CREATE TABLE {schema}.machines(id uuid PRIMARY KEY, \
+         CREATE TABLE {schema}.machines(id uuid PRIMARY KEY, ref integer, \
+         hostname text, os text, label text, tailscale_name text, owner_user_id uuid, \
+         first_seen timestamptz, last_seen timestamptz, \
          last_heartbeat_at timestamptz, node_version text); \
          CREATE TABLE {schema}.api_keys(id uuid PRIMARY KEY, \
          user_id uuid NOT NULL, machine_id uuid NOT NULL, \
@@ -768,6 +770,14 @@ impl Drop for ChannelHub {
 }
 
 async fn channel_hub(db: &ChannelDb, timing: ChannelTiming) -> Result<ChannelHub> {
+    channel_door(db, timing, None).await
+}
+
+async fn channel_door(
+    db: &ChannelDb,
+    timing: ChannelTiming,
+    native: Option<NativeRoutes>,
+) -> Result<ChannelHub> {
     let nodes = Arc::new(HubNodes {
         db: db.pool()?,
         registry: Registry::default(),
@@ -782,7 +792,7 @@ async fn channel_hub(db: &ChannelDb, timing: ChannelTiming) -> Result<ChannelHub
         path,
     )?);
     let state = FrontDoorState {
-        native: NativeRoutes::Hub(nodes.clone()),
+        native: native.unwrap_or_else(|| NativeRoutes::Hub(nodes.clone())),
         ..FrontDoorState::new("127.0.0.1:1".parse()?, BackendState::Down, auth)
     };
     let table = RouteTable::new(FAMILIES, &Default::default(), &state);
@@ -803,6 +813,235 @@ async fn channel_hub(db: &ChannelDb, timing: ChannelTiming) -> Result<ChannelHub
         task,
         _home: home,
     })
+}
+
+#[tokio::test]
+async fn machines_api_lists_rows_with_connection_state() -> Result<()> {
+    channel_database(async |db| {
+        let user: Uuid = db
+            .admin
+            .query_one(
+                &format!("SELECT user_id FROM {}.api_keys WHERE id=$1", db.schema),
+                &[&db.key_id],
+            )
+            .await?
+            .get(0);
+        let early = Uuid::from_u128(1);
+        let tied = Uuid::from_u128(2);
+        let foreign = Uuid::from_u128(3);
+        db.admin
+            .execute(
+                &format!(
+                    "UPDATE {}.machines SET owner_user_id=$1, ref=9, \
+                hostname='node', os='macos', label='Desk', tailscale_name='desk.test', \
+                first_seen='2026-01-03T00:00:00Z', last_seen='2026-01-04T01:02:03+02:00', \
+                last_heartbeat_at='2026-01-05T00:00:00Z', node_version='0.4.19' WHERE id=$2",
+                    db.schema
+                ),
+                &[&user, &db.machine],
+            )
+            .await?;
+        db.admin
+            .execute(
+                &format!(
+                    "INSERT INTO {}.machines(id,owner_user_id,first_seen) VALUES \
+                ($1,$4,'2026-01-01T00:00:00Z'), ($2,$4,'2026-01-01T00:00:00Z'), \
+                ($3,$5,'2025-01-01T00:00:00Z')",
+                    db.schema
+                ),
+                &[&early, &tied, &foreign, &user, &Uuid::new_v4()],
+            )
+            .await?;
+        let hub = channel_hub(db, channel_timing()).await?;
+        let (pending, _pending_close) = hub.nodes.registry.register(tied);
+        // An admitted slot must remain disconnected until its acknowledgement.
+        let (status, body) = send(hub.addr, get("/api/machines")).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body["machines"].as_array().expect("machine list");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![early.to_string(), tied.to_string(), db.machine.to_string()]
+        );
+        let fields = [
+            "id",
+            "ref",
+            "hostname",
+            "os",
+            "label",
+            "tailscale_name",
+            "first_seen",
+            "last_seen",
+            "last_heartbeat_at",
+            "node_version",
+            "connected",
+        ];
+        for row in rows {
+            let object = row.as_object().expect("machine object");
+            assert_eq!(object.len(), fields.len());
+            assert!(fields.iter().all(|field| object.contains_key(*field)));
+            assert_eq!(row["connected"], false);
+            for field in ["first_seen", "last_seen", "last_heartbeat_at"] {
+                if let Some(value) = row[field].as_str() {
+                    time::OffsetDateTime::parse(
+                        value,
+                        &time::format_description::well_known::Rfc3339,
+                    )?;
+                } else {
+                    assert!(row[field].is_null());
+                }
+            }
+        }
+        for field in [
+            "ref",
+            "hostname",
+            "os",
+            "label",
+            "tailscale_name",
+            "last_seen",
+            "last_heartbeat_at",
+            "node_version",
+        ] {
+            assert!(rows[0][field].is_null(), "{field} must preserve null");
+        }
+        for (field, expected) in [
+            ("hostname", "node"),
+            ("os", "macos"),
+            ("label", "Desk"),
+            ("tailscale_name", "desk.test"),
+            ("node_version", "0.4.19"),
+        ] {
+            assert_eq!(rows[2][field], expected);
+        }
+        assert_eq!(rows[2]["ref"], 9);
+        assert_eq!(
+            time::OffsetDateTime::parse(
+                rows[2]["last_seen"].as_str().unwrap(),
+                &time::format_description::well_known::Rfc3339
+            )?,
+            time::OffsetDateTime::parse(
+                "2026-01-03T23:02:03Z",
+                &time::format_description::well_known::Rfc3339
+            )?
+        );
+        assert!(hub.nodes.registry.mark_live(tied, pending));
+        let path = format!("/api/machines/{tied}");
+        let (status, live) = send(hub.addr, get(&path)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(live["id"], tied.to_string());
+        assert_eq!(live["connected"], true);
+        assert_eq!(live.as_object().unwrap().len(), 11);
+        let (_, list) = send(hub.addr, get("/api/machines")).await;
+        assert_eq!(list["machines"][1], live);
+        hub.nodes.registry.remove(tied, pending);
+        assert_eq!(send(hub.addr, get(&path)).await.1["connected"], false);
+        for id in [
+            foreign.to_string(),
+            Uuid::new_v4().to_string(),
+            "malformed".into(),
+        ] {
+            let (status, body) = send(hub.addr, get(&format!("/api/machines/{id}"))).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(body["code"], "machine_not_found");
+        }
+        let mut peer = open_channel(hub.addr).await?;
+        hello(&mut peer, "inventory-live").await?;
+        ack(&mut peer, db.machine).await?;
+        let machine_path = format!("/api/machines/{}", db.machine);
+        let (status, machine) = send(hub.addr, get(&machine_path)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(machine["connected"], true);
+        assert_eq!(machine["node_version"], "inventory-live");
+        let standalone = channel_door(
+            db,
+            channel_timing(),
+            Some(NativeRoutes::Standalone(Some(Arc::new(db.pool()?)))),
+        )
+        .await?;
+        let (_, body) = send(standalone.addr, get("/api/machines")).await;
+        assert_eq!(body["machines"].as_array().unwrap().len(), 3);
+        assert!(
+            body["machines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["connected"] == false)
+        );
+        drop(peer);
+        timeout(TIMEOUT, async {
+            let mut poll = tokio::time::interval(Duration::from_millis(5));
+            while hub.nodes.registry.is_connected(db.machine) {
+                poll.tick().await;
+            }
+        })
+        .await?;
+        assert_eq!(
+            send(hub.addr, get(&machine_path)).await.1["connected"],
+            false
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn machines_api_requires_a_key() -> Result<()> {
+    channel_database(async |db| {
+        let hub = channel_hub(db, channel_timing()).await?;
+        let standalone = channel_door(db, channel_timing(), Some(NativeRoutes::default())).await?;
+        for addr in [hub.addr, standalone.addr] {
+            for path in ["/api/machines", "/api/machines/malformed"] {
+                let mut request = get(path);
+                request.headers_mut().remove("authorization");
+                request
+                    .headers_mut()
+                    .insert("x-gobby-user-id", Uuid::new_v4().to_string().parse()?);
+                let (status, body) = send(addr, request).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED);
+                assert_eq!(body["code"], "missing_auth");
+                assert!(body["error"].is_string());
+            }
+        }
+        for path in ["/api/machines", "/api/machines/malformed"] {
+            let (status, body) = send(standalone.addr, get(path)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["code"], "machines_unavailable");
+        }
+        let (status, body) = send(hub.addr, get("/api/machines")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!({"machines": []}));
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(hub.nodes.db.get().await?);
+        }
+        for path in [
+            "/api/machines".to_string(),
+            format!("/api/machines/{}", db.machine),
+        ] {
+            let (status, body) = send(hub.addr, get(&path)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["code"], "machines_unavailable");
+        }
+        drop(held);
+        db.admin
+            .batch_execute(&format!(
+                "ALTER TABLE {}.machines DROP COLUMN ref",
+                db.schema
+            ))
+            .await?;
+        for path in [
+            "/api/machines".to_string(),
+            format!("/api/machines/{}", db.machine),
+        ] {
+            let (status, body) = send(hub.addr, get(&path)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["code"], "machines_unavailable");
+        }
+        Ok(())
+    })
+    .await
 }
 
 async fn warm_channel_pool(pool: &Pool) -> Result<()> {
@@ -994,14 +1233,30 @@ async fn revoked_key_closes_channel_on_heartbeat() -> Result<()> {
             tokio::time::sleep_until(upgraded + timing.key_recheck / 4).await;
             db.revoke().await?;
             let revoked = Instant::now();
-            if pong_only {
-                peer.send(PeerMessage::Pong(vec![1].into())).await?;
-            }
+            let mut pongs = tokio::time::interval(timing.key_recheck / 20);
+            let mut sent = 0;
+            let mut last_pong = revoked;
             timeout_at(
                 revoked + timing.key_recheck + timing.recheck_deadline,
-                close_code(&mut peer, 4401),
+                async {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            result = close_code(&mut peer, 4401) => break result,
+                            _ = pongs.tick(), if pong_only => {
+                                peer.send(PeerMessage::Pong(vec![1].into())).await?;
+                                sent += 1;
+                                last_pong = Instant::now();
+                            },
+                        }
+                    }
+                },
             )
             .await??;
+            if pong_only {
+                assert!(sent > 1, "Pongs must continue across the recheck window");
+                assert!(last_pong >= upgraded + timing.key_recheck * 3 / 4);
+            }
             assert!(!hub.nodes.registry.is_connected(db.machine));
         }
         db.admin
