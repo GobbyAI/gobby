@@ -102,6 +102,170 @@ def _metadata(command: str, root: Path, cwd: Path | None = None) -> dict[str, An
     return data
 
 
+@pytest.mark.parametrize("prefix", ["", "command ", "env LC_ALL=C "])
+@pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        ("sort -o out.txt in.txt", "out.txt"),
+        ('"sort" -o out.txt in.txt', "out.txt"),
+        ('sort -o "out file.txt" "in file.txt"', "out file.txt"),
+        ("sort --output=out.txt in.txt", "out.txt"),
+        ("sort --out=out.txt in.txt", "out.txt"),
+        ("sort --out out.txt in.txt", "out.txt"),
+        ("sort --outp out.txt in.txt", "out.txt"),
+        ("sort --o=out.txt in.txt", "out.txt"),
+        ("sort -oout.txt in.txt", "out.txt"),
+        ("sort -ro out.txt -k 1 in.txt", "out.txt"),
+        ("ln -s a b", "b"),
+        ('"ln" -s a b', "b"),
+        ('ln -s "source file" "link file"', "link file"),
+        ("ln -st links a", "links/a"),
+        ("tar -xf x.tar -C dir", "dir"),
+        ('"tar" -xf x.tar -C dir', "dir"),
+        ('tar -xf "x file.tar" -C "output dir"', "output dir"),
+        ("tar xf x.tar -Cdir", "dir"),
+        ("tar xfC x.tar dir", "dir"),
+        ("tar --extract --file=x.tar --directory=dir", "dir"),
+        ("tar --extr --file=x.tar --dire=dir", "dir"),
+        ("tar --ext -f x.tar --dire=dir", "dir"),
+        ("tar -xf x.tar --cd dir", "dir"),
+        ("tar -xf x.tar --cd=dir", "dir"),
+        ("tar --extract -f x.tar --dir dir", "dir"),
+        ("tar -xvzf x.tar -C dir", "dir"),
+        ("tar --extract --verbose --file=x.tar --directory=dir", "dir"),
+        ("tar -xf x.tar", "."),
+    ],
+)
+def test_file_writer_options_report_destination(
+    tmp_path: Path, prefix: str, command: str, target: str
+) -> None:
+    data = _metadata(f"cd '{tmp_path}' && {prefix}{command}", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert str(tmp_path / target) in data["canonical_file_paths"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sort in.txt",
+        "sort -k 'o' in.txt",
+        "sort -- in-o.txt",
+        "sort --key o in.txt",
+        "sort --random-source o in.txt",
+        "sort --compress-program o in.txt",
+        "tar -tf x.tar -C dir",
+        "tar tf extract.tar -C dir",
+        "tar --list --file=x.tar --directory=dir",
+        "tar -xOf x.tar",
+        "tar -xf x.tar --to-stdout",
+        "tar --extract --file=x.tar --to-std",
+        "git -C sub status",
+        'git -C "sub directory" status',
+    ],
+)
+def test_file_writer_read_only_forms(tmp_path: Path, command: str) -> None:
+    assert not _metadata(command, tmp_path).get("canonical_repo_mutation", False)
+
+
+@pytest.mark.parametrize("directory", ["sub", '"sub directory"'])
+def test_git_directory_selector_matches_call_directory(tmp_path: Path, directory: str) -> None:
+    selected = _metadata(f"cd '{tmp_path}' && git -C {directory} add -A", tmp_path)
+    direct = _metadata(f"cd '{tmp_path}' && cd {directory} && git add -A", tmp_path)
+    assert selected["canonical_repo_mutation"] is True
+    assert selected["canonical_repo_mutation"] == direct["canonical_repo_mutation"]
+    assert selected.get("canonical_file_paths") == direct.get("canonical_file_paths")
+    assert selected.get("canonical_repo_mutation_scope_unknown") == direct.get(
+        "canonical_repo_mutation_scope_unknown"
+    )
+
+
+@pytest.mark.parametrize("command", ["sort -o out.txt in.txt", "ln -s a b", "tar -xf x.tar -C dir"])
+def test_shell_inline_file_writer(tmp_path: Path, command: str) -> None:
+    assert _metadata(f"sh -c '{command}'", tmp_path)["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["sort -o /tmp/out.txt in.txt", "ln -s a /tmp/link", "tar -xf x.tar -C /tmp/output"],
+)
+def test_file_writer_external_destination(tmp_path: Path, command: str) -> None:
+    data = _metadata(f"cd '{tmp_path}' && {command}", tmp_path)
+    assert not data.get("canonical_repo_mutation", False)
+    assert data["canonical_tool_kind"] == "write"
+
+
+@pytest.mark.parametrize(
+    "command", ['sort -o "$OUT" in.txt', 'ln -s a "$LINK"', 'tar -xf x.tar -C "$DIR"']
+)
+def test_file_writer_dynamic_destination_fails_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(command, tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_tar_members_before_directory_switch_keep_both_scopes(tmp_path: Path) -> None:
+    data = _metadata(f"cd '{tmp_path}' && tar -xf x.tar a -C /tmp/extract b", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert set(data["canonical_file_paths"]) == {str(tmp_path), "/tmp/extract"}
+
+
+@pytest.mark.parametrize("option", ["--dire", "--cd"])
+def test_tar_directory_alias_from_external_cwd(tmp_path: Path, option: str) -> None:
+    data = _metadata(f"cd /tmp && tar -xf x.tar {option}='{tmp_path}/sub'", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert str(tmp_path / "sub") in data["canonical_file_paths"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -xPf x.tar",
+        "tar xPf x.tar",
+        "tar -x --absolute-names -f x.tar",
+        "tar -x --absolute-paths -f x.tar",
+        "tar -x --ab -f x.tar",
+        "tar -x --abs -f x.tar",
+        "tar -x --absolute- -f x.tar",
+        "tar -x --insecure -f x.tar",
+        "tar -x --insec -f x.tar",
+    ],
+)
+def test_tar_absolute_members_fail_closed(tmp_path: Path, command: str) -> None:
+    data = _metadata(f"cd /tmp && {command}", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("external_cwd", [False, True])
+@pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        ("tar -xf x.tar --exclude-from -O -C ROOT", "."),
+        ("tar -xf x.tar -X -O -C ROOT", "."),
+        ("tar -x -X -O -f x.tar -C ROOT", "."),
+        ("tar -x -I -O -f x.tar -C ROOT/sub", "sub"),
+        ("tar -xf x.tar --gname -O", None),
+        ("tar -xf x.tar --uname -O", None),
+        ("tar -xf x.tar --passphrase -O", None),
+        ("tar -xf x.tar --gname -C /tmp member.txt", None),
+        ("tar -xf x.tar --to-command=cat", None),
+        ("tar -x -H -f x.tar", None),
+    ],
+)
+def test_tar_option_values_and_unmodelled_options_preserve_write_guard(
+    tmp_path: Path, external_cwd: bool, command: str, target: str | None
+) -> None:
+    cwd = "/tmp" if external_cwd else str(tmp_path)
+    command = command.replace("ROOT", f"'{tmp_path}'")
+    data = _metadata(f"cd '{cwd}' && {command}", tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    if target is None:
+        assert data["canonical_repo_mutation_scope_unknown"] is True
+    else:
+        assert str(tmp_path / target) in data["canonical_file_paths"]
+        assert not data.get("canonical_repo_mutation_scope_unknown", False)
+
+
 @pytest.mark.parametrize(
     "command",
     [
