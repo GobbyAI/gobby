@@ -1367,13 +1367,17 @@ def test_git_branch_checkout_resolves_worktree_scope(
 )
 @pytest.mark.parametrize("directory_form", ["cwd", "git_option", "cd"])
 @pytest.mark.parametrize("subdirectory", [False, True])
+@pytest.mark.parametrize("deleted", [False, True])
 def test_git_checkout_positional_operands_have_checked_scope(
-    tmp_path: Path, operand: str, directory_form: str, subdirectory: bool
+    tmp_path: Path, operand: str, directory_form: str, subdirectory: bool, deleted: bool
 ) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     directory = tmp_path / "sub" if subdirectory else tmp_path
     directory.mkdir(exist_ok=True)
     (directory / "a.py").write_text("value = 1\n")
+    if deleted:
+        subprocess.run(["git", "-C", str(directory), "add", "a.py"], check=True)
+        (directory / "a.py").unlink()
     prefix = {
         "cwd": "git",
         "git_option": f"git -C {directory}",
@@ -1391,6 +1395,97 @@ def test_git_checkout_positional_operands_have_checked_scope(
     )
     if "-f" in operand.split() or "--force" in operand.split():
         assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("failure", ["oserror", "timeout", "exit"])
+@pytest.mark.parametrize("probe", ["revision", "index"])
+def test_git_checkout_unavailable_index_fails_closed(
+    tmp_path: Path, failure: str, probe: str
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    with patch("gobby.hooks._normalization_git.subprocess.run") as run:
+        failure_result: subprocess.CompletedProcess[bytes] | OSError | subprocess.TimeoutExpired
+        if failure == "oserror":
+            failure_result = OSError("git unavailable")
+        elif failure == "timeout":
+            failure_result = subprocess.TimeoutExpired("git", 1)
+        else:
+            failure_result = subprocess.CompletedProcess(
+                ["git"], 128, stdout=b"", stderr=b"invalid index"
+            )
+        run.side_effect = (
+            [subprocess.CompletedProcess(["git"], 1, stdout=b""), failure_result]
+            if probe == "index"
+            else [failure_result]
+        )
+        data = _invocation_metadata(
+            "git checkout missing.py", tool_cwd=tmp_path, project_path=tmp_path
+        )
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data["canonical_edit_file_paths"] == []
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("forced", [False, True])
+def test_git_checkout_proven_branch_wins_over_file(
+    tmp_path: Path, deleted: bool, forced: bool
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "a.py"
+    path.write_text("value = 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "branch", "a.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "a.py"], check=True)
+    branch = subprocess.run(
+        ["git", "-C", str(tmp_path), "symbolic-ref", "--short", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert branch.stdout.strip() == "a.py"
+    if deleted:
+        path.unlink()
+    data = _invocation_metadata(
+        f"git checkout {'-f ' if forced else ''}a.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_file_paths"] == [str(tmp_path)]
+    assert data["canonical_dirty_edit_paths"] == []
+    assert data["canonical_edit_file_paths"] == []
+    if forced:
+        assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("selector", ["GIT_INDEX_FILE", "GIT_DIR"])
+def test_git_checkout_index_proof_ignores_inherited_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selector: str
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "a.py"
+    path.write_text("value = 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.py"], check=True)
+    path.unlink()
+    monkeypatch.setenv(selector, str(tmp_path / "unrelated"))
+    data = _invocation_metadata("git checkout a.py", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == [str(path)]
+    assert data["canonical_edit_file_paths"] == []
 
 
 @pytest.mark.parametrize(

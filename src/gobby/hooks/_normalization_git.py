@@ -1,5 +1,7 @@
 """Git mutation operands and repository selection for shell normalization."""
 
+import os
+import subprocess
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -190,6 +192,51 @@ def git_command_parts(
     return [parts[0], *parts[index:]], git_cwd, unknown
 
 
+def _positional_checkout_is_path(
+    paths: tuple[str, ...], cwd: str, branch_candidate: str | None
+) -> bool | None:
+    """Prove path mode, including an indexed file missing from the filesystem."""
+    if len(paths) > 1:
+        return True
+    if not paths:
+        return False
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    try:
+        if branch_candidate is not None:
+            revision = "@{-1}" if branch_candidate == "-" else branch_candidate
+            ref = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    cwd,
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    f"{revision}^{{commit}}",
+                ],
+                capture_output=True,
+                timeout=1,
+                env=env,
+            )
+            if ref.returncode == 0:
+                return False
+            if ref.returncode != 1:
+                return None
+        if any(Path(path).exists() for path in paths):
+            return True
+        result = subprocess.run(
+            ["git", "--literal-pathspecs", "-C", cwd, "ls-files", "--cached", "-z", "--", *paths],
+            capture_output=True,
+            timeout=1,
+            # Inspect the proven checkout, never an inherited repository selector.
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return bool(result.stdout) if result.returncode == 0 else None
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -247,10 +294,23 @@ def classify_git_mutation(
         if forced or checked_paths:
             extra["canonical_git_checkout_mutation"] = True
         positional_paths = tuple(_rebase_shell_paths(operands, git_cwd)) if checked_paths else ()
-        # Branch scope is the worktree root, but non-force ownership checks
-        # retain the literal operands so Git can handle branch conflicts.
+        # Content checkout ownership follows literal operands. Revision checkout
+        # uses Git's conflict handling and the forced worktree-root check.
         extra["canonical_dirty_edit_paths"] = list(positional_paths)
-        path_checkout = any(Path(path).exists() for path in positional_paths)
+        branch_candidate = (
+            operands[0]
+            if checked_paths
+            and len(operands) == 1
+            and not any(argument in {"--ours", "--theirs"} for argument in arguments)
+            else None
+        )
+        path_checkout = _positional_checkout_is_path(
+            positional_paths, str(git_cwd), branch_candidate
+        )
+        if path_checkout is None:
+            return _ShellSegmentMetadata("write", repo_mutation=True, extra=extra)
+        if not path_checkout:
+            extra["canonical_dirty_edit_paths"] = []
         return _ShellSegmentMetadata(
             "write" if path_checkout else "execute",
             paths=positional_paths if path_checkout else (str(root),),

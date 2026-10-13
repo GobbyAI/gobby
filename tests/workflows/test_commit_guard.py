@@ -547,8 +547,8 @@ async def test_checkout_positional_paths_check_foreign_ownership(
     harness = guard_harness
     target = harness.repo
     if foreign_worktree:
-        # Keep this fixture under the managed project, rather than the
-        # intentionally exempt temporary scratchpad boundary outside it.
+        # Keep the worktree inside the known project so the unresolved-project
+        # external-path fallback cannot disable repository ownership enforcement.
         target = harness.repo / "other"
         _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
         SessionVariableManager(harness.db).merge_variables(

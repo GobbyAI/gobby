@@ -7,6 +7,7 @@ behavior to the old rule_definitions format.
 from __future__ import annotations
 
 import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -507,6 +508,74 @@ class TestDockerPolicyBlockRule:
         assert (
             await engine.evaluate(event, session_id=SESSION_ID, variables={})
         ).decision == "block"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["Dockerfile", "deploy/compose.yaml"])
+    @pytest.mark.parametrize("revision", ["", "HEAD "])
+    @pytest.mark.parametrize("directory_form", ["cwd", "git_option", "cd"])
+    async def test_deleted_tracked_checkout_is_blocked(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        target: str,
+        revision: str,
+        directory_form: str,
+    ) -> None:
+        engine = self._isolated_engine(db)
+        rule = RuleDefinitionManager(db).get_by_name("block-docker-policy-edits")
+        assert rule is not None and rule.enabled is True
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        path = tmp_path / target
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("FROM scratch\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", target], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            check=True,
+        )
+        path.unlink()
+        if revision:
+            subprocess.run(["git", "-C", str(tmp_path), "rm", "--cached", "-q", target], check=True)
+        prefix = {
+            "cwd": "git",
+            "git_option": f"git -C {tmp_path}",
+            "cd": f"cd {tmp_path} && git",
+        }[directory_form]
+        data: dict[str, object] = {
+            "tool_input": {
+                "command": f"{prefix} checkout {revision}{target}",
+                "cwd": str(tmp_path),
+            },
+            "tool_name": "Bash",
+            "project_path": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        response = await engine.evaluate(
+            self._event(HookEventType.BEFORE_TOOL, data),
+            session_id=SESSION_ID,
+            variables={},
+        )
+        assert response.decision == "block"
+        assert data["canonical_tool_kind"] == "write"
+        canonical_paths = data["canonical_file_paths"]
+        assert isinstance(canonical_paths, list)
+        assert str(path) in canonical_paths
+        assert data["canonical_edit_file_paths"] == []
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "checkout", *revision.split(), target], check=True
+        )
+        assert path.is_file()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
