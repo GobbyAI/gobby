@@ -512,6 +512,61 @@ async def test_plan_writer_commit_exemption_checks_recorded_paths(
         assert "require-task-before-commit" in str(response.reason)
 
 
+@pytest.mark.parametrize("operation", ["add", "commit"])
+@pytest.mark.parametrize("mixed_source", [False, True])
+@pytest.mark.parametrize(
+    "agent_type,path,expected",
+    [
+        ("plan-writer", ".gobby/plans/coverage/project/22948/plan.coverage.yaml", "allow"),
+        ("plan-writer", ".gobby/plans/coverage/.regenerate.log", "allow"),
+        ("developer", ".gobby/plans/coverage/project/22948/plan.coverage.yaml", "block"),
+        ("plan-enhancer", ".gobby/plans/coverage/.regenerate.log", "block"),
+        ("plan-writer", ".gobby/plans/other.yaml", "block"),
+        ("plan-writer", ".gobby/plans/coverage/../other.yaml", "block"),
+        ("plan-writer", ".gobby/plans/coverage-other/plan.coverage.yaml", "block"),
+        ("plan-writer", "src/config.yaml", "block"),
+    ],
+)
+async def test_plan_writer_coverage_artifact_gates(
+    plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
+    temp_db: HubDatabase,
+    repo: Path,
+    operation: str,
+    mixed_source: bool,
+    agent_type: str,
+    path: str,
+    expected: str,
+) -> None:
+    handler, session, project = plan_commit_handler
+    temp_db.execute(
+        "UPDATE rule_definitions SET enabled = (name IN (%s, %s, %s, %s))",
+        (
+            "require-task-before-edit",
+            "require-task-before-commit",
+            "require-code-review-skill",
+            "require-code-review-self-review",
+        ),
+    )
+    SessionVariableManager(temp_db).merge_variables(session.id, {"_agent_type": agent_type})
+    artifact = repo / path
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("coverage: pending\n", encoding="utf-8")
+    paths = [path]
+    if mixed_source:
+        _edit(repo, "src/app.py", "value = 2\n")
+        paths.append("src/app.py")
+    if operation == "commit":
+        _git(repo, "add", *paths)
+    command = f"git add -- {' '.join(paths)}" if operation == "add" else "git commit -m coverage"
+    event = _gate_event(command, session, project, repo)
+    if operation == "add":
+        event.data.update(canonical_repo_mutation=True, canonical_file_paths=paths)
+
+    response = await handler._evaluate_rules(event)
+
+    assert response.decision == ("block" if mixed_source else expected)
+
+
 @pytest.mark.parametrize("agent_type", ["developer", "plan-adversary", "default", None])
 async def test_plan_only_commit_exemption_is_writer_only(
     plan_commit_handler: tuple[WorkflowHookHandler, Session, Project],
