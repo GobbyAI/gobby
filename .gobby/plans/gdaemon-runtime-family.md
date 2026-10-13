@@ -1032,3 +1032,13 @@ installed binaries:
 
 - 2026-10-13: First draft by Plan Writer #16764. Decisions D1–D4 were ruled by
   Orchestrator #15977 on 2026-10-13.
+- 2026-10-13: Consensus between Plan Writer #16764 and Plan Adversary #16787 on
+  the revision at 3cc65d0. The adversary's six findings were accepted and repaired:
+  `check_proxied` receives the buffered request bytes (PA-1); the presentation
+  module uses the directory form (PA-2); 3.1's claims test covers only
+  `/api/config` paths and unidentified callers, and 3.2 and 3.4 extend `claims`
+  (PA-3); the desired snapshot keeps `_read_coherent`'s empty-store and
+  missing-state rules, with new item 3.1.5 (PA-4); both deferrals use
+  `TBD-at-expansion` ledgers with their own items D1.1, D1.2 and D2.1 (PA-5); and
+  4.1.5 names `config_effective.json` (PA-6). No enhancer edits were received
+  before consensus.
