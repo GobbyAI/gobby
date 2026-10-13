@@ -74,9 +74,12 @@ def _parse_git_commit_invocations(command: str, depth: int) -> tuple[GitCommitIn
         # Remove quoting/escaping conservatively: g\it and 'g'it still execute
         # Git, even when a later line cannot be tokenized.
         possible_words = command.replace("\\\n", "").translate(str.maketrans("", "", "\\'\""))
+        # ANSI-C escapes and substitutions can compute a Git command name.
+        # A failed scan cannot prove such expansions are harmless.
         return (
             (GitCommitInvocation(pathspecs=(), cwd_unverified=True),)
             if re.search(r"(?<![\w.-])git(?![\w.-])", possible_words)
+            or any(char in command for char in "$`")
             else ()
         )
 

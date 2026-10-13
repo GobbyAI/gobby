@@ -2492,6 +2492,27 @@ def test_malformed_shell_requires_git_word(command: str, contains_commit: bool) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("git_word", [r"g$'\x69't", "$(printf gi)t", "`printf gi`t"])
+async def test_malformed_later_line_cannot_hide_computed_git_name(
+    guard_harness: GuardHarness, git_word: str
+) -> None:
+    (guard_harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "foreign.txt")
+    command = f"{git_word} commit -m x\necho 'unterminated"
+    invocations = parse_git_commit_invocations(command)
+    response = await guard_harness.handler._evaluate_rules(guard_harness.event(command))
+    execution = subprocess.run(
+        ["bash", "-c", command], cwd=guard_harness.repo, capture_output=True, text=True
+    )
+    assert execution.returncode != 0
+    assert "unexpected EOF" in execution.stderr
+    assert _git(guard_harness.repo, "show", "--format=", "--name-only", "HEAD") == "foreign.txt"
+    assert response.decision == "block"
+    assert invocations
+    assert all(invocation.cwd_unverified for invocation in invocations)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("selection", ["keyword", "zsh-allexport"])
 async def test_additional_linked_selectors_refuse_foreign_capture(
     guard_harness: GuardHarness, tmp_path: Path, selection: str
