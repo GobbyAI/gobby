@@ -222,6 +222,19 @@ async def test_released_composer_delivers_the_wake_and_retires_the_item(
 
 
 @pytest.mark.asyncio
+async def test_arrow_over_held_daemon_text_withholds_wake(
+    seat: Seat, composer_ledger: ComposerLedger
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="continue")
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
+    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("block", ["provider_limit", "untracked"])
 async def test_blocks_with_their_own_valve_raise_no_composer_item(
     seat: Seat, composer_ledger: ComposerLedger, block: str

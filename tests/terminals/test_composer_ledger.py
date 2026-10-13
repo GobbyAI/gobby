@@ -189,6 +189,58 @@ def test_text_and_bracketed_paste_remain_drafts(payload: str) -> None:
     assert ledger.read("t1") == _DRAFT
 
 
+@pytest.mark.parametrize(
+    "payload", ["\x03", "\x1b", "\x7f", "\t", "\x19", "\x12", "\x1bOM", "\x1b[3~", "\x1bOP"]
+)
+@pytest.mark.parametrize("held", [False, True])
+def test_raw_interrupts_and_edits_invalidate_composer_content(payload: str, held: bool) -> None:
+    ledger = _tracked()
+    if held:
+        ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+        assert ledger.read("t1").holds("continue")
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+    assert not ledger.read("t1").holds("continue")
+
+
+@pytest.mark.parametrize("payload", ["tab", "backspace", "delete", "ctrl_u", "kp0", "kpenter"])
+def test_named_editing_keys_remain_human_input(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="key", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+
+
+@pytest.mark.parametrize("payload", ["up", "down", "left", "right"])
+def test_named_cursor_keys_leave_a_clean_composer_empty(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="key", payload=payload)
+    assert ledger.read("t1") == _EMPTY
+
+
+@pytest.mark.parametrize("payload", ["\x1b[A", "\x1b[B", "\x1bOC", "\x1bOD"])
+def test_cursor_input_invalidates_a_held_payload(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+    ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+    assert not ledger.read("t1").holds("continue")
+
+
+@pytest.mark.parametrize("payload", ["up", "down", "left", "right"])
+def test_named_cursor_keys_invalidate_a_held_payload(payload: str) -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
+    ledger.observe_write("t1", origin="operator", kind="key", payload=payload)
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_keypad_enter_flags_a_submit() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="operator", kind="input", payload="draft\x1bOM")
+    ledger.record_submit("t1")
+    assert ledger.read("t1") == _EMPTY
+
+
 def test_operator_raw_input_with_carriage_return_flags_submit() -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="input", payload="ls\r")
