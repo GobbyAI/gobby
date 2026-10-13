@@ -3,7 +3,7 @@ import logging
 import mimetypes
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -155,13 +155,16 @@ def create_communications_registry(
             destination = await asyncio.to_thread(
                 operator_destination, channel, get_current_session_id()
             )
-            return await send_attachment(
-                channel=channel,
-                file_path=file_path,
-                caption=caption,
-                filename=filename,
-                content_type=content_type,
-                metadata={"platform_destination": destination, "thread_id": None},
+            return cast(
+                dict[str, Any],
+                await send_attachment(
+                    channel=channel,
+                    file_path=file_path,
+                    caption=caption,
+                    filename=filename,
+                    content_type=content_type,
+                    metadata={"platform_destination": destination, "thread_id": None},
+                ),
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}

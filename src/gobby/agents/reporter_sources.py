@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from gobby.utils.project_context import find_project_root
+
 
 def task_refs(text: str) -> list[str]:
     """Preserve recorded order, expand ranges, and exclude session references."""
@@ -91,8 +93,12 @@ def main() -> None:
     parser.add_argument("--section", choices=("queues", "fleet", "decisions"), required=True)
     args = parser.parse_args()
     today = datetime.now(ZoneInfo("America/Chicago")).date().isoformat()
-    path = Path.home() / "Desktop" / f"gobby-digest-{today}.md"
+    path: Path | None = None
     try:
+        root = find_project_root()
+        if root is None:
+            raise ValueError("Reporter digest requires a project root")
+        path = root / ".gobby" / "reports" / f"gobby-digest-{today}.md"
         content = path.read_text(encoding="utf-8")
         result = {
             "source": str(path),
@@ -106,7 +112,13 @@ def main() -> None:
         if len(encoded.encode()) >= 14_000:
             raise ValueError("Selected digest section exceeds 14KB; report source gap")
     except (OSError, ValueError) as exc:
-        encoded = json.dumps({"source": str(path), "section": args.section, "error": str(exc)})
+        encoded = json.dumps(
+            {
+                "source": str(path) if path is not None else None,
+                "section": args.section,
+                "error": str(exc),
+            }
+        )
     print(encoded)
 
 

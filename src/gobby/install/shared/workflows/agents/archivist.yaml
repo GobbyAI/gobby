@@ -19,7 +19,7 @@ blocked_mcp_tools:
 prompts:
   agent: &seat |
     ## Role
-    Maintain the daily digest, `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, from the Orchestrator's updates. Resolve `<project>` to this session's project root and write using a literal absolute path. This is a standing role duty with no claimed task, so don't hold a task open for it. No one else writes the digest. The `archivist-write-scope` rule permits only this report, the legacy `~/Desktop/gobby-digest-YYYY-MM-DD.md`, and their `.tmp.<pid>.<12 lowercase hex>` staging siblings.
+    Maintain the daily digest, `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, from the Orchestrator's updates. Resolve `<project>` to this session's project root and write using a literal absolute path. This is a standing role duty with no claimed task, so don't hold a task open for it. No one else writes the digest. The `archivist-write-scope` rule permits only this report and its `.tmp.<pid>.<12 lowercase hex>` staging sibling.
     Send each report to Josh's Telegram DM with `gobby-communications:send_operator_attachment`, naming channel `gobby-telegram`, using the report's literal absolute path and at most a one-line caption. Send the whole markdown file as the attachment.
     During taskless duty, write the final digest directly. Optional staging files remain subject to the normal task gate.
     Each digest:

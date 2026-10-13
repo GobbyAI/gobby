@@ -1,12 +1,63 @@
 """Reporter source projection stays bounded despite historical digest cells."""
 
 import json
+from datetime import datetime, tzinfo
+from pathlib import Path
+from typing import Self
 
 import pytest
 
+from gobby.agents import reporter_sources
 from gobby.agents.reporter_sources import digest_projection, task_refs
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(("has_project", "worktree"), [(True, False), (True, True), (False, False)])
+def test_main_reads_only_checkout_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    has_project: bool,
+    worktree: bool,
+) -> None:
+    class PinnedDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Self:
+            return cls(2026, 9, 27, tzinfo=tz)
+
+    project = tmp_path / "checkout"
+    cwd = project / "nested"
+    cwd.mkdir(parents=True)
+    report = project / ".gobby/reports/gobby-digest-2026-09-27.md"
+    if has_project:
+        report.parent.mkdir(parents=True)
+        context = {"project_path": str(project)}
+        if worktree:
+            context["parent_project_path"] = str(tmp_path / "parent")
+        (project / ".gobby/project.json").write_text(json.dumps(context))
+        report.write_text("## Decisions needed (Josh)\nProject decision evidence\n")
+    home = tmp_path / "home"
+    desktop = home / "Desktop/gobby-digest-2026-09-27.md"
+    desktop.parent.mkdir(parents=True)
+    desktop.write_text("## Decisions needed (Josh)\nDesktop decoy evidence\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr("sys.argv", ["reporter_sources", "--section", "decisions"])
+    monkeypatch.setattr(reporter_sources, "datetime", PinnedDatetime)
+
+    reporter_sources.main()
+    result = json.loads(capsys.readouterr().out)
+    assert result["section"] == "decisions"
+    if has_project:
+        assert result["source"] == str(report)
+        assert "error" not in result
+        assert "Project decision evidence" in json.dumps(result["evidence"])
+        assert "Desktop decoy" not in json.dumps(result)
+    else:
+        assert "project root" in result["error"].lower()
+        assert "evidence" not in result
+        assert result.get("source") != str(desktop)
 
 
 def test_current_queues_exclude_history_and_expand_ranges_in_recorded_order() -> None:

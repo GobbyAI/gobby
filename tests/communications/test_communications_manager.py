@@ -43,13 +43,14 @@ _FIXED_TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("attachment", [False, True])
+@pytest.mark.parametrize(("attachment", "attached"), [(False, True), (True, False), (True, True)])
 async def test_operator_dm_clears_topic_thread_without_detaching(
     operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
     attachment: bool,
+    attached: bool,
 ) -> None:
     from gobby.mcp_proxy.tools.communications import create_communications_registry
     from gobby.storage.definitions import AgentDefinitionManager
@@ -80,7 +81,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
     SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", agent_type)
     holder.id = caller.id
     holder.transcript_path = None
-    if not attachment:
+    if attached:
         manager.attach_conversation(channel.name, "topic:-100123:77", caller.id)
         manager._thread_manager.track_thread(channel.id, caller.id, "77")
     manager._outbound.start()
@@ -104,15 +105,34 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
         assert sent.session_id == caller.id
         assert sent.metadata_json["platform_destination"] == "42"
         assert sent.platform_thread_id is None
+        assert sent.metadata_json["thread_id"] is None
         if attachment:
-            assert manager.attached_destination(channel.id, caller.id) is None
+            delivered_path = adapter.send_attachment.call_args.args[2]
+            assert delivered_path == report
+            assert delivered_path.read_text() == "# Systems nominal\n"
+        assert manager.attached_destination(channel.id, caller.id) == (
+            "topic:-100123:77" if attached else None
+        )
+        if not attached:
             return
-        assert manager.attached_destination(channel.id, caller.id) == "topic:-100123:77"
 
         reply = await manager.send_message(channel.name, "Topic reply", session_id=caller.id)
         assert reply.status == "sent"
         assert reply.metadata_json["platform_destination"] == "-100123"
         assert reply.platform_thread_id == "77"
+        if attachment:
+            for metadata, expected_thread in (
+                ({}, "77"),
+                ({"thread_id": " 99 "}, "99"),
+                ({"thread_id": ""}, None),
+                ({"thread_id": None}, None),
+            ):
+                ordinary, _ = await manager.send_attachment(
+                    channel.name, report, session_id=caller.id, metadata=metadata
+                )
+                assert ordinary.status == "sent"
+                assert ordinary.metadata_json["platform_destination"] == "-100123"
+                assert ordinary.platform_thread_id == expected_thread
     finally:
         await manager._outbound.stop()
 

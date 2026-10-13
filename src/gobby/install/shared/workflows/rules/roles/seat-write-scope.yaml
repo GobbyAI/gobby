@@ -19,7 +19,7 @@ rules:
           path inside it.
 
   archivist-write-scope:
-    description: "The Archivist writes only dated desktop digests and workspace reports"
+    description: "The Archivist writes only dated workspace reports"
     event: before_tool
     enabled: true
     priority: 15
@@ -28,14 +28,11 @@ rules:
       and event.data.get('canonical_tool_kind') == 'write'
       and not (
         write_paths_match(event.data, tool_input,
-          '~/Desktop/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md(?:\\.tmp\\.[0-9]{1,10}\\.[0-9a-f]{12})?')
-        or write_paths_match(event.data, tool_input,
           './\\.gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md(?:\\.tmp\\.[0-9]{1,10}\\.[0-9a-f]{12})?')
       )
     effects:
       - type: block
         reason: >-
           The Archivist writes only the dated digest at
-          `~/Desktop/gobby-digest-YYYY-MM-DD.md` or
           `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, or its `.tmp.<pid>.<12 lowercase hex>`
           staging sibling. Name it with a literal absolute path.
