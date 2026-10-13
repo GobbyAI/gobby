@@ -29,6 +29,13 @@ blocked_mcp_tools:
 
 prompts:
   agent: &seat |
+    {% if seat_context %}
+    ## Assignment
+    Lane: {{ seat_context.get('lane') or 'unassigned' }}
+    Lane epic: {{ seat_context.get('lane_epic') or 'unassigned' }}
+    Worktree: {{ seat_context.get('worktree') or 'unassigned' }}
+    First job: {{ seat_context.get('first_job') or 'await assignment' }}
+    {% endif %}
     ## Role
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
     - Send findings and proposals to the Orchestrator. Anything the operator must decide goes through the Assistant.

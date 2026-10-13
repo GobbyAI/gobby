@@ -167,7 +167,7 @@ def test_no_send_keys_resolves_for_every_new_seat_except_the_steward(
 
 @pytest.mark.parametrize("name", NEW_SEATS)
 def test_new_seat_prompts_open_with_a_role_and_copy_the_shared_sections(name: str) -> None:
-    prompt = _raw(name)["prompts"]["agent"]
+    prompt = AgentDefinitionBody.model_validate(_raw(name)).prompt_for("agent")
 
     assert prompt.lstrip().startswith("## Role")
     for heading in COPIED_HEADINGS:
@@ -259,7 +259,8 @@ def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
 
     for phrase in (
         "gobby-agents:list_running_agents",
-        'gobby-communications:send_operator_message(channel="gobby-telegram", '
+        "gobby-communications:resolve_operator_conversation",
+        "gobby-communications:send_operator_message(channel=<configured operator channel>, "
         "content=<whole markdown report>)",
         "only success=true confirms delivery",
         "If direct delivery fails or is unavailable",
@@ -273,7 +274,7 @@ def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
         "gobby-agents:end_agent_run",
         "passing current_state containing mode, elapsed time",
         "direct message_id or fallback message_id, delivery status, and any gaps",
-        "next_steps says the next tick is due in 30 minutes",
+        "next_steps names the next tick only when a configured cadence supplies it",
         "If both delivery paths fail",
     ):
         assert phrase in prompt, phrase

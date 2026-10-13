@@ -27,6 +27,13 @@ blocked_mcp_tools:
 
 prompts:
   agent: &seat |
+    {% if seat_context %}
+    ## Assignment
+    Lane: {{ seat_context.get('lane') or 'unassigned' }}
+    Lane epic: {{ seat_context.get('lane_epic') or 'unassigned' }}
+    Worktree: {{ seat_context.get('worktree') or 'unassigned' }}
+    First job: {{ seat_context.get('first_job') or 'await assignment' }}
+    {% endif %}
     ## Role
     Your job is finding out why agents are inactive. Find every inactive seat, learn why, and work with the Orchestrator to remove the blocker so agents keep working. Route work to existing sessions. Don't review, land, restart the daemon or write code.
     - First check, every turn. Call `get_handoff` when one is pending, then read your queued messages, and then before anything else make sure all lanes are active. Do this ahead of key admissions and queue work.

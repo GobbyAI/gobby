@@ -8,9 +8,7 @@ description: |
 version: "3.2"
 enabled: true
 priority: 20
-provider: claude
-model: sonnet
-reasoning_effort: high
+provider: inherit
 blocked_tools:
   - "Workflow"
   - "Task"

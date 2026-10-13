@@ -16,6 +16,7 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
+    _agent_prompt_prefix,
     _prepare_provider_sandbox,
     prepare_claude_spawn,
     prepare_codex_spawn,
@@ -30,6 +31,24 @@ from gobby.storage.project_checkouts import (
     MissingMachineContextError,
 )
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
+
+
+def test_spawn_preamble_renders_launch_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    request, _, _ = _sandbox_request()
+    request.agent_name = "assigned-seat"
+    request.session_manager = MagicMock()
+    request.initial_variables = {"seat_context": {"lane": "custom"}}
+    body = make_agent_definition(
+        name="assigned-seat", prompts={"agent": "Assigned lane {{ seat_context.lane }}."}
+    )
+    resolver = MagicMock(return_value=body)
+    monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", resolver)
+
+    assert _agent_prompt_prefix(request) == "Assigned lane custom."
+    resolver.assert_called_once_with(
+        "assigned-seat", request.session_manager._storage.db, project_id="project"
+    )
 
 
 def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:

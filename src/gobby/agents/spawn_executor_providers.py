@@ -104,7 +104,7 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
         return ""
     if not agent_body:
         return ""
-    return agent_body.prompt_for("agent") or ""
+    return agent_body.prompt_for("agent", variables=request.initial_variables) or ""
 
 
 async def _prepare_provider_sandbox(
