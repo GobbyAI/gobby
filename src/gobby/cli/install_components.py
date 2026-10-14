@@ -8,6 +8,7 @@ the named components against an existing install.
 from __future__ import annotations
 
 import logging
+import os
 import tomllib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -143,8 +144,9 @@ class EmbeddingOverrides:
 def require_installed() -> None:
     """Component runs need an existing install (bootstrap plus managed gdaemon).
 
-    A bootstrap this process cannot stat, or cannot see beside the managed
-    gdaemon, is usually a sandbox boundary rather than a missing install.
+    A bootstrap this process cannot stat or open, or cannot see beside the
+    managed gdaemon, is usually a sandbox boundary rather than a missing install.
+    The open is closed unread.
     """
     bootstrap = bootstrap_path()
     gdaemon_exists = (get_gobby_home() / "bin" / "gdaemon").exists()
@@ -155,6 +157,7 @@ def require_installed() -> None:
     )
     try:
         bootstrap.stat()
+        os.close(os.open(bootstrap, os.O_RDONLY))
     except PermissionError:
         raise click.UsageError(unreadable) from None
     except (FileNotFoundError, NotADirectoryError):

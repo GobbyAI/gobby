@@ -115,44 +115,57 @@ class TestRequireInstalled:
 
 
 def _refuse_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    def refuse(self: Path, *args: object, **kwargs: object) -> None:
-        raise AssertionError(f"require_installed read {self}")
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError(f"require_installed read {args[0]}")
 
     monkeypatch.setattr(Path, "open", refuse)
     monkeypatch.setattr(Path, "read_text", refuse)
     monkeypatch.setattr(Path, "read_bytes", refuse)
+    monkeypatch.setattr(os, "read", refuse)
+
+
+def _denied(path: Path) -> PermissionError:
+    return PermissionError(errno.EPERM, "Operation not permitted", str(path))
 
 
 def test_require_installed_reports_unreadable_bootstrap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("datastore_mode: local\n")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "gdaemon").write_text("")
     real_stat = Path.stat
+    real_open = os.open
 
     def denied_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         if self == bootstrap:
-            raise PermissionError(errno.EPERM, "Operation not permitted", str(self))
+            raise _denied(self)
         return real_stat(self, follow_symlinks=follow_symlinks)
 
-    monkeypatch.setattr(Path, "stat", denied_stat)
-    _refuse_reads(monkeypatch)
-    with pytest.raises(click.UsageError) as denied:
-        require_installed()
-    monkeypatch.undo()
+    def denied_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        if Path(path) == bootstrap:
+            raise _denied(bootstrap)
+        return real_open(path, flags, mode)
 
+    def refusal(deny: tuple[object, str, object] | None) -> str:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        if deny is not None:
+            monkeypatch.setattr(*deny)
+        _refuse_reads(monkeypatch)
+        with pytest.raises(click.UsageError) as refused:
+            require_installed()
+        monkeypatch.undo()
+        return refused.value.format_message()
+
+    denied_metadata = refusal((Path, "stat", denied_stat))
+    # The metadata can stay visible while the sandbox denies opening the file.
+    denied_data = refusal((os, "open", denied_open))
     # A sandbox can also hide the file outright while the managed gdaemon stays visible.
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     bootstrap.unlink()
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "bin" / "gdaemon").write_text("")
-    _refuse_reads(monkeypatch)
-    with pytest.raises(click.UsageError) as hidden:
-        require_installed()
+    hidden = refusal(None)
 
-    for refusal in (denied, hidden):
-        message = refusal.value.format_message()
+    for message in (denied_metadata, denied_data, hidden):
         assert f"cannot read {bootstrap}" in message
         assert "unsandboxed host shell" in message
         assert "not installed" not in message
