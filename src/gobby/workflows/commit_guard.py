@@ -93,7 +93,7 @@ async def _resolve_commit_checkout_root(
 ) -> str | None:
     """Return the invocation's Git top-level, or ``None`` for a non-repository cwd."""
     result = await daemon_git.run(
-        [*invocation.root_options, "rev-parse", "--show-toplevel"],
+        [*invocation.root_options, "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
         cwd=command_cwd,
         timeout=10.0,
     )
@@ -270,14 +270,21 @@ async def foreign_dirty_edit_conflict(
     # Checkout operands use the target worktree's ledger, including deleted files.
     checkout_scopes = {root: [root] for root in data.get("canonical_git_force_checkout_roots", [])}
     if data.get("canonical_git_checkout_mutation"):
-        for path in data.get("canonical_file_paths", []):
-            if root_path := checkout_root(Path(path)):
-                checkout_scopes.setdefault(str(root_path), []).append(path)
+        ownership_paths = data.get(
+            "canonical_dirty_edit_paths", data.get("canonical_file_paths", [])
+        )
+        for path in ownership_paths or []:
+            scoped_path = Path(path)
+            if not scoped_path.is_absolute():
+                scoped_path = Path(_normalized_command_cwd(event, project_path)) / scoped_path
+            if root_path := checkout_root(scoped_path):
+                checkout_scopes.setdefault(str(root_path), []).append(str(scoped_path))
     for root, paths in checkout_scopes.items():
         scoped_data = dict(data)
         scoped_data.pop("canonical_git_force_checkout_roots", None)
         scoped_data.pop("canonical_git_checkout_mutation", None)
         scoped_data["canonical_file_paths"] = paths
+        scoped_data["canonical_dirty_edit_paths"] = paths
         reason = await foreign_dirty_edit_conflict(
             db,
             replace(event, data=scoped_data, cwd=root),
@@ -340,7 +347,7 @@ async def foreign_dirty_edit_conflict(
 
 def _canonical_mutation_paths(event: HookEvent, project_path: str) -> set[str]:
     data = event.data if isinstance(event.data, dict) else {}
-    raw_paths = data.get("canonical_file_paths")
+    raw_paths = data.get("canonical_dirty_edit_paths", data.get("canonical_file_paths"))
     if not isinstance(raw_paths, list):
         single_path = data.get("canonical_file_path")
         raw_paths = [single_path] if isinstance(single_path, str) else []
@@ -692,7 +699,7 @@ async def _git_status_path_states_async(project_path: str) -> dict[str, bool]:
 
 async def _git_paths_async(project_path: str, *args: str) -> set[str]:
     result = await daemon_git.run(
-        ["--literal-pathspecs", *args],
+        ["--literal-pathspecs", "-c", "core.fsmonitor=false", *args],
         cwd=project_path,
         timeout=10.0,
     )

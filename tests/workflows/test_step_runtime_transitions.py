@@ -21,6 +21,32 @@ from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceM
 
 pytestmark = pytest.mark.unit
 
+
+async def test_completion_normalization_runs_off_loop(db: HubDatabase) -> None:
+    import threading
+    from unittest.mock import patch
+
+    from gobby.hooks.normalization import normalize_tool_fields
+    from gobby.hooks.tool_outcomes import tool_outcome_from_data
+
+    _setup_workflow(db)
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def normalize(data: dict[str, Any]) -> None:
+        worker_threads.append(threading.get_ident())
+        normalize_tool_fields(data)
+
+    event = _after_mcp_tool("gobby-tasks", "claim_task", arguments={"task_id": "task"})
+    with patch(
+        "gobby.workflows.engine.enforcement_completion.normalize_tool_fields",
+        side_effect=normalize,
+    ):
+        await RuleEngine(db)._process_step_after_tool(event, SESSION_ID, {})
+    assert worker_threads and all(worker != loop_thread for worker in worker_threads)
+    assert tool_outcome_from_data(event.data).succeeded is True
+
+
 # Session/project/instance id columns are native uuid in PostgreSQL; synthetic
 # ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"

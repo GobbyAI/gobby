@@ -387,12 +387,10 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         blocking_deadline.extend(lock_wait)
 
                 self._sync_tool_context(event, session_id)
-                if isinstance(event.data, dict) and not event.metadata.get(
-                    "_tool_context_rehydrated"
-                ):
+                if isinstance(event.data, dict):
                     from gobby.hooks.normalization import normalize_tool_fields
 
-                    normalize_tool_fields(event.data)
+                    await asyncio.to_thread(normalize_tool_fields, event.data)
 
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id

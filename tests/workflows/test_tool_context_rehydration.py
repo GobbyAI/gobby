@@ -18,6 +18,44 @@ from gobby.workflows.tool_context import _MAX_PENDING_TOOL_CONTEXTS_PER_SESSION
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rehydrate", [False, True])
+async def test_normalization_after_rehydration_runs_off_loop(
+    handler: WorkflowHookHandler, rehydrate: bool
+) -> None:
+    import threading
+    from unittest.mock import patch
+
+    from gobby.hooks.normalization import normalize_tool_fields
+
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    def normalize(data: dict[str, Any]) -> None:
+        worker_threads.append(threading.get_ident())
+        normalize_tool_fields(data)
+
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo hello"},
+        "tool_use_id": "normalization-probe",
+    }
+    if rehydrate:
+        handler._remember_tool_context(SessionSource.CLAUDE, PLATFORM_SESSION_ID, data)
+        data = {"tool_use_id": "normalization-probe", "tool_output": "hello"}
+    event = _event(HookEventType.AFTER_TOOL if rehydrate else HookEventType.BEFORE_TOOL, data)
+    with patch("gobby.hooks.normalization.normalize_tool_fields", side_effect=normalize):
+        response = await handler._evaluate_rules(event)
+    assert response.decision == "allow"
+    assert worker_threads and all(worker != loop_thread for worker in worker_threads)
+    assert len(worker_threads) == 1
+    assert event.data["canonical_tool_kind"] == "execute"
+    assert event.data["tool_input"] == {"command": "echo hello"}
+    if rehydrate:
+        assert event.metadata["_tool_context_rehydrated"] is True
+
+
 # Session id columns are native uuid in PostgreSQL; synthetic ids would fail
 # with `invalid input syntax for type uuid`.
 PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
@@ -39,7 +77,7 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 
 
 @pytest.fixture(autouse=True)
-def clean_dirty_files(monkeypatch) -> None:
+def clean_dirty_files(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "gobby.workflows.git_utils.get_dirty_files_categorized",
         lambda *_args, **_kwargs: DirtyFiles(set(), set()),

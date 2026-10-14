@@ -335,6 +335,19 @@ async def test_stream_cancellation_waits_for_active_consumer(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_status_disables_fsmonitor(tmp_path: Path) -> None:
+    _write_fake_git(tmp_path)
+    service = DaemonGitService()
+
+    result = await service.status(tmp_path, ["a[1].py"], env=_git_env(tmp_path))
+
+    assert isinstance(result, GitOk)
+    args = result.stdout.split("\0")
+    assert args[:2] == ["-c", "core.fsmonitor=false"]
+    assert args[-2:] == ["--", "a[1].py"]
+
+
+@pytest.mark.asyncio
 async def test_status_coalesces_only_exact_requests(tmp_path: Path) -> None:
     _write_fake_git(tmp_path)
     count = tmp_path / "count"
@@ -354,6 +367,8 @@ async def test_status_coalesces_only_exact_requests(tmp_path: Path) -> None:
     assert first == second
     assert count.read_text(encoding="utf-8") == "x"
     assert first.stdout.split("\0") == [
+        "-c",
+        "core.fsmonitor=false",
         "--literal-pathspecs",
         "--no-optional-locks",
         "status",

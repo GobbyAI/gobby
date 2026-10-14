@@ -1347,24 +1347,177 @@ def test_git_branch_checkout_resolves_worktree_scope(
     data = _invocation_metadata(f"{prefix} {operation}", tool_cwd=tmp_path, project_path=tmp_path)
 
     assert data["canonical_tool_kind"] == "execute"
-    expected_scope = target / "feature" if operation == "checkout feature" else target
-    if operation == "checkout feature" and subdirectory:
-        expected_scope = nested / "feature"
-    assert data["canonical_file_paths"] == [str(expected_scope)]
+    assert data["canonical_file_paths"] == [str(target)]
     assert data["canonical_edit_file_paths"] == []
     assert not data.get("canonical_write_file_paths")
     assert data.get("canonical_repo_mutation_scope_unknown") is None
 
 
-@pytest.mark.parametrize("operand", ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py"])
-def test_git_checkout_positional_operands_have_checked_scope(tmp_path: Path, operand: str) -> None:
+@pytest.mark.parametrize(
+    "operand",
+    ["a.py", "HEAD a.py", ".", "HEAD .", "--ours a.py", "-f a.py", "--force a.py", "-f HEAD a.py"],
+)
+@pytest.mark.parametrize("directory_form", ["cwd", "git_option", "cd"])
+@pytest.mark.parametrize("subdirectory", [False, True])
+@pytest.mark.parametrize("deleted", [False, True])
+def test_git_checkout_positional_operands_have_checked_scope(
+    tmp_path: Path, operand: str, directory_form: str, subdirectory: bool, deleted: bool
+) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    data = _invocation_metadata(f"git checkout {operand}", tool_cwd=tmp_path)
+    directory = tmp_path / "sub" if subdirectory else tmp_path
+    directory.mkdir(exist_ok=True)
+    (directory / "a.py").write_text("value = 1\n")
+    if deleted:
+        subprocess.run(["git", "-C", str(directory), "add", "a.py"], check=True)
+        (directory / "a.py").unlink()
+    prefix = {
+        "cwd": "git",
+        "git_option": f"git -C {directory}",
+        "cd": f"cd {directory} && git",
+    }[directory_form]
+    data = _invocation_metadata(
+        f"{prefix} checkout {operand}", tool_cwd=directory, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "write"
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_edit_file_paths"] == []
+    assert data["canonical_dirty_edit_paths"] == data["canonical_file_paths"]
     assert (
-        str(tmp_path / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
+        str(directory / ("." if "." in operand.split() else "a.py")) in data["canonical_file_paths"]
     )
+    if "-f" in operand.split() or "--force" in operand.split():
+        assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("failure", ["oserror", "timeout", "exit"])
+@pytest.mark.parametrize("probe", ["revision", "index"])
+def test_git_checkout_unavailable_index_fails_closed(
+    tmp_path: Path, failure: str, probe: str
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    with patch("gobby.hooks._normalization_git.subprocess.run") as run:
+        failure_result: subprocess.CompletedProcess[bytes] | OSError | subprocess.TimeoutExpired
+        if failure == "oserror":
+            failure_result = OSError("git unavailable")
+        elif failure == "timeout":
+            failure_result = subprocess.TimeoutExpired("git", 1)
+        else:
+            failure_result = subprocess.CompletedProcess(
+                ["git"], 128, stdout=b"", stderr=b"invalid index"
+            )
+        run.side_effect = (
+            [subprocess.CompletedProcess(["git"], 1, stdout=b""), failure_result]
+            if probe == "index"
+            else [failure_result]
+        )
+        data = _invocation_metadata(
+            "git checkout missing.py", tool_cwd=tmp_path, project_path=tmp_path
+        )
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert data["canonical_edit_file_paths"] == []
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("forced", [False, True])
+def test_git_checkout_proven_branch_wins_over_file(
+    tmp_path: Path, deleted: bool, forced: bool
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "a.py"
+    path.write_text("value = 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "branch", "a.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "checkout", "-q", "a.py"], check=True)
+    branch = subprocess.run(
+        ["git", "-C", str(tmp_path), "symbolic-ref", "--short", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert branch.stdout.strip() == "a.py"
+    if deleted:
+        path.unlink()
+    data = _invocation_metadata(
+        f"git checkout {'-f ' if forced else ''}a.py", tool_cwd=tmp_path, project_path=tmp_path
+    )
+    assert data["canonical_tool_kind"] == "execute"
+    assert data["canonical_file_paths"] == [str(tmp_path)]
+    assert data["canonical_dirty_edit_paths"] == []
+    assert data["canonical_edit_file_paths"] == []
+    if forced:
+        assert data["canonical_git_force_checkout_roots"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("selector", ["GIT_INDEX_FILE", "GIT_DIR"])
+def test_git_checkout_index_proof_ignores_inherited_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selector: str
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "a.py"
+    path.write_text("value = 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "a.py"], check=True)
+    path.unlink()
+    monkeypatch.setenv(selector, str(tmp_path / "unrelated"))
+    data = _invocation_metadata("git checkout a.py", tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_file_paths"] == [str(path)]
+    assert data["canonical_edit_file_paths"] == []
+
+
+def test_git_checkout_probes_disable_fsmonitor(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    with patch(
+        "gobby.hooks._normalization_git.subprocess.run",
+        side_effect=[
+            subprocess.CompletedProcess(["git"], 1, stdout=b""),
+            subprocess.CompletedProcess(["git"], 0, stdout=b"missing.py\0"),
+        ],
+    ) as run:
+        data = _invocation_metadata(
+            "git checkout missing.py", tool_cwd=tmp_path, project_path=tmp_path
+        )
+    assert data["canonical_tool_kind"] == "write"
+    assert run.call_count == 2
+    for call in run.call_args_list:
+        assert "core.fsmonitor=false" in call.args[0]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout HEAD~0; touch foreign.txt",
+        "touch foreign.txt; git checkout HEAD~0",
+        'git checkout HEAD~0; for f in foreign.txt; do touch "$f"; done',
+        'for f in foreign.txt; do touch "$f"; done; git checkout HEAD~0',
+        "bash -c 'git checkout HEAD~0; touch foreign.txt'",
+    ],
+)
+def test_checkout_dirty_edit_scope_preserves_sibling_writes(tmp_path: Path, command: str) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    data = _invocation_metadata(command, tool_cwd=tmp_path, project_path=tmp_path)
+    assert data["canonical_repo_mutation"] is True
+    if data.get("canonical_repo_mutation_scope_unknown"):
+        assert data["canonical_tool_kind"] == "write"
+    else:
+        paths = {(tmp_path / path).resolve() for path in data["canonical_dirty_edit_paths"]}
+        assert tmp_path / "foreign.txt" in paths
+        assert tmp_path not in paths
 
 
 @pytest.mark.parametrize(

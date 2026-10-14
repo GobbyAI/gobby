@@ -256,6 +256,7 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     paths: list[str] = []
     mutation_paths: list[str] = []
     edit_paths: list[str] = []
+    dirty_edit_paths: list[str] = []
     write_paths: list[str] = []
     mutation_scope_unknown = False
     mutation_scope_resolved_by_loop_binding = True
@@ -381,6 +382,13 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             mutation_scope_unknown = True
             mutation_scope_resolved_by_loop_binding = False
         explicit_edit_paths = item.extra.get("canonical_edit_file_paths") if item.extra else None
+        explicit_dirty_edit_paths = (
+            item.extra.get("canonical_dirty_edit_paths") if item.extra else None
+        )
+        if item.repo_mutation and explicit_dirty_edit_paths is not None:
+            for path in explicit_dirty_edit_paths:
+                if path not in dirty_edit_paths:
+                    dirty_edit_paths.append(path)
         if unresolved_mutation_paths:
             mutation_scope_unknown = True
             saw_unexpanded_mutation_path = True
@@ -397,6 +405,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                         if resolved_path not in mutation_paths:
                             mutation_paths.append(resolved_path)
                         if (
+                            explicit_dirty_edit_paths is None
+                            and resolved_path not in dirty_edit_paths
+                        ):
+                            dirty_edit_paths.append(resolved_path)
+                        if (
                             explicit_edit_paths is None or resolved_path in explicit_edit_paths
                         ) and resolved_path not in edit_paths:
                             edit_paths.append(resolved_path)
@@ -407,6 +420,12 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 paths.append(path)
             if item.repo_mutation and path not in mutation_paths:
                 mutation_paths.append(path)
+            if (
+                item.repo_mutation
+                and explicit_dirty_edit_paths is None
+                and path not in dirty_edit_paths
+            ):
+                dirty_edit_paths.append(path)
             if (
                 item.repo_mutation
                 and (explicit_edit_paths is None or path in explicit_edit_paths)
@@ -436,6 +455,8 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
         # Scope-only segments authorize the command without claiming a directory.
         # Preserve actual edits in mixed commands and nested shell wrappers.
         extra["canonical_edit_file_paths"] = edit_paths
+    if "canonical_dirty_edit_paths" in extra:
+        extra["canonical_dirty_edit_paths"] = dirty_edit_paths
     extra.pop("_canonical_deferred_source_read", None)
     extra.pop("_canonical_pending_source_reads", None)
     if pending_reads:
