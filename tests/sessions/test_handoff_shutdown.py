@@ -87,6 +87,7 @@ def test_cli_wait_logs_each_stale_marker_once_per_wait(
     messages: list[str] = []
     caplog.set_level(logging.WARNING, logger="gobby.sessions.handoff_shutdown")
     for wait_index in range(2):
+        logged_stale_markers: set[tuple[str, str | None, str]] = set()
         stage_handoff_attempt(
             temp_db, active, attempt_id=uuid4().hex, handoff=handoff, clear_session=False
         )
@@ -103,8 +104,15 @@ def test_cli_wait_logs_each_stale_marker_once_per_wait(
                 assert consume_pending_handoff(temp_db, active) is not None
 
         monkeypatch.setattr("gobby.cli._daemon_handoffs.time.sleep", acknowledge_after_retries)
-        with protect_pending_handoffs(runtime, wait=True, report=messages.append):
+        with protect_pending_handoffs(
+            runtime, wait=True, report=messages.append, logged_stale_markers=logged_stale_markers
+        ):
             assert sleeps == 3
+        # Cutover releases preflight's fence and reacquires it for the actual stop.
+        with protect_pending_handoffs(
+            runtime, wait=True, report=messages.append, logged_stale_markers=logged_stale_markers
+        ):
+            assert variables.get_variables(handoff_session)["set_handoff_pending"]
 
     warnings = [record.getMessage() for record in caplog.records]
     assert sum(stale_attempts[0] in message for message in warnings) == (3 if move_marker else 2)
