@@ -11,7 +11,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli import cli, daemon_preflight
+from gobby.cli import cli, daemon_preflight, install_setup_srt
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
@@ -96,6 +96,7 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
     monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", lambda _url: None)
+    monkeypatch.setattr(install_setup_srt, "restage_srt_runner", lambda: None)
     config = DaemonConfig()
     config.agent_sandbox.enabled = False
     config.web_chat_sandbox.enabled = False
@@ -138,6 +139,66 @@ def test_runner_checksum_mismatch_refuses_before_schema_plan(
     assert plan_calls == []
 
 
+@pytest.mark.parametrize("candidate", [None, _CANDIDATE], ids=["restart", "cutover"])
+@pytest.mark.parametrize("sandbox", ["agent_sandbox", "web_chat_sandbox"])
+def test_restart_restages_runner_before_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx: click.Context,
+    plan_calls: list[tuple[str, Path | None]],
+    candidate: Path | None,
+    sandbox: str,
+) -> None:
+    from gobby.agents import srt_runtime
+
+    config = DaemonConfig()
+    config.agent_sandbox.enabled = sandbox == "agent_sandbox"
+    config.web_chat_sandbox.enabled = sandbox == "web_chat_sandbox"
+    monkeypatch.setattr(CliRuntime, "read_only_operational_config", lambda _runtime: config)
+    monkeypatch.setattr(daemon_preflight, "_candidate_identity_refusal", lambda *_a, **_k: None)
+    events: list[str] = []
+
+    def restage() -> None:
+        events.append("restage")
+
+    def verify() -> None:
+        if events != ["restage"]:
+            raise srt_runtime.SrtRuntimeError("stale runner receipt")
+        events.append("verify")
+
+    monkeypatch.setattr(install_setup_srt, "restage_srt_runner", restage)
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", verify)
+
+    assert daemon_preflight.restart_start_refusal(ctx, candidate) is None
+    assert events == ["restage", "verify"]
+    assert plan_calls == [(_BOOTSTRAP_URL, candidate)]
+
+
+def test_failed_runner_restage_refuses_before_schema_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx: click.Context,
+    plan_calls: list[tuple[str, Path | None]],
+) -> None:
+    from gobby.agents import srt_runtime
+
+    config = DaemonConfig()
+    config.agent_sandbox.enabled = True
+    monkeypatch.setattr(CliRuntime, "read_only_operational_config", lambda _runtime: config)
+
+    def restage() -> None:
+        raise srt_runtime.SrtRuntimeError("bundled SRT runner checksum mismatch")
+
+    def verify() -> None:
+        pytest.fail("failed restage must prevent verification and stop")
+
+    monkeypatch.setattr(install_setup_srt, "restage_srt_runner", restage)
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", verify)
+
+    assert daemon_preflight.restart_start_refusal(ctx) == (
+        "Managed SRT sandbox preflight failed: bundled SRT runner checksum mismatch"
+    )
+    assert plan_calls == []
+
+
 def test_disabled_sandboxes_skip_srt_verification(
     monkeypatch: pytest.MonkeyPatch,
     ctx: click.Context,
@@ -149,6 +210,7 @@ def test_disabled_sandboxes_skip_srt_verification(
         pytest.fail("disabled sandboxes must not require an SRT installation")
 
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verification)
+    monkeypatch.setattr(install_setup_srt, "restage_srt_runner", unexpected_verification)
 
     assert daemon_preflight.restart_start_refusal(ctx) is None
     assert plan_calls == [(_BOOTSTRAP_URL, None)]

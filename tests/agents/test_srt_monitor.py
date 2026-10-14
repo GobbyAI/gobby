@@ -153,6 +153,13 @@ def monitor_harness(
     # Keep the Unix socket below macOS's 104-byte sun_path limit.
     with tempfile.TemporaryDirectory(prefix="sm-", dir=os.environ.get("TMPDIR")) as temporary:
         root = Path(temporary)
+        if getattr(request, "param", None) == "symlink-temp":
+            alias = root / "alias"
+            alias.symlink_to(root.resolve(), target_is_directory=True)
+            root = alias
+        # Node canonicalizes import.meta.url. Its direct-entry guard must see
+        # the same path in argv, including macOS /var -> /private/var TMPDIRs.
+        root = root.resolve()
         event_file = root / "events"
         event_file.write_text("")
         fake_log = root / "log.mjs"
@@ -268,6 +275,7 @@ def _wait_path(path: Path, *, absent: bool = False, minimum_bytes: int = 1) -> N
     pytest.fail(f"backlog path did not reach expected state: {path}")
 
 
+@pytest.mark.parametrize("monitor_harness", [None, "symlink-temp"], indirect=True)
 def test_one_stream_routes_complete_events_and_failure_closes_all(
     monitor_harness: MonitorHarness,
 ) -> None:
