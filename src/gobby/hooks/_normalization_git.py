@@ -254,9 +254,12 @@ def _positional_checkout_is_path(
     return bool(result.stdout) if result.returncode == 0 else None
 
 
-def _git_option_flags(arguments: list[str], value_options: set[str]) -> set[str]:
+def _git_option_flags(
+    arguments: list[str], value_options: set[str], supported_long_options: set[str]
+) -> tuple[set[str], bool]:
     """Read flags without interpreting option values or path operands as flags."""
     flags: set[str] = set()
+    proven_options = True
     skip_next = False
     for argument in arguments:
         if skip_next:
@@ -267,6 +270,7 @@ def _git_option_flags(arguments: list[str], value_options: set[str]) -> set[str]
         if argument.startswith("--"):
             option, separator, _ = argument.partition("=")
             flags.add(option)
+            proven_options = proven_options and option in supported_long_options
             skip_next = option in value_options and not separator
         elif argument.startswith("-") and argument != "-":
             for index, character in enumerate(argument[1:], start=1):
@@ -275,7 +279,7 @@ def _git_option_flags(arguments: list[str], value_options: set[str]) -> set[str]
                 if option in value_options:
                     skip_next = index == len(argument) - 1
                     break
-    return flags
+    return flags, proven_options
 
 
 def classify_git_mutation(
@@ -305,10 +309,36 @@ def classify_git_mutation(
             for argument in arguments
         ):
             return _ShellSegmentMetadata("write", repo_mutation=True)
-        flags = _git_option_flags(
-            arguments, {"-b", "-B", "-c", "-C", "--orphan", "--pathspec-from-file"}
+        supported_long_options = (
+            {"--force", "--detach", "--orphan", "--pathspec-from-file", "--merge"}
+            if operation == "checkout"
+            else {
+                "--force",
+                "--discard-changes",
+                "--detach",
+                "--orphan",
+                "--create",
+                "--force-create",
+                "--merge",
+            }
         )
-        forced = bool(flags & {"-f", "--force", "--discard-changes"})
+        flags, proven_options = _git_option_flags(
+            arguments,
+            {
+                "-b",
+                "-B",
+                "-c",
+                "-C",
+                "--orphan",
+                "--pathspec-from-file",
+                "--create",
+                "--force-create",
+            },
+            supported_long_options,
+        )
+        forced = not proven_options or bool(
+            flags & {"-f", "--force", "--discard-changes", "-m", "--merge"}
+        )
         head_checkout = operation == "checkout" and arguments == ["HEAD"]
         root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
         if root is None:
@@ -372,11 +402,20 @@ def classify_git_mutation(
             ):
                 return _ShellSegmentMetadata("execute")
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})
-    restore_flags = (
-        _git_option_flags(arguments, {"-s", "--source", "--pathspec-from-file"})
+    restore_flags, proven_restore_options = (
+        _git_option_flags(
+            arguments,
+            {"-s", "--source", "--pathspec-from-file"},
+            {"--source", "--staged", "--worktree", "--pathspec-from-file", "--pathspec-file-nul"},
+        )
         if operation == "restore"
-        else set()
+        else (set(), True)
     )
+    if operation == "restore" and not proven_restore_options:
+        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        return _ShellSegmentMetadata(
+            "write", paths=(str(root),) if root else (), repo_mutation=True
+        )
     if (
         operation == "restore"
         and bool(restore_flags & {"-S", "--staged"})

@@ -135,6 +135,8 @@ async def test_rule3_checks_write_paths_of_write_kind_calls_only(
     for command in (
         "git add foreign.txt",
         "git restore --staged foreign.txt",
+        "git restore -S -- foreign.txt",
+        "git switch --detach HEAD",
         "cp foreign.txt clean.txt",
     ):
         result = await h.handler._evaluate_rules(h.event(command))
@@ -272,6 +274,14 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
         "switch -f --detach HEAD",
         "switch --force --detach HEAD",
         "switch --discard-changes --detach HEAD",
+        "restore -S --workt -- foreign.txt",
+        "restore -S --w -- foreign.txt",
+        "switch --discard --detach HEAD",
+        "checkout --for HEAD",
+        "checkout --forc HEAD",
+        "restore -S --gobby-unproven -- foreign.txt",
+        "switch --gobby-unproven --detach HEAD",
+        "checkout --gobby-unproven HEAD",
     ],
 )
 @pytest.mark.parametrize("nested", [False, True])
@@ -358,6 +368,7 @@ async def test_rule3_directory_write_allows_requester_owned_child(
         "--source STABLE -- foreign.txt",
         "--pathspec-from-file -S",
         "--pathspec-from-file=-S",
+        "-S --worktree -- foreign.txt",
     ],
 )
 async def test_rule3_restore_option_values_do_not_disable_write_guard(
@@ -926,16 +937,21 @@ async def test_checkout_positional_paths_check_foreign_ownership(
     ],
 )
 @pytest.mark.parametrize("dirty", [False, True])
-async def test_merge_branch_change_execute_kind_defers_to_git(
+async def test_merge_branch_change_checks_foreign_ownership(
     guard_harness: GuardHarness, operation: str, dirty: bool
 ) -> None:
     harness = guard_harness
+    _git(harness.repo, "add", ".gobby/project.json")
+    _git(harness.repo, "commit", "-m", "project marker")
     if dirty:
         (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     event = harness.event(f"git {operation}", workdir=harness.repo)
     response = await harness.handler._evaluate_rules(event)
-    assert event.data["canonical_tool_kind"] == "execute"
-    assert response.decision == "allow", response.reason
+    assert event.data["canonical_tool_kind"] == "write"
+    assert event.data["canonical_file_paths"] == [str(harness.repo)]
+    assert response.decision == ("block" if dirty else "allow"), response.reason
+    if dirty:
+        assert harness.foreign_session.ref in (response.reason or "")
 
 
 @pytest.mark.asyncio

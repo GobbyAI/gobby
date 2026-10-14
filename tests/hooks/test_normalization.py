@@ -3148,6 +3148,51 @@ class TestExternalNavigationScope:
         normalize_tool_fields(data)
         assert data["canonical_tool_kind"] == kind
 
+    @pytest.mark.parametrize(
+        "command, kind, root_scoped",
+        [
+            ("git restore -S --workt -- foreign.txt", "write", True),
+            ("git restore -S --w -- foreign.txt", "write", True),
+            ("git switch --discard --detach HEAD", "write", True),
+            ("git checkout --for HEAD", "write", True),
+            ("git checkout --forc HEAD", "write", True),
+            ("git restore -S --gobby-unproven -- foreign.txt", "write", True),
+            ("git switch --gobby-unproven --detach HEAD", "write", True),
+            ("git checkout --gobby-unproven HEAD", "write", True),
+            ("git restore -S -- foreign.txt", "execute", False),
+            ("git restore -S --worktree -- foreign.txt", "write", False),
+            ("git switch --discard-changes --detach HEAD", "write", True),
+            ("git checkout --force HEAD", "write", True),
+            ("git switch --detach HEAD", "execute", False),
+            ("git restore -S --source --gobby-unproven -- foreign.txt", "execute", False),
+            ("git restore -S -s--gobby-unproven -- foreign.txt", "execute", False),
+            ("git restore -S -- --gobby-unproven", "execute", False),
+            ("git switch --create --gobby-unproven", "execute", False),
+            ("git checkout -qm HEAD", "write", True),
+            ("git checkout --merge HEAD", "write", True),
+            ("git switch -qm --detach HEAD", "write", True),
+            ("git switch --merge --detach HEAD", "write", True),
+        ],
+    )
+    def test_git_long_option_proof(
+        self, tmp_path: Path, command: str, kind: str, root_scoped: bool
+    ) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(tmp_path),
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+        if root_scoped:
+            assert data["canonical_file_paths"] == [str(tmp_path.resolve())]
+            if "restore" not in command:
+                assert data["canonical_git_checkout_mutation"] is True
+                assert data["canonical_dirty_edit_paths"] == [str(tmp_path.resolve())]
+
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (
             "cd docs && python3 - <<'PYEOF'\n"
