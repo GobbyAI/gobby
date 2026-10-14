@@ -1,1 +1,362 @@
-{}
+{
+  "CLI gobby embeddings": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings` from Python callback `src/gobby/cli/embeddings.py:23` to Rust embedding diagnostics, provider selection and CLI parity."
+  },
+  "CLI gobby embeddings catalog": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings catalog` from Python callback `src/gobby/cli/embeddings.py:127` to Rust embedding diagnostics, provider selection and CLI parity."
+  },
+  "CLI gobby embeddings doctor": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings doctor` from Python callback `src/gobby/cli/embeddings.py:28` to Rust embedding diagnostics, provider selection and CLI parity."
+  },
+  "CLI gobby embeddings switch": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings switch` from Python callback `src/gobby/cli/embeddings.py:40` to Rust embedding diagnostics, provider selection and CLI parity."
+  },
+  "CLI gobby feedback": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback` from Python callback `src/gobby/cli/feedback.py:21` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback digest": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback digest` from Python callback `src/gobby/cli/feedback.py:155` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback list": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback list` from Python callback `src/gobby/cli/feedback.py:54` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback observations": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback observations` from Python callback `src/gobby/cli/feedback.py:26` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback results": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback results` from Python callback `src/gobby/cli/feedback.py:41` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback review": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback review` from Python callback `src/gobby/cli/feedback.py:124` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby feedback status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback status` from Python callback `src/gobby/cli/feedback.py:95` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby health": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby health` from Python callback `src/gobby/cli/daemon_health.py:69` to Rust daemon lifecycle/health CLI orchestration and output parity."
+  },
+  "CLI gobby init": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby init` from Python callback `src/gobby/cli/init.py:20` to Rust project/bootstrap setup, bundled-content installation and CLI parity."
+  },
+  "CLI gobby install": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby install` from Python callback `src/gobby/cli/install.py:242` to Rust project/bootstrap setup, bundled-content installation and CLI parity."
+  },
+  "CLI gobby mcp-server": {
+    "status": "proxied",
+    "note": "Blocked on #23275 (gobby-mcp native MCP transports), #24351 (gmcp stdio tool surface) and #24356 (remove Python wrapper): port `gobby mcp-server` from Python callback `src/gobby/cli/mcp.py:13` to native stdio MCP transport and lifecycle tool parity."
+  },
+  "CLI gobby observations": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby observations` from Python callback `src/gobby/cli/observations.py:15` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby observations list": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby observations list` from Python callback `src/gobby/cli/observations.py:20` to Rust feedback/review observation services and CLI parity."
+  },
+  "CLI gobby pack": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby pack` from Python callback `src/gobby/cli/pack.py:433` to Rust portable archive export/restore and CLI parity."
+  },
+  "CLI gobby restart": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby restart` from Python callback `src/gobby/cli/daemon_lifecycle.py:412` to Rust daemon lifecycle/health CLI orchestration and output parity."
+  },
+  "CLI gobby start": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby start` from Python callback `src/gobby/cli/daemon_start.py:310` to Rust daemon lifecycle/health CLI orchestration and output parity."
+  },
+  "CLI gobby status": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby status` from Python callback `src/gobby/cli/daemon_lifecycle.py:562` to Rust daemon lifecycle/health CLI orchestration and output parity."
+  },
+  "CLI gobby stop": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby stop` from Python callback `src/gobby/cli/daemon_lifecycle.py:371` to Rust daemon lifecycle/health CLI orchestration and output parity."
+  },
+  "CLI gobby sync": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby sync` from Python callback `src/gobby/cli/sync.py:93` to Rust project/bootstrap setup, bundled-content installation and CLI parity."
+  },
+  "CLI gobby test-quality": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port `gobby test-quality` from Python callback `src/gobby/test_quality/cli.py:23` to Rust test audit/baseline services and CLI parity."
+  },
+  "CLI gobby test-quality audit": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port `gobby test-quality audit` from Python callback `src/gobby/test_quality/cli.py:28` to Rust test audit/baseline services and CLI parity."
+  },
+  "CLI gobby test-types": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port `gobby test-types` from Python callback `src/gobby/test_types/cli.py:33` to Rust test audit/baseline services and CLI parity."
+  },
+  "CLI gobby test-types audit": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port `gobby test-types audit` from Python callback `src/gobby/test_types/cli.py:134` to Rust test audit/baseline services and CLI parity."
+  },
+  "CLI gobby test-types suppressions": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port `gobby test-types suppressions` from Python callback `src/gobby/test_types/cli.py:38` to Rust test audit/baseline services and CLI parity."
+  },
+  "CLI gobby uninstall": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby uninstall` from Python callback `src/gobby/cli/uninstall.py:72` to Rust project/bootstrap setup, bundled-content installation and CLI parity."
+  },
+  "CLI gobby unpack": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 12 (install and setup): port `gobby unpack` from Python callback `src/gobby/cli/pack.py:676` to Rust portable archive export/restore and CLI parity."
+  },
+  "Gate native terminal default flip #21357": {
+    "status": "proxied",
+    "note": "Blocked on #21565 (Daemon-side gterm adoption and terminal WS): complete Rust epoch adoption and terminal WS cutover for the #21357 native-default evidence gate; closing that planning task alone does not prove this gate. Native gterm is preferred by Python `src/gobby/config/terminals.py:8`, while `crates/gdaemon/src/front_door/routes.rs:36-51` still gives TerminalFamily no prefixes and an empty router (excerpt_hash 3637daaec391c43c1a8ae31a0e85aa66ddf16118da9b89c8a3099bcaf6b9d9c7)."
+  },
+  "HTTP GET /api/embeddings/doctor": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:112` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/embeddings/status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:72` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/embeddings/switch/status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:124` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/entries": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:64` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/review/latest": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:135` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/review/{run_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:142` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/review/{run_id}/observations": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:149` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/review/{run_id}/results": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:161` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/runs": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:95` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/feedback/status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:104` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/llm/status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:231` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/llm/vision/status": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:397` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/metrics/current": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/metrics.py:42` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/metrics/snapshots": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/metrics.py:28` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/observations/unmodeled": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/observations.py:22` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/traces": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/traces.py:77` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /api/traces/{trace_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/traces.py:107` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP GET /docs": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP GET /docs/oauth2-redirect": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP GET /openapi.json": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP GET /redoc": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP HEAD /docs": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP HEAD /docs/oauth2-redirect": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP HEAD /openapi.json": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP HEAD /redoc": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/embeddings": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:77` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/embeddings/switch/abort": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:153` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/embeddings/switch/resume": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:145` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/embeddings/switch/start": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:128` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/feedback/review": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:52` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/hooks/execute": {
+    "status": "proxied",
+    "note": "Blocked on #24151 (S2.11 hub hook ingress and rule engine in Rust), with #24150 node forwarding and #24364 contract freeze: port Python `src/gobby/servers/routes/mcp/hooks.py:197-226::execute_hook` (excerpt_hash 9bb141cf402b9cc37684b4579904b4e79600c2fc5b15f20c6d485fb440a6c8f9) to the native hook HTTP handler and rule engine; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/llm/chat/completions": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:296` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/llm/generate": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:237` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "HTTP POST /api/llm/vision/extract": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:403` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route."
+  },
+  "MCP gobby-feedback:get_review_observations": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:18` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-feedback:get_review_results": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:28` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-feedback:submit_review": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:36` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:cleanup_old_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:283` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_failing_tools": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:137` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_metrics_timeseries": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:460` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_provider_capacity": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:86` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_retention_stats": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:313` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_rule_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:386` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_session_tools": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:358` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_skill_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:422` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_tool_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:55` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_tool_success_rate": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:173` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_top_tools": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:102` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:get_usage_report": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:332` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:reset_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:218` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-metrics:reset_tool_metrics": {
+    "status": "proxied",
+    "note": "Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:249` to Rust feedback/review and metrics MCP services."
+  },
+  "MCP gobby-results:get_tool_result": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port Python handler `src/gobby/mcp_proxy/tools/results.py:149` to Rust stored tool-result retrieval/search and bounded MCP envelopes."
+  },
+  "MCP gobby-results:search_tool_result": {
+    "status": "proxied",
+    "note": "Blocked on #21568 (remaining route families): port Python handler `src/gobby/mcp_proxy/tools/results.py:67` to Rust stored tool-result retrieval/search and bounded MCP envelopes."
+  },
+  "MCP gobby-review-learning:list_check_keys": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:166` to Rust review-lesson memory recall, recording and retirement."
+  },
+  "MCP gobby-review-learning:recall_review_context": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:87` to Rust review-lesson memory recall, recording and retirement."
+  },
+  "MCP gobby-review-learning:recall_review_lessons_by_class": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:143` to Rust review-lesson memory recall, recording and retirement."
+  },
+  "MCP gobby-review-learning:recall_review_lessons_for_files": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:118` to Rust review-lesson memory recall, recording and retirement."
+  },
+  "MCP gobby-review-learning:record_review_lesson": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:207` to Rust review-lesson memory recall, recording and retirement."
+  },
+  "MCP gobby-review-learning:retire_review_lesson": {
+    "status": "proxied",
+    "note": "Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:187` to Rust review-lesson memory recall, recording and retirement."
+  }
+}
