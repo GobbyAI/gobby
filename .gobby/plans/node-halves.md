@@ -1490,3 +1490,439 @@ uv run gobby plans validate .gobby/plans/node-halves.md -p .
   terminal host. D3's live proof runs in hub-mode D4.
 - Every cargo run is a heavy command and needs the Release Manager's grant.
   Run these from the worktree root, and never run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Freeze the hook ingress contract
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `docs/contracts/hook-ingress.md` states the request,
+    every response shape listed above, the replay rule, the receipt-ack file body
+    and the node forwarding pointer. file: `docs/contracts/hook-ingress.md`.
+
+    1.1.2: The four `hooks` cases replay equal against the e2e daemon. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    1.1.3: The manifest lists the `hooks` family and its cases, and the manifest contract
+    still holds. test: `tests/contracts/test_http_corpus.py::test_manifest_contract`.'
+  labels:
+  - covers:node-halves:1.1:1.1.1
+  - covers:node-halves:1.1:1.1.2
+  - covers:node-halves:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: developer
+- title: Node envelope ledger
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: A claim creates a Python-format processing marker and
+    a second claim of the same id fails while the first holds it. test: `crates/gdaemon/tests/node_hooks.rs::ledger_claim_is_exclusive`.
+
+    1.2.2: Renew, finalize and release succeed only for the owner token that holds
+    the lease. test: `crates/gdaemon/tests/node_hooks.rs::ledger_mutations_require_owner_token`.
+
+    1.2.3: A processing marker is stale only when its owner process is dead and its
+    lease is expired; a live owner past its lease stays active, and a non-empty unreadable
+    marker counts as processed. test: `crates/gdaemon/tests/node_hooks.rs::ledger_stale_and_malformed_markers`.
+
+    1.2.4: A stored STOP or turn-end block replays only within 120 seconds and only
+    when processed at or after the STOP epoch; any other stored response always replays.
+    test: `crates/gdaemon/tests/node_hooks.rs::ledger_stop_block_replay_window`.
+
+    1.2.5: Pruning deletes markers older than 24 hours, keeps newer ones and stops
+    at 100,000 entries. test: `crates/gdaemon/tests/node_hooks.rs::ledger_prune_retention`.
+
+    1.2.6: A marker written by the Python ledger reads back with the same status and
+    response. test: `crates/gdaemon/tests/node_hooks.rs::ledger_reads_python_markers`.'
+  labels:
+  - covers:node-halves:1.2:1.2.1
+  - covers:node-halves:1.2:1.2.2
+  - covers:node-halves:1.2:1.2.3
+  - covers:node-halves:1.2:1.2.4
+  - covers:node-halves:1.2:1.2.5
+  - covers:node-halves:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Hub routes for node replay decisions and receipts
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.3.1: `decide_replay` returns `retain`, `requeued`, `unlink`,
+    `archived`, `below_floor` and `execute` in the drain''s order for the matching
+    hub state, with a live envelope at or above the floor retained after the processed
+    check and before the fence, and a below-floor envelope with a matching Grok delivery
+    answered `below_floor`. test: `tests/hooks/test_replay_decision.py::test_decision_order`.
+
+    1.3.2: With a machine id, a session row on another machine is treated as unknown
+    by the Grok and fence lookups. test: `tests/hooks/test_replay_decision.py::test_foreign_rows_are_unknown`.
+
+    1.3.3: The local drain''s outcomes are unchanged after the extraction, and a fresh
+    live file still receives the Grok check and is not fenced. test: `tests/hooks/test_replay_decision.py::test_local_drain_unchanged`.
+
+    1.3.4: The replay route answers the decision for a node key, including the node''s
+    `live` flag, 403 `node_identity_required` without one, 403 `machine_is_local`
+    for the hub''s own key, and 422 for an unknown `v` or field. test: `tests/servers/test_node_hook_routes.py::test_replay_route`.
+
+    1.3.5: The receipts route acknowledges a node''s receipt, applies its effects
+    once, returns the carrying envelope ids, releases on `release`, and refuses another
+    machine''s receipt. test: `tests/servers/test_node_hook_routes.py::test_receipts_route`.'
+  labels:
+  - covers:node-halves:1.3:1.3.1
+  - covers:node-halves:1.3:1.3.2
+  - covers:node-halves:1.3:1.3.3
+  - covers:node-halves:1.3:1.3.4
+  - covers:node-halves:1.3:1.3.5
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Node receipt forwarding
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  validation_criteria: '1.4.1: A receipt-ack file is claimed once, posted with the
+    node key, and on 2xx its carrying envelopes and its own id are marked processed
+    and the claim is removed. test: `crates/gdaemon/tests/node_hooks.rs::receipts_ack_forwarded_and_terminalized`.
+
+    1.4.2: A failed post restores the ack file for the next sweep, and an orphaned
+    claim from a previous process is restored at sweep start. test: `crates/gdaemon/tests/node_hooks.rs::receipts_failed_post_and_orphan_restore`.'
+  labels:
+  - covers:node-halves:1.4:1.4.1
+  - covers:node-halves:1.4:1.4.2
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Node hook ingress arm
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.4'
+  validation_criteria: '1.5.1: A hook with an envelope id is claimed, forwarded with
+    ghook''s key, finalized with the hub''s response, and answered with the hub''s
+    bytes. test: `crates/gdaemon/tests/node_hooks.rs::ingress_forwards_and_finalizes`.
+
+    1.5.2: A retry of a processed envelope replays the stored response without reaching
+    the hub, and during a forward that outlasts the 15-second lease the marker''s
+    `lease_expires_at` moves forward before the forward returns and a retry answers
+    409 `processing`. test: `crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries`.
+
+    1.5.3: Hub 503 retry, hub 409 `processing` and relay failure release the claim
+    and pass the hub''s response through; hub 409 `processed` marks the envelope processed.
+    test: `crates/gdaemon/tests/node_hooks.rs::ingress_failure_dispositions`.
+
+    1.5.4: Pending receipt acks reach the hub before the hook they precede. test:
+    `crates/gdaemon/tests/node_hooks.rs::ingress_sweeps_receipts_first`.
+
+    1.5.5: A session start answered 2xx bumps the node''s STOP epoch. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
+
+    1.5.6: A client that disconnects mid-forward still gets its envelope finalized,
+    and its attached receipt is released. test: `crates/gdaemon/tests/node_hooks.rs::ingress_disconnect_finalizes_and_releases`.
+
+    1.5.7: A hook without an envelope id, or below the floor, is forwarded unchanged
+    with no marker. test: `crates/gdaemon/tests/node_hooks.rs::ingress_unledgered_passthrough`.'
+  labels:
+  - covers:node-halves:1.5:1.5.1
+  - covers:node-halves:1.5:1.5.2
+  - covers:node-halves:1.5:1.5.3
+  - covers:node-halves:1.5:1.5.4
+  - covers:node-halves:1.5:1.5.5
+  - covers:node-halves:1.5:1.5.6
+  - covers:node-halves:1.5:1.5.7
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: frontend
+- title: Node spool drain, boot release and retention
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '1.5'
+  validation_criteria: '1.6.1: The drain applies every replay disposition to the spool
+    file as specified, and an `execute` envelope is forwarded, marked processed and
+    rechecked without posting a receipt `release`. test: `crates/gdaemon/tests/node_hooks.rs::drain_applies_dispositions`.
+
+    1.6.2: A live file is posted with `live: true`, gets the Grok disposition, and
+    is otherwise kept; receipt files are swept before hook files. test: `crates/gdaemon/tests/node_hooks.rs::drain_skips_live_and_sweeps_receipts`.
+
+    1.6.3: At node start, processing markers from a previous process are removed and
+    markers held by the current process are kept. test: `crates/gdaemon/tests/node_hooks.rs::boot_releases_dead_processing_markers`.
+
+    1.6.4: A node daemon registers the drain and prune jobs on its heartbeat host.
+    test: `crates/gdaemon/tests/node_hooks.rs::node_registers_hook_jobs`.
+
+    1.6.5: Pruning removes expired markers and abandoned `.tmp` files older than an
+    hour. test: `crates/gdaemon/tests/node_hooks.rs::prune_markers_and_temp_files`.'
+  labels:
+  - covers:node-halves:1.6:1.6.1
+  - covers:node-halves:1.6:1.6.2
+  - covers:node-halves:1.6:1.6.3
+  - covers:node-halves:1.6:1.6.4
+  - covers:node-halves:1.6:1.6.5
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Durable node agent state
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  validation_criteria: '2.1.1: Agent state round-trips through `agents.json` across
+    a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents.rs::agent_state_round_trips`.
+
+    2.1.2: `next_revision` persists each value before returning it, so revisions never
+    repeat across a reopen. test: `crates/gdaemon/tests/node_agents.rs::revision_never_repeats_after_restart`.
+
+    2.1.3: An unparsable `agents.json` makes `NodeServices::prepare` fail with the
+    file''s path. test: `crates/gdaemon/tests/node_agents.rs::prepare_refuses_unreadable_agent_state`.
+
+    2.1.4: Cancel records survive a reopen and are pruned after 24 hours. test: `crates/gdaemon/tests/node_agents.rs::cancel_records_survive_restart_and_expire`.
+
+    2.1.5: On reopen, accepted and preparing runs become `prepare_failed` exits with
+    `launched: false`, and their workspace records become pending removals. test:
+    `crates/gdaemon/tests/node_agents.rs::restart_fails_unlaunched_runs`.'
+  labels:
+  - covers:node-halves:2.1:2.1.1
+  - covers:node-halves:2.1:2.1.2
+  - covers:node-halves:2.1:2.1.3
+  - covers:node-halves:2.1:2.1.4
+  - covers:node-halves:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Node terminal host
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The node''s epoch authority bumps and persists the
+    numeric host epoch exactly once per new host epoch string. test: `crates/gdaemon/tests/node_agents.rs::host_epoch_counter_follows_epoch`.
+
+    2.2.2: A node daemon adopts a running terminal host and completes `hello` with
+    the control token. test: `crates/gdaemon/tests/node_agents.rs::node_adopts_terminal_host`.
+
+    2.2.3: A dropped control connection is reopened and re-authenticated on the next
+    call. test: `crates/gdaemon/tests/node_agents.rs::host_control_reconnects`.'
+  labels:
+  - covers:node-halves:2.2:2.2.1
+  - covers:node-halves:2.2:2.2.2
+  - covers:node-halves:2.2:2.2.3
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Worktree and clone preparation and removal
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: Worktree preparation commits its record before the
+    first filesystem effect and creates a path and branch that embed `run_id` from
+    the requested or current base. test: `crates/gdaemon/tests/node_agents.rs::worktree_prepared_with_record_first`.
+
+    2.3.2: Clone preparation commits its record first and creates the clone and branch
+    under the clones root. test: `crates/gdaemon/tests/node_agents.rs::clone_prepared_with_record_first`.
+
+    2.3.3: Repair copies the provider''s hook directory, writes `.gobby/project.json`,
+    patches the MCP config and applies the git hygiene excludes for claude, codex
+    and grok. test: `crates/gdaemon/tests/node_agents.rs::workspace_repair_per_provider`.
+
+    2.3.4: A failed removal keeps its record, a later retry that succeeds deletes
+    it, and a path and branch already gone count as removed. test: `crates/gdaemon/tests/node_agents.rs::failed_removal_keeps_record_and_retries`.
+
+    2.3.5: A node daemon restart after the record, after the worktree add, and during
+    removal each ends with the workspace removed and the record deleted by the startup
+    retry. test: `crates/gdaemon/tests/node_agents.rs::restart_at_each_boundary_cleans_up`.'
+  labels:
+  - covers:node-halves:2.3:2.3.1
+  - covers:node-halves:2.3:2.3.2
+  - covers:node-halves:2.3:2.3.3
+  - covers:node-halves:2.3:2.3.4
+  - covers:node-halves:2.3:2.3.5
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: SRT policy for node runs
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: The Python oracle''s output for every corpus case equals
+    the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+
+    2.4.2: The Rust policy produces each case''s `settings.json` bytes and run environment
+    exactly. test: `crates/gdaemon/tests/node_agents.rs::srt_settings_match_python_corpus`.
+
+    2.4.3: `network: "trusted"` adds the embedded Trusted seed and the git and package-registry
+    domains, and `network: "none"` adds neither. test: `crates/gdaemon/tests/node_agents.rs::srt_network_profiles`.
+
+    2.4.4: An `extra_write_paths` entry inside a sensitive or credential root is refused
+    with the Python contract''s message. test: `crates/gdaemon/tests/node_agents.rs::srt_policy_refuses_sensitive_grants`.'
+  labels:
+  - covers:node-halves:2.4:2.4.1
+  - covers:node-halves:2.4:2.4.2
+  - covers:node-halves:2.4:2.4.3
+  - covers:node-halves:2.4:2.4.4
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: SRT install verification and the launch chokepoint
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: A verified install yields the wrapped argv `[node,
+    runner, --settings, <settings>, --violations, <violations>, --, <provider executable>,
+    ...]` with both files written 0600, and a disabled sandbox leaves the argv unchanged.
+    test: `crates/gdaemon/tests/node_agents.rs::chokepoint_wraps_once`.
+
+    2.5.2: A content-manifest mismatch, a missing install or a failed preflight refuses
+    the launch. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_refuses_unverified_install`.
+
+    2.5.3: Grok gets a private `GROK_HOME` with its write and deny paths, and is refused
+    on Linux. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_grok_home`.
+
+    2.5.4: The Rust SRT version pin equals the Python `SRT_RELEASE` version. test:
+    `crates/gdaemon/tests/node_agents.rs::srt_version_matches_python_pin`.'
+  labels:
+  - covers:node-halves:2.5:2.5.1
+  - covers:node-halves:2.5:2.5.2
+  - covers:node-halves:2.5:2.5.3
+  - covers:node-halves:2.5:2.5.4
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Provider launch, exits and host reconciliation
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '2.6.1: Each of claude, codex and grok gets the Python provider
+    flags, the payload''s `provider_args` and prompt, the seven identity variables,
+    `GOBBY_DAEMON_URL` and `GOBBY_PROMPT_FILE`. test: `crates/gdaemon/tests/node_agents.rs::provider_commands_match_python`.
+
+    2.6.2: A launch spawns through the chokepoint with `spawn_key` equal to `run_id`,
+    commits, and records the run as launched with its host terminal id. test: `crates/gdaemon/tests/node_agents.rs::launch_spawns_and_commits`.
+
+    2.6.3: A host exit event produces an `exited` exit with the exit code and workspace,
+    or `cancelled` when a cancel record exists. test: `crates/gdaemon/tests/node_agents.rs::exit_events_record_exits`.
+
+    2.6.4: `timeout_seconds` sends `TERM` to the agent. test: `crates/gdaemon/tests/node_agents.rs::timeout_kills_agent`.
+
+    2.6.5: `reconcile` turns a launched run whose terminal is absent from the live
+    host''s inventory into an `exited` exit with a null exit code and keeps a present
+    one live, both for runs reloaded from durable state after a restart and after
+    a host epoch change. test: `crates/gdaemon/tests/node_agents.rs::reconcile_after_restart`.'
+  labels:
+  - covers:node-halves:2.6:2.6.1
+  - covers:node-halves:2.6:2.6.2
+  - covers:node-halves:2.6:2.6.3
+  - covers:node-halves:2.6:2.6.4
+  - covers:node-halves:2.6:2.6.5
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Command dispatch over the node channel
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  validation_criteria: '2.7.1: Unknown versions, unknown commands and invalid payloads
+    answer their codes with `stage` `"none"` and the frame''s `request_id`, and record
+    nothing. test: `crates/gdaemon/tests/node_agents.rs::dispatch_rejects_bad_frames`.
+
+    2.7.2: A spawn is recorded and answered `{accepted: true}` before preparation
+    starts, then prepared and launched; a repeated spawn for a known run with no cancel
+    record answers the same and records nothing new. test: `crates/gdaemon/tests/node_agents.rs::spawn_accepts_before_preparing`.
+
+    2.7.3: A spawn at 1,000 accepted and live runs answers `command_failed` with `"none"`
+    and records nothing. test: `crates/gdaemon/tests/node_agents.rs::spawn_refused_at_capacity`.
+
+    2.7.4: A cancel before launch records the cancel, stops preparation, removes the
+    workspace, reports a `cancelled` exit with `launched: false` and answers `{stopped:
+    true}`; a later spawn answers `cancelled`, and a cancel for an unknown run answers
+    `not_found`. test: `crates/gdaemon/tests/node_agents.rs::cancel_before_launch`.
+
+    2.7.5: A cancel of a launched run sends the requested signal and reports a `cancelled`
+    exit when the agent ends, and a spawn for that run before its exit answers `cancelled`.
+    test: `crates/gdaemon/tests/node_agents.rs::cancel_launched_run`.
+
+    2.7.6: A preparation failure, the preparation deadline and a host launch failure
+    report `prepare_failed`, `prepare_timeout` and `launch_failed` with `launched:
+    false`, and remove the workspace. test: `crates/gdaemon/tests/node_agents.rs::preparation_failures_report_exits`.
+
+    2.7.7: `terminal.write` reaches the host for a known terminal, answers `not_found`
+    for an unknown one, and `command_failed` with `"partial"` when the host fails
+    after the request was sent. test: `crates/gdaemon/tests/node_agents.rs::terminal_write_dispositions`.
+
+    2.7.8: Commands for the same run run one at a time in arrival order, and commands
+    for different runs do not wait on each other. test: `crates/gdaemon/tests/node_agents.rs::same_run_commands_serialize`.'
+  labels:
+  - covers:node-halves:2.7:2.7.1
+  - covers:node-halves:2.7:2.7.2
+  - covers:node-halves:2.7:2.7.3
+  - covers:node-halves:2.7:2.7.4
+  - covers:node-halves:2.7:2.7.5
+  - covers:node-halves:2.7:2.7.6
+  - covers:node-halves:2.7:2.7.7
+  - covers:node-halves:2.7:2.7.8
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: backend
+- title: Node reports
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.7'
+  validation_criteria: '2.8.1: Reports go out one at a time, each with a fresh higher
+    revision, after every change and on the 30-second tick; a failed report is followed
+    by a new revision, never the same bytes, including across a restart. test: `crates/gdaemon/tests/node_agents.rs::reports_are_fresh_and_serial`.
+
+    2.8.2: A `stale_report` refusal makes the node adopt the hub''s epoch and send
+    a fresh report carrying it. test: `crates/gdaemon/tests/node_agents.rs::stale_report_adopts_epoch`.
+
+    2.8.3: With more than 1,000 pending exits, each report carries the oldest 1,000,
+    and an exit leaves only after a report carrying it gets 200. test: `crates/gdaemon/tests/node_agents.rs::exits_page_oldest_first_until_acknowledged`.
+
+    2.8.4: A report lists every accepted run and every live agent from the host inventory
+    with its pid, native locator, locator key and workspace. test: `crates/gdaemon/tests/node_agents.rs::report_lists_accepted_and_live_agents`.
+
+    2.8.5: Each report tick retries pending removals and prunes expired cancel records.
+    test: `crates/gdaemon/tests/node_agents.rs::report_tick_retries_removals`.
+
+    2.8.6: A node daemon registers the report job and starts the exit watcher at start.
+    test: `crates/gdaemon/tests/node_agents.rs::node_registers_report_job`.'
+  labels:
+  - covers:node-halves:2.8:2.8.1
+  - covers:node-halves:2.8:2.8.2
+  - covers:node-halves:2.8:2.8.3
+  - covers:node-halves:2.8:2.8.4
+  - covers:node-halves:2.8:2.8.5
+  - covers:node-halves:2.8:2.8.6
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: backend
+- title: Checkout registration
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.5'
+  - '2.8'
+  validation_criteria: '2.9.1: The first hook from a project root registers that root
+    once with the project id, even when the hub refuses the hook itself, and later
+    hooks from it post nothing. test: `crates/gdaemon/tests/node_agents.rs::checkout_registered_on_first_hook`.
+
+    2.9.2: A failed registration is retried on the next hook, and roots under the
+    node''s worktrees and clones are never registered. test: `crates/gdaemon/tests/node_agents.rs::checkout_registration_retries_and_skips_workspaces`.'
+  labels:
+  - covers:node-halves:2.9:2.9.1
+  - covers:node-halves:2.9:2.9.2
+  tdd: true
+  source_section: '2.9'
+  implementation_domain: backend
+```
