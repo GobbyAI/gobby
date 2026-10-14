@@ -14,7 +14,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `plan-mode` | `plan-mode/` | 6 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
 | `memory-lifecycle` | `memory-lifecycle/` | 14 | Initial-load recovery gated on MCP proxy readiness, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
-| `context-handoff` | `context-handoff/` | 15 | Compact/resume handoffs, task context, user profile, and pressure nudges |
+| `context-handoff` | `context-handoff/` | 15 | Compact/resume handoffs, task context, user profile, and pressure nudges; the task-close reviewer excludes the feedback and handoff-authoring gates on `end_agent_run` by name |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `code-index` | `code-index/` | 8 | Require the code-index/overview reference, redirect broad source reads to `gcode`, and fail open when gcode cannot serve the checkout |
 | `monolith-enforcement` | `monolith-enforcement/` | 4 | Require same-session decomposition before writes, commits, task transitions, and turn end |
