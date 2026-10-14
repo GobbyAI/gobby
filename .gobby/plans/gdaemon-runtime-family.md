@@ -7164,3 +7164,1196 @@ freshly built and installed binaries, before #21559 closes.
     a forced failure after each write.
 
   No enhancer edits were received before consensus.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`RouteFamily` seam in gcore with per-request claims'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck` behind
+    `route-family`, with defaults `default_backend = Proxy`, `claims = true` and `check_proxied
+    = Skipped`, and `cargo tree -p gobby-hooks -i axum` is empty. file: `crates/gcore/src/route_family.rs`.
+
+    1.1.2: Under a `Native` or `Compare` backend, a request the family does not claim
+    reaches the proxy unchanged and never the family router. test: `crates/gdaemon/src/front_door/routes.rs::unclaimed_requests_are_proxied_under_every_backend`.
+
+    1.1.3: The existing routing behaviors still hold. test: `crates/gdaemon/src/front_door/routes.rs::health_family_honors_proxy_native_and_compare`.
+
+    1.1.4: The corpus parity precheck compiles against the generic trait and passes.
+    test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+
+    1.1.5: A family with no `front_door.routes` entry takes its `default_backend()`,
+    and an entry overrides it. test: `crates/gdaemon/src/front_door/routes.rs::absent_route_takes_the_family_default`.
+
+    1.1.6: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    1.1.7: The gcore `FrontDoorBootstrap` doc states that absent families take their
+    family''s default. file: `crates/gcore/src/bootstrap/front_door.rs`.'
+  labels:
+  - covers:gdaemon-runtime-family:1.1:1.1.1
+  - covers:gdaemon-runtime-family:1.1:1.1.2
+  - covers:gdaemon-runtime-family:1.1:1.1.3
+  - covers:gdaemon-runtime-family:1.1:1.1.4
+  - covers:gdaemon-runtime-family:1.1:1.1.5
+  - covers:gdaemon-runtime-family:1.1:1.1.6
+  - covers:gdaemon-runtime-family:1.1:1.1.7
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: One gdaemon pool for key resolution, the lease and hub node routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `serve::run` builds exactly one pool, used by the resolver,
+    the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs` calls
+    `Pool::build`. file: `crates/gdaemon/src/serve.rs`.
+
+    1.2.2: The lease still holds a dedicated advisory-lock session that drop and failed
+    transactions release. test: `crates/gdaemon/tests/lease.rs::failed_transaction_and_drop_release_the_dedicated_session`.
+
+    1.2.3: Epoch and signing secret still rotate together on acquisition. test: `crates/gdaemon/tests/lease.rs::epoch_and_secret_rotate_together`.
+
+    1.2.4: A resolver on an unreachable pool fails closed. test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.
+
+    1.2.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:1.2:1.2.1
+  - covers:gdaemon-runtime-family:1.2:1.2.2
+  - covers:gdaemon-runtime-family:1.2:1.2.3
+  - covers:gdaemon-runtime-family:1.2:1.2.4
+  - covers:gdaemon-runtime-family:1.2:1.2.5
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Compare policy, compare log and `gdaemon compare-report`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: A claimed GET in Compare mode returns the proxied response
+    and records `match`, or `diff` with a pointer and no values. test: `crates/gdaemon/tests/compare.rs::get_compare_records_match_and_diff_without_values`.
+
+    2.1.2: JSON bodies that differ only in key order record `match`. test: `crates/gdaemon/tests/compare.rs::json_bodies_compare_by_value`.
+
+    2.1.3: A claimed POST in Compare mode never reaches the native router, the backend
+    and `check_proxied` both receive the original request bytes, and the family check''s
+    outcome is recorded. test: `crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg`.
+
+    2.1.4: A failing native leg records `native_error` and the caller still receives
+    the proxied response. test: `crates/gdaemon/tests/compare.rs::native_failure_returns_the_proxied_response`.
+
+    2.1.5: The report counts per family within `--since` and fails on any diff, native_error
+    or mismatch, and on an empty window. test: `crates/gdaemon/tests/compare.rs::report_fails_on_mismatch_and_empty_window`.
+
+    2.1.6: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    2.1.7: In Compare mode, a claimed GET and a claimed POST whose backend refuses
+    connections each return the typed 503 and record `skipped` with detail `backend_unavailable`,
+    never `diff` or `mismatch`. test: `crates/gdaemon/tests/compare.rs::unreachable_backend_records_skipped`.'
+  labels:
+  - covers:gdaemon-runtime-family:2.1:2.1.1
+  - covers:gdaemon-runtime-family:2.1:2.1.2
+  - covers:gdaemon-runtime-family:2.1:2.1.3
+  - covers:gdaemon-runtime-family:2.1:2.1.4
+  - covers:gdaemon-runtime-family:2.1:2.1.5
+  - covers:gdaemon-runtime-family:2.1:2.1.6
+  - covers:gdaemon-runtime-family:2.1:2.1.7
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Active config state table
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The migration creates `config_active_state` keyed by
+    `deployment_token`, not accessible to PUBLIC, with select, insert and update for
+    `gobby_daemon_runtime`. file: `crates/gcore/assets/schema/migrations/469_config_active_state.sql`.
+
+    2.2.2: Each of the four swap sites publishes the new snapshot, and a failed-live
+    activation in `_reconcile_locked` is published before its error propagates. test:
+    `tests/config/test_config_active_state.py::test_every_bundle_swap_publishes`.
+
+    2.2.3: The document carries the snapshot''s values, sorted pending keys and failed-live
+    revision and subscriber, and each binding''s `sealed` opens with `SecretStore.open_sealed`
+    under its AAD while no plaintext appears in the document. test: `tests/config/test_config_active_state.py::test_document_seals_bindings`.
+
+    2.2.4: A failed publish leaves the runtime serving, and the next poll tick republishes
+    the current snapshot under the reconcile lock. test: `tests/config/test_config_active_state.py::test_failed_publish_retries_on_poll`.
+
+    2.2.5: On the test hub, publishing twice for one deployment leaves one row holding
+    the second revision and state. test: `tests/config/test_config_active_state.py::test_publish_upserts_one_row_per_deployment`.
+
+    2.2.6: The embedded identity publishes the new latest migration. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+
+    2.2.7: The catalog manifest matches the embedded assets. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`.
+
+    2.2.8: The re-signed golden grants round-trip under the new identity. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+
+    2.2.9: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:2.2:2.2.1
+  - covers:gdaemon-runtime-family:2.2:2.2.2
+  - covers:gdaemon-runtime-family:2.2:2.2.3
+  - covers:gdaemon-runtime-family:2.2:2.2.4
+  - covers:gdaemon-runtime-family:2.2:2.2.5
+  - covers:gdaemon-runtime-family:2.2:2.2.6
+  - covers:gdaemon-runtime-family:2.2:2.2.7
+  - covers:gdaemon-runtime-family:2.2:2.2.8
+  - covers:gdaemon-runtime-family:2.2:2.2.9
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: '`gobby-runtime` crate and native `GET /api/config/effective`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: "3.1.1: `crates/gruntime` builds as workspace member `gobby-runtime`\
+    \ (publish false, workspace version) and gdaemon links it. file: `crates/gruntime/Cargo.toml`.\n\
+    3.1.2: `GET /api/config/effective` with an API-key identity returns Python's projection\
+    \ of the published active configuration with `no-store`. test: `crates/gruntime/tests/config.rs::effective_config_matches_python_projection`.\n\
+    3.1.3: `claims` follows `NATIVE_ROUTES`: every row is claimed for each listed\
+    \ caller with its gate satisfied; the same request with no caller, or with a caller\
+    \ not in the row's list, is forwarded; and a method or path no row lists (such\
+    \ as `DELETE /api/runtime/config` or `GET /api/config/no-such-route`) is forwarded.\
+    \ test: `crates/gruntime/tests/config.rs::claims_follow_the_route_table`.\n3.1.5:\
+    \ With no `config_active_state` row for the deployment the route returns Python's\
+    \ 503 `runtime_unavailable` body, and a database failure returns 500. test: `crates/gruntime/tests/config.rs::missing_row_is_unavailable_and_database_failure_fails`.\n\
+    3.1.4: Values that still hold `$secret:` or `${\u2026}` after expansion are omitted.\
+    \ test: `crates/gruntime/tests/config.rs::unresolved_values_are_omitted`.\n3.1.6:\
+    \ `gdaemon`, `gcode` and `ghook` are each one patch version above the executor's\
+    \ starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,\
+    \ so this leaf's cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`."
+  labels:
+  - covers:gdaemon-runtime-family:3.1:3.1.1
+  - covers:gdaemon-runtime-family:3.1:3.1.2
+  - covers:gdaemon-runtime-family:3.1:3.1.3
+  - covers:gdaemon-runtime-family:3.1:3.1.5
+  - covers:gdaemon-runtime-family:3.1:3.1.4
+  - covers:gdaemon-runtime-family:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Grant signing and presentation in gcore; native `GET /api/runtime/config`
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: `sign_grant` reproduces a Python-signed grant''s checksum
+    and signature byte for byte, and `signature_matches` accepts it. test: `crates/gcore/src/grant/presentation/tests.rs::signature_matches_python_vector`.
+
+    3.2.2: Each rejection code maps to its status and `{code, error, message}` body.
+    test: `crates/gcore/src/grant/presentation/tests.rs::rejection_matrix_maps_codes_to_statuses`.
+
+    3.2.3: `verify_static` reports the first failing check in Python''s order. test:
+    `crates/gcore/src/grant/presentation/tests.rs::checks_run_in_python_order`.
+
+    3.2.4: `GET /api/runtime/config` with a valid interactive grant returns `{config_revision,
+    settings}`, a stale epoch returns 409, and a revoked generation returns 403 `revoked`.
+    test: `crates/gruntime/tests/grant.rs::runtime_config_presents_interactive_grants`.
+
+    3.2.5: Missing grant headers and headers that are not base64url JSON in the `GrantBundle`
+    shape are forwarded, and a top-level `managed_api_token` does not make a header
+    malformed. test: `crates/gruntime/tests/grant.rs::malformed_and_missing_grant_headers_are_forwarded`.
+
+    3.2.6: Through the handler, a validly signed grant with a wrong `payload_checksum`
+    returns 403 `invalid_signature` (Python''s checksum check raises `InvalidGrantSignature`),
+    a correctly signed grant with a wrong `api_contract` returns 403 `wrong_api_contract`,
+    a grant failing several checks reports only the first, and every one of them is
+    still answered while the Python backend is down. test: `crates/gruntime/tests/grant.rs::presentation_rejections_follow_python_order_without_the_backend`.
+
+    3.2.7: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.2:3.2.1
+  - covers:gdaemon-runtime-family:3.2:3.2.2
+  - covers:gdaemon-runtime-family:3.2:3.2.3
+  - covers:gdaemon-runtime-family:3.2:3.2.4
+  - covers:gdaemon-runtime-family:3.2:3.2.5
+  - covers:gdaemon-runtime-family:3.2:3.2.6
+  - covers:gdaemon-runtime-family:3.2:3.2.7
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: 'Secret-store port: envelope, secret reads and credential sealing'
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Rust opens the Python-sealed token and decrypts the
+    Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_python_sealed_vector`.
+
+    3.3.2: Python opens the Rust-sealed token from the committed vector. test: `tests/storage/test_secret_seal_vector.py::test_python_opens_rust_sealed_vector`.
+
+    3.3.3: DEK unwrap works for the key-file and scrypt postures against Python-written
+    rows. test: `crates/gruntime/tests/secrets.rs::unwraps_both_postures`.
+
+    3.3.4: Two concurrent key-file initializations converge on one DEK and a 0600
+    KEK file; a leftover partial `.secret_kek.*.tmp` is ignored by the reader; and
+    a publish that fails before the link (an unwritable directory) leaves neither
+    a final nor a temp file. test: `crates/gruntime/tests/secrets.rs::concurrent_envelope_initialization_converges`.
+
+    3.3.5: A wrong AAD or a truncated token fails to open. test: `crates/gruntime/tests/secrets.rs::open_rejects_wrong_aad_and_truncation`.
+
+    3.3.6: On an isolated database seeded with an encrypted `secrets` row and no `secret_key_material`
+    row, initialization returns `SecretError::Unavailable`, and the KEK file and both
+    tables are unchanged. test: `crates/gruntime/tests/secrets.rs::missing_envelope_with_existing_secrets_fails_closed`.
+
+    3.3.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.3:3.3.1
+  - covers:gdaemon-runtime-family:3.3:3.3.2
+  - covers:gdaemon-runtime-family:3.3:3.3.3
+  - covers:gdaemon-runtime-family:3.3:3.3.4
+  - covers:gdaemon-runtime-family:3.3:3.3.5
+  - covers:gdaemon-runtime-family:3.3:3.3.6
+  - covers:gdaemon-runtime-family:3.3:3.3.7
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Native interactive handshake and grant capabilities
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: An identified operator handshake returns a signed interactive
+    grant whose payload fields equal Python''s for the same database state. test:
+    `crates/gruntime/tests/handshake.rs::interactive_handshake_issues_signed_grant`.
+
+    3.4.2: A repeat handshake reuses the principal and returns the stored password,
+    and a fresh issuance stores material that Python opens. test: `crates/gruntime/tests/handshake.rs::reused_principal_returns_the_sealed_password`.
+
+    3.4.3: A machine mismatch, an unadmitted project and a bad overlay return 403
+    `claims_mismatch`, other issuance failures return 403 `credential_issuance_failed`,
+    and with no published active state the handshake returns 503 `handshake service
+    unavailable`. test: `crates/gruntime/tests/handshake.rs::handshake_rejections_match_python_codes`.
+
+    3.4.4: Cookie-only and unauthenticated handshakes are not claimed and reach Python
+    unchanged. test: `crates/gruntime/tests/handshake.rs::callerless_handshakes_are_not_claimed`.
+
+    3.4.5: The Rust capability port matches every Python-generated vector. test: `crates/gruntime/tests/capabilities.rs::capabilities_match_python_vectors`.
+
+    3.4.6: The committed vectors still match Python''s `capabilities_from_snapshot`.
+    test: `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.
+
+    3.4.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.4:3.4.1
+  - covers:gdaemon-runtime-family:3.4:3.4.2
+  - covers:gdaemon-runtime-family:3.4:3.4.3
+  - covers:gdaemon-runtime-family:3.4:3.4.4
+  - covers:gdaemon-runtime-family:3.4:3.4.5
+  - covers:gdaemon-runtime-family:3.4:3.4.6
+  - covers:gdaemon-runtime-family:3.4:3.4.7
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Compare check for proxied handshake grants
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: A Python-issued grant for the request records `verified`.
+    test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+
+    3.5.2: A tampered capability, a wrong epoch, a bad signature or a principal mismatch
+    records `mismatch` with the field pointer and no values. test: `crates/gruntime/tests/verify.rs::mismatches_name_the_field_without_values`.
+
+    3.5.3: A grant whose `config_revision` differs from the published row''s revision
+    records `skipped`. test: `crates/gruntime/tests/verify.rs::moved_config_revision_skips`.
+
+    3.5.4: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:3.5:3.5.1
+  - covers:gdaemon-runtime-family:3.5:3.5.2
+  - covers:gdaemon-runtime-family:3.5:3.5.3
+  - covers:gdaemon-runtime-family:3.5:3.5.4
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Durable managed revocation read
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+    integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+    by `gobby_daemon_runtime`. file: `crates/gcore/assets/schema/migrations/470_managed_principal_revoked.sql`.
+
+    4.1.2: On the test hub, a live generation and a draining predecessor (revocation
+    requested, `revoked_at` null) read not revoked, while a revoked generation and
+    an unknown generation read revoked. test: `tests/storage/test_managed_revocation_read.py::test_managed_generation_revoked_follows_revoked_at`.
+
+    4.1.3: `_grant_principal_revoked` reports a managed grant revoked once its binding
+    is revoked in the database, with Python''s in-memory set untouched, and its interactive
+    answer is unchanged. test: `tests/storage/test_managed_revocation_read.py::test_principal_callback_reads_managed_revocation_from_the_database`.
+
+    4.1.4: The embedded identity publishes the new latest migration. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+
+    4.1.5: The catalog manifest matches the embedded assets. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`.
+
+    4.1.6: The re-signed golden grants round-trip under the new identity. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+
+    4.1.7: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.1:4.1.1
+  - covers:gdaemon-runtime-family:4.1:4.1.2
+  - covers:gdaemon-runtime-family:4.1:4.1.3
+  - covers:gdaemon-runtime-family:4.1:4.1.4
+  - covers:gdaemon-runtime-family:4.1:4.1.5
+  - covers:gdaemon-runtime-family:4.1:4.1.6
+  - covers:gdaemon-runtime-family:4.1:4.1.7
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Capability-token verification
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: `classify` returns Python''s classification for every
+    committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+
+    4.2.2: `mint` reproduces the committed Python tokens byte for byte. test: `crates/gruntime/tests/agent.rs::mint_reproduces_python_tokens`.
+
+    4.2.3: A finished agent run and a managed execution that is not login-capable
+    return 401 `run_inactive`, and missing or mismatched project, session or owner
+    headers return 401 `identity_mismatch`, each with Python''s message. test: `crates/gruntime/tests/agent.rs::liveness_and_identity_follow_python`.
+
+    4.2.4: A session-reference spelling, a break-glass header, a non-bearer scheme
+    and an operator identity never resolve to `Agent`. test: `crates/gruntime/tests/agent.rs::agent_caller_gate_forwards_what_python_owns`.
+
+    4.2.5: The committed vectors still match Python''s classifier and issuers. test:
+    `tests/runtime_grants/test_agent_token_vectors.py::test_vectors_match_python_classification`.
+
+    4.2.6: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.2:4.2.1
+  - covers:gdaemon-runtime-family:4.2:4.2.2
+  - covers:gdaemon-runtime-family:4.2:4.2.3
+  - covers:gdaemon-runtime-family:4.2:4.2.4
+  - covers:gdaemon-runtime-family:4.2:4.2.5
+  - covers:gdaemon-runtime-family:4.2:4.2.6
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Managed challenge as a family route
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: A managed challenge returns Python''s proof for the
+    same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof_matches_python`.
+
+    4.3.2: A missing signing key returns 503 `signing_key_unavailable` before claims
+    are examined, and each invalid claim returns 403 `claims_mismatch`. test: `crates/gruntime/tests/challenge.rs::challenge_rejections_follow_python_order`.
+
+    4.3.3: In compare mode a Python proof records `verified` and a wrong proof records
+    `mismatch` at `/proof`. test: `crates/gruntime/tests/challenge.rs::proxied_proof_is_recomputed`.
+
+    4.3.4: `claims_follow_the_route_table` covers `Public`, and the challenge row
+    is the only row that lists it. test: `crates/gruntime/tests/config.rs::claims_follow_the_route_table`.
+
+    4.3.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.3:4.3.1
+  - covers:gdaemon-runtime-family:4.3:4.3.2
+  - covers:gdaemon-runtime-family:4.3:4.3.3
+  - covers:gdaemon-runtime-family:4.3:4.3.4
+  - covers:gdaemon-runtime-family:4.3:4.3.5
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Managed credential issuance
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: `issue` and `issue_maintenance` each leave a live binding
+    whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json` in a
+    0700 execution directory. test: `crates/gruntime/tests/managed.rs::issuance_materializes_a_private_bootstrap`.
+
+    4.4.2: Native `bootstrap.json` and retry-record bytes equal the committed Python
+    bytes. test: `crates/gruntime/tests/managed.rs::bootstrap_bytes_match_python`.
+
+    4.4.3: A duplicate agent binding returns `claims_mismatch`, and a failure after
+    the issuer returned a row revokes that generation. test: `crates/gruntime/tests/managed.rs::issuance_failures_roll_back_and_map_codes`.
+
+    4.4.4: A revocation blocked by active sessions writes the retry record and deletes
+    only a bootstrap of the same generation. test: `crates/gruntime/tests/managed.rs::blocked_revocation_records_a_retry`.
+
+    4.4.5: The committed vector still matches Python''s writers. test: `tests/storage/test_managed_bootstrap_vector.py::test_vector_matches_python_bootstrap_writers`.
+
+    4.4.6: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.4:4.4.1
+  - covers:gdaemon-runtime-family:4.4:4.4.2
+  - covers:gdaemon-runtime-family:4.4:4.4.3
+  - covers:gdaemon-runtime-family:4.4:4.4.4
+  - covers:gdaemon-runtime-family:4.4:4.4.5
+  - covers:gdaemon-runtime-family:4.4:4.4.6
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Managed rotation and the `grant.json` rewrite
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: '4.5.1: Rotation issues the successor and rewrites `grant.json`
+    with the successor credential and a fresh capability, and the predecessor drains.
+    test: `crates/gruntime/tests/rotation.rs::rotation_rewrites_the_launch_grant`.
+
+    4.5.2: A failed native rewrite (a `grant.json` with mode 0644) restores the predecessor
+    `bootstrap.json` bytes, revokes the successor and cancels the rotation, and `grant.json`
+    never names a revoked predecessor. test: `crates/gruntime/tests/rotation.rs::failed_rewrite_restores_the_predecessor`.
+
+    4.5.3: The native rewrite equals Python''s rewritten bytes for agent_run, tool_chat
+    and maintenance. test: `crates/gruntime/tests/rotation.rs::rewrite_matches_python_bytes`.
+
+    4.5.4: The committed rewrite vector still matches Python''s `rewrite_managed_grant_file`.
+    test: `tests/runtime_grants/test_managed_grant_rewrite_vector.py::test_vector_matches_python_rewrite`.
+
+    4.5.5: During a drain, a request matching the current binding reuses its bootstrap,
+    an identity mismatch is `claims_mismatch`, and a bootstrap that is not a private
+    regular file is refused. test: `crates/gruntime/tests/rotation.rs::drain_reuse_follows_python`.
+
+    4.5.6: A lost generation race yields `credential_issuance_failed` and leaves the
+    winner''s binding and bootstrap untouched. test: `crates/gruntime/tests/rotation.rs::lost_generation_race_changes_nothing`.
+
+    4.5.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.5:4.5.1
+  - covers:gdaemon-runtime-family:4.5:4.5.2
+  - covers:gdaemon-runtime-family:4.5:4.5.3
+  - covers:gdaemon-runtime-family:4.5:4.5.4
+  - covers:gdaemon-runtime-family:4.5:4.5.5
+  - covers:gdaemon-runtime-family:4.5:4.5.6
+  - covers:gdaemon-runtime-family:4.5:4.5.7
+  tdd: true
+  source_section: '4.5'
+  implementation_domain: backend
+- title: Native managed handshake
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.5'
+  validation_criteria: '4.6.1: An agent_run, a tool_chat and a maintenance handshake
+    each return a signed grant whose principal and TTL equal Python''s for the same
+    token and database state. test: `crates/gruntime/tests/managed_handshake.rs::agent_handshakes_issue_managed_grants`.
+
+    4.6.2: A second handshake on a live binding rotates (or reuses during a drain)
+    and rewrites `grant.json`. test: `crates/gruntime/tests/managed_handshake.rs::repeat_handshake_rotates_or_reuses`.
+
+    4.6.3: A body that disagrees with the claims, or a non-managed kind, returns 403
+    `claims_mismatch`. test: `crates/gruntime/tests/managed_handshake.rs::claims_must_match_the_body`.
+
+    4.6.4: In compare mode a Python-issued managed grant records `verified`, and a
+    grant naming a revoked generation records `mismatch`. test: `crates/gruntime/tests/managed_handshake.rs::proxied_managed_grants_are_checked`.
+
+    4.6.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.6:4.6.1
+  - covers:gdaemon-runtime-family:4.6:4.6.2
+  - covers:gdaemon-runtime-family:4.6:4.6.3
+  - covers:gdaemon-runtime-family:4.6:4.6.4
+  - covers:gdaemon-runtime-family:4.6:4.6.5
+  tdd: true
+  source_section: '4.6'
+  implementation_domain: backend
+- title: Managed grant presentation
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.6'
+  validation_criteria: '4.7.1: An agent presenting its managed grant receives `{config_revision,
+    settings}`, and after the generation is revoked it receives 403 `revoked`. test:
+    `crates/gruntime/tests/managed_presentation.rs::managed_grants_present_until_revoked`.
+
+    4.7.2: A finished run''s bearer returns 401 `run_inactive` before presentation.
+    test: `crates/gruntime/tests/managed_presentation.rs::inactive_runs_are_rejected_before_presentation`.
+
+    4.7.3: An operator presenting a managed grant is claimed and presented. test:
+    `crates/gruntime/tests/managed_presentation.rs::operator_rows_claim_every_principal_kind`.
+
+    4.7.4: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:4.7:4.7.1
+  - covers:gdaemon-runtime-family:4.7:4.7.2
+  - covers:gdaemon-runtime-family:4.7:4.7.3
+  - covers:gdaemon-runtime-family:4.7:4.7.4
+  tdd: true
+  source_section: '4.7'
+  implementation_domain: backend
+- title: Native `GET /api/config/schema`
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.7'
+  validation_criteria: '5.1.1: `GET /api/config/schema` returns `public_config_schema()`:
+    every public exact key and public pattern, no `key` member, inside the draft 2020-12
+    wrapper. test: `crates/gruntime/tests/config.rs::schema_serves_the_public_contract_projection`.
+
+    5.1.2: The same projection, computed in Python from the checked-in contract, equals
+    `CONFIG_REGISTRY.json_schema(ConfigVisibility.PUBLIC)`. test: `tests/config/test_runtime_config_contract.py::test_public_schema_derives_from_contract`.
+
+    5.1.3: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.1:5.1.1
+  - covers:gdaemon-runtime-family:5.1:5.1.2
+  - covers:gdaemon-runtime-family:5.1:5.1.3
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Native secret listing and deletion
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: Listing returns the global secrets in database order
+    with Python''s timestamp format (whole-second and fractional cases) and the sorted
+    categories. test: `crates/gruntime/tests/secret_routes.rs::listing_matches_python_shape`.
+
+    5.2.2: Deletion returns 200 for an unreferenced secret, 409 for one referenced
+    from `config_store` or from an `mcp_servers` header value, and 404 for a missing
+    name. A reference that appears only as a `jsonb` object key does not block deletion.
+    test: `crates/gruntime/tests/secret_routes.rs::deletion_follows_references`.
+
+    5.2.3: Deleting `embeddings_api_key` during an active embedding switch returns
+    500 and deletes nothing, and a native deletion waits on the advisory lock a Python
+    mutation holds. test: `crates/gruntime/tests/secret_routes.rs::embedding_switch_blocks_key_deletion`.
+
+    5.2.4: A proxied deletion records `verified` when the state matches the status
+    and `mismatch` when it does not. test: `crates/gruntime/tests/secret_routes.rs::proxied_deletions_are_checked`.
+
+    5.2.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.2:5.2.1
+  - covers:gdaemon-runtime-family:5.2:5.2.2
+  - covers:gdaemon-runtime-family:5.2:5.2.3
+  - covers:gdaemon-runtime-family:5.2:5.2.4
+  - covers:gdaemon-runtime-family:5.2:5.2.5
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Prompt loads read the database every time
+  category: refactor
+  task_type: feature
+  depends_on: []
+  validation_criteria: '5.3.1: A long-lived `PromptLoader` that already loaded a prompt
+    returns the new content on its next `load()` after an override is written through
+    `PUT /api/config/prompts/{path}`, with no restart. test: `tests/servers/routes/test_configuration_prompts.py::test_route_override_reaches_a_long_lived_loader`.
+
+    5.3.2: `PromptLoader` has no cache, `clear_cache` or notifier parameter, and `PromptChangeNotifier`
+    no longer exists. file: `src/gobby/prompts/loader.py`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.3:5.3.1
+  - covers:gdaemon-runtime-family:5.3:5.3.2
+  tdd: false
+  source_section: '5.3'
+  assigned_agent: developer
+- title: 'Prompt routes: JSON save contract and native serving'
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  - '5.3'
+  validation_criteria: '5.4.1: A UI-style body-only save keeps the overridden record''s
+    variables, description and version, and a save that sets `variables` replaces
+    them. test: `tests/servers/routes/test_configuration_prompts.py::test_body_only_save_keeps_metadata`.
+
+    5.4.2: A frontmatter-led body returns 400 naming the JSON fields, in both implementations.
+    test: `tests/servers/routes/test_configuration_prompts.py::test_frontmatter_led_body_is_rejected`.
+
+    5.4.3: Python''s routes produce every corpus case''s status, body and stored row.
+    test: `tests/servers/routes/test_configuration_prompts.py::test_python_routes_match_the_corpus`.
+
+    5.4.4: The native routes produce every corpus case''s status, body and stored
+    row. test: `crates/gruntime/tests/prompts.rs::native_routes_match_the_corpus`.
+
+    5.4.5: The daemon project resolves from the cwd''s `.gobby/project.json` only,
+    and a project-scoped override wins over global and bundled rows in list and detail.
+    test: `crates/gruntime/tests/prompts.rs::daemon_project_scopes_prompts`.
+
+    5.4.6: Proxied prompt writes record `verified` when the stored row matches and
+    `mismatch` when it does not. test: `crates/gruntime/tests/prompts.rs::proxied_prompt_writes_are_checked`.
+
+    5.4.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.4:5.4.1
+  - covers:gdaemon-runtime-family:5.4:5.4.2
+  - covers:gdaemon-runtime-family:5.4:5.4.3
+  - covers:gdaemon-runtime-family:5.4:5.4.4
+  - covers:gdaemon-runtime-family:5.4:5.4.5
+  - covers:gdaemon-runtime-family:5.4:5.4.6
+  - covers:gdaemon-runtime-family:5.4:5.4.7
+  tdd: true
+  source_section: '5.4'
+  implementation_domain: backend
+- title: Native YAML template read and export
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.4'
+  validation_criteria: '5.5.1: Native export bytes equal every committed vector. test:
+    `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+
+    5.5.2: Each vector equals the pinned Python `_dump` output and round-trips through
+    `yaml.safe_load`. test: `tests/config/test_yaml_export_vectors.py::test_vectors_match_python_dump`.
+
+    5.5.3: Export skips unknown, restricted, sourceless and managed keys, masks reference
+    secrets and structured reference fields, returns 500 for an ambiguous key or a
+    scalar/nested conflict, and returns Python''s 503 `runtime_unavailable` body with
+    no published row. test: `crates/gruntime/tests/export.rs::export_filters_and_masks_like_python`.
+
+    5.5.4: No restricted key matches a contract pattern. test: `tests/config/test_runtime_config_contract.py::test_no_restricted_key_matches_a_contract_pattern`.
+
+    5.5.5: A proxied export of the native revision records `verified`, and different
+    content records `mismatch`. test: `crates/gruntime/tests/export.rs::proxied_exports_are_checked`.
+
+    5.5.6: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.5:5.5.1
+  - covers:gdaemon-runtime-family:5.5:5.5.2
+  - covers:gdaemon-runtime-family:5.5:5.5.3
+  - covers:gdaemon-runtime-family:5.5:5.5.4
+  - covers:gdaemon-runtime-family:5.5:5.5.5
+  - covers:gdaemon-runtime-family:5.5:5.5.6
+  tdd: true
+  source_section: '5.5'
+  implementation_domain: backend
+- title: 'Native active-state reads: values, UI settings and global tool approvals'
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.5'
+  validation_criteria: '5.6.1: Native `GET /api/config/values` returns each vector''s
+    Python body, including masked and unset reference keys, masked structured fields,
+    and public-only pending and failed-live keys. test: `crates/gruntime/tests/active_reads.rs::values_match_python_vectors`.
+
+    5.6.2: Native `GET /api/config/ui-settings` and `GET /api/config/tool-approvals/global`
+    return each vector''s Python bodies, including default rules for `null` and the
+    `str.isspace` strip. test: `crates/gruntime/tests/active_reads.rs::ui_settings_and_approvals_match_python_vectors`.
+
+    5.6.3: Each vector matches Python''s three routes and 2.2''s published value fields.
+    test: `tests/servers/routes/test_active_read_vectors.py::test_vectors_match_python_routes`.
+
+    5.6.4: With no published row the values route returns the `not ready` 503 and
+    the other two the `still starting` 503. An ambiguous key or unflatten conflict
+    returns the global 500 body, and a row read failure returns each route''s Python
+    500 body. test: `crates/gruntime/tests/active_reads.rs::missing_row_and_failures_match_python`.
+
+    5.6.5: `gdaemon`, `gcode` and `ghook` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`,
+    so this leaf''s cutover passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.6:5.6.1
+  - covers:gdaemon-runtime-family:5.6:5.6.2
+  - covers:gdaemon-runtime-family:5.6:5.6.3
+  - covers:gdaemon-runtime-family:5.6:5.6.4
+  - covers:gdaemon-runtime-family:5.6:5.6.5
+  tdd: true
+  source_section: '5.6'
+  implementation_domain: backend
+- title: Per-key config validation
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.6'
+  validation_criteria: '5.7.1: The checked-in validation carrier equals the generator''s
+    output, and the generator fails on a node type, node key or union shape the interpreter
+    does not implement. test: `tests/config/test_runtime_config_contract.py::test_checked_in_validation_carrier_matches_registry`.
+
+    5.7.2: Every per-key corpus case matches `_validate_value`: stored bytes, or a
+    message in the `<loc>: <msg>` form. test: `tests/config/test_config_validation_corpus.py::test_per_key_corpus_matches_python`.
+
+    5.7.3: The corpus raises every type in `errorTypes`, and every per-key function
+    has an accepting and a rejecting case. test: `tests/config/test_config_validation_corpus.py::test_corpus_covers_error_types_and_functions`.
+
+    5.7.4: Native `validate_value` gives byte-equal stored values and messages for
+    every per-key case, and `ERROR_TYPES` equals `errorTypes`. test: `crates/gruntime/tests/validation.rs::per_key_corpus_matches_python`.
+
+    5.7.5: Every function the per-key schemas name has a port, and a carrier whose
+    `specs` schemas name an unported function fails to load. test: `crates/gruntime/tests/validation.rs::per_key_functions_have_ports`.
+
+    5.7.6: `json.rs` parses and dumps every `json` entry as Python does: key order,
+    repeated keys, big integers, float repr and `ensure_ascii`; it rejects `NaN`,
+    `Infinity` and lone surrogates. test: `crates/gruntime/tests/validation.rs::json_tree_matches_python_vectors`.
+
+    5.7.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    5.7.8: `memory_backup.backup_path` validates as a string and is stored as written
+    on every platform, and `MemoryBackupManager` resolves relative and absolute values
+    as before. test: `tests/config/test_persistence.py::test_backup_path_is_stored_as_written`.
+
+    5.7.9: The regenerated gcore contract equals the checked-in bytes, so this leaf
+    leaves gcore unchanged. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.7:5.7.1
+  - covers:gdaemon-runtime-family:5.7:5.7.2
+  - covers:gdaemon-runtime-family:5.7:5.7.3
+  - covers:gdaemon-runtime-family:5.7:5.7.4
+  - covers:gdaemon-runtime-family:5.7:5.7.5
+  - covers:gdaemon-runtime-family:5.7:5.7.6
+  - covers:gdaemon-runtime-family:5.7:5.7.7
+  - covers:gdaemon-runtime-family:5.7:5.7.8
+  - covers:gdaemon-runtime-family:5.7:5.7.9
+  tdd: true
+  source_section: '5.7'
+  implementation_domain: backend
+- title: Complete-candidate config validation
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.7'
+  validation_criteria: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+    and strict JSON validation of the same tree gives the same detail. test: `tests/config/test_candidate_validation_corpus.py::test_trees_match_lax_and_strict_python`.
+
+    5.8.2: Every mutation case matches `ConfigMutations._validate_candidate`''s accepted
+    values and references, its `ConfigValidationError` message and key, or its runtime
+    failure, and every `secretNames` pair matches `config_key_to_secret_name`. test:
+    `tests/config/test_candidate_validation_corpus.py::test_mutations_match_validate_candidate`.
+
+    5.8.3: The corpus has an accepting and a rejecting tree for every raising port,
+    a tree for every port whose output a later validator reads, every cron family
+    and rejected form checked against `croniter.is_valid`, and every listed failure
+    kind. test: `tests/config/test_candidate_validation_corpus.py::test_corpus_covers_ports_and_failures`.
+
+    5.8.4: The default-mode message lists sorted choices, `validate_injection_format`
+    is gone, the `local:` re-raise reads only error messages, and the timezone check
+    accepts exactly the `tzdata` zone names. test: `tests/config/test_candidate_validation_corpus.py::test_python_validator_changes`.
+
+    5.8.5: Native candidate validation gives each tree case''s detail byte for byte.
+    test: `crates/gruntime/tests/candidate.rs::trees_match_python`.
+
+    5.8.6: Native `validate_candidate` gives each mutation case''s outcome and each
+    `secretNames` pair. test: `crates/gruntime/tests/candidate.rs::mutations_match_python`.
+
+    5.8.7: Every name in the carrier''s `functions` has a port, and a carrier naming
+    an unported function fails to load. test: `crates/gruntime/tests/candidate.rs::all_functions_have_ports`.
+
+    5.8.8: The regenerated gcore contract equals the checked-in bytes, so this leaf
+    leaves gcore unchanged. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    5.8.9: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.8:5.8.1
+  - covers:gdaemon-runtime-family:5.8:5.8.2
+  - covers:gdaemon-runtime-family:5.8:5.8.3
+  - covers:gdaemon-runtime-family:5.8:5.8.4
+  - covers:gdaemon-runtime-family:5.8:5.8.5
+  - covers:gdaemon-runtime-family:5.8:5.8.6
+  - covers:gdaemon-runtime-family:5.8:5.8.7
+  - covers:gdaemon-runtime-family:5.8:5.8.8
+  - covers:gdaemon-runtime-family:5.8:5.8.9
+  tdd: true
+  source_section: '5.8'
+  implementation_domain: backend
+- title: Native `PATCH /api/config/values`
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.8'
+  validation_criteria: '5.9.1: Every corpus case matches Python''s PATCH route: status,
+    body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_corpus.py::test_cases_match_python_route`.
+
+    5.9.2: Python answers a boolean, float, negative or out-of-range `expected_revision`
+    with 422 `{"detail": "invalid config patch request"}`, and an exhausted revision
+    with the `revision_exhausted` body. test: `tests/servers/routes/test_config_values_api.py::test_revision_domain_and_exhaustion_contract`.
+
+    5.9.3: Native PATCH gives every corpus case''s status, body, rows, secrets and
+    notification. test: `crates/gruntime/tests/values_patch.rs::cases_match_python`.
+
+    5.9.4: A native write waits on the advisory lock a Python mutation holds, a stale
+    locked revision returns 409 with the locked revision, a no-change patch writes
+    and notifies nothing, and a released secret is deleted only when no row references
+    it. test: `crates/gruntime/tests/values_patch.rs::commit_serializes_and_releases_like_python`.
+
+    5.9.5: The write wait answers from the published row, and with no publish inside
+    the bound it returns the `reconcile_failed` body. test: `crates/gruntime/tests/values_patch.rs::write_wait_answers_or_reports_reconcile_failed`.
+
+    5.9.6: `check_proxied` verifies a Python-committed PATCH and a Python 422, reports
+    a tampered stored value as a mismatch, and skips when the revision moved. test:
+    `crates/gruntime/tests/values_patch.rs::check_proxied_verifies_python_writes`.
+
+    5.9.7: The regenerated validation carrier, with `default` and `identityField`,
+    equals the checked-in bytes. test: `tests/config/test_runtime_config_contract.py::test_checked_in_validation_carrier_matches_registry`.
+
+    5.9.8: The regenerated gcore contract equals the checked-in bytes, so this leaf
+    leaves gcore unchanged. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    5.9.9: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.9:5.9.1
+  - covers:gdaemon-runtime-family:5.9:5.9.2
+  - covers:gdaemon-runtime-family:5.9:5.9.3
+  - covers:gdaemon-runtime-family:5.9:5.9.4
+  - covers:gdaemon-runtime-family:5.9:5.9.5
+  - covers:gdaemon-runtime-family:5.9:5.9.6
+  - covers:gdaemon-runtime-family:5.9:5.9.7
+  - covers:gdaemon-runtime-family:5.9:5.9.8
+  - covers:gdaemon-runtime-family:5.9:5.9.9
+  tdd: true
+  source_section: '5.9'
+  implementation_domain: backend
+- title: Native `POST /api/config/secrets`
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.9'
+  validation_criteria: '5.10.1: Every corpus case matches Python''s secrets POST:
+    status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_corpus.py::test_cases_match_python_route`.
+
+    5.10.2: The native secrets POST gives every corpus case''s status, body, rows,
+    secrets and notification. test: `crates/gruntime/tests/secret_save.rs::cases_match_python`.
+
+    5.10.3: A native save waits on the advisory lock a Python mutation holds, and
+    a referencing save whose `set` fails leaves the rows, the secrets and the revision
+    unchanged and sends no notification. test: `crates/gruntime/tests/secret_save.rs::save_serializes_and_rolls_back`.
+
+    5.10.4: `check_saved` verifies a Python-committed save and a Python 400 or 422,
+    reports a changed plaintext or `id` as a mismatch, and skips other statuses. test:
+    `crates/gruntime/tests/secret_save.rs::proxied_saves_are_checked`.
+
+    5.10.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.10:5.10.1
+  - covers:gdaemon-runtime-family:5.10:5.10.2
+  - covers:gdaemon-runtime-family:5.10:5.10.3
+  - covers:gdaemon-runtime-family:5.10:5.10.4
+  - covers:gdaemon-runtime-family:5.10:5.10.5
+  tdd: true
+  source_section: '5.10'
+  implementation_domain: backend
+- title: YAML 1.2 document reading on both sides
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.10'
+  validation_criteria: '5.11.1: `yaml12.load` gives every vector''s value, error message
+    or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+
+    5.11.2: `yaml::load` gives every vector''s value, error message or non-string
+    key. test: `crates/gruntime/tests/yaml12.rs::vectors_match_python`.
+
+    5.11.3: An import through `replace_yaml` stores `on` as a string, and a non-string
+    key and malformed YAML return their 422 bodies. test: `tests/servers/routes/test_config_yaml_replace.py::test_import_reads_yaml_1_2`.
+
+    5.11.4: Each export vector equals `_dump`''s output and reads back unchanged through
+    both `yaml.safe_load` and `yaml12.load`, including the strings only YAML 1.2 reads
+    as numbers. test: `tests/config/test_yaml_export_vectors.py::test_vectors_match_python_dump`.
+
+    5.11.5: Native export bytes equal every regenerated vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+
+    5.11.6: The regenerated gcore contract equals the checked-in bytes, so this leaf
+    leaves gcore unchanged. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    5.11.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.11:5.11.1
+  - covers:gdaemon-runtime-family:5.11:5.11.2
+  - covers:gdaemon-runtime-family:5.11:5.11.3
+  - covers:gdaemon-runtime-family:5.11:5.11.4
+  - covers:gdaemon-runtime-family:5.11:5.11.5
+  - covers:gdaemon-runtime-family:5.11:5.11.6
+  - covers:gdaemon-runtime-family:5.11:5.11.7
+  tdd: true
+  source_section: '5.11'
+  implementation_domain: backend
+- title: Native `PUT /api/config/template` and `POST /api/config/import`
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.11'
+  validation_criteria: '5.12.1: Every corpus case matches Python''s template PUT and
+    import POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_yaml_documents_corpus.py::test_cases_match_python_routes`.
+
+    5.12.2: Python answers a boolean, float, negative or out-of-range `expected_revision`
+    with 422 `{"detail": "invalid config document request"}`, and an exhausted revision
+    with the `revision_exhausted` body. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_revision_domain_and_exhaustion`.
+
+    5.12.3: The native template PUT and import POST give every corpus case''s status,
+    body, rows, secrets and notification. test: `crates/gruntime/tests/documents.rs::cases_match_python`.
+
+    5.12.4: A native document replace waits on the advisory lock a Python mutation
+    holds, unsets every stored override that has a `sourcePath`, is not named and
+    is not managed, and keeps managed and sourceless overrides. test: `crates/gruntime/tests/documents.rs::replace_scopes_to_daemon_keys`.
+
+    5.12.5: `check_proxied` verifies a Python-committed document and a Python 422,
+    reports a tampered stored value as a mismatch, and skips when the revision moved.
+    test: `crates/gruntime/tests/documents.rs::check_proxied_verifies_python_documents`.
+
+    5.12.6: The regenerated gcore contract equals the checked-in bytes, so this leaf
+    leaves gcore unchanged. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    5.12.7: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.12:5.12.1
+  - covers:gdaemon-runtime-family:5.12:5.12.2
+  - covers:gdaemon-runtime-family:5.12:5.12.3
+  - covers:gdaemon-runtime-family:5.12:5.12.4
+  - covers:gdaemon-runtime-family:5.12:5.12.5
+  - covers:gdaemon-runtime-family:5.12:5.12.6
+  - covers:gdaemon-runtime-family:5.12:5.12.7
+  tdd: true
+  source_section: '5.12'
+  implementation_domain: backend
+- title: Native generation-endpoint probe client
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.12'
+  validation_criteria: '5.13.1: Python''s probe chains give every corpus case''s outcome,
+    fake log and retry delays, and leave no fake process running. test: `tests/ai/test_endpoint_probe_corpus.py::test_cases_match_python_probes`.
+
+    5.13.2: The corpus''s g-format vectors equal Python''s `format(x, "g")`. test:
+    `tests/ai/test_endpoint_probe_corpus.py::test_g_format_vectors_match_python`.
+
+    5.13.3: The native probe chain gives every corpus case''s outcome, fake log and
+    retry delays, and leaves no fake process running, including after the deadline
+    drops it. test: `crates/gruntime/tests/endpoint_probe.rs::cases_match_python`.
+
+    5.13.4: `pystr::format_g` gives every g-format vector. test: `crates/gruntime/tests/endpoint_probe.rs::format_g_matches_python`.
+
+    5.13.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.13:5.13.1
+  - covers:gdaemon-runtime-family:5.13:5.13.2
+  - covers:gdaemon-runtime-family:5.13:5.13.3
+  - covers:gdaemon-runtime-family:5.13:5.13.4
+  - covers:gdaemon-runtime-family:5.13:5.13.5
+  tdd: true
+  source_section: '5.13'
+  implementation_domain: backend
+- title: Native `PUT /api/config/generation-endpoints/{endpoint_name}/activate`
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.13'
+  validation_criteria: '5.14.1: Every corpus case matches Python''s activate PUT:
+    status, body, rows, secrets, notification and fake log, with an invalid endpoint
+    and a vLLM catalog failure answered 422. test: `tests/servers/routes/test_endpoint_activation_corpus.py::test_cases_match_python_route`.
+
+    5.14.2: The native activate PUT gives every corpus case''s status, body, rows,
+    secrets, notification and fake log. test: `crates/gruntime/tests/activation.rs::cases_match_python`.
+
+    5.14.3: A segment whose decoding contains `/` is not claimed, and a percent-encoded
+    name is claimed and written under its encoded segment. test: `crates/gruntime/tests/activation.rs::path_segments_route_like_python`.
+
+    5.14.4: `check_proxied` verifies a Python-committed activation and a pre-probe
+    Python 422, reports a tampered evidence row and a differing 422 body as mismatches,
+    skips a probe 422 and a moved revision, and starts no fake. test: `crates/gruntime/tests/activation.rs::proxied_activations_are_checked`.
+
+    5.14.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.14:5.14.1
+  - covers:gdaemon-runtime-family:5.14:5.14.2
+  - covers:gdaemon-runtime-family:5.14:5.14.3
+  - covers:gdaemon-runtime-family:5.14:5.14.4
+  - covers:gdaemon-runtime-family:5.14:5.14.5
+  tdd: true
+  source_section: '5.14'
+  implementation_domain: backend
+- title: Native validation-command classifier
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.14'
+  validation_criteria: '5.15.1: The checked-in builtins carrier equals the generator''s
+    output. test: `tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_python`.
+
+    5.15.2: Python''s classifier, `parse_shell_command`, `safe_split`, `str.isalnum`
+    and `str.isdigit` give every corpus case''s result. test: `tests/config/test_validation_detection_corpus.py::test_cases_match_python_classifier`.
+
+    5.15.3: `first_match`, the native lexer and `pystr` give every corpus case''s
+    result. test: `crates/gruntime/tests/classifier.rs::cases_match_python`.
+
+    5.15.4: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.15:5.15.1
+  - covers:gdaemon-runtime-family:5.15:5.15.2
+  - covers:gdaemon-runtime-family:5.15:5.15.3
+  - covers:gdaemon-runtime-family:5.15:5.15.4
+  tdd: true
+  source_section: '5.15'
+  implementation_domain: backend
+- title: Native `POST /api/config/validation-detection/preview`
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.15'
+  validation_criteria: '5.16.1: Every corpus case matches Python''s preview: status
+    and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_detection_preview_corpus.py::test_cases_match_python_route`.
+
+    5.16.2: The native preview gives every corpus case''s status and body. test: `crates/gruntime/tests/validation_preview.rs::cases_match_python`.
+
+    5.16.3: `check_proxied` verifies Python''s 200, 400 and 422 answers, reports a
+    differing body as a mismatch, and skips a native 503 and other statuses. test:
+    `crates/gruntime/tests/validation_preview.rs::proxied_previews_are_checked`.
+
+    5.16.4: A preview without `config` reads the runtime snapshot once and classifies
+    with its active config. test: `tests/config/test_live_policy_consumers.py::test_validation_detection_uses_runtime_snapshot`.
+
+    5.16.5: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:5.16:5.16.1
+  - covers:gdaemon-runtime-family:5.16:5.16.2
+  - covers:gdaemon-runtime-family:5.16:5.16.3
+  - covers:gdaemon-runtime-family:5.16:5.16.4
+  - covers:gdaemon-runtime-family:5.16:5.16.5
+  tdd: true
+  source_section: '5.16'
+  implementation_domain: backend
+- title: '`runtime` defaults to native'
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.16'
+  validation_criteria: '6.1.1: `RuntimeFamily::default_backend()` returns `Native`.
+    1.1.5 proves an absent entry takes the default and an entry overrides it, and
+    6.3 proves it end to end. test: `crates/gruntime/tests/family.rs::runtime_defaults_to_native`.
+
+    6.1.2: `gdaemon` is one patch version above the executor''s starting tip in its
+    `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`, so this leaf''s cutover
+    passes the release-identity preflight. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-runtime-family:6.1:6.1.1
+  - covers:gdaemon-runtime-family:6.1:6.1.2
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: 'Corpus: `runtime` family cases replayed natively'
+  category: test
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: The manifest declares `runtime` native with origin
+    python, owns the handshake, config and new cases, and no longer lists `config`
+    or `runtime_handshake`. file: `tests/contracts/http/manifest.json`.
+
+    6.2.2: `runtime_config` is recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
+
+    6.2.3: Every corpus case replays equal against the e2e daemon on the default `runtime`
+    backend (native). test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    6.2.4: The Rust parity precheck passes with `runtime` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+
+    6.2.5: `config_effective` is recorded from Python and committed. file: `tests/contracts/http/config_effective.json`.'
+  labels:
+  - covers:gdaemon-runtime-family:6.2:6.2.1
+  - covers:gdaemon-runtime-family:6.2:6.2.2
+  - covers:gdaemon-runtime-family:6.2:6.2.3
+  - covers:gdaemon-runtime-family:6.2:6.2.4
+  - covers:gdaemon-runtime-family:6.2:6.2.5
+  tdd: false
+  source_section: '6.2'
+  assigned_agent: developer
+- title: 'E2E: compare smoke, backend-kill fallback, flip and rollback'
+  category: test
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: Compare mode serves Python''s responses and records
+    `match` for every claimed GET, including the P5 reads, and `verified` for the
+    handshake, the managed challenge, the export, the preview and every P5 write,
+    with zero mismatches, and `compare-report` exits 0. test: `tests/e2e/test_runtime_family.py::test_compare_mode_records_zero_mismatches`.
+
+    6.3.2: With no `runtime` entry (the native default), the interactive runtime routes
+    and the P5 reads serve 200 while the backend is killed, and `GET /api/sessions`
+    returns the typed 503. test: `tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill`.
+
+    6.3.3: Rollback to `proxy` and return to the default take only a bootstrap edit
+    and a gdaemon restart with the same binaries. test: `tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy`.
+
+    6.3.4: With the backend killed on the native default, a managed challenge returns
+    Python''s proof for the isolated key, a first agent handshake issues G1, a second
+    rotates to G2 and rewrites the launch `grant.json` with G2 and a valid capability,
+    and the G2 grant presents. test: `tests/e2e/test_runtime_family.py::test_managed_handshake_and_rotation_survive_backend_kill`.'
+  labels:
+  - covers:gdaemon-runtime-family:6.3:6.3.1
+  - covers:gdaemon-runtime-family:6.3:6.3.2
+  - covers:gdaemon-runtime-family:6.3:6.3.3
+  - covers:gdaemon-runtime-family:6.3:6.3.4
+  tdd: false
+  source_section: '6.3'
+  assigned_agent: developer
+- title: 'Docs: family-crate template and the flip runbook'
+  category: docs
+  task_type: feature
+  depends_on:
+  - '6.3'
+  validation_criteria: '6.4.1: "Daemon family crates" documents the seam, the claims
+    and proxied-check hooks, the compare log and the corpus split. file: `crates/AGENTS.md`.
+
+    6.4.2: The configuration guide states the per-family default (native for `runtime`)
+    and documents the compare, soak, clear-to-default and `proxy` fallback runbook
+    with `compare-report` and the route commands. file: `docs/guides/configuration.md`.'
+  labels:
+  - covers:gdaemon-runtime-family:6.4:6.4.1
+  - covers:gdaemon-runtime-family:6.4:6.4.2
+  tdd: false
+  source_section: '6.4'
+  assigned_agent: tech-writer
+```
