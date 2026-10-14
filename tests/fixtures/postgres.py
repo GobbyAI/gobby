@@ -43,9 +43,13 @@ from gobby.utils.machine_id import get_machine_id
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
 _TEST_SCHEMA_PREFIX = "gobby_test_"
-# isolated_test_database names: gobby_test_<pid>_<12 hex>. PID 0 names a process group,
-# and seven digits cover Linux's 4194304 pid_max without overflowing os.kill.
-_PROCESS_DATABASE_NAME = re.compile(r"gobby_test_([1-9][0-9]{0,6})_[0-9a-f]{12}")
+# Per-process test databases: isolated_test_database's gobby_test_<pid>_<12 hex> and
+# test_postgres_safety's gobby_sweep_test_<pid>_<8 hex>. Exactly one PID group matches.
+# PID 0 names a process group, and seven digits cover Linux's 4194304 pid_max without
+# overflowing os.kill.
+_PROCESS_DATABASE_NAME = re.compile(
+    r"gobby_test_([1-9][0-9]{0,6})_[0-9a-f]{12}|gobby_sweep_test_([1-9][0-9]{0,6})_[0-9a-f]{8}"
+)
 
 
 def _test_schema_created_epoch(schema_name: str) -> int | None:
@@ -310,7 +314,7 @@ def _reap_dead_process_databases(connection: psycopg.Connection[Any], url: str) 
     rows = connection.execute("SELECT datname FROM pg_database").fetchall()
     for (name,) in rows:
         match = _PROCESS_DATABASE_NAME.fullmatch(name)
-        if match is None or _process_alive(int(match.group(1))):
+        if match is None or _process_alive(int(match[1] or match[2])):
             continue
         with contextlib.suppress(psycopg.errors.InvalidCatalogName):
             # A concurrently starting run may have reaped it first.

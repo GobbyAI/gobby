@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
-import uuid
-from collections.abc import Iterator
-
 import psycopg
 import pytest
 from psycopg import sql
-from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
 from gobby.storage.schema_contract import (
@@ -17,27 +12,9 @@ from gobby.storage.schema_contract import (
     apply_schema,
     expected_schema_identity,
 )
-from tests.fixtures.postgres import isolated_test_schema
+from tests.fixtures.postgres import isolated_test_database, isolated_test_schema
 
 pytestmark = pytest.mark.integration
-
-
-@contextlib.contextmanager
-def _isolated_test_database(base_url: str, label: str) -> Iterator[str]:
-    database_name = f"gobby_test_{label}_{uuid.uuid4().hex[:8]}"
-    with psycopg.connect(base_url, autocommit=True) as connection:
-        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
-
-    database_url = make_conninfo(base_url, dbname=database_name)
-    try:
-        with psycopg.connect(database_url, autocommit=True) as connection:
-            connection.execute("CREATE EXTENSION IF NOT EXISTS pg_search")
-        yield database_url
-    finally:
-        with psycopg.connect(base_url, autocommit=True) as connection:
-            connection.execute(
-                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
-            )
 
 
 def test_gdaemon_applies_fresh_baseline_to_named_test_schema(
@@ -73,7 +50,7 @@ def test_gdaemon_adopts_gcode_standalone_tables(
     postgres_database_url: str,
 ) -> None:
     project_id = "11111111-1111-1111-1111-111111111111"
-    with _isolated_test_database(postgres_database_url, "gcodeadopt") as database_url:
+    with isolated_test_database(postgres_database_url) as database_url:
         apply_schema(database_url)
         with psycopg.connect(
             database_url,
@@ -119,7 +96,7 @@ def test_gdaemon_refuses_gwiki_standalone_tables(
     schema over these tables and leaves their rows alone.
     """
     document_id = "standalone-gwiki-document"
-    with _isolated_test_database(postgres_database_url, "gwikiadopt") as database_url:
+    with isolated_test_database(postgres_database_url) as database_url:
         with psycopg.connect(
             database_url,
             autocommit=True,
