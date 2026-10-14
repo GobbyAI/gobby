@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -104,22 +106,67 @@ class TestRequireInstalled:
 
         assert outcome == "accepted"
 
-    def test_rejects_missing_bootstrap(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-        (tmp_path / "bin").mkdir()
-        (tmp_path / "bin" / "gdaemon").write_text("")
-
-        with pytest.raises(click.UsageError, match="run `gobby install` first"):
-            require_installed()
-
     def test_rejects_missing_gdaemon(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
         (tmp_path / "bootstrap.yaml").write_text("datastore_mode: local\n")
 
         with pytest.raises(click.UsageError, match="run `gobby install` first"):
             require_installed()
+
+
+def _refuse_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(self: Path, *args: object, **kwargs: object) -> None:
+        raise AssertionError(f"require_installed read {self}")
+
+    monkeypatch.setattr(Path, "open", refuse)
+    monkeypatch.setattr(Path, "read_text", refuse)
+    monkeypatch.setattr(Path, "read_bytes", refuse)
+
+
+def test_require_installed_reports_unreadable_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    bootstrap = tmp_path / "bootstrap.yaml"
+    bootstrap.write_text("datastore_mode: local\n")
+    real_stat = Path.stat
+
+    def denied_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self == bootstrap:
+            raise PermissionError(errno.EPERM, "Operation not permitted", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", denied_stat)
+    _refuse_reads(monkeypatch)
+    with pytest.raises(click.UsageError) as denied:
+        require_installed()
+    monkeypatch.undo()
+
+    # A sandbox can also hide the file outright while the managed gdaemon stays visible.
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    bootstrap.unlink()
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "gdaemon").write_text("")
+    _refuse_reads(monkeypatch)
+    with pytest.raises(click.UsageError) as hidden:
+        require_installed()
+
+    for refusal in (denied, hidden):
+        message = refusal.value.format_message()
+        assert f"cannot read {bootstrap}" in message
+        assert "unsandboxed host shell" in message
+        assert "not installed" not in message
+
+
+def test_require_installed_reports_missing_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    with pytest.raises(click.UsageError) as refusal:
+        require_installed()
+
+    assert refusal.value.format_message() == "Gobby is not installed; run `gobby install` first."
 
 
 class TestRunInstallComponents:
