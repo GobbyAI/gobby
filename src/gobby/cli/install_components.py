@@ -141,10 +141,26 @@ class EmbeddingOverrides:
 
 
 def require_installed() -> None:
-    """Component runs need an existing install (bootstrap plus managed gdaemon)."""
-    gdaemon = get_gobby_home() / "bin" / "gdaemon"
-    if not bootstrap_path().exists() or not gdaemon.exists():
-        raise click.UsageError("Gobby is not installed; run `gobby install` first.")
+    """Component runs need an existing install (bootstrap plus managed gdaemon).
+
+    A bootstrap this process cannot stat, or cannot see beside the managed
+    gdaemon, is usually a sandbox boundary rather than a missing install.
+    """
+    bootstrap = bootstrap_path()
+    gdaemon_exists = (get_gobby_home() / "bin" / "gdaemon").exists()
+    not_installed = "Gobby is not installed; run `gobby install` first."
+    unreadable = (
+        f"This process cannot read {bootstrap}. Run from an unsandboxed host shell; "
+        "if the file is truly gone, run `gobby install` to restore it."
+    )
+    try:
+        bootstrap.stat()
+    except PermissionError:
+        raise click.UsageError(unreadable) from None
+    except (FileNotFoundError, NotADirectoryError):
+        raise click.UsageError(unreadable if gdaemon_exists else not_installed) from None
+    if not gdaemon_exists:
+        raise click.UsageError(not_installed)
 
 
 def reconcile_rtk_step(
