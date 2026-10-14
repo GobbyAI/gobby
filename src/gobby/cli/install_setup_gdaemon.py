@@ -11,6 +11,7 @@ from typing import cast
 
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
     promote_workspace_binary_set,
@@ -102,7 +103,7 @@ def _install_from_workspace(binary: Path) -> bool:
         return False
     try:
         promote_workspace_binary_set({"gdaemon": source}, bin_dir=binary.parent)
-    except BinarySetCoherenceError as exc:
+    except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
         raise GdaemonInstallError(str(exc)) from exc
     return True
 

@@ -15,10 +15,59 @@ import pytest
 
 from gobby.cli import install_setup, install_setup_gdaemon
 from gobby.install import bin_set_coherence
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
 
 _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
+
+
+def test_ensure_gdaemon_wraps_unbumped_workspace_release_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "workspace" / "Cargo.toml"
+    source = manifest.parent / "target" / "release" / "gdaemon"
+    source.parent.mkdir(parents=True)
+    manifest.write_text("[workspace]\n")
+    source.write_bytes(b"changed workspace gdaemon")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = bin_dir / "gdaemon"
+    installed.write_bytes(b"installed gdaemon")
+    refusal = BinaryReleaseVersionError(
+        f"gdaemon: changed source under installed version {_GDAEMON_PIN}; "
+        "bump its patch version before promotion"
+    )
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(install_setup_gdaemon, "_workspace_manifest", lambda: manifest)
+    monkeypatch.setattr(install_setup_gdaemon, "cargo_release_dir", lambda _root: source.parent)
+    monkeypatch.setattr(
+        install_setup_gdaemon, "shutil", SimpleNamespace(which=lambda _name: "cargo")
+    )
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", ""),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda _binary: _GDAEMON_PIN)
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "_probe_identity",
+        lambda _binary: schema_contract.expected_schema_identity(),
+    )
+    monkeypatch.setattr(install_setup_gdaemon, "promote_workspace_binary_set", refuse)
+    with pytest.raises(
+        install_setup_gdaemon.GdaemonInstallError, match="bump its patch version"
+    ) as exc:
+        install_setup_gdaemon.ensure_gdaemon(bin_dir=bin_dir, force=True)
+    assert exc.value.__cause__ is refusal
+    assert installed.read_bytes() == b"installed gdaemon"
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -244,6 +293,7 @@ def test_workspace_set_refusal_is_reported_as_install_failure(
         schema_contract.expected_schema_identity_json(), encoding="utf-8"
     )
     monkeypatch.setattr(install_setup_gdaemon, "_workspace_manifest", lambda: manifest)
+    monkeypatch.setattr(install_setup_gdaemon, "cargo_release_dir", lambda _root: source.parent)
     monkeypatch.setattr(
         install_setup_gdaemon,
         "shutil",

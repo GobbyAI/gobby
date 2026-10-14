@@ -195,7 +195,8 @@ def check_binary_release(
     installed_version = probe_native_bin_version(installed)
     if installed_version is None:
         raise BinaryReleaseVersionError(
-            f"{name}: installed version cannot be verified; rebuild and install"
+            f"{name}: installed version cannot be verified; "
+            "remove the unverified installed binary, then rebuild and install"
         )
     if installed_version != version:
         return candidate
