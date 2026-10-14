@@ -302,17 +302,22 @@ async fn ledger_prune_retention() {
     assert!(ledger.inbox.join("processed/.locks").is_dir());
     assert!(ledger.is_processed("fresh").await.unwrap());
 
-    // Hardlinks make the production-size bound cheap to exercise without
-    // allocating 100,002 separate file bodies. All links retain the old mtime.
+    // Small hardlink groups keep the production-size fixture cheap without
+    // exceeding filesystem link limits. Every group has the same old mtime.
     let bound_home = TempDir::new().unwrap();
     let bounded = Ledger::new(bound_home.path().join("inbox"));
     let processed = bounded.inbox.join("processed");
     fs::create_dir_all(&processed).unwrap();
-    let seed = processed.join("seed");
-    fs::write(&seed, "{}").unwrap();
-    age(&seed, 86_500);
-    for index in 0..100_001 {
-        fs::hard_link(&seed, processed.join(index.to_string())).unwrap();
+    let old: SystemTime = (now - Duration::seconds(86_500)).into();
+    for index in 0..100_002 {
+        let path = processed.join(index.to_string());
+        if index % 128 == 0 {
+            fs::write(&path, "{}").unwrap();
+            fs::File::open(&path).unwrap().set_modified(old).unwrap();
+        } else {
+            let seed = processed.join((index / 128 * 128).to_string());
+            fs::hard_link(seed, path).unwrap();
+        }
     }
     let capped = bounded
         .prune(Some(now), PROCESSED_MARKER_RETENTION_SECONDS, usize::MAX)
