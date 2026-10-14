@@ -1449,10 +1449,13 @@ async fn channel_registers_and_replaces() -> Result<()> {
             .await?
             .get(0);
         assert_eq!(writes, 2, "hello and the due ping each write exactly once");
+        let first_connection = hub.nodes.registry.connection_id(db.machine).unwrap();
         let mut second = open_channel(hub.addr).await?;
         hello(&mut second, "successor").await?;
         ack(&mut second, db.machine).await?;
         close_code(&mut first, 4409).await?;
+        // Force stale cleanup after replacement instead of depending on task scheduling.
+        hub.nodes.registry.remove(db.machine, first_connection);
         assert!(hub.nodes.registry.is_connected(db.machine));
         assert_eq!(db.row().await?.1.as_deref(), Some("successor"));
         Ok(())
