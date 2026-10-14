@@ -14,6 +14,7 @@ from typing import Any
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import get_current_session_id
 
@@ -30,19 +31,33 @@ def _bound_workspace(db: HubDatabase, run: AgentRun) -> str:
     return "the checkout it launched in"
 
 
+def _claimed_by(db: HubDatabase, task_id: str | None, session_id: str) -> bool:
+    if task_id is None:
+        return False
+    try:
+        task = LocalTaskManager(db).get_task(task_id)
+    except ValueError:
+        # An unresolvable reference is reported by the create path itself.
+        return False
+    return task.claimed_by_session_id is not None and str(task.claimed_by_session_id) == session_id
+
+
 def frozen_workspace_refusal(
     db: HubDatabase,
     action: str,
     *,
     claimed_worktree_id: str | None = None,
     claimed_clone_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Return the refusal payload when the calling run cannot use the workspace.
 
-    A create (no claimed id) is refused only for a run already bound to a
-    worktree or clone; an unbound coordinator still creates workspaces for other
-    seats. A claim for the caller itself is refused unless it names the run's
-    own bound workspace. Callers outside a live agent run are never refused.
+    A create (no claimed id) is refused only when it is for the caller: its
+    ``task_id`` names a task the calling session has claimed. Creates for other
+    seats stay open, so worktree-bound coordinators still create sub-lane trees
+    that a later resume binds. A claim for the caller itself is refused unless
+    it names the run's own bound workspace. Callers outside a live agent run are
+    never refused.
     """
     session_id = get_current_session_id()
     if not session_id:
@@ -55,7 +70,7 @@ def frozen_workspace_refusal(
             claimed_clone_id is not None and claimed_clone_id == run.clone_id
         ):
             return None
-    elif run.worktree_id is None and run.clone_id is None:
+    elif not _claimed_by(db, task_id, session_id):
         return None
     return {
         "success": False,

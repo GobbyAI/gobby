@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,6 +17,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
 
@@ -77,6 +78,24 @@ def _clone(db: HubDatabase, project_id: str, name: str, tmp_path: Path) -> tuple
     return clone.id, path
 
 
+def _claimed_task(db: HubDatabase, project_id: str, session_id: str) -> str:
+    tasks = LocalTaskManager(db)
+    task = tasks.create_task(
+        project_id, "Frozen workspace task", validation_criteria="Workspace stays usable."
+    )
+    tasks.claim_task(task.id, session_id)
+    return task.id
+
+
+def _git_stops_after_guard() -> MagicMock:
+    """A git manager whose creates fail, so a create that passes the guard has no side effects."""
+    git_manager = MagicMock()
+    stopped = MagicMock(success=False, error="stopped after guard", message="")
+    git_manager.create_worktree = AsyncMock(return_value=stopped)
+    git_manager.shallow_clone = AsyncMock(return_value=stopped)
+    return git_manager
+
+
 def _worktree_tools(
     db: HubDatabase, git_manager: MagicMock, project_id: str
 ) -> InternalToolRegistry:
@@ -99,7 +118,7 @@ def _assert_frozen(result: dict[str, Any], action: str, bound_path: str) -> None
 
 
 @pytest.mark.asyncio
-async def test_bound_run_create_worktree_refused_before_git(
+async def test_bound_run_create_worktree_for_own_task_refused_before_git(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -108,17 +127,50 @@ async def test_bound_run_create_worktree_refused_before_git(
     project_id = sample_project["id"]
     bound_id, bound_path = _worktree(temp_db, project_id, "lane-bound", tmp_path)
     caller = _live_run(temp_db, session_manager, project_id, worktree_id=bound_id)
-    git_manager = MagicMock()
+    own_task = _claimed_task(temp_db, project_id, caller)
+    git_manager = _git_stops_after_guard()
     tools = _worktree_tools(temp_db, git_manager, project_id)
 
     with session_context_for_test(caller):
         result = await tools.call(
-            "create_worktree", {"branch_name": "mid-run", "base_branch": "0.5.0"}
+            "create_worktree",
+            {"branch_name": "mid-run", "base_branch": "0.5.0", "task_id": own_task},
         )
 
     _assert_frozen(result, "create_worktree", bound_path)
     git_manager.create_worktree.assert_not_called()
     assert LocalWorktreeManager(temp_db).get_by_branch(project_id, "mid-run") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("for_task", ["none", "other-seat"])
+async def test_bound_run_creates_worktree_for_another_seat(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    for_task: str,
+) -> None:
+    project_id = sample_project["id"]
+    bound_id, _ = _worktree(temp_db, project_id, "lane-bound", tmp_path)
+    caller = _live_run(temp_db, session_manager, project_id, worktree_id=bound_id)
+    arguments: dict[str, Any] = {
+        "branch_name": "sub-lane",
+        "base_branch": "0.5.0",
+        "worktree_path": str(tmp_path / "sub-lane"),
+        "use_local": True,
+    }
+    if for_task == "other-seat":
+        seat = _session(session_manager, project_id, "seat")
+        arguments["task_id"] = _claimed_task(temp_db, project_id, seat)
+    git_manager = _git_stops_after_guard()
+    tools = _worktree_tools(temp_db, git_manager, project_id)
+
+    with session_context_for_test(caller):
+        result = await tools.call("create_worktree", arguments)
+
+    assert result["error_code"] == "git_create_failed"
+    git_manager.create_worktree.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -169,7 +221,7 @@ async def test_claim_worktree_for_another_session_is_not_guarded(
     assert claimed is not None and claimed.agent_session_id == seat
 
 
-def test_unbound_run_may_create_but_not_claim_for_itself(
+def test_unbound_run_may_create_for_others_but_not_for_itself(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -178,12 +230,18 @@ def test_unbound_run_may_create_but_not_claim_for_itself(
     project_id = sample_project["id"]
     other_id, _ = _worktree(temp_db, project_id, "lane-other", tmp_path)
     caller = _live_run(temp_db, session_manager, project_id)
+    own_task = _claimed_task(temp_db, project_id, caller)
 
     with session_context_for_test(caller):
         create = frozen_workspace_refusal(temp_db, "create_worktree")
+        unresolved = frozen_workspace_refusal(temp_db, "create_worktree", task_id="#999999")
+        own_create = frozen_workspace_refusal(temp_db, "create_worktree", task_id=own_task)
         claim = frozen_workspace_refusal(temp_db, "claim_worktree", claimed_worktree_id=other_id)
 
     assert create is None
+    assert unresolved is None
+    assert own_create is not None
+    _assert_frozen(own_create, "create_worktree", "the checkout it launched in")
     assert claim is not None
     _assert_frozen(claim, "claim_worktree", "the checkout it launched in")
 
@@ -208,7 +266,7 @@ def test_callers_outside_a_live_run_are_not_guarded(
 
 
 @pytest.mark.asyncio
-async def test_clone_bound_run_create_and_claim_clone_refused(
+async def test_clone_bound_run_create_for_own_task_and_claim_clone_refused(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -218,7 +276,8 @@ async def test_clone_bound_run_create_and_claim_clone_refused(
     bound_id, bound_path = _clone(temp_db, project_id, "clone-bound", tmp_path)
     other_id, _ = _clone(temp_db, project_id, "clone-other", tmp_path)
     caller = _live_run(temp_db, session_manager, project_id, clone_id=bound_id)
-    git_manager = MagicMock()
+    own_task = _claimed_task(temp_db, project_id, caller)
+    git_manager = _git_stops_after_guard()
     tools = create_clones_registry(
         clone_storage=LocalCloneManager(temp_db), git_manager=git_manager, project_id=project_id
     )
@@ -226,7 +285,12 @@ async def test_clone_bound_run_create_and_claim_clone_refused(
     with session_context_for_test(caller):
         created = await tools.call(
             "create_clone",
-            {"branch_name": "mid-run", "clone_path": str(tmp_path / "mid-run")},
+            {
+                "branch_name": "mid-run",
+                "clone_path": str(tmp_path / "mid-run"),
+                "remote_url": "https://example.invalid/repo.git",
+                "task_id": own_task,
+            },
         )
         claimed = await tools.call("claim_clone", {"clone_id": other_id})
 
@@ -235,3 +299,32 @@ async def test_clone_bound_run_create_and_claim_clone_refused(
     git_manager.shallow_clone.assert_not_called()
     other = LocalCloneManager(temp_db).get(other_id)
     assert other is not None and other.agent_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_clone_bound_run_creates_clone_for_another_seat(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    project_id = sample_project["id"]
+    bound_id, _ = _clone(temp_db, project_id, "clone-bound", tmp_path)
+    caller = _live_run(temp_db, session_manager, project_id, clone_id=bound_id)
+    git_manager = _git_stops_after_guard()
+    tools = create_clones_registry(
+        clone_storage=LocalCloneManager(temp_db), git_manager=git_manager, project_id=project_id
+    )
+
+    with session_context_for_test(caller):
+        created = await tools.call(
+            "create_clone",
+            {
+                "branch_name": "sub-lane",
+                "clone_path": str(tmp_path / "sub-lane"),
+                "remote_url": "https://example.invalid/repo.git",
+            },
+        )
+
+    assert created == {"success": False, "error": "Clone failed: stopped after guard"}
+    git_manager.shallow_clone.assert_awaited_once()

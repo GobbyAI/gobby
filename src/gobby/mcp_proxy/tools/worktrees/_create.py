@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 from gobby.agents.frozen_workspace import frozen_workspace_refusal
@@ -13,6 +14,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.worktrees.creation import create_worktree as create_worktree_record
 from gobby.worktrees.events import emit_worktree_event
 
@@ -68,7 +70,19 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "error": f"Remote-style base branch is not allowed: {base_branch}",
                 "error_code": "remote_base_branch_not_allowed",
             }
-        refusal = frozen_workspace_refusal(ctx.worktree_storage.db, "create_worktree")
+        owning_task_id = None
+        if task_id:
+            try:
+                owning_task_id = await asyncio.to_thread(ctx.resolve_task_id, task_id)
+            except (ValueError, TaskNotFoundError):
+                # create_worktree_record reports the invalid reference.
+                owning_task_id = None
+        refusal = await asyncio.to_thread(
+            frozen_workspace_refusal,
+            ctx.worktree_storage.db,
+            "create_worktree",
+            task_id=owning_task_id,
+        )
         if refusal is not None:
             return refusal
         resolved_git_mgr, resolved_project_id, error = resolve_project_context(

@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
     install_provider_hooks,
 )
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import BranchDivergenceUnavailableError, WorktreeGitManager
@@ -420,15 +421,20 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolution_error",
+    [ValueError("bad task ref"), TaskNotFoundError("Task #99999 not found")],
+    ids=["invalid-format", "unknown-seq-ref"],
+)
 async def test_invalid_task_cleanup_preserves_preexisting_branch(
-    registry, mock_worktree_storage, mock_git_manager
+    registry, mock_worktree_storage, mock_git_manager, resolution_error: Exception
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
 
     with patch(
         "gobby.mcp_proxy.tools.worktrees._context.RegistryContext.resolve_task_id",
-        side_effect=ValueError("bad task ref"),
+        side_effect=resolution_error,
     ):
         result = await registry.call(
             "create_worktree",

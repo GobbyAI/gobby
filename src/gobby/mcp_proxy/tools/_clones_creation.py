@@ -48,10 +48,6 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         Returns:
             Dict with clone info or error
         """
-        refusal = frozen_workspace_refusal(ctx.clone_storage.db, "create_clone")
-        if refusal is not None:
-            return refusal
-
         # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
         clone_path = str(Path(clone_path).expanduser())
 
@@ -96,6 +92,14 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             # Resolve task references before creating anything on disk. A bad task
             # reference must not leave a clone directory behind.
             resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
+            refusal = await asyncio.to_thread(
+                frozen_workspace_refusal,
+                ctx.clone_storage.db,
+                "create_clone",
+                task_id=resolved_task_id,
+            )
+            if refusal is not None:
+                return refusal
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
 
