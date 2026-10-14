@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -25,9 +26,12 @@ import pytest
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
+    DaemonInstance,
+    MCPTestClient,
     authenticated_daemon_client_for_home,
     daemon_health_unavailable,
     daemon_token,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -41,8 +45,8 @@ class TestFullWorkflowIntegration:
 
     def test_full_workflow_with_daemon_restart(
         self,
-        e2e_project_dir,
-        e2e_config,
+        e2e_project_dir: Path,
+        e2e_config: tuple[Path, int, int],
     ) -> None:
         """
         Test the complete workflow including daemon restart.
@@ -70,7 +74,9 @@ class TestFullWorkflowIntegration:
         # ===== PHASE 1: Start daemon =====
         with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -176,7 +182,9 @@ class TestFullWorkflowIntegration:
             # Start second daemon
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    native_daemon_command(
+                        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                    ),
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
@@ -261,10 +269,10 @@ class TestFullWorkflowIntegration:
 
     def test_concurrent_components_work_together(
         self,
-        daemon_instance,
+        daemon_instance: DaemonInstance,
         daemon_client: httpx.Client,
         cli_events: CLIEventSimulator,
-        mcp_client,
+        mcp_client: MCPTestClient,
     ) -> None:
         """
         Test that multiple components work correctly in concurrent usage.
@@ -324,7 +332,7 @@ class TestFullWorkflowIntegration:
 
     def test_error_recovery_across_components(
         self,
-        daemon_instance,
+        daemon_instance: DaemonInstance,
         daemon_client: httpx.Client,
         cli_events: CLIEventSimulator,
     ) -> None:

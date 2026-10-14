@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -23,6 +24,7 @@ from tests.e2e.conftest import (
     DaemonInstance,
     authenticated_daemon_client_for_home,
     daemon_health_unavailable,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -183,8 +185,8 @@ class TestSessionPersistence:
 
     def test_sessions_endpoint_works_after_restart(
         self,
-        e2e_project_dir,
-        e2e_config,
+        e2e_project_dir: Path,
+        e2e_config: tuple[Path, int, int],
     ) -> None:
         """Verify sessions endpoint works after daemon restart."""
         config_path, http_port, ws_port = e2e_config
@@ -202,7 +204,9 @@ class TestSessionPersistence:
         # Start first daemon
         with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
             process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                native_daemon_command(
+                    env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                ),
                 stdout=log_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
@@ -237,7 +241,9 @@ class TestSessionPersistence:
             # Start second daemon
             with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
                 process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+                    native_daemon_command(
+                        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+                    ),
                     stdout=log_f,
                     stderr=err_f,
                     stdin=subprocess.DEVNULL,
