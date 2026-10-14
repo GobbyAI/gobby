@@ -77,6 +77,21 @@ def rule_manager(db: HubDatabase) -> RuleDefinitionManager:
 class TestAgentDefinitionBodyModel:
     """AgentDefinitionBody has the current field set with correct defaults."""
 
+    def test_communications_admin_defaults_to_denied(self) -> None:
+        body = make_agent_definition(
+            name="delivery-seat", prompts={"agent": "Deliver reports."}, operator_messaging=True
+        )
+        assert body.communications_admin is False
+
+    @pytest.mark.parametrize("value", ["true", "false", 1, 0, None])
+    def test_communications_admin_requires_boolean(self, value: object) -> None:
+        with pytest.raises(ValidationError, match="communications_admin"):
+            make_agent_definition(
+                name="invalid-admin",
+                prompts={"agent": "Manage channels."},
+                communications_admin=value,
+            )
+
     def test_minimal_creation(self) -> None:
         """Create with a name and the required default-surface prompt."""
 
@@ -137,8 +152,9 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 28, f"Expected 28 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 29, f"Expected 29 fields, got {len(fields)}: {list(fields.keys())}"
         assert "operator_messaging" in fields
+        assert "communications_admin" in fields
         assert "idle_ttl_seconds" in fields
         assert "checkout_mode" in fields
         assert "isolation" not in fields

@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
@@ -78,7 +79,7 @@ def create_communications_registry(
                 )
         return caller_id
 
-    def operator_destination(channel: str, caller_id: str | None) -> str:
+    def installed_caller(caller_id: str | None) -> tuple[Session, AgentDefinitionBody]:
         if db is None or not caller_id:
             raise ValueError("Operator messaging requires a registered caller")
         caller = SessionManager(db).get(caller_id)
@@ -97,9 +98,33 @@ def create_communications_registry(
         if row is None or not row.enabled:
             raise ValueError("Caller is not permitted to message the operator")
         body = AgentDefinitionBody.model_validate({"name": row.name, **row.definition_json})
+        return caller, body
+
+    def require_channel_admin() -> None:
+        _, body = installed_caller(get_current_session_id())
+        if not body.communications_admin:
+            raise ValueError("Caller is not permitted to administer communication channels")
+
+    def operator_destination(channel: str, caller_id: str | None) -> str:
+        caller, body = installed_caller(caller_id)
         if not body.operator_messaging:
             raise ValueError("Caller is not permitted to message the operator on this channel")
-        destination = communications_manager.resolve_operator_conversation(channel)
+        permitted_channels: list[str] = []
+        for configured in communications_manager.list_channels():
+            if (
+                configured.enabled
+                and configured.channel_type == "telegram"
+                and configured.config_json.get("operator_project_id") == caller.project_id
+            ):
+                permitted_channels.append(configured.name)
+        if len(permitted_channels) != 1:
+            raise ValueError(
+                "Operator messaging requires exactly one project-bound Telegram channel"
+            )
+        permitted_channel = permitted_channels[0]
+        if channel != permitted_channel:
+            raise ValueError("Caller is not permitted to message the operator on this channel")
+        destination = communications_manager.resolve_operator_conversation(permitted_channel)
         conversation = destination.get("conversation_id")
         if not isinstance(conversation, str) or not conversation.startswith("dm:"):
             raise ValueError("Operator has no recorded Telegram DM")
@@ -482,6 +507,7 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Add a new communication channel."""
         try:
+            require_channel_admin()
             ch = await communications_manager.add_channel(
                 channel_type=channel_type,
                 name=name,
@@ -506,6 +532,7 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Remove a communication channel."""
         try:
+            require_channel_admin()
             await communications_manager.remove_channel(name=name)
             return {"success": True}
         except Exception as e:
@@ -521,6 +548,7 @@ def create_communications_registry(
     async def set_channel_project(channel: str, project: str) -> dict[str, Any]:
         """Persist the project used by future responder turns on one channel."""
         try:
+            require_channel_admin()
             if db is None:
                 return {"success": False, "error": "Project storage is unavailable"}
             configured_channel = communications_manager.get_channel_by_name(channel)

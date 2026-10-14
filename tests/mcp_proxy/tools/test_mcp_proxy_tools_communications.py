@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.communications import create_communications_registry
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
@@ -25,6 +26,103 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def channel_admin(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Session:
+    AgentDefinitionManager(temp_db).create(
+        name="comms-agent",
+        definition_json={
+            "name": "comms-agent",
+            "prompts": {"agent": "Manage communications."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "communications_admin": True,
+        },
+        source="custom",
+    )
+    caller = SessionManager(temp_db).register(
+        external_id="channel-admin",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=str(sample_project["id"]),
+        agent_depth=1,
+    )
+    SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", "comms-agent")
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_current_session_id", lambda: caller.id
+    )
+    return caller
+
+
+@pytest.fixture
+def admin_registry(mock_manager: MagicMock, channel_admin: Session, temp_db: HubDatabase) -> Any:
+    return create_communications_registry(mock_manager, db=temp_db)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["add_channel", "remove_channel", "set_channel_project"])
+async def test_delivery_grant_cannot_administer_channels(
+    writer: str,
+    channel_admin: Session,
+    temp_db: HubDatabase,
+    mock_manager: MagicMock,
+) -> None:
+    from uuid import uuid4
+
+    from gobby.storage.communications import LocalCommunicationsStore
+
+    AgentDefinitionManager(temp_db).create(
+        name="delivery-only",
+        definition_json={
+            "name": "delivery-only",
+            "prompts": {"agent": "Deliver reports."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "operator_messaging": True,
+        },
+        source="custom",
+    )
+    variables = SessionVariableManager(temp_db)
+    variables.set_variable(channel_admin.id, "_agent_type", "delivery-only")
+    variables.set_variable(channel_admin.id, "communications_admin", True)
+    channel = _make_channel(id=str(uuid4()))
+    channel.config_json = {
+        "operator_project_id": "other-project",
+        "responder": {"project_id": "other-project"},
+    }
+    original = dict(channel.config_json)
+    persisted_store = LocalCommunicationsStore(temp_db, project_id=channel_admin.project_id)
+    persisted_store.create_channel(channel)
+    mock_manager.get_channel_by_name.return_value = channel
+    mock_manager.list_channels.return_value = [channel]
+    registry = create_communications_registry(mock_manager, db=temp_db)
+    handler = registry.get_tool(writer)
+    assert handler is not None
+    arguments: dict[str, dict[str, Any]] = {
+        "add_channel": {"channel_type": "telegram", "name": "foreign", "config": {}},
+        "remove_channel": {"name": channel.name},
+        "set_channel_project": {"channel": channel.name, "project": channel_admin.project_id},
+    }
+    result = await handler(**arguments[writer])
+    assert result["success"] is False
+    assert "not permitted to administer" in result["error"]
+    assert channel.config_json == original
+    persisted = persisted_store.get_channel(channel.id)
+    assert persisted is not None
+    assert persisted.config_json == original
+    mock_manager.add_channel.assert_not_awaited()
+    mock_manager.remove_channel.assert_not_awaited()
+    mock_manager.update_channel.assert_not_awaited()
+    mock_manager.get_channel_by_name.assert_not_called()
+    sender = registry.get_tool("send_operator_message")
+    assert sender is not None
+    denied = await sender(channel=channel.name, content="Attempted rebind then send")
+    assert denied["success"] is False
+    mock_manager.resolve_operator_conversation.assert_not_called()
+    mock_manager.send_message.assert_not_awaited()
 
 
 def test_operator_conversation_discovery_tools(registry: Any, mock_manager: MagicMock) -> None:
@@ -98,6 +196,10 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
     ("permitted", "delivery_status"), [(True, "sent"), (False, "sent"), (True, "failed")]
 )
 @pytest.mark.parametrize("tool_name", ["send_operator_message", "send_operator_attachment"])
+@pytest.mark.parametrize(
+    "binding",
+    ["valid", "other-channel", "missing", "ambiguous", "disabled", "other-project", "unenrolled"],
+)
 async def test_send_operator_message_requires_installed_operator_grant(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -105,6 +207,7 @@ async def test_send_operator_message_requires_installed_operator_grant(
     permitted: bool,
     delivery_status: str,
     tool_name: str,
+    binding: str,
     tmp_path: Path,
 ) -> None:
     """An enrolled DM is targeted explicitly; unlisted agents cannot send to it."""
@@ -129,10 +232,44 @@ async def test_send_operator_message_requires_installed_operator_grant(
         agent_depth=1,
     )
     SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", agent_type)
+    channel_a = ChannelConfig(
+        id="channel-a",
+        channel_type="telegram",
+        name="operator-status",
+        enabled=binding != "disabled",
+        config_json={
+            "operator_project_id": "other-project"
+            if binding == "other-project"
+            else caller.project_id,
+            "responder": {"project_id": "chat-project"},
+        },
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    channel_b = ChannelConfig(
+        id="channel-b",
+        channel_type="telegram",
+        name="other-operator",
+        enabled=True,
+        config_json={
+            "operator_project_id": caller.project_id if binding == "ambiguous" else "other-project",
+            "responder": {"project_id": "chat-project"},
+        },
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    mock_manager.list_channels.return_value = (
+        [channel_b] if binding == "missing" else [channel_a, channel_b]
+    )
+    requested_channel = "other-operator" if binding == "other-channel" else "operator-status"
     mock_manager.resolve_operator_conversation.return_value = {
         "conversation_id": "dm:42",
         "session_id": None,
     }
+    if binding == "unenrolled":
+        mock_manager.resolve_operator_conversation.side_effect = ValueError(
+            "No enrolled operator DM"
+        )
     delivery_error = "Telegram unavailable" if delivery_status == "failed" else None
     mock_manager.send_message.return_value = MagicMock(
         status=delivery_status, id="delivered", error=delivery_error
@@ -150,11 +287,11 @@ async def test_send_operator_message_requires_installed_operator_grant(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
     ):
         if tool_name == "send_operator_attachment":
-            result = await handler(channel="operator-status", file_path=str(report))
+            result = await handler(channel=requested_channel, file_path=str(report))
         else:
-            result = await handler(channel="operator-status", content="**Systems nominal**")
+            result = await handler(channel=requested_channel, content="**Systems nominal**")
 
-    if permitted:
+    if permitted and binding == "valid":
         if tool_name == "send_operator_attachment":
             assert result["success"] is (delivery_status == "sent")
             mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
@@ -187,8 +324,16 @@ async def test_send_operator_message_requires_installed_operator_grant(
         )
     else:
         assert result["success"] is False
-        assert "not permitted" in result["error"]
-        mock_manager.resolve_operator_conversation.assert_not_called()
+        if not permitted or binding == "other-channel":
+            assert "not permitted" in result["error"]
+        elif binding == "unenrolled":
+            assert "No enrolled operator DM" in result["error"]
+        else:
+            assert "exactly one project-bound" in result["error"]
+        if permitted and binding == "unenrolled":
+            mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
+        else:
+            mock_manager.resolve_operator_conversation.assert_not_called()
         mock_manager.send_message.assert_not_awaited()
         mock_manager.send_attachment.assert_not_awaited()
 
@@ -731,7 +876,8 @@ async def test_communications_tools_reject_invalid_session_references(
 
 
 @pytest.mark.asyncio
-async def test_add_channel(registry: Any, mock_manager: MagicMock) -> None:
+async def test_add_channel(admin_registry: Any, mock_manager: MagicMock) -> None:
+    registry = admin_registry
     channel = ChannelConfig(
         id="ch-new",
         channel_type="slack",
@@ -752,7 +898,8 @@ async def test_add_channel(registry: Any, mock_manager: MagicMock) -> None:
     assert res["init_error"] is None
 
 
-async def test_add_channel_reports_init_error(registry: Any, mock_manager: MagicMock) -> None:
+async def test_add_channel_reports_init_error(admin_registry: Any, mock_manager: MagicMock) -> None:
+    registry = admin_registry
     channel = ChannelConfig(
         id="ch-new",
         channel_type="slack",
@@ -781,7 +928,8 @@ async def test_add_channel_reports_init_error(registry: Any, mock_manager: Magic
 
 
 @pytest.mark.asyncio
-async def test_remove_channel(registry: Any, mock_manager: MagicMock) -> None:
+async def test_remove_channel(admin_registry: Any, mock_manager: MagicMock) -> None:
+    registry = admin_registry
     handler = registry.get_tool("remove_channel")
 
     res = await handler(name="old-channel")
@@ -796,6 +944,7 @@ async def test_set_channel_project_resolves_name_and_persists_config(
     temp_db: Any,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    channel_admin: Session,
 ) -> None:
     from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -803,7 +952,10 @@ async def test_set_channel_project_resolves_name_and_persists_config(
         temp_db, tmp_path / "gobby", name="gobby", monkeypatch=monkeypatch
     )
     channel = _make_channel()
-    channel.config_json = {"responder": {"enabled": True}}
+    channel.config_json = {
+        "operator_project_id": channel_admin.project_id,
+        "responder": {"enabled": True},
+    }
     mock_store.get_channel_by_name.return_value = channel
     registry = create_communications_registry(mock_manager, db=temp_db)
     handler = registry.get_tool("set_channel_project")
@@ -823,10 +975,14 @@ async def test_set_channel_project_resolves_name_and_persists_config(
     }
     updated = mock_manager.update_channel.await_args.args[0]
     assert updated.config_json == {
-        "responder": {"enabled": True, "project_id": isolated.project.id}
+        "operator_project_id": channel_admin.project_id,
+        "responder": {"enabled": True, "project_id": isolated.project.id},
     }
     assert updated.updated_at > channel.updated_at
-    assert channel.config_json == {"responder": {"enabled": True}}
+    assert channel.config_json == {
+        "operator_project_id": channel_admin.project_id,
+        "responder": {"enabled": True},
+    }
 
 
 @pytest.mark.asyncio
@@ -834,6 +990,7 @@ async def test_set_channel_project_rejects_unknown_project(
     mock_manager: MagicMock,
     mock_store: MagicMock,
     temp_db: Any,
+    channel_admin: Session,
 ) -> None:
     mock_store.get_channel_by_name.return_value = _make_channel()
     registry = create_communications_registry(mock_manager, db=temp_db)
@@ -847,6 +1004,62 @@ async def test_set_channel_project_rejects_unknown_project(
 
     assert result == {"success": False, "error": "Project 'missing' not found"}
     mock_manager.update_channel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_operator_dm_binding_survives_authorized_chat_project_switch(
+    channel_admin: Session,
+    temp_db: HubDatabase,
+    mock_manager: MagicMock,
+    mock_store: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+
+    other = install_isolated_checkout_project(
+        temp_db, tmp_path / "other", name="other", monkeypatch=monkeypatch
+    )
+    AgentDefinitionManager(temp_db).create(
+        name="operator-admin",
+        definition_json={
+            "name": "operator-admin",
+            "prompts": {"agent": "Manage and report."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "communications_admin": True,
+            "operator_messaging": True,
+        },
+        source="custom",
+    )
+    SessionVariableManager(temp_db).set_variable(channel_admin.id, "_agent_type", "operator-admin")
+    channel = _make_channel()
+    channel.channel_type = "telegram"
+    channel.config_json = {
+        "operator_project_id": channel_admin.project_id,
+        "responder": {"enabled": True, "project_id": channel_admin.project_id},
+    }
+    mock_store.get_channel_by_name.return_value = channel
+
+    async def persist(updated: ChannelConfig) -> None:
+        mock_store.get_channel_by_name.return_value = updated
+        mock_manager.list_channels.return_value = [updated]
+
+    mock_manager.update_channel.side_effect = persist
+    mock_manager.resolve_operator_conversation.return_value = {"conversation_id": "dm:42"}
+    mock_manager.send_message.return_value = MagicMock(status="sent", id="sent-report", error=None)
+    registry = create_communications_registry(mock_manager, db=temp_db)
+    switch = registry.get_tool("set_channel_project")
+    sender = registry.get_tool("send_operator_message")
+    assert switch is not None and sender is not None
+    switched = await switch(channel=channel.name, project=other.project.id)
+    assert switched["success"] is True
+    updated = mock_store.get_channel_by_name.return_value
+    assert updated.config_json["operator_project_id"] == channel_admin.project_id
+    assert updated.config_json["responder"]["project_id"] == other.project.id
+    sent = await sender(channel=channel.name, content="Systems nominal")
+    assert sent["success"] is True
+    mock_manager.resolve_operator_conversation.assert_called_once_with(channel.name)
+    mock_manager.send_message.assert_awaited_once()
 
 
 def _make_channel(id: str = "ch-1", name: str = "test-channel") -> ChannelConfig:
