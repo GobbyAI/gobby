@@ -312,6 +312,16 @@ Orchestrator return (gobby#15977, 2026-10-14):
       SHA-256 digest the detectors produce. Anything else fails the parse
       with 422 `invalid_body` before anything is stored, so 3.3's redaction
       exemption covers only digests (3.1).
+    - Security's review of 19d3e8ba41 (B3): the sandbox record's other
+      strings fail closed the same way. `runtime_version` must be a plain
+      `<digits>.<digits>.<digits>` version, the form of `SRT_RELEASE.version`.
+      Each `denial_operations` name must be `unclassified`, or match the
+      operation pattern and come back unchanged from
+      `redact_terminal_output`, so a name shaped like a secret key fails the
+      parse (3.1, 3.9). Rejected: requiring `runtime_version` to equal the
+      hub's pin, which would drop every report from a node one SRT release
+      behind; and a fixed list of operation names, which SRT's sandbox
+      profiles do not bound.
 
 ## Constraints
 `kind: framing`
@@ -2690,7 +2700,8 @@ change in one commit, because the shared corpus fails on either side alone.
   never reached the chokepoint, otherwise
   `{runtime_version, policy_schema_version, policy_hash, violation_count, violation_count_truncated, denial_operations, recent_violations}`
   (Decision 33):
-  - `runtime_version`: the SRT version string. `policy_schema_version`: an
+  - `runtime_version`: the SRT version string, which the Python model
+    requires to match `^[0-9]+\.[0-9]+\.[0-9]+$`. `policy_schema_version`: an
     integer. `policy_hash`: the policy's SHA-256 hex digest, which the
     Python model requires to match `^[0-9a-f]{64}$`.
   - `violation_count`: at most 10,000, with `violation_count_truncated`
@@ -2698,7 +2709,10 @@ change in one commit, because the shared corpus fails on either side alone.
     (`src/gobby/storage/agents/_sandbox_records.py`).
   - `denial_operations`: an object from operation name to count, as 3.9's
     `denial_operations` classifies the log. Each name is `unclassified` or
-    matches `^[a-z][a-z0-9*-]*$`, and each count is at least 0.
+    matches `^[a-z][a-z0-9*-]*$`, and each count is at least 0. The Python
+    model also refuses a name that
+    `src/gobby/utils/terminal_output.py::redact_terminal_output` changes,
+    such as `sk-abcdefghijklmnopqrstuv` (Decision 34).
   - `recent_violations`: in an exit, at most the last 100 events, as
     `_recent_violations` projects them with each `command` cut to 2,048
     characters; null in an agent entry.
@@ -2805,7 +2819,7 @@ Verification planned:
 - 3.1.3 - Each new body refuses a `machine_id`, a spawn payload with version 1's `sandbox.network` or with `env` or `cwd` fails, an `existing` workspace without a `path` or a `path` with another mode fails, and a 1,001-entry report fails. test: `tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine`.
 - 3.1.4 - The contract document names every field of every version 2 model, including the `existing` workspace, the pane block, the sandbox record and the four new bodies, and states `run_not_found`, `remote_loopback_endpoint`, the node's managed-SRT refusal and the 300-second preparation deadline, and no longer lists `remote_resume_unsupported`. test: `tests/hub/test_node_command_corpus.py::test_contract_doc_covers_version_2`.
 - 3.1.5 - The contract document's "Fields not carried" section names exactly the `SpawnRequest` fields that `SpawnPayload` lacks, each with its reason. test: `tests/hub/test_node_command_corpus.py::test_fields_not_carried_matches_spawn_request`.
-- 3.1.6 - A report whose `attention.fingerprint` or `attention.payload.fingerprint` holds `sk-ABCDEFGHIJKLMNOPQRSTUV`, 63 hex characters or uppercase hex, or whose `sandbox` holds such a `policy_hash`, an operation name outside the pattern, a negative count or 101 events, fails the Python parse, and the same report with valid digests parses with them unchanged. test: `tests/hub/test_node_command_corpus.py::test_report_digests_and_sandbox_records_validate`.
+- 3.1.6 - A report whose `attention.fingerprint` or `attention.payload.fingerprint` holds `sk-ABCDEFGHIJKLMNOPQRSTUV`, 63 hex characters or uppercase hex, or whose `sandbox` holds such a `policy_hash`, a `runtime_version` of `sk-ABCDEFGHIJKLMNOPQRSTUV` or `0.0.79-x`, an operation name outside the pattern, the operation name `sk-abcdefghijklmnopqrstuv`, a negative count or 101 events, fails the Python parse, and the same report with valid digests, `runtime_version` `0.0.79` and the operation names `file-write-create`, `file-write*` and `unclassified` parses with them unchanged. test: `tests/hub/test_node_command_corpus.py::test_report_digests_and_sandbox_records_validate`.
 
 ### 3.2 Hub spawn payload builder [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -3428,6 +3442,9 @@ Targets:
 - `nodes.py`: the report route calls `redact_report_sandbox` right after
   3.3's `redact_report_panes`, and `apply_sandbox_records` after `put`
   succeeds. A failure there is logged and the route still answers `{}`.
+  `runtime_version` and the `denial_operations` names merge unredacted
+  because 3.1's model has already refused any value that is not a plain
+  version or a name the redactor leaves unchanged (Decision 34).
 - `_sandbox_records.py`: with no trusted log, `sandbox_record` returns the
   stored `recent_violations`, bounded again to 100 events and 2,048
   characters a command, and `sandbox_list_record` returns the stored count
@@ -3451,6 +3468,7 @@ Verification planned:
 - 3.9.2 - A node run's record shows the reported count while active and after it ends, and its events after the exit, bounded to 100 events and 2,048 characters a command. test: `tests/hub/test_remote_sandbox.py::test_node_run_record_reads_stored_values`.
 - 3.9.3 - A node `task-close-reviewer`'s close review reports the node's denial operations, and a local reviewer's denials still come from its log. test: `tests/hub/test_remote_sandbox.py::test_close_review_uses_node_denials`.
 - 3.9.4 - An exit whose `recent_violations` hold `sk-ABCDEFGHIJKLMNOPQRSTUV` in a `line` and a `command` stores `sk-<redacted>` in their place, and the secret reaches neither the run row, its broadcast nor any log record. test: `tests/servers/test_node_routes.py::test_report_sandbox_events_redacted`.
+- 3.9.5 - A report whose agent `sandbox` has `runtime_version` `sk-ABCDEFGHIJKLMNOPQRSTUV`, and one whose `denial_operations` names `sk-abcdefghijklmnopqrstuv`, each answers 422 `invalid_body`, and neither secret reaches the inbox, the run's sandbox record, a broadcast, any log record or the close review's denial summary. The same report with `runtime_version` `0.0.79` and the operation `file-write-create` merges both unchanged. test: `tests/servers/test_node_routes.py::test_report_secret_sandbox_identity_refused`.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -3595,6 +3613,11 @@ Verification planned:
      local-inference-runtime-foundation 4.3 (no task). 2.15 states why it
      follows 3.9. 3.1's contract doc states the 300-second deadline. The
      plan now has 30 leaves.
+- 2026-10-14, third amendment. Security gobby#16011 landed B1 and B2 at
+  19d3e8ba41 and bounced B3: the sandbox record's `runtime_version` and
+  `denial_operations` names had no refusal. 3.1's model now requires a plain
+  version and refuses any operation name `redact_terminal_output` changes
+  (Decision 34; 3.1.6, 3.9, new 3.9.5).
 
 ## V2: Verification
 `kind: verification`
