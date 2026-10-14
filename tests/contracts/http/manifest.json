@@ -12,9 +12,17 @@
     "auth_missing_auth.json",
     "auth_missing_grant.json",
     "auth_forged_identity.json",
-    "front_door_backend_down.json"
+    "front_door_backend_down.json",
+    "hooks_execute_ok.json",
+    "hooks_execute_replay.json",
+    "hooks_execute_below_floor.json",
+    "hooks_execute_bad_schema.json"
   ],
   "families": {
+    "hooks": {
+      "parity": "proxy",
+      "origin": "python"
+    },
     "health": {
       "parity": "native",
       "origin": "python"
