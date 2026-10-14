@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1095. Unclassified: 307.
+Public surfaces and evidence gates: 1095. Unclassified: 241.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -328,16 +328,16 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `CLI gobby tokens` | **unclassified** |  |
 | `CLI gobby tokens audit` | **unclassified** |  |
 | `CLI gobby tokens stats` | **unclassified** |  |
-| `CLI gobby ui` | **unclassified** |  |
-| `CLI gobby ui build` | **unclassified** |  |
-| `CLI gobby ui dev` | **unclassified** |  |
-| `CLI gobby ui expose` | **unclassified** |  |
-| `CLI gobby ui install-deps` | **unclassified** |  |
-| `CLI gobby ui restart` | **unclassified** |  |
-| `CLI gobby ui start` | **unclassified** |  |
-| `CLI gobby ui status` | **unclassified** |  |
-| `CLI gobby ui stop` | **unclassified** |  |
-| `CLI gobby ui unexpose` | **unclassified** |  |
+| `CLI gobby ui` | proxied | Python handler `ui` at `src/gobby/cli/ui.py:101`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui build` | proxied | Python handler `build` at `src/gobby/cli/ui.py:276`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui dev` | proxied | Python handler `dev` at `src/gobby/cli/ui.py:240`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui expose` | proxied | Python handler `ui_expose` at `src/gobby/cli/ui.py:107`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui install-deps` | proxied | Python handler `install_deps` at `src/gobby/cli/ui.py:308`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui restart` | proxied | Python handler `ui_restart` at `src/gobby/cli/ui.py:193`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui start` | proxied | Python handler `ui_start` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui status` | proxied | Python handler `ui_status` at `src/gobby/cli/ui.py:201`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui stop` | proxied | Python handler `ui_stop` at `src/gobby/cli/ui.py:177`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui unexpose` | proxied | Python handler `ui_unexpose` at `src/gobby/cli/ui.py:118`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby uninstall` | **unclassified** |  |
 | `CLI gobby unpack` | **unclassified** |  |
 | `CLI gobby variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables` from Python callback `src/gobby/cli/variables.py:67` to Rust services and CLI parity. |
@@ -368,8 +368,8 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `HTTP DELETE /api/admin/test/unregister-agent/{run_id}` | **unclassified** |  |
 | `HTTP DELETE /api/agents/definitions/{definition_id}` | proxied | Python `src/gobby/servers/routes/agents.py::delete_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP DELETE /api/auth/keys/{key_id}` | **unclassified** |  |
-| `HTTP DELETE /api/chat/attachments/{attachment_id}` | **unclassified** |  |
-| `HTTP DELETE /api/chat/{conversation_id}/messages` | **unclassified** |  |
+| `HTTP DELETE /api/chat/attachments/{attachment_id}` | proxied | Python handler `create_chat_attachments_router.<locals>.delete_attachment` at `src/gobby/servers/routes/chat_attachments.py:365`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
+| `HTTP DELETE /api/chat/{conversation_id}/messages` | proxied | Python handler `create_chat_router.<locals>.delete_messages` at `src/gobby/servers/routes/chat.py:56`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
 | `HTTP DELETE /api/comms/channels/{channel_id}` | proxied | Python handler `src/gobby/servers/routes/communications.py:240` (`create_communications_router::remove_channel`); blocked on #21583 Communications to port channel, conversation and delivery services. |
 | `HTTP DELETE /api/config/prompts/{path:path}` | **unclassified** |  |
 | `HTTP DELETE /api/config/secrets/{name}` | **unclassified** |  |
@@ -407,9 +407,9 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `HTTP GET /api/attention/roster` | proxied | Python `src/gobby/servers/routes/attention.py::roster`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP GET /api/auth/keys` | **unclassified** |  |
 | `HTTP GET /api/auth/status` | **unclassified** |  |
-| `HTTP GET /api/chat/attachments/limits` | **unclassified** |  |
-| `HTTP GET /api/chat/attachments/{attachment_id}/content` | **unclassified** |  |
-| `HTTP GET /api/chat/{conversation_id}/messages` | **unclassified** |  |
+| `HTTP GET /api/chat/attachments/limits` | proxied | Python handler `create_chat_attachments_router.<locals>.get_attachment_limits` at `src/gobby/servers/routes/chat_attachments.py:270`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
+| `HTTP GET /api/chat/attachments/{attachment_id}/content` | proxied | Python handler `create_chat_attachments_router.<locals>.get_attachment_content` at `src/gobby/servers/routes/chat_attachments.py:319`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
+| `HTTP GET /api/chat/{conversation_id}/messages` | proxied | Python handler `create_chat_router.<locals>.get_messages` at `src/gobby/servers/routes/chat.py:38`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
 | `HTTP GET /api/code-index/graph` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:106 (create_code_index_router.<locals>.graph_overview)`. |
 | `HTTP GET /api/code-index/graph/blast-radius` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:212 (create_code_index_router.<locals>.graph_blast_radius)`. |
 | `HTTP GET /api/code-index/graph/file/{file_path:path}` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:138 (create_code_index_router.<locals>.graph_file)`. |
@@ -527,7 +527,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `HTTP GET /api/traces` | **unclassified** |  |
 | `HTTP GET /api/traces/{trace_id}` | **unclassified** |  |
 | `HTTP GET /api/variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:87`; Rust front-door dispatch currently proxies this family. |
-| `HTTP GET /api/voice/status` | **unclassified** |  |
+| `HTTP GET /api/voice/status` | proxied | Python handler `create_voice_router.<locals>.voice_status` at `src/gobby/servers/routes/voice.py:157`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `HTTP GET /api/webhooks` | proxied | Python handler `src/gobby/servers/routes/mcp/webhooks.py:31` (`create_webhooks_router::list_webhooks`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. |
 | `HTTP GET /docs` | **unclassified** |  |
 | `HTTP GET /docs/oauth2-redirect` | **unclassified** |  |
@@ -569,7 +569,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `HTTP POST /api/auth/keys/bootstrap` | **unclassified** |  |
 | `HTTP POST /api/auth/login` | **unclassified** |  |
 | `HTTP POST /api/auth/logout` | **unclassified** |  |
-| `HTTP POST /api/chat/attachments` | **unclassified** |  |
+| `HTTP POST /api/chat/attachments` | proxied | Python handler `create_chat_attachments_router.<locals>.upload_attachment` at `src/gobby/servers/routes/chat_attachments.py:275`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
 | `HTTP POST /api/code-index/graph/clear` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:351 (create_code_index_router.<locals>.clear_graph)`. |
 | `HTTP POST /api/code-index/graph/rebuild` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:377 (create_code_index_router.<locals>.rebuild_graph)`. |
 | `HTTP POST /api/code-index/invalidate` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:441 (create_code_index_router.<locals>.invalidate_index)`. |
@@ -676,7 +676,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `HTTP POST /api/tasks/{task_id}/reopen` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/reopen; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:244`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:109`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/variables/{ref}/restore-from-template` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/variables/{ref}/restore-from-template; Python handler `src/gobby/servers/routes/variable_definitions.py:188`; Rust front-door dispatch currently proxies this family. |
-| `HTTP POST /api/voice/transcribe` | **unclassified** |  |
+| `HTTP POST /api/voice/transcribe` | proxied | Python handler `create_voice_router.<locals>.transcribe_audio` at `src/gobby/servers/routes/voice.py:234`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `HTTP POST /api/webhooks/test` | proxied | Python handler `src/gobby/servers/routes/mcp/webhooks.py:71` (`create_webhooks_router::test_webhook`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. |
 | `HTTP POST /memory/dream` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream; Rust HTTP handler parity for POST /memory/dream remains under #21563 Memory and search. |
 | `HTTP POST /memory/dream/{run_id}/revert` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream_revert; Rust HTTP handler parity for POST /memory/dream/{run_id}/revert remains under #21563 Memory and search. |
@@ -988,10 +988,10 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `MCP gobby-tasks:unlink_commit` | proxied | Blocked on #21560 Tasks family: port `unlink_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:311`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:update_observed_files` | proxied | Blocked on #21560 Tasks family: port `update_observed_files` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:update_task` | proxied | Blocked on #21560 Tasks family: port `update_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_crud.py:533`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
-| `MCP gobby-voice:add_vocab` | **unclassified** |  |
-| `MCP gobby-voice:clear_vocab` | **unclassified** |  |
-| `MCP gobby-voice:list_vocab` | **unclassified** |  |
-| `MCP gobby-voice:remove_vocab` | **unclassified** |  |
+| `MCP gobby-voice:add_vocab` | proxied | Python handler `create_voice_registry.add_vocab` at `src/gobby/mcp_proxy/tools/voice.py:64`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `MCP gobby-voice:clear_vocab` | proxied | Python handler `create_voice_registry.clear_vocab` at `src/gobby/mcp_proxy/tools/voice.py:155`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `MCP gobby-voice:list_vocab` | proxied | Python handler `create_voice_registry.list_vocab` at `src/gobby/mcp_proxy/tools/voice.py:137`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `MCP gobby-voice:remove_vocab` | proxied | Python handler `create_voice_registry.remove_vocab` at `src/gobby/mcp_proxy/tools/voice.py:103`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `MCP gobby-workflows:approve_pipeline` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `approve_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:569` and serve the `gobby-workflows` registry in Rust. |
 | `MCP gobby-workflows:cancel_pipeline` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `cancel_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:619` and serve the `gobby-workflows` registry in Rust. |
 | `MCP gobby-workflows:clear_pipeline_execution_history` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `clear_pipeline_execution_history` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:736` and serve the `gobby-workflows` registry in Rust. |
@@ -1079,48 +1079,48 @@ Public surfaces and evidence gates: 1095. Unclassified: 307.
 | `MCP stdio gobby:remove_mcp_server` | **unclassified** |  |
 | `MCP stdio gobby:search_tools` | **unclassified** |  |
 | `MCP stdio gobby:set_variable` | **unclassified** |  |
-| `WS message ask_user_response` | **unclassified** |  |
-| `WS message attach_to_session` | **unclassified** |  |
-| `WS message chat_message` | **unclassified** |  |
-| `WS message clear_chat` | **unclassified** |  |
-| `WS message continue_in_chat` | **unclassified** |  |
-| `WS message delete_chat` | **unclassified** |  |
-| `WS message detach_from_session` | **unclassified** |  |
-| `WS message heartbeat` | **unclassified** |  |
-| `WS message ping` | **unclassified** |  |
-| `WS message plan_approval_response` | **unclassified** |  |
-| `WS message send_to_cli_session` | **unclassified** |  |
-| `WS message set_agent` | **unclassified** |  |
-| `WS message set_mode` | **unclassified** |  |
-| `WS message set_project` | **unclassified** |  |
-| `WS message set_provider` | **unclassified** |  |
-| `WS message set_worktree` | **unclassified** |  |
-| `WS message stop_chat` | **unclassified** |  |
-| `WS message stop_request` | **unclassified** |  |
-| `WS message subscribe` | **unclassified** |  |
-| `WS message terminal_attach` | **unclassified** |  |
-| `WS message terminal_create` | **unclassified** |  |
-| `WS message terminal_detach` | **unclassified** |  |
-| `WS message terminal_input` | **unclassified** |  |
-| `WS message terminal_kill` | **unclassified** |  |
-| `WS message terminal_list` | **unclassified** |  |
-| `WS message terminal_paste` | **unclassified** |  |
-| `WS message terminal_release_control` | **unclassified** |  |
-| `WS message terminal_resize` | **unclassified** |  |
-| `WS message terminal_set_scroll_offset` | **unclassified** |  |
-| `WS message terminal_set_theme` | **unclassified** |  |
-| `WS message terminal_set_viewport` | **unclassified** |  |
-| `WS message terminal_take_control` | **unclassified** |  |
-| `WS message tool_approval_response` | **unclassified** |  |
-| `WS message tool_call` | proxied |  |
-| `WS message tts_stop` | **unclassified** |  |
-| `WS message unsubscribe` | **unclassified** |  |
-| `WS message voice_audio` | **unclassified** |  |
-| `WS message voice_mode_toggle` | **unclassified** |  |
-| `WS message voice_prepare` | **unclassified** |  |
-| `WS message voice_status_request` | **unclassified** |  |
-| `WS message workspace_attach` | **unclassified** |  |
-| `WS message workspace_op` | **unclassified** |  |
-| `WS message workspace_snapshot` | **unclassified** |  |
-| `WS transport /ws` | **unclassified** |  |
-| `WS transport /ws/{path:path}` | **unclassified** |  |
+| `WS message ask_user_response` | proxied | Python handler `ChatInteractionResponsesMixin._handle_ask_user_response` at `src/gobby/servers/websocket/chat/_interaction_responses.py:29`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message attach_to_session` | proxied | Python handler `SessionControlMixin._handle_attach_to_session` at `src/gobby/servers/websocket/session_control.py:222`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message chat_message` | proxied | Python handler `ChatMessageIngressMixin._handle_chat_message` at `src/gobby/servers/websocket/chat/_message_ingress.py:66`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message clear_chat` | proxied | Python handler `SessionControlMixin._handle_clear_chat` at `src/gobby/servers/websocket/session_control.py:106`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message continue_in_chat` | proxied | Python handler `SessionControlMixin._handle_continue_in_chat` at `src/gobby/servers/websocket/session_control.py:216`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message delete_chat` | proxied | Python handler `SessionControlMixin._handle_delete_chat` at `src/gobby/servers/websocket/session_control.py:109`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message detach_from_session` | proxied | Python handler `SessionControlMixin._handle_detach_from_session` at `src/gobby/servers/websocket/session_control.py:228`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message heartbeat` | proxied | Python handler `ChatInteractionResponsesMixin._handle_heartbeat` at `src/gobby/servers/websocket/chat/_interaction_responses.py:104`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message ping` | proxied | Python handler `HandlerMixin._handle_ping` at `src/gobby/servers/websocket/handlers/core.py:154`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS message plan_approval_response` | proxied | Python handler `SessionControlMixin._handle_plan_approval_response` at `src/gobby/servers/websocket/session_control.py:117`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message send_to_cli_session` | proxied | Python handler `SessionControlMixin._handle_send_to_cli_session` at `src/gobby/servers/websocket/session_control.py:225`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message set_agent` | proxied | Python handler `SessionControlMixin._handle_set_agent` at `src/gobby/servers/websocket/session_control.py:208`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message set_mode` | proxied | Python handler `SessionControlMixin._handle_set_mode` at `src/gobby/servers/websocket/session_control.py:199`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message set_project` | proxied | Python handler `SessionControlMixin._handle_set_project` at `src/gobby/servers/websocket/session_control.py:202`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message set_provider` | proxied | Python handler `SessionControlMixin._handle_set_provider` at `src/gobby/servers/websocket/session_control.py:211`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message set_worktree` | proxied | Python handler `SessionControlMixin._handle_set_worktree` at `src/gobby/servers/websocket/session_control.py:205`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message stop_chat` | proxied | Python handler `SessionControlMixin._handle_stop_chat` at `src/gobby/servers/websocket/session_control.py:103`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message stop_request` | proxied | Python handler `HandlerMixin._handle_stop_request` at `src/gobby/servers/websocket/handlers/core.py:236`. Blocked on #21562 Sessions and transcripts: port session stop signaling and event publication to Rust. |
+| `WS message subscribe` | proxied | Python handler `HandlerMixin._handle_subscribe` at `src/gobby/servers/websocket/handlers/core.py:173`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS message terminal_attach` | proxied | Python handler `TerminalWsMixin._handle_terminal_attach` at `src/gobby/servers/websocket/terminal_ws.py:145`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_create` | proxied | Python handler `TerminalCreateMixin._handle_terminal_create` at `src/gobby/servers/websocket/terminal_ws_create.py:48`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_detach` | proxied | Python handler `TerminalWsMixin._handle_terminal_detach` at `src/gobby/servers/websocket/terminal_ws.py:303`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_input` | proxied | Python handler `TerminalWriteMixin._handle_terminal_input` at `src/gobby/servers/websocket/terminal_ws_write.py:34`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_kill` | proxied | Python handler `TerminalCreateMixin._handle_terminal_kill` at `src/gobby/servers/websocket/terminal_ws_create.py:152`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_list` | proxied | Python handler `TerminalWsMixin._handle_terminal_list` at `src/gobby/servers/websocket/terminal_ws.py:336`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_paste` | proxied | Python handler `TerminalWriteMixin._handle_terminal_paste` at `src/gobby/servers/websocket/terminal_ws_write.py:37`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_release_control` | proxied | Python handler `TerminalControlMixin._handle_terminal_release_control` at `src/gobby/servers/websocket/terminal_ws_control.py:69`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_resize` | proxied | Python handler `TerminalSizingMixin._handle_terminal_resize` at `src/gobby/servers/websocket/terminal_sizing.py:29`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_set_scroll_offset` | proxied | Python handler `TerminalWsMixin._handle_terminal_set_scroll_offset` at `src/gobby/servers/websocket/terminal_ws.py:503`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_set_theme` | proxied | Python handler `TerminalWsMixin._handle_terminal_set_theme` at `src/gobby/servers/websocket/terminal_ws.py:447`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_set_viewport` | proxied | Python handler `TerminalSizingMixin._handle_terminal_set_viewport` at `src/gobby/servers/websocket/terminal_sizing.py:108`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message terminal_take_control` | proxied | Python handler `TerminalControlMixin._handle_terminal_take_control` at `src/gobby/servers/websocket/terminal_ws_control.py:36`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport. |
+| `WS message tool_approval_response` | proxied | Python handler `ChatInteractionResponsesMixin._handle_tool_approval_response` at `src/gobby/servers/websocket/chat/_interaction_responses.py:55`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust. |
+| `WS message tool_call` | proxied | Python handler `HandlerMixin._handle_tool_call` at `src/gobby/servers/websocket/handlers/core.py:78`. Blocked on #21566 MCP transport multiplexer and #21570 MCP front door flip: port WebSocket MCP invocation and result/error framing. |
+| `WS message tts_stop` | proxied | Python handler `VoiceMixin._handle_tts_stop` at `src/gobby/servers/websocket/voice/mixin.py:195`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `WS message unsubscribe` | proxied | Python handler `HandlerMixin._handle_unsubscribe` at `src/gobby/servers/websocket/handlers/core.py:202`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS message voice_audio` | proxied | Python handler `VoiceMixin._handle_voice_audio` at `src/gobby/servers/websocket/voice/mixin.py:208`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `WS message voice_mode_toggle` | proxied | Python handler `VoiceMixin._handle_voice_mode_toggle` at `src/gobby/servers/websocket/voice/mixin.py:418`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `WS message voice_prepare` | proxied | Python handler `VoiceMixin._handle_voice_prepare` at `src/gobby/servers/websocket/voice/mixin.py:472`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `WS message voice_status_request` | proxied | Python handler `VoiceMixin._handle_voice_status_request` at `src/gobby/servers/websocket/voice/mixin.py:453`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
+| `WS message workspace_attach` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:129`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS message workspace_op` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:189`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS message workspace_snapshot` | proxied | Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:175`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary. |
+| `WS transport /ws` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:76`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |
+| `WS transport /ws/{path:path}` | proxied | Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:49`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon. |

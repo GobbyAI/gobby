@@ -1,3 +1,270 @@
 {
-  "WS message tool_call": "proxied"
+  "CLI gobby ui": {
+    "status": "proxied",
+    "note": "Python handler `ui` at `src/gobby/cli/ui.py:101`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui build": {
+    "status": "proxied",
+    "note": "Python handler `build` at `src/gobby/cli/ui.py:276`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui dev": {
+    "status": "proxied",
+    "note": "Python handler `dev` at `src/gobby/cli/ui.py:240`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui expose": {
+    "status": "proxied",
+    "note": "Python handler `ui_expose` at `src/gobby/cli/ui.py:107`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui install-deps": {
+    "status": "proxied",
+    "note": "Python handler `install_deps` at `src/gobby/cli/ui.py:308`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui restart": {
+    "status": "proxied",
+    "note": "Python handler `ui_restart` at `src/gobby/cli/ui.py:193`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui start": {
+    "status": "proxied",
+    "note": "Python handler `ui_start` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui status": {
+    "status": "proxied",
+    "note": "Python handler `ui_status` at `src/gobby/cli/ui.py:201`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui stop": {
+    "status": "proxied",
+    "note": "Python handler `ui_stop` at `src/gobby/cli/ui.py:177`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "CLI gobby ui unexpose": {
+    "status": "proxied",
+    "note": "Python handler `ui_unexpose` at `src/gobby/cli/ui.py:118`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon."
+  },
+  "HTTP DELETE /api/chat/attachments/{attachment_id}": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_attachments_router.<locals>.delete_attachment` at `src/gobby/servers/routes/chat_attachments.py:365`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services."
+  },
+  "HTTP DELETE /api/chat/{conversation_id}/messages": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_router.<locals>.delete_messages` at `src/gobby/servers/routes/chat.py:56`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "HTTP GET /api/chat/attachments/limits": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_attachments_router.<locals>.get_attachment_limits` at `src/gobby/servers/routes/chat_attachments.py:270`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services."
+  },
+  "HTTP GET /api/chat/attachments/{attachment_id}/content": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_attachments_router.<locals>.get_attachment_content` at `src/gobby/servers/routes/chat_attachments.py:319`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services."
+  },
+  "HTTP GET /api/chat/{conversation_id}/messages": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_router.<locals>.get_messages` at `src/gobby/servers/routes/chat.py:38`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "HTTP GET /api/voice/status": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_router.<locals>.voice_status` at `src/gobby/servers/routes/voice.py:157`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "HTTP POST /api/chat/attachments": {
+    "status": "proxied",
+    "note": "Python handler `create_chat_attachments_router.<locals>.upload_attachment` at `src/gobby/servers/routes/chat_attachments.py:275`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services."
+  },
+  "HTTP POST /api/voice/transcribe": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_router.<locals>.transcribe_audio` at `src/gobby/servers/routes/voice.py:234`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "MCP gobby-voice:add_vocab": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_registry.add_vocab` at `src/gobby/mcp_proxy/tools/voice.py:64`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "MCP gobby-voice:clear_vocab": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_registry.clear_vocab` at `src/gobby/mcp_proxy/tools/voice.py:155`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "MCP gobby-voice:list_vocab": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_registry.list_vocab` at `src/gobby/mcp_proxy/tools/voice.py:137`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "MCP gobby-voice:remove_vocab": {
+    "status": "proxied",
+    "note": "Python handler `create_voice_registry.remove_vocab` at `src/gobby/mcp_proxy/tools/voice.py:103`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message ask_user_response": {
+    "status": "proxied",
+    "note": "Python handler `ChatInteractionResponsesMixin._handle_ask_user_response` at `src/gobby/servers/websocket/chat/_interaction_responses.py:29`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message attach_to_session": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_attach_to_session` at `src/gobby/servers/websocket/session_control.py:222`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message chat_message": {
+    "status": "proxied",
+    "note": "Python handler `ChatMessageIngressMixin._handle_chat_message` at `src/gobby/servers/websocket/chat/_message_ingress.py:66`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message clear_chat": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_clear_chat` at `src/gobby/servers/websocket/session_control.py:106`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message continue_in_chat": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_continue_in_chat` at `src/gobby/servers/websocket/session_control.py:216`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message delete_chat": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_delete_chat` at `src/gobby/servers/websocket/session_control.py:109`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message detach_from_session": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_detach_from_session` at `src/gobby/servers/websocket/session_control.py:228`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message heartbeat": {
+    "status": "proxied",
+    "note": "Python handler `ChatInteractionResponsesMixin._handle_heartbeat` at `src/gobby/servers/websocket/chat/_interaction_responses.py:104`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message ping": {
+    "status": "proxied",
+    "note": "Python handler `HandlerMixin._handle_ping` at `src/gobby/servers/websocket/handlers/core.py:154`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  },
+  "WS message plan_approval_response": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_plan_approval_response` at `src/gobby/servers/websocket/session_control.py:117`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message send_to_cli_session": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_send_to_cli_session` at `src/gobby/servers/websocket/session_control.py:225`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message set_agent": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_set_agent` at `src/gobby/servers/websocket/session_control.py:208`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message set_mode": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_set_mode` at `src/gobby/servers/websocket/session_control.py:199`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message set_project": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_set_project` at `src/gobby/servers/websocket/session_control.py:202`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message set_provider": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_set_provider` at `src/gobby/servers/websocket/session_control.py:211`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message set_worktree": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_set_worktree` at `src/gobby/servers/websocket/session_control.py:205`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message stop_chat": {
+    "status": "proxied",
+    "note": "Python handler `SessionControlMixin._handle_stop_chat` at `src/gobby/servers/websocket/session_control.py:103`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message stop_request": {
+    "status": "proxied",
+    "note": "Python handler `HandlerMixin._handle_stop_request` at `src/gobby/servers/websocket/handlers/core.py:236`. Blocked on #21562 Sessions and transcripts: port session stop signaling and event publication to Rust."
+  },
+  "WS message subscribe": {
+    "status": "proxied",
+    "note": "Python handler `HandlerMixin._handle_subscribe` at `src/gobby/servers/websocket/handlers/core.py:173`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  },
+  "WS message terminal_attach": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWsMixin._handle_terminal_attach` at `src/gobby/servers/websocket/terminal_ws.py:145`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_create": {
+    "status": "proxied",
+    "note": "Python handler `TerminalCreateMixin._handle_terminal_create` at `src/gobby/servers/websocket/terminal_ws_create.py:48`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_detach": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWsMixin._handle_terminal_detach` at `src/gobby/servers/websocket/terminal_ws.py:303`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_input": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWriteMixin._handle_terminal_input` at `src/gobby/servers/websocket/terminal_ws_write.py:34`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_kill": {
+    "status": "proxied",
+    "note": "Python handler `TerminalCreateMixin._handle_terminal_kill` at `src/gobby/servers/websocket/terminal_ws_create.py:152`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_list": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWsMixin._handle_terminal_list` at `src/gobby/servers/websocket/terminal_ws.py:336`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_paste": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWriteMixin._handle_terminal_paste` at `src/gobby/servers/websocket/terminal_ws_write.py:37`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_release_control": {
+    "status": "proxied",
+    "note": "Python handler `TerminalControlMixin._handle_terminal_release_control` at `src/gobby/servers/websocket/terminal_ws_control.py:69`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_resize": {
+    "status": "proxied",
+    "note": "Python handler `TerminalSizingMixin._handle_terminal_resize` at `src/gobby/servers/websocket/terminal_sizing.py:29`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_set_scroll_offset": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWsMixin._handle_terminal_set_scroll_offset` at `src/gobby/servers/websocket/terminal_ws.py:503`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_set_theme": {
+    "status": "proxied",
+    "note": "Python handler `TerminalWsMixin._handle_terminal_set_theme` at `src/gobby/servers/websocket/terminal_ws.py:447`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_set_viewport": {
+    "status": "proxied",
+    "note": "Python handler `TerminalSizingMixin._handle_terminal_set_viewport` at `src/gobby/servers/websocket/terminal_sizing.py:108`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message terminal_take_control": {
+    "status": "proxied",
+    "note": "Python handler `TerminalControlMixin._handle_terminal_take_control` at `src/gobby/servers/websocket/terminal_ws_control.py:36`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
+  "WS message tool_approval_response": {
+    "status": "proxied",
+    "note": "Python handler `ChatInteractionResponsesMixin._handle_tool_approval_response` at `src/gobby/servers/websocket/chat/_interaction_responses.py:55`. Blocked on #21592 WS chat family: port conversation persistence, streaming, interaction responses and attached-session controls to Rust."
+  },
+  "WS message tool_call": {
+    "status": "proxied",
+    "note": "Python handler `HandlerMixin._handle_tool_call` at `src/gobby/servers/websocket/handlers/core.py:78`. Blocked on #21566 MCP transport multiplexer and #21570 MCP front door flip: port WebSocket MCP invocation and result/error framing."
+  },
+  "WS message tts_stop": {
+    "status": "proxied",
+    "note": "Python handler `VoiceMixin._handle_tts_stop` at `src/gobby/servers/websocket/voice/mixin.py:195`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message unsubscribe": {
+    "status": "proxied",
+    "note": "Python handler `HandlerMixin._handle_unsubscribe` at `src/gobby/servers/websocket/handlers/core.py:202`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  },
+  "WS message voice_audio": {
+    "status": "proxied",
+    "note": "Python handler `VoiceMixin._handle_voice_audio` at `src/gobby/servers/websocket/voice/mixin.py:208`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message voice_mode_toggle": {
+    "status": "proxied",
+    "note": "Python handler `VoiceMixin._handle_voice_mode_toggle` at `src/gobby/servers/websocket/voice/mixin.py:418`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message voice_prepare": {
+    "status": "proxied",
+    "note": "Python handler `VoiceMixin._handle_voice_prepare` at `src/gobby/servers/websocket/voice/mixin.py:472`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message voice_status_request": {
+    "status": "proxied",
+    "note": "Python handler `VoiceMixin._handle_voice_status_request` at `src/gobby/servers/websocket/voice/mixin.py:453`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust."
+  },
+  "WS message workspace_attach": {
+    "status": "proxied",
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_attach` at `src/gobby/servers/websocket/workspace_ws.py:129`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+  },
+  "WS message workspace_op": {
+    "status": "proxied",
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_op` at `src/gobby/servers/websocket/workspace_ws.py:189`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+  },
+  "WS message workspace_snapshot": {
+    "status": "proxied",
+    "note": "Python handler `WorkspaceWsMixin._handle_workspace_snapshot` at `src/gobby/servers/websocket/workspace_ws.py:175`. Blocked on #21564 Workspaces/agents family and #21565 Terminal WS: port workspace attachment, snapshots and operations behind the native WS boundary."
+  },
+  "WS transport /ws": {
+    "status": "proxied",
+    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint_root` at `src/gobby/servers/_app_ui.py:76`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  },
+  "WS transport /ws/{path:path}": {
+    "status": "proxied",
+    "note": "Python handler `_mount_ws_endpoint.<locals>.websocket_endpoint` at `src/gobby/servers/_app_ui.py:49`. Blocked on #21558 Native WS transport: implement authenticated accept, subscription and event-envelope handling in gdaemon."
+  }
 }
