@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1095. Unclassified: 90.
+Public surfaces and evidence gates: 1095. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -79,20 +79,20 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby datastores` | proxied | Python `src/gobby/cli/datastores.py::datastores (line 406)`; blocked on Rust CLI dispatcher for `gobby datastores`. Owner: #21568 Remaining route families. |
 | `CLI gobby datastores expose` | proxied | Python `src/gobby/cli/datastores.py::expose (line 411)`; blocked on Rust CLI dispatcher for `gobby datastores expose`. Owner: #21568 Remaining route families. |
 | `CLI gobby datastores rotate-password` | proxied | Python `src/gobby/cli/datastores.py::rotate_password (line 650)`; blocked on Rust CLI dispatcher for `gobby datastores rotate-password`. Owner: #21568 Remaining route families. |
-| `CLI gobby embeddings` | **unclassified** |  |
-| `CLI gobby embeddings catalog` | **unclassified** |  |
-| `CLI gobby embeddings doctor` | **unclassified** |  |
-| `CLI gobby embeddings switch` | **unclassified** |  |
-| `CLI gobby feedback` | **unclassified** |  |
-| `CLI gobby feedback digest` | **unclassified** |  |
-| `CLI gobby feedback list` | **unclassified** |  |
-| `CLI gobby feedback observations` | **unclassified** |  |
-| `CLI gobby feedback results` | **unclassified** |  |
-| `CLI gobby feedback review` | **unclassified** |  |
-| `CLI gobby feedback status` | **unclassified** |  |
+| `CLI gobby embeddings` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings` from Python callback `src/gobby/cli/embeddings.py:23` to Rust embedding diagnostics, provider selection and CLI parity. |
+| `CLI gobby embeddings catalog` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings catalog` from Python callback `src/gobby/cli/embeddings.py:127` to Rust embedding diagnostics, provider selection and CLI parity. |
+| `CLI gobby embeddings doctor` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings doctor` from Python callback `src/gobby/cli/embeddings.py:28` to Rust embedding diagnostics, provider selection and CLI parity. |
+| `CLI gobby embeddings switch` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port `gobby embeddings switch` from Python callback `src/gobby/cli/embeddings.py:40` to Rust embedding diagnostics, provider selection and CLI parity. |
+| `CLI gobby feedback` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback` from Python callback `src/gobby/cli/feedback.py:21` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback digest` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback digest` from Python callback `src/gobby/cli/feedback.py:155` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback list` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback list` from Python callback `src/gobby/cli/feedback.py:54` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback observations` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback observations` from Python callback `src/gobby/cli/feedback.py:26` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback results` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback results` from Python callback `src/gobby/cli/feedback.py:41` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback review` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback review` from Python callback `src/gobby/cli/feedback.py:124` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby feedback status` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby feedback status` from Python callback `src/gobby/cli/feedback.py:95` to Rust feedback/review observation services and CLI parity. |
 | `CLI gobby files` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/cli/files.py:15 (files)`. |
 | `CLI gobby files migrate` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/cli/files.py:20 (migrate)`. |
-| `CLI gobby health` | **unclassified** |  |
+| `CLI gobby health` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby health` from Python callback `src/gobby/cli/daemon_health.py:69` to Rust daemon lifecycle/health CLI orchestration and output parity. |
 | `CLI gobby hooks` | proxied | Python `src/gobby/cli/extensions.py::hooks`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
 | `CLI gobby hooks disable` | proxied | Python `src/gobby/cli/extensions.py::hooks_disable`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
 | `CLI gobby hooks enable` | proxied | Python `src/gobby/cli/extensions.py::hooks_enable`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
@@ -102,8 +102,8 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby hooks test` | proxied | Python `src/gobby/cli/extensions.py::hooks_test`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
 | `CLI gobby hub-backup` | proxied | Python callback `src/gobby/cli/hub_backup/cli.py:183` (`hub_backup`); blocked on #21568 Remaining route families to port multi-store hub backup/restore; no explicit Stage 2 owner exists, and the Orchestrator may reassign. #21571 Operator verbs on the client must replace this Python verb. |
 | `CLI gobby hub-backup restore` | proxied | Python callback `src/gobby/cli/hub_backup/cli.py:264` (`restore_hub_backup`); blocked on #21568 Remaining route families to port multi-store hub backup/restore; no explicit Stage 2 owner exists, and the Orchestrator may reassign. #21571 Operator verbs on the client must replace this Python verb. |
-| `CLI gobby init` | **unclassified** |  |
-| `CLI gobby install` | **unclassified** |  |
+| `CLI gobby init` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby init` from Python callback `src/gobby/cli/init.py:20` to Rust project/bootstrap setup, bundled-content installation and CLI parity. |
+| `CLI gobby install` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby install` from Python callback `src/gobby/cli/install.py:242` to Rust project/bootstrap setup, bundled-content installation and CLI parity. |
 | `CLI gobby mcp-proxy` | proxied | Python `src/gobby/cli/mcp_proxy.py::mcp_proxy (line 130)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy`. Owner: #21566 External-MCP transport multiplexer. |
 | `CLI gobby mcp-proxy add-server` | proxied | Python `src/gobby/cli/mcp_proxy.py::add_server (line 334)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy add-server`. Owner: #21566 External-MCP transport multiplexer. |
 | `CLI gobby mcp-proxy auth` | proxied | Python `src/gobby/cli/mcp_oauth.py::auth_server (line 26)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy auth`. Owner: #21566 External-MCP transport multiplexer. |
@@ -120,7 +120,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby mcp-proxy search-tools` | proxied | Python `src/gobby/cli/mcp_proxy.py::search_tools (line 578)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy search-tools`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer. |
 | `CLI gobby mcp-proxy show-template` | proxied | Python `src/gobby/cli/mcp_proxy_templates.py::show_template (line 44)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy show-template`. Owner: #21566 External-MCP transport multiplexer. |
 | `CLI gobby mcp-proxy status` | proxied | Python `src/gobby/cli/mcp_proxy.py::proxy_status (line 832)`; blocked on Rust MCP transport/discovery/execution handler for `CLI gobby mcp-proxy status`. Owner: #21566 External-MCP transport multiplexer. |
-| `CLI gobby mcp-server` | **unclassified** |  |
+| `CLI gobby mcp-server` | proxied | Blocked on #23275 (gobby-mcp native MCP transports), #24351 (gmcp stdio tool surface) and #24356 (remove Python wrapper): port `gobby mcp-server` from Python callback `src/gobby/cli/mcp.py:13` to native stdio MCP transport and lifecycle tool parity. |
 | `CLI gobby memory` | proxied | Python src/gobby/cli/memory/main.py::memory; Rust CLI group/subcommand dispatch parity for gobby memory remains under #21563 Memory and search. |
 | `CLI gobby memory backfill-unscoped-lessons` | proxied | Python src/gobby/cli/memory/crud.py::backfill_unscoped_lessons_command; Rust CLI command callback parity for gobby memory backfill-unscoped-lessons remains under #21563 Memory and search. |
 | `CLI gobby memory backup` | proxied | Python src/gobby/cli/memory/export.py::backup_memories; Rust CLI command callback parity for gobby memory backup remains under #21563 Memory and search. |
@@ -152,9 +152,9 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby merge status` | proxied | Blocked on #21584 Source control/GitHub triage/sync: port Python Git/merge orchestration and its public response contract to Rust; registered Python handler `src/gobby/cli/merge.py:266 (merge_status)`. |
 | `CLI gobby nodes` | proxied | Python callback `src/gobby/cli/workspaces.py:170` (`nodes`); blocked on #21564 Attention, agents, dispatch and worktrees / #24149 hub roster to port machine inventory served by Python workspaces registry list_nodes. #21571 Operator verbs on the client must replace this Python verb. |
 | `CLI gobby nodes list` | proxied | Python callback `src/gobby/cli/workspaces.py:546` (`list_nodes`); blocked on #21564 Attention, agents, dispatch and worktrees / #24149 hub roster to port machine inventory served by Python workspaces registry list_nodes. #21571 Operator verbs on the client must replace this Python verb. |
-| `CLI gobby observations` | **unclassified** |  |
-| `CLI gobby observations list` | **unclassified** |  |
-| `CLI gobby pack` | **unclassified** |  |
+| `CLI gobby observations` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby observations` from Python callback `src/gobby/cli/observations.py:15` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby observations list` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port `gobby observations list` from Python callback `src/gobby/cli/observations.py:20` to Rust feedback/review observation services and CLI parity. |
+| `CLI gobby pack` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby pack` from Python callback `src/gobby/cli/pack.py:433` to Rust portable archive export/restore and CLI parity. |
 | `CLI gobby panes` | proxied | Python `src/gobby/cli/workspaces.py::panes`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `CLI gobby panes close` | proxied | Python `src/gobby/cli/workspaces.py::close_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `CLI gobby panes move` | proxied | Python `src/gobby/cli/workspaces.py::move_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
@@ -207,7 +207,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby qdrant` | proxied | Python `src/gobby/cli/qdrant.py::qdrant (line 16)`; blocked on Rust CLI dispatcher for `gobby qdrant`. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant install` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_install (line 21)`; blocked on Rust CLI dispatcher for `gobby qdrant install`. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant status` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_status (line 37)`; blocked on Rust CLI dispatcher for `gobby qdrant status`. Owner: #21568 Remaining route families. |
-| `CLI gobby restart` | **unclassified** |  |
+| `CLI gobby restart` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby restart` from Python callback `src/gobby/cli/daemon_lifecycle.py:412` to Rust daemon lifecycle/health CLI orchestration and output parity. |
 | `CLI gobby rules` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules` from Python callback `src/gobby/cli/rules.py:157` to Rust services and CLI parity. |
 | `CLI gobby rules audit` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules audit` from Python callback `src/gobby/cli/rules.py:335` to Rust services and CLI parity. |
 | `CLI gobby rules disable` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules disable` from Python callback `src/gobby/cli/rules.py:251` to Rust services and CLI parity. |
@@ -268,10 +268,10 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby stages restore` | proxied | Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21560 Tasks family. |
 | `CLI gobby stages show` | proxied | Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21560 Tasks family. |
 | `CLI gobby stages update` | proxied | Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21560 Tasks family. |
-| `CLI gobby start` | **unclassified** |  |
-| `CLI gobby status` | **unclassified** |  |
-| `CLI gobby stop` | **unclassified** |  |
-| `CLI gobby sync` | **unclassified** |  |
+| `CLI gobby start` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby start` from Python callback `src/gobby/cli/daemon_start.py:310` to Rust daemon lifecycle/health CLI orchestration and output parity. |
+| `CLI gobby status` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby status` from Python callback `src/gobby/cli/daemon_lifecycle.py:562` to Rust daemon lifecycle/health CLI orchestration and output parity. |
+| `CLI gobby stop` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby stop` from Python callback `src/gobby/cli/daemon_lifecycle.py:371` to Rust daemon lifecycle/health CLI orchestration and output parity. |
+| `CLI gobby sync` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby sync` from Python callback `src/gobby/cli/sync.py:93` to Rust project/bootstrap setup, bundled-content installation and CLI parity. |
 | `CLI gobby tasks` | proxied | Blocked on #21560 Tasks family: port `gobby tasks` from Python callback `src/gobby/cli/tasks/main.py:41` to Rust task services and CLI parity. |
 | `CLI gobby tasks advance` | proxied | Blocked on #21560 Tasks family: port `gobby tasks advance` from Python callback `src/gobby/cli/tasks/stages.py:65` to Rust task services and CLI parity. |
 | `CLI gobby tasks backup` | proxied | Blocked on #21560 Tasks family: port `gobby tasks backup` from Python callback `src/gobby/cli/tasks/main.py:72` to Rust task services and CLI parity. |
@@ -320,11 +320,11 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby tasks suggest` | proxied | Blocked on #21560 Tasks family: port `gobby tasks suggest` from Python callback `src/gobby/cli/tasks/ai.py:10` to Rust task services and CLI parity. |
 | `CLI gobby tasks update` | proxied | Blocked on #21560 Tasks family: port `gobby tasks update` from Python callback `src/gobby/cli/tasks/crud.py:223` to Rust task services and CLI parity. |
 | `CLI gobby tasks validation-history` | proxied | Blocked on #21560 Tasks family: port `gobby tasks validation-history` from Python callback `src/gobby/cli/tasks/crud.py:387` to Rust task services and CLI parity. |
-| `CLI gobby test-quality` | **unclassified** |  |
-| `CLI gobby test-quality audit` | **unclassified** |  |
-| `CLI gobby test-types` | **unclassified** |  |
-| `CLI gobby test-types audit` | **unclassified** |  |
-| `CLI gobby test-types suppressions` | **unclassified** |  |
+| `CLI gobby test-quality` | proxied | Blocked on #21568 (remaining route families): port `gobby test-quality` from Python callback `src/gobby/test_quality/cli.py:23` to Rust test audit/baseline services and CLI parity. |
+| `CLI gobby test-quality audit` | proxied | Blocked on #21568 (remaining route families): port `gobby test-quality audit` from Python callback `src/gobby/test_quality/cli.py:28` to Rust test audit/baseline services and CLI parity. |
+| `CLI gobby test-types` | proxied | Blocked on #21568 (remaining route families): port `gobby test-types` from Python callback `src/gobby/test_types/cli.py:33` to Rust test audit/baseline services and CLI parity. |
+| `CLI gobby test-types audit` | proxied | Blocked on #21568 (remaining route families): port `gobby test-types audit` from Python callback `src/gobby/test_types/cli.py:134` to Rust test audit/baseline services and CLI parity. |
+| `CLI gobby test-types suppressions` | proxied | Blocked on #21568 (remaining route families): port `gobby test-types suppressions` from Python callback `src/gobby/test_types/cli.py:38` to Rust test audit/baseline services and CLI parity. |
 | `CLI gobby tokens` | proxied | Python `src/gobby/cli/tokens.py::tokens (line 25)`; blocked on Rust CLI dispatcher for `gobby tokens`. Owner: #21568 Remaining route families. |
 | `CLI gobby tokens audit` | proxied | Python `src/gobby/cli/tokens.py::audit_tokens (line 123)`; blocked on Rust CLI dispatcher for `gobby tokens audit`. Owner: #21568 Remaining route families. |
 | `CLI gobby tokens stats` | proxied | Python `src/gobby/cli/tokens.py::token_stats (line 230)`; blocked on Rust CLI dispatcher for `gobby tokens stats`. Owner: #21568 Remaining route families. |
@@ -338,8 +338,8 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby ui status` | proxied | Python handler `ui_status` at `src/gobby/cli/ui.py:201`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui stop` | proxied | Python handler `ui_stop` at `src/gobby/cli/ui.py:177`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui unexpose` | proxied | Python handler `ui_unexpose` at `src/gobby/cli/ui.py:118`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
-| `CLI gobby uninstall` | **unclassified** |  |
-| `CLI gobby unpack` | **unclassified** |  |
+| `CLI gobby uninstall` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby uninstall` from Python callback `src/gobby/cli/uninstall.py:72` to Rust project/bootstrap setup, bundled-content installation and CLI parity. |
+| `CLI gobby unpack` | proxied | Blocked on #21568 item 12 (install and setup): port `gobby unpack` from Python callback `src/gobby/cli/pack.py:676` to Rust portable archive export/restore and CLI parity. |
 | `CLI gobby variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables` from Python callback `src/gobby/cli/variables.py:67` to Rust services and CLI parity. |
 | `CLI gobby variables get` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables get` from Python callback `src/gobby/cli/variables.py:109` to Rust services and CLI parity. |
 | `CLI gobby variables set` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables set` from Python callback `src/gobby/cli/variables.py:72` to Rust services and CLI parity. |
@@ -363,7 +363,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `CLI gobby worktrees stale` | proxied | Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the Python checkout lifecycle, ownership and Git operation contract to Rust; registered Python handler `src/gobby/cli/worktrees.py:373 (detect_stale)`. |
 | `CLI gobby worktrees stats` | proxied | Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the Python checkout lifecycle, ownership and Git operation contract to Rust; registered Python handler `src/gobby/cli/worktrees.py:434 (worktree_stats)`. |
 | `CLI gobby worktrees sync` | proxied | Blocked on #21564 Attention/agents/dispatch/worktrees (#24148 node-local worktrees): port the Python checkout lifecycle, ownership and Git operation contract to Rust; registered Python handler `src/gobby/cli/worktrees.py:314 (sync_worktree)`. |
-| `Gate native terminal default flip #21357` | **unclassified** |  |
+| `Gate native terminal default flip #21357` | proxied | Blocked on #21565 (Daemon-side gterm adoption and terminal WS): complete Rust epoch adoption and terminal WS cutover for the #21357 native-default evidence gate; closing that planning task alone does not prove this gate. Native gterm is preferred by Python `src/gobby/config/terminals.py:8`, while `crates/gdaemon/src/front_door/routes.rs:36-51` still gives TerminalFamily no prefixes and an empty router (excerpt_hash 3637daaec391c43c1a8ae31a0e85aa66ddf16118da9b89c8a3099bcaf6b9d9c7). |
 | `HTTP * /mcp` | proxied | Python `src/gobby/servers/app_factory.py::_register_mcp_http_route (ASGI MCP transport)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP * /mcp`. Owner: #21570 MCP front door flip; prerequisite: #21566 External-MCP transport multiplexer. |
 | `HTTP DELETE /api/admin/test/unregister-agent/{run_id}` | proxied | Python `src/gobby/servers/routes/admin/_testing.py::register_testing_routes.<locals>.unregister_test_agent (line 224)`; blocked on native Rust handler for `HTTP DELETE /api/admin/test/unregister-agent/{run_id}`. Owner: #21568 Remaining route families. |
 | `HTTP DELETE /api/agents/definitions/{definition_id}` | proxied | Python `src/gobby/servers/routes/agents.py::delete_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
@@ -433,16 +433,16 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `HTTP GET /api/cron/jobs/{job_id}` | proxied | Python handler `src/gobby/servers/routes/cron.py:203` (`create_cron_router::get_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
 | `HTTP GET /api/cron/jobs/{job_id}/runs` | proxied | Python handler `src/gobby/servers/routes/cron.py:330` (`create_cron_router::list_runs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
 | `HTTP GET /api/cron/runs/{run_id}` | proxied | Python handler `src/gobby/servers/routes/cron.py:350` (`create_cron_router::get_run`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
-| `HTTP GET /api/embeddings/doctor` | **unclassified** |  |
-| `HTTP GET /api/embeddings/status` | **unclassified** |  |
-| `HTTP GET /api/embeddings/switch/status` | **unclassified** |  |
-| `HTTP GET /api/feedback/entries` | **unclassified** |  |
-| `HTTP GET /api/feedback/review/latest` | **unclassified** |  |
-| `HTTP GET /api/feedback/review/{run_id}` | **unclassified** |  |
-| `HTTP GET /api/feedback/review/{run_id}/observations` | **unclassified** |  |
-| `HTTP GET /api/feedback/review/{run_id}/results` | **unclassified** |  |
-| `HTTP GET /api/feedback/runs` | **unclassified** |  |
-| `HTTP GET /api/feedback/status` | **unclassified** |  |
+| `HTTP GET /api/embeddings/doctor` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:112` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP GET /api/embeddings/status` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:72` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP GET /api/embeddings/switch/status` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:124` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/entries` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:64` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/review/latest` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:135` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/review/{run_id}` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:142` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/review/{run_id}/observations` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:149` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/review/{run_id}/results` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:161` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/runs` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:95` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/feedback/status` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:104` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
 | `HTTP GET /api/files/git-diff` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/files.py:410 (create_files_router.<locals>.git_diff)`. |
 | `HTTP GET /api/files/git-status` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/files.py:381 (create_files_router.<locals>.git_status)`. |
 | `HTTP GET /api/files/image` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/files.py:322 (create_files_router.<locals>.serve_image)`. |
@@ -451,8 +451,8 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `HTTP GET /api/files/tree` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/files.py:213 (create_files_router.<locals>.list_directory)`. |
 | `HTTP GET /api/files/user-md` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/hub_files_proxy.py:36 (create_hub_files_proxy_router.<locals>.get_user_md)`. |
 | `HTTP GET /api/health` | proxied | Python `src/gobby/servers/routes/admin/_health.py::create_health_router.<locals>.health_check (line 376)`; blocked on backend-independent Rust health response handler. Owner: #21568 Remaining route families. Rust `crates/gdaemon/src/front_door/health.rs::native_health` forwards the Python response via `proxy::forward`; HealthFamily registration alone does not absorb its body. |
-| `HTTP GET /api/llm/status` | **unclassified** |  |
-| `HTTP GET /api/llm/vision/status` | **unclassified** |  |
+| `HTTP GET /api/llm/status` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:231` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP GET /api/llm/vision/status` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:397` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
 | `HTTP GET /api/mcp/bridge/tool-timeouts` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/bridge.py::get_bridge_tool_timeouts (line 41)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/bridge/tool-timeouts`. Owner: #21566 External-MCP transport multiplexer. |
 | `HTTP GET /api/mcp/servers` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/server.py::list_mcp_servers (line 87)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/servers`. Owner: #21566 External-MCP transport multiplexer. |
 | `HTTP GET /api/mcp/status` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/registry.py::get_mcp_status (line 99)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP GET /api/mcp/status`. Owner: #21566 External-MCP transport multiplexer. |
@@ -468,9 +468,9 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `HTTP GET /api/memories/search` | proxied | Python src/gobby/servers/routes/memory.py::search_memories; Rust HTTP handler parity for GET /api/memories/search remains under #21563 Memory and search. |
 | `HTTP GET /api/memories/stats` | proxied | Python src/gobby/servers/routes/memory.py::memory_stats; Rust HTTP handler parity for GET /api/memories/stats remains under #21563 Memory and search. |
 | `HTTP GET /api/memories/{memory_id}` | proxied | Python src/gobby/servers/routes/memory.py::get_memory; Rust HTTP handler parity for GET /api/memories/{memory_id} remains under #21563 Memory and search. |
-| `HTTP GET /api/metrics/current` | **unclassified** |  |
-| `HTTP GET /api/metrics/snapshots` | **unclassified** |  |
-| `HTTP GET /api/observations/unmodeled` | **unclassified** |  |
+| `HTTP GET /api/metrics/current` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/metrics.py:42` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/metrics/snapshots` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/metrics.py:28` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/observations/unmodeled` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/observations.py:22` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
 | `HTTP GET /api/pipelines/definitions` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:183`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/pipelines/definitions/templates` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions/templates; Python handler `src/gobby/servers/routes/pipeline_definitions.py:178`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/pipelines/definitions/{definition_id}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:227`; Rust front-door dispatch currently proxies this family. |
@@ -524,20 +524,20 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `HTTP GET /api/tasks/{task_id}/stages` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/stages; Python handler `src/gobby/servers/routes/tasks_stage_routes.py:135`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/terminals` | proxied | Python `src/gobby/servers/routes/terminals.py::list_terminals`; Rust blocker: implement native terminal registry paging, attach/lease projection and detail HTTP handlers; TerminalFamily.router in crates/gdaemon/src/front_door/routes.rs is empty. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `HTTP GET /api/terminals/{terminal_id}` | proxied | Python `src/gobby/servers/routes/terminals.py::get_terminal`; Rust blocker: implement native terminal registry paging, attach/lease projection and detail HTTP handlers; TerminalFamily.router in crates/gdaemon/src/front_door/routes.rs is empty. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
-| `HTTP GET /api/traces` | **unclassified** |  |
-| `HTTP GET /api/traces/{trace_id}` | **unclassified** |  |
+| `HTTP GET /api/traces` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/traces.py:77` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
+| `HTTP GET /api/traces/{trace_id}` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/traces.py:107` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
 | `HTTP GET /api/variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:87`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/voice/status` | proxied | Python handler `create_voice_router.<locals>.voice_status` at `src/gobby/servers/routes/voice.py:157`. Blocked on #21588 Voice family: port STT/TTS, voice preparation/status and vocabulary services to Rust. |
 | `HTTP GET /api/webhooks` | proxied | Python handler `src/gobby/servers/routes/mcp/webhooks.py:31` (`create_webhooks_router::list_webhooks`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. |
-| `HTTP GET /docs` | **unclassified** |  |
-| `HTTP GET /docs/oauth2-redirect` | **unclassified** |  |
+| `HTTP GET /docs` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP GET /docs/oauth2-redirect` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
 | `HTTP GET /memory/dream/{run_id}` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream_status; Rust HTTP handler parity for GET /memory/dream/{run_id} remains under #21563 Memory and search. |
-| `HTTP GET /openapi.json` | **unclassified** |  |
-| `HTTP GET /redoc` | **unclassified** |  |
-| `HTTP HEAD /docs` | **unclassified** |  |
-| `HTTP HEAD /docs/oauth2-redirect` | **unclassified** |  |
-| `HTTP HEAD /openapi.json` | **unclassified** |  |
-| `HTTP HEAD /redoc` | **unclassified** |  |
+| `HTTP GET /openapi.json` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP GET /redoc` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP HEAD /docs` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP HEAD /docs/oauth2-redirect` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP HEAD /openapi.json` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
+| `HTTP HEAD /redoc` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/app_factory.py:70` to Rust OpenAPI schema and API documentation serving; gdaemon still proxies this route. |
 | `HTTP PATCH /api/agents/definitions/{definition_id}/rule-selectors` | proxied | Python `src/gobby/servers/routes/agents.py::patch_rule_selectors`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP PATCH /api/agents/definitions/{definition_id}/rules` | proxied | Python `src/gobby/servers/routes/agents.py::patch_rules`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP PATCH /api/agents/definitions/{definition_id}/variables` | proxied | Python `src/gobby/servers/routes/agents.py::patch_variables`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
@@ -585,16 +585,16 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `HTTP POST /api/cron/jobs` | proxied | Python handler `src/gobby/servers/routes/cron.py:174` (`create_cron_router::create_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
 | `HTTP POST /api/cron/jobs/{job_id}/run` | proxied | Python handler `src/gobby/servers/routes/cron.py:290` (`create_cron_router::run_job_now`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
 | `HTTP POST /api/cron/jobs/{job_id}/toggle` | proxied | Python handler `src/gobby/servers/routes/cron.py:273` (`create_cron_router::toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. |
-| `HTTP POST /api/embeddings` | **unclassified** |  |
-| `HTTP POST /api/embeddings/switch/abort` | **unclassified** |  |
-| `HTTP POST /api/embeddings/switch/resume` | **unclassified** |  |
-| `HTTP POST /api/embeddings/switch/start` | **unclassified** |  |
-| `HTTP POST /api/feedback/review` | **unclassified** |  |
+| `HTTP POST /api/embeddings` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:77` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/embeddings/switch/abort` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:153` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/embeddings/switch/resume` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:145` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/embeddings/switch/start` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/embeddings.py:128` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/feedback/review` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/servers/routes/feedback.py:52` to Rust feedback, observations, metrics and trace HTTP services; gdaemon still proxies this route. |
 | `HTTP POST /api/files/write` | proxied | Blocked on #21585 Projects/files/hub documents: port file access, validation and hub-document routing to Rust; registered Python handler `src/gobby/servers/routes/files.py:351 (create_files_router.<locals>.write_file)`. |
-| `HTTP POST /api/hooks/execute` | **unclassified** |  |
-| `HTTP POST /api/llm/chat/completions` | **unclassified** |  |
-| `HTTP POST /api/llm/generate` | **unclassified** |  |
-| `HTTP POST /api/llm/vision/extract` | **unclassified** |  |
+| `HTTP POST /api/hooks/execute` | proxied | Blocked on #24151 (S2.11 hub hook ingress and rule engine in Rust), with #24150 node forwarding and #24364 contract freeze: port Python `src/gobby/servers/routes/mcp/hooks.py:197-226::execute_hook` (excerpt_hash 9bb141cf402b9cc37684b4579904b4e79600c2fc5b15f20c6d485fb440a6c8f9) to the native hook HTTP handler and rule engine; gdaemon still proxies this route. |
+| `HTTP POST /api/llm/chat/completions` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:296` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/llm/generate` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:237` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
+| `HTTP POST /api/llm/vision/extract` | proxied | Blocked on #21568 item 8 (AI providers, LLM routing and local models): port Python handler `src/gobby/servers/routes/llm.py:403` to Rust embedding/LLM provider services and HTTP handlers; gdaemon still proxies this route. |
 | `HTTP POST /api/mcp/bridge/ready` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/bridge.py::report_bridge_ready (line 16)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/bridge/ready`. Owner: #21566 External-MCP transport multiplexer. |
 | `HTTP POST /api/mcp/refresh` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/registry.py::refresh_mcp_tools (line 160)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/refresh`. Owner: #21566 External-MCP transport multiplexer. |
 | `HTTP POST /api/mcp/servers` | proxied | Python `src/gobby/servers/routes/mcp/endpoints/server.py::add_mcp_server (line 175)`; blocked on Rust MCP transport/discovery/execution handler for `HTTP POST /api/mcp/servers`. Owner: #21566 External-MCP transport multiplexer. |
@@ -781,9 +781,9 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `MCP gobby-cron:run_cron_job` | proxied | Python handler `src/gobby/mcp_proxy/tools/cron.py:319` (`create_cron_registry::run_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust. |
 | `MCP gobby-cron:toggle_cron_job` | proxied | Python handler `src/gobby/mcp_proxy/tools/cron.py:274` (`create_cron_registry::toggle_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust. |
 | `MCP gobby-cron:update_cron_job` | proxied | Python handler `src/gobby/mcp_proxy/tools/cron.py:205` (`create_cron_registry::update_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust. |
-| `MCP gobby-feedback:get_review_observations` | **unclassified** |  |
-| `MCP gobby-feedback:get_review_results` | **unclassified** |  |
-| `MCP gobby-feedback:submit_review` | **unclassified** |  |
+| `MCP gobby-feedback:get_review_observations` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:18` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-feedback:get_review_results` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:28` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-feedback:submit_review` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/feedback.py:36` to Rust feedback/review and metrics MCP services. |
 | `MCP gobby-hub:get_machine_id` | proxied | Python handler `src/gobby/mcp_proxy/tools/hub.py:111` (`create_hub_registry::get_machine_id`); blocked on #21559 Config, runtime handshake and grants to port the machine identity tool. #21570 MCP front door flip must re-front this registry onto Rust. |
 | `MCP gobby-hub:hub_stats` | proxied | Python handler `src/gobby/mcp_proxy/tools/hub.py:345` (`create_hub_registry::hub_stats`); blocked on #21589 Admin, metrics, traces and telemetry to port aggregate hub statistics. #21570 MCP front door flip must re-front this registry onto Rust. |
 | `MCP gobby-hub:list_all_projects` | proxied | Python handler `src/gobby/mcp_proxy/tools/hub.py:138` (`create_hub_registry::list_all_projects`); blocked on #21585 Projects, files and hub documents to port cross-project project inventory. #21570 MCP front door flip must re-front this registry onto Rust. |
@@ -827,20 +827,20 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `MCP gobby-merge:predict_conflicts` | proxied | Blocked on #21584 Source control/GitHub triage/sync: port Python Git/merge orchestration and its public response contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/merge_landscape.py:239 (register_merge_landscape_tools.<locals>.predict_conflicts)`. |
 | `MCP gobby-merge:probe_branch_protection` | proxied | Blocked on #21584 Source control/GitHub triage/sync: port Python Git/merge orchestration and its public response contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/merge_branch_protection_tool.py:19 (register_branch_protection_tool.<locals>.probe_branch_protection)`. |
 | `MCP gobby-merge:verify_in_worktree` | proxied | Blocked on #21584 Source control/GitHub triage/sync: port Python Git/merge orchestration and its public response contract to Rust; registered Python handler `src/gobby/mcp_proxy/tools/merge_landscape.py:458 (register_merge_landscape_tools.<locals>.verify_in_worktree)`. |
-| `MCP gobby-metrics:cleanup_old_metrics` | **unclassified** |  |
-| `MCP gobby-metrics:get_failing_tools` | **unclassified** |  |
-| `MCP gobby-metrics:get_metrics_timeseries` | **unclassified** |  |
-| `MCP gobby-metrics:get_provider_capacity` | **unclassified** |  |
-| `MCP gobby-metrics:get_retention_stats` | **unclassified** |  |
-| `MCP gobby-metrics:get_rule_metrics` | **unclassified** |  |
-| `MCP gobby-metrics:get_session_tools` | **unclassified** |  |
-| `MCP gobby-metrics:get_skill_metrics` | **unclassified** |  |
-| `MCP gobby-metrics:get_tool_metrics` | **unclassified** |  |
-| `MCP gobby-metrics:get_tool_success_rate` | **unclassified** |  |
-| `MCP gobby-metrics:get_top_tools` | **unclassified** |  |
-| `MCP gobby-metrics:get_usage_report` | **unclassified** |  |
-| `MCP gobby-metrics:reset_metrics` | **unclassified** |  |
-| `MCP gobby-metrics:reset_tool_metrics` | **unclassified** |  |
+| `MCP gobby-metrics:cleanup_old_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:283` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_failing_tools` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:137` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_metrics_timeseries` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:460` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_provider_capacity` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:86` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_retention_stats` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:313` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_rule_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:386` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_session_tools` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:358` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_skill_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:422` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_tool_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:55` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_tool_success_rate` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:173` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_top_tools` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:102` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:get_usage_report` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:332` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:reset_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:218` to Rust feedback/review and metrics MCP services. |
+| `MCP gobby-metrics:reset_tool_metrics` | proxied | Blocked on #21568 item 10 (admin, metrics, traces and telemetry): port Python handler `src/gobby/mcp_proxy/tools/metrics.py:249` to Rust feedback/review and metrics MCP services. |
 | `MCP gobby-plans:append_plan_changelog_round` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::append_plan_changelog_round; blocked on Rust hash-bound changelog append and MCP registration. Owner: #21568 Remaining route families. |
 | `MCP gobby-plans:apply_plan_handoff_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::apply_plan_handoff_manifest; blocked on Rust hash/digest-bound routing-manifest application and MCP registration. Owner: #21568 Remaining route families. |
 | `MCP gobby-plans:apply_plan_review_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::apply_plan_review_manifest; blocked on Rust caller/run-bound review-manifest application and MCP registration. Owner: #21568 Remaining route families. |
@@ -865,14 +865,14 @@ Public surfaces and evidence gates: 1095. Unclassified: 90.
 | `MCP gobby-plans:validate_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::validate_plan; blocked on Rust plan-contract, checkout-overlay and symbol validation and MCP registration. Owner: #21568 Remaining route families. |
 | `MCP gobby-plans:validate_plan_review_coverage` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::validate_plan_review_coverage; blocked on Rust bound review-coverage validation and MCP registration. Owner: #21568 Remaining route families. |
 | `MCP gobby-plans:verify_plan_unchanged` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::verify_plan_unchanged; blocked on Rust bound plan-hash verification and MCP registration. Owner: #21568 Remaining route families. |
-| `MCP gobby-results:get_tool_result` | **unclassified** |  |
-| `MCP gobby-results:search_tool_result` | **unclassified** |  |
-| `MCP gobby-review-learning:list_check_keys` | **unclassified** |  |
-| `MCP gobby-review-learning:recall_review_context` | **unclassified** |  |
-| `MCP gobby-review-learning:recall_review_lessons_by_class` | **unclassified** |  |
-| `MCP gobby-review-learning:recall_review_lessons_for_files` | **unclassified** |  |
-| `MCP gobby-review-learning:record_review_lesson` | **unclassified** |  |
-| `MCP gobby-review-learning:retire_review_lesson` | **unclassified** |  |
+| `MCP gobby-results:get_tool_result` | proxied | Blocked on #21568 (remaining route families): port Python handler `src/gobby/mcp_proxy/tools/results.py:149` to Rust stored tool-result retrieval/search and bounded MCP envelopes. |
+| `MCP gobby-results:search_tool_result` | proxied | Blocked on #21568 (remaining route families): port Python handler `src/gobby/mcp_proxy/tools/results.py:67` to Rust stored tool-result retrieval/search and bounded MCP envelopes. |
+| `MCP gobby-review-learning:list_check_keys` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:166` to Rust review-lesson memory recall, recording and retirement. |
+| `MCP gobby-review-learning:recall_review_context` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:87` to Rust review-lesson memory recall, recording and retirement. |
+| `MCP gobby-review-learning:recall_review_lessons_by_class` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:143` to Rust review-lesson memory recall, recording and retirement. |
+| `MCP gobby-review-learning:recall_review_lessons_for_files` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:118` to Rust review-lesson memory recall, recording and retirement. |
+| `MCP gobby-review-learning:record_review_lesson` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:207` to Rust review-lesson memory recall, recording and retirement. |
+| `MCP gobby-review-learning:retire_review_lesson` | proxied | Blocked on #21563 (Memory and search): port Python handler `src/gobby/mcp_proxy/tools/review_learning.py:187` to Rust review-lesson memory recall, recording and retirement. |
 | `MCP gobby-sessions:capture_baseline_dirty_files` | dropped by decision #23563 | #23563 Retire capture_baseline_dirty_files and baseline_dirty_files explicitly deletes this tool and registration; removal is in flight. Still registered at this snapshot by `src/gobby/mcp_proxy/tools/sessions/_actions.py::capture_baseline_dirty_files_tool`; no Rust port is planned. |
 | `MCP gobby-sessions:capture_output` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::capture_output`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
 | `MCP gobby-sessions:feedback` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::feedback`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
