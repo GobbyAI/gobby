@@ -48,6 +48,14 @@ from gobby.utils.dependency_requirements import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def isolated_shared_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def monitor(**_kwargs: object) -> str:
+        return str(tmp_path / "monitor.sock")
+
+    monkeypatch.setattr("gobby.agents.srt_monitor.ensure_srt_monitor", monitor)
+
+
 def test_macos_profile_grants_only_semaphore_limit_and_self_scheduling(tmp_path: Path) -> None:
     from gobby.agents.srt_package_patch import MACOS_PROFILE_PATH
     from tests.srt_fixture_helpers import upstream_proxy_bytes, write_srt_proxy_fixture

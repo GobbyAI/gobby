@@ -137,10 +137,12 @@ _SUDO_FLAG_OPTIONS = frozenset(
 )
 
 
-def _unwrap(words: list[str]) -> list[str]:
+def _unwrap(words: list[str], *, stop_at_xargs: bool = False) -> list[str]:
     """Common literal execution wrappers; never treat query operands as launches."""
     while words:
         name = words[0].rsplit("/", 1)[-1]
+        if stop_at_xargs and name == "xargs":
+            break
         if (
             name in {"for", "select"}
             and len(words) >= 3

@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::ipc::{prepare_socket_path, restrict_socket_permissions};
 
+mod activity;
 mod backpressure;
 mod config;
 mod control;

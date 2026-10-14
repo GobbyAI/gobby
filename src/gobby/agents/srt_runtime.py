@@ -842,6 +842,20 @@ async def prepare_sandbox_launch(
     finally:
         finish_spawn_phase(phase_timings_ms, "verify_srt_installation", verify_started)
     policy_path = run_paths.root / SRT_SETTINGS_RELATIVE_PATH
+    if sys.platform == "darwin":
+        from gobby.agents.srt_monitor import ensure_srt_monitor
+
+        try:
+            run_environment["GOBBY_SRT_MONITOR_SOCKET"] = await asyncio.to_thread(
+                ensure_srt_monitor,
+                node=installation.node,
+                runner=installation.runner,
+                env=env,
+                run_key=run_paths.root.name,
+            )
+            run_environment["GOBBY_SRT_RUN_KEY"] = run_paths.root.name
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise SrtRuntimeError(f"Shared SRT violation monitor unavailable: {exc}") from exc
     violation_path = run_paths.root / SRT_VIOLATIONS_RELATIVE_PATH
     _write_private_file(policy_path, policy_bytes)
     _write_private_file(violation_path, b"")

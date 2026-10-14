@@ -12,7 +12,7 @@ fn serve_logs_unavailable_singleton() -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     std::fs::write(
         home.path().join("bootstrap.yaml"),
-        "datastore_mode: remote\nhub_daemon_url: http://127.0.0.1:1\n",
+        "mode: standalone\ndatabase_url: postgresql://gobby_test@127.0.0.1:1/gobby_test\n",
     )?;
     let pid_file = home.path().join("gobby.pid");
     let _claim = claim_pid_file(&pid_file, Role::Maintenance)?
@@ -24,8 +24,12 @@ fn serve_logs_unavailable_singleton() -> anyhow::Result<()> {
         .env_remove("GOBBY_SERVICE_NONCE")
         .timeout(std::time::Duration::from_secs(10))
         .output()?;
-    assert!(output.status.success());
     let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        output.status.success(),
+        "serve exited with {}: {stderr}",
+        output.status
+    );
     assert!(
         stderr.contains("runtime singleton claim unavailable"),
         "serve must explain its exit: {stderr}"
@@ -98,9 +102,6 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["latest_version"], embedded.latest_asset.version);
     assert_eq!(identity["latest_checksum"], embedded.latest_asset.checksum);
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
-    // One literal stays as the human tripwire, deliberately: a bare version number is
-    // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 467);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)

@@ -17,6 +17,7 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.code_navigation import shell_command_name
+from gobby.hooks.provider_launch_guard import _SHELLS
 from gobby.hooks.shell_execution import SCRIPT_BODY_LIMIT, shell_execution
 
 
@@ -33,11 +34,17 @@ def shell_stdin_arguments(
     """
     tokens = segment.tokens
     plain = strip_input_redirections(strip_output_redirections(tokens))
-    parts = _unwrap(shell_token_values(plain))
+    # xargs consumes stdin to build argv; it does not forward that stream as
+    # the shell's program. Other execution wrappers preserve stdin.
+    parts = _unwrap(shell_token_values(plain), stop_at_xargs=True)
+    if parts and shell_command_name(parts[0]) == "xargs" and shell_execution(parts) is not None:
+        # Runtime argv may add -c/program text or replace an existing -c word.
+        # Stopping the stdin proof must not turn that program into plain execution.
+        return _replace_stdin_program(tokens, [ShellToken(UNRESOLVED_WRAPPER)], raw)
     inputs = [
         index for index, token in enumerate(tokens) if is_shell_input_redirection_token(token)
     ]
-    if not parts or shell_command_name(parts[0]) not in {"bash", "sh"}:
+    if not parts or shell_command_name(parts[0]) not in _SHELLS:
         return tokens, _strip_shell_wrappers(shell_token_values(tokens)), raw
     execution = shell_execution(parts, stdin=bool(inputs) or segment.separator_before == "|")
     if (
@@ -67,22 +74,28 @@ def shell_stdin_arguments(
                     # expansion or escape syntax the recorded text is exact.
                     if body.quoted or not any(char in body.text for char in "$`\\"):
                         source = body.text + "\n"
-    elif not inputs and segment.separator_before == "|" and previous is not None:
+    elif (
+        not inputs
+        and segment.separator_before == "|"
+        and not segment.stderr_pipe
+        and previous is not None
+    ):
         source = _literal_stdout(previous.tokens, raw)
 
     # Startup/configuration options and positional parameters need their own
     # proof. Simple shell flags do not change how literal program text is read.
-    options = parts[1:]
-    if any(
-        option not in {"--", "-", "--norc", "--noprofile"}
-        and (not option.startswith("-") or not set(option[1:]) <= set("seuxv"))
-        for option in options
-    ):
+    if not _safe_stdin_options(parts[1:], shell_command_name(parts[0])):
         source = None
     if source is None or len(source) > SCRIPT_BODY_LIMIT:
         replacement = [ShellToken(UNRESOLVED_WRAPPER)]
     else:
         replacement = [ShellToken(parts[0]), ShellToken("-c"), ShellToken(source, quoted=True)]
+    return _replace_stdin_program(tokens, replacement, raw)
+
+
+def _replace_stdin_program(
+    tokens: list[ShellToken], replacement: list[ShellToken], raw: dict[int, str]
+) -> tuple[list[ShellToken], list[str], dict[int, str]]:
     # Retain output redirections so the body and its output destinations both
     # participate in the mutation scope. Input data is never a file operand.
     raw = {**raw, **{id(token): shlex.quote(token.value) for token in replacement}}
@@ -94,10 +107,44 @@ def shell_stdin_arguments(
     return replacement, shell_token_values(replacement), raw
 
 
+def _safe_stdin_options(options: list[str], shell: str) -> bool:
+    """Consume simple flags and safe option operands without treating them as files."""
+    index = 0
+    while index < len(options):
+        option = options[index]
+        index += 1
+        if option in {"--", "-", "--norc", "--noprofile"}:
+            continue
+        if not option.startswith("-") or option.startswith("--"):
+            return False
+        flags = option[1:]
+        if not flags or not set(flags) <= set("seuxvoO"):
+            return False
+        if "O" in flags and shell not in {"bash", "sh"}:
+            return False
+        if "o" in flags or "O" in flags:
+            # Value-taking flags must end the cluster. Startup and grammar
+            # options outside this proof remain unknown-scope writes.
+            names = (
+                {"pipefail", "errexit", "nounset", "xtrace", "verbose"}
+                if flags.endswith("o")
+                else {"nullglob", "failglob", "globstar", "extglob"}
+            )
+            if (
+                flags[-1] not in "oO"
+                or any(flag in "oO" for flag in flags[:-1])
+                or index >= len(options)
+                or options[index] not in names
+            ):
+                return False
+            index += 1
+    return True
+
+
 def _literal_stdout(tokens: list[ShellToken], raw: dict[int, str]) -> str | None:
     if any(is_unquoted_shell_control_token(token) for token in tokens):
         return None
-    parts = _unwrap(shell_token_values(tokens))
+    parts = _unwrap(shell_token_values(tokens), stop_at_xargs=True)
     if not parts or not all(_raw_shell_word_is_literal(raw[id(token)]) for token in tokens):
         return None
     command, *arguments = parts

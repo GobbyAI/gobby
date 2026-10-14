@@ -7,9 +7,10 @@ Plan artifact: `.gobby/plans/node-halves.md`
 ## Overview
 `kind: framing`
 
-This plan covers two Stage 2 node halves under #21579. P1 is #24150 (S2.11 node
-half: a gdaemon node-local envelope ledger that forwards hooks to the hub). P2 is
-#24148 (S2.7 node half: node-local agent spawn and worktrees in gdaemon).
+This plan covers two Stage 2 node halves. P1 is #24150 (S2.11 node half: a
+gdaemon node-local envelope ledger that forwards hooks to the hub), and its
+leaves expand under #24150. P2 is #24148 (S2.7 node half: node-local agent
+spawn and worktrees in gdaemon), and its leaves expand under #24148.
 
 A node is `gdaemon` in node mode (ROADMAP decision 17). It holds no datastore
 credential, runs no Python daemon, and today relays every HTTP request to its hub
@@ -28,7 +29,11 @@ and the Python spawn path until the hub halves, #24151 and #24149.
 Orchestrator rulings (gobby#15977, 2026-10-13), operator-approved planning
 (`stage2-plan:now`):
 
-1. **Root and order.** Expansion root is #21579. P1 is #24150; P2 is #24148.
+1. **Roots and order.** P1's leaves (1.1 to 1.6) expand under #24150 and P2's
+   leaves (2.1 to 2.9) under #24148. Neither epic is a child of #21579, which
+   both block, so leaves under #21579 could never become ready. Cross-epic
+   order is expressed as leaf dependencies: 2.1 depends on 1.6, and 2.9 on
+   1.5. (Amended by gobby#15977 on its 2026-10-13 return.)
 2. **Receipt route.** This plan owns the hub route `POST /api/nodes/receipts`,
    key-bound in the style of hub-mode 1.4.
 3. **Providers.** Node v1 launches claude, codex and grok. Droid and agy are
@@ -38,7 +43,7 @@ Orchestrator rulings (gobby#15977, 2026-10-13), operator-approved planning
 5. **Placement.** Node duties live in `crates/gdaemon/src/nodes/`, following the
    node-channel plan's Decision 8. Family crates (ROADMAP decision 16) are for
    route families.
-6. **Seats.** No Plan Enhancer. The adversary is Grok seat gobby#16768.
+6. **Seats.** No Plan Enhancer. The adversary is Grok seat gobby#16791.
 7. **Replay decisions.** This plan owns the hub route
    `POST /api/nodes/hooks/replay`. It shares one decision function with the
    local drain.
@@ -142,7 +147,6 @@ Design decisions (writer, from the code):
 - **S2.8 overlap.** The open S2.8 leaves #23211 (`crates/gterminals/src/write.rs`),
   #23213 (Python spawn executor) and #23214 (`crates/gterminals/src/family.rs`,
   `tmux_runtime.rs`) share no Target with this plan.
-- **Stage gate.** Implementation waits for Stage 1 (#21543) to close.
 
 ## P1: Node hook ingress (#24150)
 `kind: framing`
@@ -266,8 +270,12 @@ Targets:
     `{envelope_id, processed_at, status:"processed", response?, hook_type?}`.
   - `read_envelope_marker`, `is_envelope_processed`,
     `is_envelope_processing_active`, `clear_stale_envelope_processing_marker`
-    (expired lease or dead owner, by pid and create time within 1 s), and
-    `mark_envelope_processed`. An unreadable marker counts as processed.
+    and `mark_envelope_processed`. A `processing` marker stays active while
+    its owner process is live (pid and create time within 1 s), even past
+    `lease_expires_at`, or while its lease is unexpired
+    (`_is_active_processing_record`). It is stale only when the owner is dead
+    and the lease is expired. A non-empty unreadable marker counts as
+    processed; an empty one counts as absent.
   - `envelope_terminal_response` with `_should_replay_processed_response`: a
     stored block (`decision` `block` or `deny`) for `stop`, `subagent_stop`,
     `subagent_end`, `session_end`, `turn_end` or `stop_failure`, or one whose
@@ -297,7 +305,8 @@ Targets:
 - `nodes/hooks/ledger.rs` (new) defines `Ledger { inbox: PathBuf }` with
   `claim`, `renew`, `finalize`, `release`, `marker`, `is_processed`,
   `is_active`, `clear_stale`, `mark_processed`, `terminal_response`,
-  `bump_stop_epoch` and `prune`, mirroring the Python functions above, and the
+  `bump_stop_epoch`, `is_fresh` and `prune`, mirroring the Python functions
+  above, and the
   constants with their Python values.
 - `crates/gdaemon/tests/node_hooks.rs` (new) holds this plan's P1 tests.
   Ledger tests write the marker files Python writes and read Python-format
@@ -310,7 +319,7 @@ Verification planned:
 
 - 1.2.1 - A claim creates a Python-format processing marker and a second claim of the same id fails while the first holds it. test: `crates/gdaemon/tests/node_hooks.rs::ledger_claim_is_exclusive`.
 - 1.2.2 - Renew, finalize and release succeed only for the owner token that holds the lease. test: `crates/gdaemon/tests/node_hooks.rs::ledger_mutations_require_owner_token`.
-- 1.2.3 - An expired lease or a dead owner process makes a processing marker stale, and an unreadable marker counts as processed. test: `crates/gdaemon/tests/node_hooks.rs::ledger_stale_and_malformed_markers`.
+- 1.2.3 - A processing marker is stale only when its owner process is dead and its lease is expired; a live owner past its lease stays active, and a non-empty unreadable marker counts as processed. test: `crates/gdaemon/tests/node_hooks.rs::ledger_stale_and_malformed_markers`.
 - 1.2.4 - A stored STOP or turn-end block replays only within 120 seconds and only when processed at or after the STOP epoch; any other stored response always replays. test: `crates/gdaemon/tests/node_hooks.rs::ledger_stop_block_replay_window`.
 - 1.2.5 - Pruning deletes markers older than 24 hours, keeps newer ones and stops at 100,000 entries. test: `crates/gdaemon/tests/node_hooks.rs::ledger_prune_retention`.
 - 1.2.6 - A marker written by the Python ledger reads back with the same status and response. test: `crates/gdaemon/tests/node_hooks.rs::ledger_reads_python_markers`.
@@ -343,7 +352,8 @@ that extracts it.
   and hub-mode 2.2 covers none of them:
   1. Grok pending delivery
      (`src/gobby/hooks/grok_pending_context.py::handle_ack_pending_inbox_envelope`),
-     before the processed check and again after a 2xx. If the session's
+     before the processed check and again after a 2xx, only for an envelope
+     with an id at or above the floor. If the session's
      delivery variable names the envelope, it retains the file for
      `GROK_DELIVERY_RETENTION_SECONDS` (3,600) from the file's mtime, then
      requeues the briefing, unlinks the file and removes the marker.
@@ -361,6 +371,12 @@ that extracts it.
      delivered, commits startup context and applies session variables), then
      `_mark_carrying_envelopes_processed` for the receipt's
      `original_envelope_id` and `current_envelope_id`.
+- Between the Grok check and the fence, the drain unlinks a processed
+  envelope and then skips a live one
+  (`src/gobby/hooks/replay_fence.py::defer_live_hook`: a fresh file or an
+  active marker, only for an envelope at or above the floor). A live file
+  still gets the Grok check and is never fenced
+  (`src/gobby/hooks/inbox.py` lines 453-479).
 - `src/gobby/hooks/receipt_redelivery.py::release_receipt_for_response` calls
   `release_receipt(db, receipt_id=, delivery_generation=)` when a response
   cannot be emitted.
@@ -378,22 +394,30 @@ that extracts it.
 
 **Implementation:**
 - `src/gobby/hooks/replay_decision.py` (new) defines
-  `decide_replay(app, envelope_id, envelope, *, age_seconds, processed, machine_id) -> ReplayDecision`.
+  `decide_replay(app, envelope_id, envelope, *, age_seconds, processed, live, machine_id) -> ReplayDecision`.
   `ReplayDecision` has `disposition` (`retain`, `requeued`, `unlink`,
-  `archived`, `below_floor` or `execute`) and `detail`. Order:
-  1. Grok pending check: `retain` inside retention, `requeued` after
-     requeueing.
+  `archived`, `below_floor` or `execute`) and `detail`. Order, matching the
+  drain's:
+  1. Grok pending check, only for an envelope with an id at or above the
+     floor, as the drain gates it today (`src/gobby/hooks/inbox.py` lines
+     453-456): `retain` inside retention, `requeued` after requeueing. A
+     below-floor envelope skips it.
   2. `processed` true: `unlink`.
-  3. Fence: `archived` with the fence detail, or `retain` on a failed lookup.
-  4. Floor: `below_floor` after terminalizing the envelope's receipts.
-  5. Otherwise `execute`.
+  3. `live` true for an envelope at or above the floor: `retain` with detail
+     `live`.
+  4. Fence: `archived` with the fence detail, or `retain` on a failed lookup.
+  5. Floor: `below_floor` after terminalizing the envelope's receipts.
+  6. Otherwise `execute`.
   With `machine_id` set, a session row on another machine counts as unknown
   in both the Grok and fence lookups.
 - `handle_ack_pending_inbox_envelope` splits into a pure decision on
   `(envelope_id, envelope, age_seconds)` and the file effects.
-  `archive_superseded_hook` gains a keyword `machine_id`. The local drain calls
-  `decide_replay` with `machine_id=None` and keeps its file effects, so its
-  behavior is unchanged. `_consume_inbox_delivery_receipt` and
+  `archive_superseded_hook` gains a keyword `machine_id`. The local drain
+  keeps its restart-residue skip, then calls `decide_replay` with
+  `live=defer_live_hook(path, envelope_id, processed_dir, include_fresh)`
+  and `machine_id=None`, and keeps its file effects. `defer_live_hook` only
+  reads the file's age and the marker, so reading it before the Grok check
+  leaves the outcomes unchanged. `_consume_inbox_delivery_receipt` and
   `_terminalize_below_floor_receipts` call the shared helpers.
 - `replay_decision.py` also defines
   `acknowledge_and_apply_receipt(db, *, receipt_id, delivery_generation, message_manager, variable_manager)`,
@@ -407,7 +431,7 @@ that extracts it.
   unknown `v` answers 422 `unsupported_version`, and any other parse failure
   answers 422 `invalid_body`.
   - `POST /api/nodes/hooks/replay`: body
-    `{v, envelope_id, envelope, age_seconds, processed}`. It answers
+    `{v, envelope_id, envelope, age_seconds, processed, live}`. It answers
     `{disposition, detail}` from `decide_replay` with
     `machine_id=identity.machine_id`.
   - `POST /api/nodes/receipts`: body
@@ -431,10 +455,10 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.3.1 - `decide_replay` returns `retain`, `requeued`, `unlink`, `archived`, `below_floor` and `execute` in the drain's order for the matching hub state. test: `tests/hooks/test_replay_decision.py::test_decision_order`.
+- 1.3.1 - `decide_replay` returns `retain`, `requeued`, `unlink`, `archived`, `below_floor` and `execute` in the drain's order for the matching hub state, with a live envelope at or above the floor retained after the processed check and before the fence, and a below-floor envelope with a matching Grok delivery answered `below_floor`. test: `tests/hooks/test_replay_decision.py::test_decision_order`.
 - 1.3.2 - With a machine id, a session row on another machine is treated as unknown by the Grok and fence lookups. test: `tests/hooks/test_replay_decision.py::test_foreign_rows_are_unknown`.
-- 1.3.3 - The local drain's outcomes are unchanged after the extraction. test: `tests/hooks/test_replay_decision.py::test_local_drain_unchanged`.
-- 1.3.4 - The replay route answers the decision for a node key, 403 `node_identity_required` without one, 403 `machine_is_local` for the hub's own key, and 422 for an unknown `v` or field. test: `tests/servers/test_node_hook_routes.py::test_replay_route`.
+- 1.3.3 - The local drain's outcomes are unchanged after the extraction, and a fresh live file still receives the Grok check and is not fenced. test: `tests/hooks/test_replay_decision.py::test_local_drain_unchanged`.
+- 1.3.4 - The replay route answers the decision for a node key, including the node's `live` flag, 403 `node_identity_required` without one, 403 `machine_is_local` for the hub's own key, and 422 for an unknown `v` or field. test: `tests/servers/test_node_hook_routes.py::test_replay_route`.
 - 1.3.5 - The receipts route acknowledges a node's receipt, applies its effects once, returns the carrying envelope ids, releases on `release`, and refuses another machine's receipt. test: `tests/servers/test_node_hook_routes.py::test_receipts_route`.
 
 ### 1.4 Node receipt forwarding [category: code] (depends: 1.2, 1.3)
@@ -498,7 +522,7 @@ Verification planned:
 - 1.4.1 - A receipt-ack file is claimed once, posted with the node key, and on 2xx its carrying envelopes and its own id are marked processed and the claim is removed. test: `crates/gdaemon/tests/node_hooks.rs::receipts_ack_forwarded_and_terminalized`.
 - 1.4.2 - A failed post restores the ack file for the next sweep, and an orphaned claim from a previous process is restored at sweep start. test: `crates/gdaemon/tests/node_hooks.rs::receipts_failed_post_and_orphan_restore`.
 
-### 1.5 Node hook ingress arm [category: code] (depends: 1.2, 1.4)
+### 1.5 Node hook ingress arm [category: code] (depends: 1.1, 1.2, 1.4)
 `kind: deliverable`
 
 Targets:
@@ -509,8 +533,8 @@ Targets:
 
 **Granularity:** one leaf with seven acceptance items. They are the outcomes of
 one request path (claim, forward, finalize or release, receipt release) owned
-by `execute`; each item is a branch of that path, and none is testable without
-the others' claim and forward steps.
+by `forward_claimed` and its HTTP wrapper `execute`; each item is a branch of
+that path, and none is testable without the others' claim and forward steps.
 
 **Research context:**
 - `FrontDoor::handle`'s `Door::Node` arm answers
@@ -528,30 +552,38 @@ the others' claim and forward steps.
   `ReceiptGuardedJSONResponse` does on the hub.
 
 **Implementation:**
-- `nodes/hooks/ingress.rs` (new) defines
-  `execute(node: Arc<NodeServices>, ledger, request) -> Response`.
-  `FrontDoor::handle` calls it for `POST /api/hooks/execute` in the
-  `Door::Node` arm, before the relay. The steps:
-  1. Buffer the request body. Without `X-Gobby-Envelope-Id`, or when
-     `response_capability` is below the floor, forward unchanged with no claim.
-  2. Claim. On a lost claim:
-     - replay the stored response with 200;
-     - reclaim a vanished or stale marker;
-     - otherwise answer 409 with the Python bodies.
-  3. In a spawned task:
-     1. Renew the lease every 5 s.
-     2. Run `sweep_receipts`.
-     3. Forward through `HubRelay::forward` and buffer the response.
-  4. Hub 2xx: finalize with the response JSON and the request's `hook_type`.
-     When `hook_type` is `session_start` or `SessionStart`, bump the STOP
-     epoch. Answer the hub's bytes.
-  5. Hub 409 with `status: "processed"`: mark processed without a response
-     and pass the 409 through. Any other 409, a 503, another status or a relay
-     failure releases the claim and passes the response through.
-  6. If the handler's receiver is gone when the task finishes, or writing the
-     body fails, post `release` for an attached `_gobby_delivery_receipt`.
-     The receiver check uses a `oneshot`; the write check wraps the response
-     body in a stream whose drop before the last frame posts `release`.
+- `nodes/hooks/ingress.rs` (new) defines two entry points:
+  - `forward_claimed(node, ledger, envelope_id, request) -> HubOutcome`, the
+    core that 1.6's drain also calls:
+    1. Claim. On a lost claim:
+       - replay the stored response with 200;
+       - reclaim a stale marker (owner dead and lease expired) or a vanished
+         one;
+       - otherwise answer 409 with the Python bodies.
+    2. Start a renewal task that renews the lease every 5 s, concurrent with
+       the next two steps, and cancel it when the forward finishes.
+    3. Run `sweep_receipts`.
+    4. Forward through `HubRelay::forward` and buffer the response.
+    5. Hub 2xx: finalize with the response JSON and the request's
+       `hook_type`. When `hook_type` is `session_start` or `SessionStart`,
+       bump the STOP epoch.
+    6. Hub 409 with `status: "processed"`: mark processed without a response.
+       Any other 409, a 503, another status or a relay failure releases the
+       claim.
+    It never posts a receipt `release`.
+  - `execute(node: Arc<NodeServices>, ledger, request) -> Response`, the HTTP
+    path. `FrontDoor::handle` calls it for `POST /api/hooks/execute` in the
+    `Door::Node` arm, before the relay:
+    1. Buffer the request body. Without `X-Gobby-Envelope-Id`, or when
+       `response_capability` is below the floor, forward unchanged with no
+       claim.
+    2. Run `forward_claimed` in a spawned task and answer its response: the
+       hub's bytes, the replay, or the 409.
+    3. If the handler's receiver is gone when the task finishes, or writing
+       the body fails, post `release` for an attached
+       `_gobby_delivery_receipt`. The receiver check uses a `oneshot`; the
+       write check wraps the response body in a stream whose drop before the
+       last frame posts `release`. Only this path releases a receipt.
 - `nodes/hooks/mod.rs` declares `pub mod ingress;`. `serve.rs` builds
   `FrontDoor::node` and calls `handle` through `serve_connection`; neither
   signature changes in this section.
@@ -562,7 +594,7 @@ Verification planned:
 **Acceptance:**
 
 - 1.5.1 - A hook with an envelope id is claimed, forwarded with ghook's key, finalized with the hub's response, and answered with the hub's bytes. test: `crates/gdaemon/tests/node_hooks.rs::ingress_forwards_and_finalizes`.
-- 1.5.2 - A retry of a processed envelope replays the stored response without reaching the hub, and a retry during processing answers 409 `processing`. test: `crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries`.
+- 1.5.2 - A retry of a processed envelope replays the stored response without reaching the hub, and during a forward that outlasts the 15-second lease the marker's `lease_expires_at` moves forward before the forward returns and a retry answers 409 `processing`. test: `crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries`.
 - 1.5.3 - Hub 503 retry, hub 409 `processing` and relay failure release the claim and pass the hub's response through; hub 409 `processed` marks the envelope processed. test: `crates/gdaemon/tests/node_hooks.rs::ingress_failure_dispositions`.
 - 1.5.4 - Pending receipt acks reach the hub before the hook they precede. test: `crates/gdaemon/tests/node_hooks.rs::ingress_sweeps_receipts_first`.
 - 1.5.5 - A session start answered 2xx bumps the node's STOP epoch. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
@@ -587,11 +619,11 @@ Targets:
   (`prune_orphaned_inbox_temp_files`, 100,000 per pass).
 - The drain's per-file order (`_drain_hook_inbox_once_locked`):
   1. Restore orphaned receipt claims, then consume receipt files.
-  2. Skip a live hook (`defer_live_hook`: a fresh file, or an active
-     processing marker).
-  3. Take the hub-state decisions (1.3's `decide_replay`).
-  4. Clear a stale marker and post.
-  5. On 2xx, mark processed and unlink. 409 retains the file. 401
+  2. Take the hub-state decisions in 1.3's order: Grok check, processed
+     unlink, live skip (`defer_live_hook`: a fresh file, or an active
+     processing marker), fence, floor.
+  3. Clear a stale marker and post.
+  4. On 2xx, mark processed and unlink. 409 retains the file. 401
      quarantines it and releases the claim.
 - `crates/gdaemon/src/serve.rs::serve_doors` creates `HeartbeatHost::new()`
   and starts it with no jobs. `HeartbeatHost::register` refuses after start,
@@ -614,18 +646,20 @@ Targets:
   4. Calls `serve_doors`.
 - `nodes/hooks/drain.rs` (new) defines `drain_once(node, ledger)`:
   1. `sweep_receipts`.
-  2. For each hook file oldest first: skip a live one.
-  3. Post `/api/nodes/hooks/replay` with `age_seconds` from the file mtime and
-     `processed` from the ledger, then act on the disposition:
+  2. For each hook file oldest first, live or not, compute `live` as
+     `Ledger::is_fresh` or `Ledger::is_active`.
+  3. Post `/api/nodes/hooks/replay` with `age_seconds` from the file mtime,
+     `processed` from the ledger and `live`, then act on the disposition:
      - `retain`: keep the file.
      - `requeued`: unlink the file and remove the marker.
      - `unlink`: unlink the file.
      - `archived`: quarantine as `superseded_hook`.
      - `below_floor`: release and quarantine as
        `below_floor_response_capability`.
-     - `execute`: run 1.5's claim and forward path without a client, then on
-       2xx mark processed and ask the replay route once more, with
-       `processed: true`, to apply the post-execute Grok check.
+     - `execute`: call 1.5's `forward_claimed`, never `execute`, so no
+       receipt `release` is posted. On 2xx mark processed and ask the replay
+       route once more, with `processed: true`, to apply the post-execute
+       Grok check.
   4. A 401 from either call quarantines the file as `replay_auth_rejected`.
 - It also defines `prune(ledger)`.
 - `nodes/hooks/mod.rs` declares `pub mod drain;`.
@@ -635,8 +669,8 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.6.1 - The drain applies every replay disposition to the spool file as specified, and an `execute` envelope is forwarded, marked processed and rechecked. test: `crates/gdaemon/tests/node_hooks.rs::drain_applies_dispositions`.
-- 1.6.2 - A live file is skipped, and receipt files are swept before hook files. test: `crates/gdaemon/tests/node_hooks.rs::drain_skips_live_and_sweeps_receipts`.
+- 1.6.1 - The drain applies every replay disposition to the spool file as specified, and an `execute` envelope is forwarded, marked processed and rechecked without posting a receipt `release`. test: `crates/gdaemon/tests/node_hooks.rs::drain_applies_dispositions`.
+- 1.6.2 - A live file is posted with `live: true`, gets the Grok disposition, and is otherwise kept; receipt files are swept before hook files. test: `crates/gdaemon/tests/node_hooks.rs::drain_skips_live_and_sweeps_receipts`.
 - 1.6.3 - At node start, processing markers from a previous process are removed and markers held by the current process are kept. test: `crates/gdaemon/tests/node_hooks.rs::boot_releases_dead_processing_markers`.
 - 1.6.4 - A node daemon registers the drain and prune jobs on its heartbeat host. test: `crates/gdaemon/tests/node_hooks.rs::node_registers_hook_jobs`.
 - 1.6.5 - Pruning removes expired markers and abandoned `.tmp` files older than an hour. test: `crates/gdaemon/tests/node_hooks.rs::prune_markers_and_temp_files`.
@@ -825,6 +859,7 @@ Verification planned:
 `kind: deliverable`
 
 Targets:
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: the unix `run` runs the startup removal retry; two cfg-gated functions share the name `run`
 - `crates/gdaemon/src/nodes/agents/mod.rs`
 - `crates/gdaemon/src/nodes/agents/workspace.rs`
 - `crates/gdaemon/tests/node_agents.rs`
@@ -877,8 +912,9 @@ Targets:
     branch counts as removed.
   - `retry_removals(agents)` tries each pending removal and deletes the
     record of each one that succeeds. 2.8's report job calls it on every
-    interval, and `serve::run` calls it once at start through 2.8's job
-    registration.
+    interval.
+- `serve::run`'s node branch calls `retry_removals` once at start, after
+  2.1's `open` has run `recover_after_restart`, and before `serve_doors`.
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_agents)'`.
@@ -1092,8 +1128,10 @@ Targets:
   `terminal_id` and `exit_code`.
 - `list()` returns `Inventory { epoch, seq, terminals }`. Each entry has
   `terminal_id`, `spawn_key`, `host_terminal_id`, `commit_state` and `pgid`
-  (`crates/gterminals/src/reconcile.rs::HostEntry`). A new epoch means the
-  host restarted and lost its panes.
+  (`crates/gterminals/src/reconcile.rs::HostEntry`). An epoch change alone
+  does not prove the panes are gone: 2.2 never stops the host, and
+  `crates/gterminals/src/host.rs::EpochSnapshot` requires the consumer to
+  check the live host against `current_epoch` before settling anything.
 
 **Implementation:**
 - `nodes/agents/launch.rs` (new):
@@ -1113,10 +1151,11 @@ Targets:
   - `watch_exits(agents)` subscribes to host events. On `terminal_exited`
     for a launched run, it commits an exit `{launched: true, exit_code, reason, workspace}`
     and removes the run. The reason is `cancelled` when a cancel record exists
-    for the run, else `exited`. On an event gap or a reconnect it reconciles.
-  - `reconcile(agents)` lists the inventory. A launched run whose
-    `terminal_id` is absent, or any launched run when the host epoch changed,
-    becomes an `exited` exit with a null `exit_code`.
+    for the run, else `exited`. It reconciles once when it subscribes, and
+    again on an event gap, a reconnect or a host epoch change.
+  - `reconcile(agents)` lists the inventory from the live host. A launched
+    run becomes an `exited` exit with a null `exit_code` only when its
+    `terminal_id` is absent from that inventory; a present run stays live.
 - `serve::run` starts `watch_exits` through 2.8's registration, so this
   section adds no serve change.
 
@@ -1129,7 +1168,7 @@ Verification planned:
 - 2.6.2 - A launch spawns through the chokepoint with `spawn_key` equal to `run_id`, commits, and records the run as launched with its host terminal id. test: `crates/gdaemon/tests/node_agents.rs::launch_spawns_and_commits`.
 - 2.6.3 - A host exit event produces an `exited` exit with the exit code and workspace, or `cancelled` when a cancel record exists. test: `crates/gdaemon/tests/node_agents.rs::exit_events_record_exits`.
 - 2.6.4 - `timeout_seconds` sends `TERM` to the agent. test: `crates/gdaemon/tests/node_agents.rs::timeout_kills_agent`.
-- 2.6.5 - After a restart or a host epoch change, launched runs missing from the inventory become exits with a null exit code, and present ones stay live. test: `crates/gdaemon/tests/node_agents.rs::reconcile_after_restart`.
+- 2.6.5 - `reconcile` turns a launched run whose terminal is absent from the live host's inventory into an `exited` exit with a null exit code and keeps a present one live, both for runs reloaded from durable state after a restart and after a host epoch change. test: `crates/gdaemon/tests/node_agents.rs::reconcile_after_restart`.
 
 ### 2.7 Command dispatch over the node channel [category: code] (depends: 2.6)
 `kind: deliverable`
@@ -1192,8 +1231,10 @@ queue from the commands that need it.
     in order and exits when its queue is idle. `terminal.write` resolves its
     `terminal_id` to a run first.
   - `agent.spawn`:
-    1. A known run answers `{accepted: true}` again and records nothing.
-    2. A cancelled run answers `cancelled`.
+    1. A run with a cancel record answers `cancelled`, even while the run is
+       still known.
+    2. A known run with no cancel record answers `{accepted: true}` again and
+       records nothing.
     3. A run at capacity answers `command_failed`.
     4. Otherwise commit the run as `accepted` and reply.
     5. Start the preparation task under a 300-second deadline (Decision 19)
@@ -1228,10 +1269,10 @@ Verification planned:
 **Acceptance:**
 
 - 2.7.1 - Unknown versions, unknown commands and invalid payloads answer their codes with `stage` `"none"` and the frame's `request_id`, and record nothing. test: `crates/gdaemon/tests/node_agents.rs::dispatch_rejects_bad_frames`.
-- 2.7.2 - A spawn is recorded and answered `{accepted: true}` before preparation starts, then prepared and launched; a repeated spawn for the same run answers the same and records nothing new. test: `crates/gdaemon/tests/node_agents.rs::spawn_accepts_before_preparing`.
+- 2.7.2 - A spawn is recorded and answered `{accepted: true}` before preparation starts, then prepared and launched; a repeated spawn for a known run with no cancel record answers the same and records nothing new. test: `crates/gdaemon/tests/node_agents.rs::spawn_accepts_before_preparing`.
 - 2.7.3 - A spawn at 1,000 accepted and live runs answers `command_failed` with `"none"` and records nothing. test: `crates/gdaemon/tests/node_agents.rs::spawn_refused_at_capacity`.
 - 2.7.4 - A cancel before launch records the cancel, stops preparation, removes the workspace, reports a `cancelled` exit with `launched: false` and answers `{stopped: true}`; a later spawn answers `cancelled`, and a cancel for an unknown run answers `not_found`. test: `crates/gdaemon/tests/node_agents.rs::cancel_before_launch`.
-- 2.7.5 - A cancel of a launched run sends the requested signal and reports a `cancelled` exit when the agent ends. test: `crates/gdaemon/tests/node_agents.rs::cancel_launched_run`.
+- 2.7.5 - A cancel of a launched run sends the requested signal and reports a `cancelled` exit when the agent ends, and a spawn for that run before its exit answers `cancelled`. test: `crates/gdaemon/tests/node_agents.rs::cancel_launched_run`.
 - 2.7.6 - A preparation failure, the preparation deadline and a host launch failure report `prepare_failed`, `prepare_timeout` and `launch_failed` with `launched: false`, and remove the workspace. test: `crates/gdaemon/tests/node_agents.rs::preparation_failures_report_exits`.
 - 2.7.7 - `terminal.write` reaches the host for a known terminal, answers `not_found` for an unknown one, and `command_failed` with `"partial"` when the host fails after the request was sent. test: `crates/gdaemon/tests/node_agents.rs::terminal_write_dispositions`.
 - 2.7.8 - Commands for the same run run one at a time in arrival order, and commands for different runs do not wait on each other. test: `crates/gdaemon/tests/node_agents.rs::same_run_commands_serialize`.
@@ -1279,16 +1320,17 @@ Targets:
     2. Post it.
     3. On 200, drop the exits it carried and their launched workspace
        records.
-    4. On a `stale_report` 409, commit the hub's epoch and report again at
-       once.
+    4. On a `stale_report` 409, commit the hub's epoch and notify `changed`,
+       so `report_loop` sends a fresh report as soon as this one releases
+       `report_lock`. `report_once` never calls itself.
     5. On any other outcome, change nothing; the next report retries.
   - `report_loop(node)` waits on `changed` or the 30-second job tick. A change
     that arrives while a report is in flight queues exactly one more report.
 - `serve::run`'s node branch:
   - registers `node-agent-report` (30 s), whose tick also calls 2.3's
     `retry_removals` and `prune_cancelled`;
-  - at start, runs `retry_removals` once and starts 2.6's `watch_exits` and
-    `report_loop`.
+  - at start, starts 2.6's `watch_exits` and `report_loop`. 2.3 owns the
+    start-time `retry_removals` call.
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_agents) + binary(heartbeat)'`.
@@ -1408,6 +1450,28 @@ deferral:
 
 - 2026-10-13: First draft from the Orchestrator's rulings 1 to 9
   (gobby#15977).
+- 2026-10-13: Revision for Plan Adversary gobby#16791 findings NH-1 to NH-8:
+  the ledger's stale rule is the owner-dead-and-lease-expired conjunction
+  with concurrent renewal (1.2, 1.5); `decide_replay` takes `live` in the
+  drain's slot and the node drain posts every file (1.3, 1.6); the drain
+  calls `forward_claimed`, which never releases a receipt (1.5, 1.6);
+  `reconcile` exits only runs absent from the live inventory (2.6); a cancel
+  record wins over an idempotent spawn (2.7); 2.3 owns the start-time
+  removal retry; 1.5 depends on 1.1; and a `stale_report` notifies `changed`
+  instead of re-entering `report_once` (2.8).
+- 2026-10-13: Consensus with Plan Adversary gobby#16791 after NH-9 (the Grok
+  check runs only at or above the response-capability floor, 1.3) and NH-10
+  (1.5.2 pins the lease renewal write).
+- 2026-10-13: Coordinator return from gobby#15977: P1 expands under #24150
+  and P2 under #24148, with cross-epic order as leaf dependencies (Decision
+  1); the adversary is gobby#16791; the Stage 1 gate prose is dropped because
+  the #21555 edge on both epics enforces it. Consensus with gobby#16791
+  renewed on these bytes.
+- 2026-10-13: Return from gobby#15977 with Josh's ruling "No deferrals":
+  droid and agy, node pane detection and the live proof move into scope, and
+  the v1 payload limits are lifted by an additive contract amendment. The M1
+  manifest stamped at 32d8aa5dde is withdrawn; its bytes stay in Git
+  history. A full adversary re-review and a fresh M1 follow the revision.
 
 ## V2: Verification
 `kind: verification`

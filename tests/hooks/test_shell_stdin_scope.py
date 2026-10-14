@@ -134,3 +134,115 @@ def test_literal_stdin_external_target_stays_external(tmp_path: Path, command: s
     assert data["canonical_write_file_paths"] == [str(target)]
     assert data["canonical_repo_mutation"] is False
     assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh", "zsh", "dash", "ksh"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{shell} <<'EOF'\ntouch a.py\nEOF",
+        "{shell} <<< 'touch a.py'",
+        "echo touch a.py | {shell}",
+    ],
+)
+def test_supported_shell_stdin_scope(tmp_path: Path, shell: str, template: str) -> None:
+    data = metadata(template.format(shell=shell), tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == ["a.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh", "zsh", "dash", "ksh"])
+@pytest.mark.parametrize("pipe", ["|&", "|&\n"])
+def test_stderr_pipe_shell_fails_closed(tmp_path: Path, shell: str, pipe: str) -> None:
+    data = metadata(f"echo touch a.py {pipe} {shell}", tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    # Stderr can add program text, so stdout alone cannot prove the body.
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("options", ["-euo pipefail", "-o pipefail", "-O nullglob"])
+def test_bash_stdin_option_operands(tmp_path: Path, options: str) -> None:
+    data = metadata(f"bash {options} <<'EOF'\ntouch a.py\nEOF", tmp_path)
+    assert data["canonical_write_file_paths"] == ["a.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
+
+
+@pytest.mark.parametrize("wrapper", ["xargs", "env xargs", "xargs -n 2", "xargs -I {}"])
+def test_xargs_arguments_are_not_shell_stdin(tmp_path: Path, wrapper: str) -> None:
+    data = metadata(f"echo touch a.py | {wrapper} bash", tmp_path)
+    assert "a.py" not in data.get("canonical_write_file_paths", [])
+
+
+@pytest.mark.parametrize("shell", ["zsh", "dash", "ksh"])
+def test_other_shell_dynamic_stdin_fails_closed(tmp_path: Path, shell: str) -> None:
+    data = metadata(f'{shell} <<< "$BODY"', tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "options",
+    ["--rcfile custom.rc", "-O lastpipe", "-o", "-eou pipefail", "-o unknown"],
+)
+def test_unproven_stdin_options_stay_unknown(tmp_path: Path, options: str) -> None:
+    data = metadata(f"bash {options} <<'EOF'\ntouch a.py\nEOF", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("shell", ["zsh", "dash", "ksh"])
+def test_other_shell_script_operand_preserves_stdin_as_data(tmp_path: Path, shell: str) -> None:
+    (tmp_path / "read.sh").write_text("echo hi\n")
+    data = metadata(f"{shell} read.sh <<'EOF'\ntouch a.py\nEOF", tmp_path)
+    assert not data.get("canonical_repo_mutation")
+
+
+def test_xargs_inline_shell_body_still_classifies(tmp_path: Path) -> None:
+    data = metadata("echo ignored | xargs bash -c 'touch a.py'", tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_xargs_producer_does_not_prove_literal_stdout(tmp_path: Path) -> None:
+    data = metadata("xargs echo 'touch a.py' | bash", tmp_path)
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_quoted_stderr_pipe_is_data(tmp_path: Path) -> None:
+    assert not metadata("echo '|& bash'", tmp_path).get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "printf '%s\\n' '-c' 'touch a.py' | xargs -d '\\n' bash",
+        "printf '%s\\n' '-c \"touch a.py\"' | xargs bash",
+        "printf '%s\\n' '-c \"touch Dockerfile\"' | xargs bash",
+        "echo touch a.py | xargs bash",
+        "echo ignored | xargs -I {} bash -c '{}'",
+    ],
+)
+def test_xargs_runtime_shell_argv_fails_closed(tmp_path: Path, command: str) -> None:
+    data = metadata(command, tmp_path)
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+    assert "a.py" not in data.get("canonical_write_file_paths", [])
+
+
+def test_xargs_shell_unknown_program_retains_output_scope(tmp_path: Path) -> None:
+    data = metadata("echo touch a.py | xargs bash > result.txt", tmp_path)
+    assert data["canonical_write_file_paths"] == ["result.txt"]
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("option", ["-O", "+O"])
+@pytest.mark.parametrize("script", ["evil.sh", "extglob"])
+@pytest.mark.parametrize("stdin", ["", " <<'EOF'\ntouch a.py\nEOF"])
+def test_zsh_correct_all_keeps_script_operand(
+    tmp_path: Path, option: str, script: str, stdin: str
+) -> None:
+    (tmp_path / script).write_text("touch b.py\n")
+    data = metadata(f"zsh {option} {script}{stdin}", tmp_path)
+    assert data["canonical_write_file_paths"] == ["b.py"]
+    assert not data.get("canonical_repo_mutation_scope_unknown")
