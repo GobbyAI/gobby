@@ -183,9 +183,11 @@ gobby#15977):
     session's machine, overriding `machine` and the origin (hub-mode 2.5).
     As a local resume returns to its worktree, a remote resume runs in the
     workspace the session's earlier run used on that node: the payload names
-    it as an `existing` workspace (3.1), the builder finds it from the hub's
-    workspace row (3.2), and the node runs there in place and never removes
-    it (2.1, 2.3).
+    it as an `existing` workspace (3.1), the builder takes the session's
+    most recently reported `active` worktree or clone row on that machine,
+    ordered by the `updated_at` that hub-mode 1.4 moves each time a report
+    names the workspace (3.2), and the node runs there in place and never
+    removes it (2.1, 2.3).
 24. **MCP command on nodes.** Node launches write `~/.gobby/bin/gmcp` as the
     Gobby MCP server. The leaves that write MCP config (2.3 and 2.6) are
     blocked at expansion by gmcp-stdio 1.6 (#23275), set then like 21.
@@ -285,8 +287,11 @@ Writer decisions for the no-deferrals revision:
     build or check `v` against `CONTRACT_VERSION`.
   - 3.2 blocks hub-mode 2.5 (#24275 Remote spawn goes through the node),
     which calls `build_spawn_payload`.
-  - hub-mode 1.4 (#24270 Node routes) blocks 3.3, which adds one call to
-    the report route that 1.4 creates in `src/gobby/servers/routes/nodes.py`.
+  - hub-mode 1.4 (#24270 Node routes) blocks 3.2 and 3.3. 3.2's
+    `resumed_workspace` orders by the `updated_at` that 1.4's
+    `record_remote_workspaces` sets each time a report names a workspace,
+    and 3.3 adds one call to the report route that 1.4 creates in
+    `src/gobby/servers/routes/nodes.py`.
   - hub-mode 2.3 (#24273 Remote terminal writes go through the node) and 2.4
     (#24274 Remote cancel goes through the node) block 3.4, whose runtime
     calls 2.4's `remote_cancel` and relies on 2.3's write guard.
@@ -295,11 +300,11 @@ Writer decisions for the no-deferrals revision:
     2.6's reconciler when the node's exit arrives.
   - hub-mode D4 (#24283 Live hub-to-node proof) proves this plan's sections
     on a live hub and node (Decision 20).
-- **`render_srt_settings` may move.** The open gmcp-stdio plan
+- **`render_srt_settings` lives in `srt_settings.py`.** gmcp-stdio 1.8
   (`.gobby/plans/gmcp-stdio.md`) moves `render_srt_settings` from
-  `src/gobby/agents/srt_runtime.py` to `src/gobby/agents/srt_settings.py`. This
-  plan's oracle is the function, imported from whichever module defines it
-  when 2.4 is implemented.
+  `src/gobby/agents/srt_runtime.py` to `src/gobby/agents/srt_settings.py`, and
+  it blocks 2.4. 2.4's oracle imports `render_srt_settings` from
+  `src/gobby/agents/srt_settings.py`.
 - **Hub STOP epoch.** The hub route's `.stop_replay_epoch` stays one file per
   hub until #24151, so any machine's session start bumps it. The node replays
   its own stored responses under its own epoch, so the hub's epoch matters only
@@ -1281,8 +1286,9 @@ lays out.
       only when its binary or state directory exists.
   - `sandbox_policy.py` holds per-provider rows for all five providers,
     including droid's and agy's.
-  - With backend `srt`: `render_srt_settings` (see Constraints for its
-    module), with the run's temp root added to `allow_unix_sockets` on macOS.
+  - With backend `srt`: `src/gobby/agents/srt_settings.py::render_srt_settings`
+    (moved there by gmcp-stdio 1.8; see Constraints), with the run's temp root
+    added to `allow_unix_sockets` on macOS.
   - With backend `provider-native`: only claude proves the sensitive-root
     contract (`src/gobby/agents/provider_capabilities.py`,
     `sensitive_path_enforcement`). Any other provider is refused with
@@ -2211,10 +2217,16 @@ ships alone.
   key per prompt (`trust-dismiss:<run_id>` and its siblings), with an
   indexed action key per key in a multi-key sequence. After a send it calls
   `mark_enter_sent`, `mark_dismissed` and `_notify_prompt_injected`, which
-  clears attention after the injection. A loop prompt is dismissed at most
-  once per `LOOP_PROMPT_DISMISS_MIN_INTERVAL_SECONDS` (60), and
-  `LoopTracker` trips at 3, which runs `_checkpoint_and_kill_looping_agent`.
-  Approval prompts are answered only with `auto_enter_approval_prompts`,
+  clears attention after the injection.
+- `TerminalPromptMonitor.check_loop_prompts` reads 15 lines, skips a pane
+  `was_loop_prompt_dismissed` already holds, and dismisses at most once per
+  `LOOP_PROMPT_DISMISS_MIN_INTERVAL_SECONDS` (60) per run. It writes the
+  text `y` with submit under the action key `loop-dismiss:<run_id>`. Only a
+  delivered write records the time, marks the pane dismissed and counts a
+  dismissal; a failed or indeterminate write records nothing.
+  `LoopTracker.should_escalate` is true once the count reaches 3, which runs
+  `_checkpoint_and_kill_looping_agent`.
+- Approval prompts are answered only with `auto_enter_approval_prompts`,
   and the periodic Enter runs only with `auto_enter_agent_terminals`, every
   `auto_enter_agent_interval_seconds`, skipped for a dialog
   (`_should_skip_periodic_enter_for_dialog`).
@@ -2255,7 +2267,12 @@ ships alone.
   2. Handles trust, loop, approval and queued-continuation prompts and the
      periodic Enter with 2.13's detectors and the settings above. It sends
      the Python key sequences through `ControlClient::write` with the Python
-     action keys. Each send raises the run's `injections` count.
+     action keys. Each send raises the run's `injections` count. A loop
+     prompt is answered as `check_loop_prompts` answers it: `y` with submit
+     under `loop-dismiss:<run_id>`, never twice for the same pane and at most
+     once per 60 seconds per run, measured on the node's monotonic clock. The
+     last dismissal time lives in memory beside the run's `RunDetectState`
+     (2.13). Only a delivered write counts a dismissal.
   3. Applies the automatic-write rule per terminal: a write that fails after
      the request was sent latches its action key, and the run gets no
      automatic write under any other key until a hub `terminal.write` (2.7)
@@ -2294,11 +2311,11 @@ Verification planned:
 **Acceptance:**
 
 - 2.14.1 - The node fetches manifests with the last `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check before its first successful fetch. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_fetches_manifests`.
-- 2.14.2 - Trust, approval (only with its flag) and queued-continuation prompts, and the periodic Enter (only with its flag, at its interval, skipped for a dialog), send the Python key sequences with the Python action keys, and each send raises the run's `injections` in the next report. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_auto_enter`.
+- 2.14.2 - Trust, loop, approval (only with its flag) and queued-continuation prompts, and the periodic Enter (only with its flag, at its interval, skipped for a dialog), send the Python key sequences with the Python action keys, and each send raises the run's `injections` in the next report. A loop prompt is answered with `y` and submit under `loop-dismiss:<run_id>`, never twice for the same pane and at most once per 60 seconds per run; a failed write counts no dismissal, and the first two dismissals post no terminate. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_auto_enter`.
 - 2.14.3 - A write that fails after sending latches its action key and blocks automatic writes under other keys, and a later successful hub `terminal.write` to that terminal lifts the latch. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_automatic_write_latch`.
-- 2.14.4 - The third loop dismissal checkpoints the workspace to `refs/gobby/ckpt/<task_id>/<run_id>` and posts `doom_loop`, and a provider stall checkpoints and posts `provider_stall` with its pane tail. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_doom_loop_and_stall_post`.
+- 2.14.4 - The third loop dismissal checkpoints the workspace to `refs/gobby/ckpt/<task_id>/<run_id>` and posts `doom_loop`, a provider stall checkpoints and posts `provider_stall` with its pane tail, and a run with no `task_id` or one that fails `^[\w-]+$` posts with `checkpoint: null`. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_doom_loop_and_stall_post`.
 - 2.14.5 - A run past `timeout_seconds` posts `timeout` with the 50-line tail and one past `init_timeout_seconds` posts `init_timeout`; `retry: true` and an unreachable hub repeat the post on the next tick, `retry: false` ends it for that cause, and no answer makes the node signal the run. test: `crates/gdaemon/tests/node_agents.rs::pane_monitor_timeouts_ask_the_hub`.
-- 2.14.6 - Each report's agent entry carries the run's attention, injections, composer, idle facts and tail. test: `crates/gdaemon/tests/node_agents.rs::report_carries_pane_state`.
+- 2.14.6 - Each report's agent entry carries the run's attention, injections, composer, idle facts and the last 15-line read cut to 2,000 characters. test: `crates/gdaemon/tests/node_agents.rs::report_carries_pane_state`.
 - 2.14.7 - The watch record survives a node daemon restart, so a run that outlives it is still watched, and `agents.json` holds no prompt, endpoint or token. test: `crates/gdaemon/tests/node_agents.rs::watch_record_survives_restart`.
 
 ## P3: Contract version 2 and its hub consumers (#24148)
@@ -2503,6 +2520,22 @@ produce a valid payload, so no field group ships alone.
   (hub-mode Decision 15). A resume keeps its session, so that row names the
   resumed session. `LocalWorktreeManager` and `LocalCloneManager` bind this
   machine, so they cannot read it.
+- Both tables carry `created_at` and `updated_at`, and `worktrees` also
+  `last_activity_at` (`crates/gcore/assets/schema/baseline.sql`). Unique
+  indexes: `idx_worktrees_path (machine_id, worktree_path)`,
+  `idx_worktrees_branch (project_id, branch_name, machine_id)` and
+  `idx_clones_path (machine_id, clone_path)`. Local storage already ranks
+  workspaces by `updated_at DESC` (`src/gobby/storage/worktrees.py`).
+- hub-mode 1.4's `record_remote_workspaces`, as amended for this plan,
+  records `exits[]` entries before `agents[]` entries. For each entry it
+  first sets `updated_at = clock_timestamp()` on the row with that machine
+  and path, and inserts the `active` row with `updated_at = clock_timestamp()`
+  and `ON CONFLICT DO NOTHING` only when no row matched. So `updated_at` is
+  the last time a report named the workspace, a reused path moves it, and
+  within one report a live run's workspace is newer than an exited run's.
+  The update comes first because `worktrees` has two unique indexes, and an
+  `ON CONFLICT DO UPDATE` on the path would abort the report on a branch
+  conflict.
 
 **Implementation:**
 - `spawn_executor_providers.py` gains the module function
@@ -2525,12 +2558,16 @@ produce a valid payload, so no field group ships alone.
   6. sets `monitor` from `tmux_config`, and `task_id` from `run.task_id`;
   7. maps the workspace as hub-mode 2.5's fourth step did, except for a
      resume (`resume_existing_session`) whose request names no isolation:
-     `resumed_workspace(db, run.machine_id, run.child_session_id)` reads the
-     most recent `active` `worktrees` row, else `clones` row, with that
-     machine and `agent_session_id` (a read-only query in this module), and
-     a row gives `{mode: "existing", path, branch_name}`. With no row the
-     mapping above applies, as a local resume with no recorded workspace
-     does;
+     `resumed_workspace(db, run.machine_id, run.child_session_id)`, a
+     read-only query in this module, selects the `active` rows with that
+     `machine_id` and `agent_session_id` from `worktrees` and `clones`
+     together (`UNION ALL` of `worktree_path` and `clone_path` as `path`,
+     with `branch_name`, `updated_at` and `created_at`), orders them by
+     `updated_at DESC, created_at DESC`, and takes the first. So the
+     workspace of the session's most recently reported run wins, and a newer
+     clone beats an older worktree. That row gives
+     `{mode: "existing", path, branch_name}`. With no row the mapping above
+     applies, as a local resume with no recorded workspace does;
   8. returns a validated `SpawnPayload` (3.1), so a field outside the
      contract fails before anything is sent.
 - `api_token` appears only in the returned payload and never in a log line
@@ -2552,7 +2589,7 @@ Verification planned:
 - 3.2.5 - `monitor` carries the hub's `TmuxConfig` values for its four settings. test: `tests/hub/test_spawn_payload.py::test_monitor_from_tmux_config`.
 - 3.2.6 - `task_id` is the run's task id, and null for a run without one. test: `tests/hub/test_spawn_payload.py::test_task_id_from_run`.
 - 3.2.7 - The workspace mapping, `agent_name`, `droid_mode`, `prewarm_pre_commit_store` and `code_index_preflight` match the inputs, and the result validates as `SpawnPayload`. test: `tests/hub/test_spawn_payload.py::test_launch_fields_and_workspace`.
-- 3.2.8 - A resume with no requested isolation names the resumed session's active worktree or clone row on its machine as an `existing` workspace; a row on another machine, an inactive row or a requested isolation is ignored, and with no row the workspace maps as for a new spawn. test: `tests/hub/test_spawn_payload.py::test_resume_uses_existing_workspace`.
+- 3.2.8 - A resume with no requested isolation names, as an `existing` workspace, the resumed session's `active` worktree or clone row on its machine with the greatest `updated_at`, ties broken by the greater `created_at`: a clone with a later `updated_at` beats an older active worktree, and an older worktree whose `updated_at` a repeated report of its path moved beats a clone recorded before that report. A row on another machine, an inactive row or a requested isolation is ignored, and with no row the workspace maps as for a new spawn. test: `tests/hub/test_spawn_payload.py::test_resume_uses_existing_workspace`.
 
 ### 3.3 Node pane state on the hub [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -2982,6 +3019,17 @@ Verification planned:
   2.1, 2.3, 2.7, 3.1, 3.2). The same commit amends hub-mode.md so a resume
   routes to the session's machine and resumes that session there, and 2.5
   builds its payload with 3.2.
+- 2026-10-14: Revision for Plan Adversary gobby#16791 findings NH-12 to
+  NH-14. `resumed_workspace` orders the session's active worktree and clone
+  rows together by `updated_at DESC, created_at DESC`, and hub-mode 1.4's
+  `record_remote_workspaces` moves `updated_at` each time a report names a
+  workspace, exits before live runs; hub-mode 1.4 now blocks 3.2 (Decision
+  23, Constraints, 3.2, 3.2.8). 2.4's oracle imports `render_srt_settings`
+  from `src/gobby/agents/srt_settings.py`, where gmcp-stdio 1.8 moves it
+  (Constraints, 2.4). 2.14 states and accepts the loop-prompt dismissal (`y`
+  with submit under `loop-dismiss:<run_id>`, once per pane, at most once per
+  60 seconds per run), the null checkpoint for a run without a valid task id,
+  and the 2,000-character tail (2.14.2, 2.14.4, 2.14.6).
 
 ## V2: Verification
 `kind: verification`
