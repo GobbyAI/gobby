@@ -12,3 +12,4 @@ pub mod serve;
 pub mod state;
 #[cfg(unix)]
 mod state_services;
+pub mod websocket;
