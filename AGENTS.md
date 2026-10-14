@@ -233,6 +233,14 @@ state inconsistent.
   `target/release/`; and the stamped coherent set is exactly `gcode`, `gdaemon`,
   `ghook`, so other `gobby-core` dependents such as `gclient` must be rebuilt alongside
   them but are promoted separately.
+  Every shipped binary whose crate or recursive path dependencies changed gets
+  a `0.0.1` patch-version bump in its shipping commit, with `Cargo.lock` updated.
+  Keep managed version pins and the gcode maintenance version floor in step.
+  Apply this to `gcode`, `gdaemon`, `ghook`, `gclient`, and `gterm` only when
+  released. Workspace promotion records each binary's version and source identity
+  in `.<binary>-release-identity.json`; same-version changed-source promotion is
+  refused by the shared promotion guard, including cutover preflight before stop.
+  Same-source re-promotion is permitted. Component installs use the same guard.
   Load the `rust` skill before editing Rust; conventions live in `crates/CLAUDE.md`.
 - Key paths: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
   owner-only 0600), `~/.gobby/logs/`, `.gobby/project.json` (project metadata),

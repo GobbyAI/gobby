@@ -16,6 +16,7 @@ from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import (
     clear_source_hash,
     file_sha256,
+    install_staged_cargo_binary,
     stage_and_promote_binary_file,
     workspace_binary_is_current,
     write_source_hash,
@@ -213,7 +214,9 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
             return None
 
         dest = bin_dir / module._GTERM_BIN_NAME
-        if workspace_binary_is_current(bin_dir, "gterm", src_bin, dest):
+        if workspace_binary_is_current(
+            bin_dir, "gterm", src_bin, dest, workspace_root=manifest.parent
+        ):
             return "current"
         lock = try_acquire_native_bin_lock("gterm", bin_dir=bin_dir)
         if lock is None:
@@ -224,6 +227,7 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
                 src_bin,
                 destination=dest,
                 prepare_staged=_codesign_workspace_binary,
+                workspace_root=manifest.parent,
             )
             write_source_hash(bin_dir, "gterm", file_sha256(src_bin))
         return "promoted"
@@ -241,7 +245,7 @@ def install_gterm_from_cargo_git(module: Any, bin_dir: Path) -> bool:
         return False
     try:
         module.click.echo("  Compiling gterm from source (this may take several minutes)...")
-        result = module.subprocess.run(
+        return install_staged_cargo_binary(
             [
                 "cargo",
                 "install",
@@ -254,11 +258,11 @@ def install_gterm_from_cargo_git(module: Any, bin_dir: Path) -> bool:
                 "--root",
                 str(bin_dir.parent),
             ],
-            capture_output=True,
-            text=True,
+            binary_name=module._GTERM_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
             timeout=_WORKSPACE_BUILD_TIMEOUT_SECONDS,
         )
-        return bool(result.returncode == 0)
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gterm: cargo install --git failed: %s", e)
         return False
@@ -274,7 +278,7 @@ def install_gterm_from_cargo_binstall(
         return False
     try:
         crate = f"{_CRATE_PACKAGE}@{version}" if version else _CRATE_PACKAGE
-        result = module.subprocess.run(
+        return install_staged_cargo_binary(
             [
                 "cargo-binstall",
                 crate,
@@ -283,11 +287,11 @@ def install_gterm_from_cargo_binstall(
                 "--no-confirm",
                 "--no-symlinks",
             ],
-            capture_output=True,
-            text=True,
+            binary_name=module._GTERM_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
             timeout=60,
         )
-        return bool(result.returncode == 0)
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gterm: cargo-binstall failed: %s", e)
         return False
@@ -317,13 +321,13 @@ def install_gterm_from_cargo_install(
         if version:
             cmd.extend(["--version", version])
         module.click.echo("  Compiling gterm from source (this may take several minutes)...")
-        result = module.subprocess.run(
+        return install_staged_cargo_binary(
             cmd,
-            capture_output=True,
-            text=True,
+            binary_name=module._GTERM_BIN_NAME,
+            bin_dir=bin_dir,
+            run=module.subprocess.run,
             timeout=_WORKSPACE_BUILD_TIMEOUT_SECONDS,
         )
-        return bool(result.returncode == 0)
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gterm: cargo install failed: %s", e)
         return False

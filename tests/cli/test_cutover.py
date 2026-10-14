@@ -217,11 +217,11 @@ def _identity(version: int) -> dict[str, int | str]:
     }
 
 
-def _write_stub(path: Path, identity: dict[str, int | str]) -> None:
+def _write_stub(path: Path, identity: dict[str, int | str], version: str = VERSION) -> None:
     payload = json.dumps(identity, sort_keys=True)
     path.write_text(
         "#!/bin/sh\n"
-        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{path.name} {VERSION}'; "
+        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{path.name} {version}'; "
         f"else printf '%s\\n' '{payload}'; fi\n",
         encoding="utf-8",
     )
@@ -229,8 +229,14 @@ def _write_stub(path: Path, identity: dict[str, int | str]) -> None:
 
 
 def _artifacts(root: Path, identity: dict[str, int | str]) -> dict[str, Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
+    for member in SET_MEMBERS:
+        crate = root / "crates" / member
+        crate.mkdir(parents=True, exist_ok=True)
+        (crate / "Cargo.toml").write_text(f'[package]\nname = "{member}"\nversion = "{VERSION}"\n')
     release = root / "target" / "release"
-    release.mkdir(parents=True)
+    release.mkdir(parents=True, exist_ok=True)
     artifacts = {member: release / member for member in SET_MEMBERS}
     for artifact in artifacts.values():
         _write_stub(artifact, identity)
@@ -597,7 +603,7 @@ def _stub_cutover_pipeline(
         events.append("promote")
 
     monkeypatch.setattr(
-        cutover_module, "_build_artifacts", lambda _root: _artifacts(tmp_path, _identity(420))
+        cutover_module, "_build_artifacts", lambda root: _artifacts(root, _identity(420))
     )
     monkeypatch.setattr(cutover_module, "restart_start_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promote)
@@ -691,12 +697,12 @@ def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
     bin_dir.mkdir()
     installed = {name: bin_dir / name for name in SET_MEMBERS}
     for path in installed.values():
-        _write_stub(path, _identity(419))
+        _write_stub(path, _identity(419), "0.4.0")
     stamp = bin_dir / ".gdaemon-schema-identity.json"
     stamp.write_text(json.dumps(_identity(419)), encoding="utf-8")
     paths = [*installed.values(), stamp]
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
-    candidate = _artifacts(tmp_path / "candidate", _identity(420))
+    candidate = _artifacts(tmp_path, _identity(420))
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: candidate)
     monkeypatch.setattr(daemon_lifecycle, "is_test_protect_enabled", lambda: False)
     monkeypatch.setattr(

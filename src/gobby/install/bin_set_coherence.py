@@ -90,6 +90,7 @@ def promote_workspace_binary_set(
     *,
     bin_dir: Path,
     metadata: WorkspacePromotionMetadata | None = None,
+    workspace_root: Path | None = None,
 ) -> None:
     """Promote a coherent partial or complete workspace binary set."""
     ordered = _validate_candidates(candidates)
@@ -106,6 +107,10 @@ def promote_workspace_binary_set(
     else:
         _require_installed_agreement(identities, bin_dir=bin_dir)
 
+    bin_freshness_promotion.preflight_binary_promotions(
+        dict(candidates), bin_dir=bin_dir, workspace_root=workspace_root
+    )
+
     bin_dir.mkdir(parents=True, exist_ok=True)
     promoted: list[str] = []
     try:
@@ -115,11 +120,15 @@ def promote_workspace_binary_set(
                 if lock is None:
                     raise OSError(f"{member} native binary update is already in progress")
                 locks.enter_context(lock)
+            bin_freshness_promotion.preflight_binary_promotions(
+                dict(candidates), bin_dir=bin_dir, workspace_root=workspace_root
+            )
             for member in ordered:
                 bin_freshness_promotion.stage_and_promote_binary_file(
                     candidates[member],
                     destination=bin_dir / native_bin_name(member),
                     prepare_staged=_codesign_workspace_binary,
+                    workspace_root=workspace_root,
                 )
                 promoted.append(member)
             if complete_set:
