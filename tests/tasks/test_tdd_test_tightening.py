@@ -109,7 +109,7 @@ def test_post_production_proof_rejects_unattributable_red(cause: str) -> None:
     assert not evaluate_tdd_evidence((test,), evidence).passed
 
 
-def test_post_production_proof_credits_added_node() -> None:
+def test_post_production_proof_rejects_unproven_added_node() -> None:
     test, evidence = cycle()
     baseline = BEFORE.replace("test_feature", "test_other")
     evidence = replace(
@@ -127,7 +127,7 @@ def test_post_production_proof_credits_added_node() -> None:
         ),
     )
 
-    assert evaluate_tdd_evidence((test,), evidence).passed
+    assert not evaluate_tdd_evidence((test,), evidence).passed
 
 
 @pytest.mark.parametrize("cause", ["no_green", "unconfirmed", "fragment", "foreign_green"])
@@ -298,3 +298,45 @@ def test_post_production_cycle_rejects_intermediate_expectation_reset() -> None:
     )
 
     assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("mutation", ["setattr(Engine, 'run', fake)", "install_fake()"])
+def test_post_production_proof_rejects_added_assertion_mutation(mutation: str) -> None:
+    test, _ = cycle()
+    baseline = (
+        "import feature\nfrom feature import Engine\n\n"
+        "def fake(self):\n    return feature.flag\n\n"
+        "def install_fake():\n    Engine.run = fake\n\n"
+        "def test_other():\n    assert Engine().run() == 2\n"
+    )
+    added = (
+        f"\ndef test_feature():\n    assert {mutation} is None\n    assert Engine().run() == 2\n"
+    )
+    production = "flag = 0\nclass Engine:\n    def run(self):\n        return 2\n"
+    evidence = TranscriptEvidence(
+        edits=(
+            edit(TEST_PATH, 1, baseline),
+            edit("src/feature.py", 2, production),
+            edit(TEST_PATH, 4, baseline + added),
+            edit("src/feature.py", 6, production.replace("flag = 0", "flag = 2")),
+        ),
+        validation_runs=(run(3), run(5, red=True), run(7)),
+    )
+
+    assert not evaluate_tdd_evidence((replace(test, body=added),), evidence).passed
+
+
+def test_post_production_proof_credits_literal_expectation_change() -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=(
+            replace(
+                evidence.edits[0],
+                source_after=BEFORE.replace("Engine().run()", "Engine().run() == 1"),
+            ),
+            *evidence.edits[1:],
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed

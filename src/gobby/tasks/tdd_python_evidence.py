@@ -77,28 +77,11 @@ def _has_python_test_tightening(
     after = copy.deepcopy(current_module)
     current = _test_node_from_module(test, after)
     previous = _test_node_from_module(test, before)
-    if current is None or not _normalize_expectations(current):
+    # A new node has no previously executed behavior to compare. Assertions may
+    # themselves mutate bindings, so deleting that node cannot prove tightening.
+    if current is None or previous is None:
         return False
-    if previous is None:
-        # Added tests may only introduce assertions, without executable definition setup.
-        if (
-            not all(isinstance(statement, ast.Assert) for statement in current.body)
-            or current.decorator_list
-            or current.args.defaults
-            or any(default is not None for default in current.args.kw_defaults)
-            or current.returns is not None
-            or any(
-                arg.annotation is not None
-                for arg in ast.walk(current.args)
-                if isinstance(arg, ast.arg)
-            )
-        ):
-            return False
-        for parent in ast.walk(after):
-            if isinstance(parent, ast.Module | ast.ClassDef) and current in parent.body:
-                parent.body.remove(current)
-                break
-    elif not _normalize_expectations(previous):
+    if not _normalize_expectations(current) or not _normalize_expectations(previous):
         return False
     return ast.dump(baseline) != ast.dump(current_module) and ast.dump(before) == ast.dump(after)
 

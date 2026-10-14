@@ -372,6 +372,11 @@ def _test_tightening_proof(
     red: TranscriptValidationRun,
     parse_cache: PythonModuleCache | None = None,
 ) -> bool:
+    """Verify transcript and source continuity, not semantic non-interference.
+
+    Accepted residuals include pre-existing executable mutation in an existing
+    test node, an unchanged module helper, or a pre-GREEN fixture.
+    """
     prior_green = max(
         (
             candidate
