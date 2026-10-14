@@ -721,6 +721,18 @@ invariant. Base validation and user approval remain separate mandatory gates.
 
 ## Review Severity and Approval
 
+A plan with any unresolved question may not be stamped, approved or expanded.
+An Open Questions section, TBD or to-decide markers, an unchosen either/or, and
+a choice left to the implementer are blocking findings. Resolve the decisions
+in the plan text before review; optional review never waives this requirement.
+
+The adversary rejects the plan and bounces it to the writer. The writer sends
+each open question to the operator as a decision with options and a
+recommendation, following the project's operator communication route. After
+the operator answers, the writer resolves every question in the plan text.
+The adversary re-reviews the corrected plan and only then reaches consensus
+and stamps it. A prior consensus or manifest does not waive this requirement.
+
 The active plan-review protocol uses `blocking` and `nit`. A blocking finding
 names a concrete violated obligation and a repair; it must be resolved before
 approval. A nit is cosmetic or advisory and does not block approval. Every finding
