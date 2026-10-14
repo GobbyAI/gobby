@@ -1137,3 +1137,185 @@ async def test_chained_handler_failure_is_reported_and_the_queue_continues() -> 
             await connection
         except asyncio.CancelledError:
             pass
+
+
+async def _end_connection(socket: _ScriptedSocket, connection: asyncio.Task[None]) -> None:
+    socket.close()
+    try:
+        await asyncio.wait_for(connection, timeout=1)
+    except (TimeoutError, asyncio.CancelledError):
+        connection.cancel()
+        try:
+            await connection
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "slow_frame",
+    [
+        {"type": "workspace_attach", "request_id": "slow-1"},
+        {"type": "workspace_snapshot", "request_id": "slow-1", "workspace": "ws-1"},
+        {"type": "terminal_list", "request_id": "slow-1"},
+        {"type": "terminal_create", "request_id": "slow-1"},
+        {"type": "terminal_kill", "request_id": "slow-1", "terminal_id": "term-a"},
+    ],
+    ids=lambda frame: frame["type"],
+)
+async def test_operator_input_runs_while_a_slow_handler_is_still_running(
+    slow_frame: dict[str, Any],
+) -> None:
+    """Keystrokes and take-control on the same socket must not queue behind a slow handler."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    slow_started = asyncio.Event()
+    release = asyncio.Event()
+    input_done = asyncio.Event()
+    take_done = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        slow_started.set()
+        await release.wait()
+
+    async def operator_input(_websocket: Any, _data: dict[str, Any]) -> None:
+        input_done.set()
+
+    async def take_control(_websocket: Any, _data: dict[str, Any]) -> None:
+        take_done.set()
+
+    server._dispatch_table = {
+        slow_frame["type"]: slow,
+        "terminal_input": operator_input,
+        "terminal_take_control": take_control,
+    }
+    socket = _ScriptedSocket(
+        [
+            json.dumps(slow_frame),
+            json.dumps(
+                {
+                    "type": "terminal_input",
+                    "terminal_id": "term-b",
+                    "attachment_id": "att-b",
+                    "client_write_seq": 1,
+                    "data": "x",
+                }
+            ),
+            json.dumps(
+                {"type": "terminal_take_control", "terminal_id": "term-b", "attachment_id": "att-b"}
+            ),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(slow_started.wait(), timeout=1)
+        await asyncio.wait_for(input_done.wait(), timeout=1)
+        await asyncio.wait_for(take_done.wait(), timeout=1)
+        assert not release.is_set()
+    finally:
+        release.set()
+        await _end_connection(socket, connection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_type", ["workspace_attach", "workspace_snapshot"])
+async def test_workspace_read_keeps_its_place_behind_a_workspace_mutation(read_type: str) -> None:
+    """A snapshot read after a mutation on the same socket must see that mutation finished."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    mutation_started = asyncio.Event()
+    release = asyncio.Event()
+    read_done = asyncio.Event()
+    order: list[str] = []
+
+    async def mutation(_websocket: Any, _data: dict[str, Any]) -> None:
+        mutation_started.set()
+        await release.wait()
+        order.append("mutation")
+
+    async def read(_websocket: Any, _data: dict[str, Any]) -> None:
+        order.append("read")
+        read_done.set()
+
+    server._dispatch_table = {"workspace_op": mutation, read_type: read}
+    socket = _ScriptedSocket(
+        [
+            json.dumps({"type": "workspace_op", "request_id": "op-1", "op": "pane.split"}),
+            json.dumps({"type": read_type, "request_id": "read-1", "workspace": "ws-1"}),
+        ],
+        hold_open=True,
+    )
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(mutation_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert order == []
+        release.set()
+        await asyncio.wait_for(read_done.wait(), timeout=1)
+        assert order == ["mutation", "read"]
+    finally:
+        release.set()
+        await _end_connection(socket, connection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("frame", "survives"),
+    [
+        ({"type": "terminal_create", "request_id": "c-1"}, True),
+        ({"type": "terminal_kill", "request_id": "k-1", "terminal_id": "term-a"}, True),
+        ({"type": "workspace_attach", "request_id": "a-1"}, False),
+        ({"type": "terminal_list", "request_id": "l-1"}, False),
+    ],
+    ids=lambda value: value["type"] if isinstance(value, dict) else str(value),
+)
+async def test_disconnect_keeps_spawns_and_kills_and_cancels_reads(
+    frame: dict[str, Any], survives: bool
+) -> None:
+    """A dropped socket must not abandon a spawn or kill halfway, but stops a pure read."""
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        auth_callback=AsyncMock(return_value="test-user"),
+    )
+    _quiet_disconnect(server)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow(_websocket: Any, _data: dict[str, Any]) -> None:
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        finished.set()
+
+    server._dispatch_table = {frame["type"]: slow}
+    socket = _ScriptedSocket([json.dumps(frame)], hold_open=True)
+    connection = asyncio.create_task(server.handle_connection(socket))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        socket.close()
+        await asyncio.wait_for(connection, timeout=1)
+        release.set()
+        if survives:
+            await asyncio.wait_for(finished.wait(), timeout=1)
+            assert not cancelled.is_set()
+        else:
+            assert cancelled.is_set()
+            assert not finished.is_set()
+    finally:
+        release.set()
+        await _end_connection(socket, connection)

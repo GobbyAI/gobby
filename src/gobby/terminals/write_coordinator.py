@@ -203,11 +203,17 @@ class WriteCoordinator:
                 )
                 if replay is not None:
                     return replay
-            blocked = await asyncio.to_thread(
-                self._blocked_automatic, request.terminal_id, request.action_key, request.origin
-            )
-            if blocked is not None:
-                return blocked
+            # Only automatic writes read the quarantine; an operator keystroke
+            # must not queue for a worker thread just to learn that (#23080).
+            if request.origin == "automatic":
+                blocked = await asyncio.to_thread(
+                    self._blocked_automatic,
+                    request.terminal_id,
+                    request.action_key,
+                    request.origin,
+                )
+                if blocked is not None:
+                    return blocked
             outcome = await self._write_locked(
                 request,
                 latch=_latches(request),

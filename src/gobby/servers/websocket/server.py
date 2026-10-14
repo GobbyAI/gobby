@@ -58,23 +58,34 @@ logger = logging.getLogger(__name__)
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
 # These handlers do their slow work off the read loop. Later frames on the
 # same socket are read while they run. Frames for one terminal stay in
-# arrival order; another terminal's frames do not wait (#22709).
+# arrival order; another terminal's frames do not wait (#22709). Workspace
+# reads, listings, spawns and kills are here too, so the operator's keystrokes
+# never wait behind them (#23080).
 _OFF_LOOP_MESSAGE_TYPES = frozenset(
     {
         "terminal_attach",
+        "terminal_create",
         "terminal_detach",
         "terminal_input",
+        "terminal_kill",
+        "terminal_list",
         "terminal_paste",
         "terminal_release_control",
         "terminal_resize",
         "terminal_take_control",
+        "workspace_attach",
         "workspace_op",
+        "workspace_snapshot",
     }
 )
+# A workspace read keeps its place among the socket's workspace mutations.
+_WORKSPACE_CHAIN_TYPES = frozenset({"workspace_attach", "workspace_op", "workspace_snapshot"})
 # Reads and waits are cancelled with the socket. Mutations stay alive so a
-# committed close still publishes its removal and reaps the shell.
+# committed close still publishes its removal and reaps the shell, and a spawn
+# or kill already under way is not abandoned halfway.
 _READ_WORKSPACE_OPS = frozenset({"workspace.list", "pane.read", "pane.wait_for_output"})
 _DURABLE_WORKSPACE_OPS = frozenset(WORKSPACE_OPS) - _READ_WORKSPACE_OPS
+_DURABLE_TERMINAL_TYPES = frozenset({"terminal_create", "terminal_kill"})
 _DURABLE_OFF_LOOP_STOP_SECONDS = 2.0
 
 
@@ -90,13 +101,17 @@ def _message_leaves_the_read_loop(message: str) -> bool:
     return isinstance(message_type, str) and message_type in _OFF_LOOP_MESSAGE_TYPES
 
 
-def _workspace_op_survives_disconnect(message: str) -> bool:
-    """True when this workspace_op must finish after the socket drops."""
+def _survives_disconnect(message: str) -> bool:
+    """True when this off-loop frame must finish after the socket drops."""
     try:
         data = json.loads(message)
     except json.JSONDecodeError:
         return False
-    if not isinstance(data, dict) or data.get("type") != "workspace_op":
+    if not isinstance(data, dict):
+        return False
+    if data.get("type") in _DURABLE_TERMINAL_TYPES:
+        return True
+    if data.get("type") != "workspace_op":
         return False
     op = data.get("op")
     return isinstance(op, str) and op in _DURABLE_WORKSPACE_OPS
@@ -111,7 +126,7 @@ def _off_loop_chain_key(message: str) -> str:
     if not isinstance(data, dict):
         return ""
     message_type = data.get("type")
-    if message_type == "workspace_op":
+    if message_type in _WORKSPACE_CHAIN_TYPES:
         return "workspace_op"
     for field in ("terminal_id", "attachment_id"):
         value = data.get(field)
@@ -604,7 +619,7 @@ class WebSocketServer(
             self._forget_off_loop_tail(key, done)
 
         task.add_done_callback(forget)
-        if _workspace_op_survives_disconnect(message):
+        if _survives_disconnect(message):
             self._off_loop_durable.add(task)
             task.add_done_callback(self._off_loop_durable.discard)
 
