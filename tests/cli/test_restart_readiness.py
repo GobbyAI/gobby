@@ -126,6 +126,21 @@ def test_restart_waits_through_native_unavailability(
         {"status": "unavailable", "backend": {"state": "starting"}},
         {"status": "unavailable", "backend": {"state": 1, "target": "test"}},
         {"status": "error", "backend": {"state": "starting", "target": "test"}},
+        {
+            "error": "backend_refused",
+            "status": "unavailable",
+            "backend": {
+                "state": "refused",
+                "refusal": "schema mismatch",
+                "target": "http://127.0.0.1:60888",
+            },
+        },
+        {
+            "error": "standby",
+            "status": "unavailable",
+            "state": "standby",
+            "backend": {"state": "standby", "target": "http://127.0.0.1:60888"},
+        },
     ],
 )
 def test_startup_poll_rejects_unrecognized_503(

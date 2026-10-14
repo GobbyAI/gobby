@@ -124,7 +124,7 @@ def _poll_startup_progress(
                         isinstance(unavailable, dict)
                         and unavailable.get("status") == "unavailable"
                         and isinstance(backend, dict)
-                        and isinstance(backend.get("state"), str)
+                        and backend.get("state") in ("starting", "down")
                         and isinstance(backend.get("target"), str)
                     ):
                         time.sleep(0.5)
