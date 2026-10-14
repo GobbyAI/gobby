@@ -1410,7 +1410,7 @@ These obligations follow the MCP authorization specification of 2026-07-28.
 
 ```yaml
 deferral:
-  task_ref: "TBD-at-expansion"
+  task_ref: "#24360"
   reason: "The OAuth authorization server serves the HTTP transport, which is the MCP front door flip (S2.12). Its access tokens become a second bearer kind at the dispatch seam #23519 (Shared-token cutover) built, which closed on 2026-10-09. The task expands held needs-planning, because an authorization server needs its own planning pass before it can be specified."
   owner: "gobby-1.0 stage 2 (S2.12, #21570)"
   original_acceptance_items:
