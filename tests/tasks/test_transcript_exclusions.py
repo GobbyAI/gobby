@@ -23,8 +23,11 @@ from gobby.tasks import (
     transcript_exclusions,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import _derivation_fingerprint, derive_transcript_evidence
-from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks.transcript_evidence_snapshots import (
+    clear_evidence_snapshots,
+    derivation_fingerprint,
+)
 from gobby.tasks.transcript_evidence_transfer import ChunkedPayload
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_outcomes import (
@@ -115,8 +118,8 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     session = _session("claude", transcript)
     config = default_validation_detection_config()
     start = BASE_TIME + timedelta(minutes=5)
-    window_fingerprint = _derivation_fingerprint(session, start, config, set(), str(tmp_path), None)
-    prelink_fingerprint = _derivation_fingerprint(session, None, config, set(), str(tmp_path), None)
+    window_fingerprint = derivation_fingerprint(session, start, config, set(), str(tmp_path), None)
+    prelink_fingerprint = derivation_fingerprint(session, None, config, set(), str(tmp_path), None)
     window_key = f"{session.id}:{window_fingerprint}"
     prelink_key = f"{session.id}:{prelink_fingerprint}"
 
