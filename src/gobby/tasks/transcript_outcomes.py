@@ -30,6 +30,76 @@ _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
+_PYTHON_EXECUTABLE = re.compile(r"python(?:\d+(?:\.\d+)*)?t?")
+_UV_VALUE_OPTIONS = frozenset(
+    {
+        "--allow-insecure-host",
+        "--cache-dir",
+        "--color",
+        "--config-file",
+        "--config-setting",
+        "--directory",
+        "--env-file",
+        "--extra",
+        "--no-extra",
+        "--group",
+        "--no-group",
+        "--only-group",
+        "--package",
+        "--project",
+        "--python",
+        "--python-preference",
+        "--python-platform",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "--index",
+        "--default-index",
+        "--index-url",
+        "--extra-index-url",
+        "--index-strategy",
+        "--find-links",
+        "--keyring-provider",
+        "-C",
+        "-p",
+        "-w",
+        "-i",
+        "-f",
+    }
+)
+_UV_FLAG_OPTIONS = frozenset(
+    {
+        "--no-sync",
+        "--frozen",
+        "--locked",
+        "--offline",
+        "--no-progress",
+        "--no-config",
+        "--isolated",
+        "--no-project",
+        "--no-env-file",
+        "--active",
+        "--all-packages",
+        "--all-extras",
+        "--all-groups",
+        "--no-default-groups",
+        "--no-dev",
+        "--only-dev",
+        "--no-editable",
+        "--exact",
+        "--no-index",
+        "--no-python-downloads",
+        "--managed-python",
+        "--no-managed-python",
+        "--no-cache",
+        "--quiet",
+        "--verbose",
+        "--system-certs",
+        "-n",
+        "-q",
+        "-v",
+    }
+)
 
 _HOOK_BLOCKING_ATTACHMENT = "hook_blocking_error"
 _TOOL_DENIAL_KIND_KEYS = ("toolDenialKind", "tool_denial_kind")
@@ -132,18 +202,55 @@ def _wrapper_reason(command: str) -> str | None:
 
 
 def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
-    executable, arguments = _first_executable(parsed)
+    resolved = _first_executable(parsed)
+    if resolved is None:
+        return "ambiguous launcher"
+    executable, arguments = resolved
     if executable == "nohup":
         return "nohup wrapper"
-    if executable in _SHELL_COMMAND_WRAPPERS and any(
-        argument in {"-c", "-lc"} for argument in arguments
-    ):
-        return "subshell wrapper"
+    if executable in _SHELL_COMMAND_WRAPPERS:
+        if not arguments or arguments[0].startswith("-"):
+            return "subshell wrapper"
     if executable == "js_repl":
         return "js_repl wrapper"
     if executable in _NODE_WRAPPERS:
         return "node wrapper"
+    if _PYTHON_EXECUTABLE.fullmatch(executable):
+        return _python_wrapper_reason(arguments)
     return None
+
+
+def _python_wrapper_reason(arguments: tuple[str, ...]) -> str | None:
+    """Credit only proven module/script runs; unknown options fail closed."""
+    options = iter(arguments)
+    for argument in options:
+        if argument == "--":
+            script = next(options, "")
+            return None if script and script != "-" else "ambiguous python execution"
+        if argument == "-" or not argument:
+            return "ambiguous python execution"
+        if not argument.startswith("-"):
+            return None  # Everything after the script path is script data.
+        if argument == "--check-hash-based-pycs":
+            if next(options, None) is None:
+                return "ambiguous python execution"
+            continue
+        # CPython scans combined short options. W/X consume the token suffix,
+        # or the next argument when no suffix remains; their operands are data.
+        short_options = argument[1:]
+        for index, option in enumerate(short_options):
+            if option in "cm":
+                if option == "c":
+                    return "python inline wrapper"
+                module = short_options[index + 1 :] or next(options, "")
+                return None if module else "ambiguous python execution"
+            if option in "WX":
+                if index == len(short_options) - 1 and next(options, None) is None:
+                    return "ambiguous python execution"
+                break
+            if option not in "bBdEiIOPqRsStuvx":
+                return "unsupported python option"
+    return "ambiguous python execution"
 
 
 def _trailing_output_command(parsed: ParsedShellCommand) -> str | None:
@@ -163,21 +270,67 @@ def _trailing_output_command(parsed: ParsedShellCommand) -> str | None:
     return executable if executable in {"echo", "printf"} else None
 
 
-def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]:
+def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]] | None:
     if not parsed.segments or not parsed.segments[0]:
-        return "", ()
+        return None
     tokens = parsed.segments[0]
-    executable_index = 0
-    while executable_index < len(tokens) and _ENV_ASSIGNMENT_PREFIX.match(tokens[executable_index]):
-        executable_index += 1
-    if executable_index >= len(tokens):
-        return "", ()
-    executable = os.path.basename(tokens[executable_index])
-    arguments = tokens[executable_index + 1 :]
-    if executable == "uv" and len(arguments) >= 2 and arguments[0] == "run":
-        executable = os.path.basename(arguments[1])
-        arguments = arguments[2:]
-    return executable, arguments
+    while tokens:
+        if _ENV_ASSIGNMENT_PREFIX.match(tokens[0]):
+            tokens = tokens[1:]
+            continue
+        executable = os.path.basename(tokens[0])
+        arguments = tokens[1:]
+        if executable == "uv":
+            if arguments and arguments[0] in {"pip", "lock", "sync", "tree", "version"}:
+                return executable, arguments  # Known direct checks, never child launchers.
+            inner = _uv_run_arguments(arguments)
+            if inner is None:
+                return None
+            tokens = inner
+        elif executable in {"env", "rtk"}:
+            if arguments[:1] == ("--",):
+                arguments = arguments[1:]
+            if arguments and arguments[0].startswith("-"):
+                return None
+            tokens = arguments
+        elif executable == "nice":
+            return None  # Normalization already removed every proven nice prefix.
+        else:
+            return executable, arguments
+    return None
+
+
+def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Resolve only known uv options, stopping at the child command boundary."""
+    index = 0
+    seen_run = False
+    while index < len(arguments):
+        token = arguments[index]
+        if not seen_run and token == "run":
+            seen_run = True
+            index += 1
+            continue
+        if seen_run and token == "--":
+            return arguments[index + 1 :] or None
+        if not token.startswith("-"):
+            return arguments[index:] if seen_run else None
+        option, equals, value = token.partition("=")
+        if option in _UV_VALUE_OPTIONS:
+            if equals:
+                if not value:
+                    return None
+                index += 1
+            elif index + 1 < len(arguments):
+                index += 2
+            else:
+                return None
+        elif token in _UV_FLAG_OPTIONS or re.fullmatch(r"-[qv]+", token):
+            index += 1
+        elif len(token) > 2 and token[:2] in _UV_VALUE_OPTIONS:
+            index += 1  # Attached short-option operand, e.g. -p3.14.
+        else:
+            return None
+    return None
 
 
 def is_unexecuted_tool_result(result: Any, *, source: str | None = None) -> bool:
