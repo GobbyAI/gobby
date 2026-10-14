@@ -87,7 +87,8 @@ def mutations(revision_db: HubDatabase, secret_store: SecretStore) -> ConfigMuta
 @pytest.fixture
 def revision_db() -> Iterator[PostgresHubDatabase]:
     database_url = os.environ["DATABASE_URL"]
-    database_name = f"revisioned_config_{uuid.uuid4().hex}"
+    # The fixture reaper's per-process shape, so a killed run's database is reclaimed.
+    database_name = f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(database_url, autocommit=True) as connection:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
     scoped_url = make_conninfo(database_url, dbname=database_name)
