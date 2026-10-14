@@ -67,7 +67,7 @@ class RunCommandEffectsMixin:
             return
 
         try:
-            payload = build_run_command_payload(event)
+            payload = await offload(build_run_command_payload, event)
             stdin_payload = json.dumps(payload).encode("utf-8")
         except Exception:
             logger.warning("run_command[%s]: event payload could not be encoded", row.name)

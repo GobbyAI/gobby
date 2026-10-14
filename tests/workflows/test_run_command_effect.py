@@ -1,13 +1,16 @@
 """Tests for the run_command rule effect."""
 
 import asyncio
+import copy
 import json
 import logging
 import os
 import sys
+import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +29,9 @@ from gobby.skills.materialization import (
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.utils import spawn
 from gobby.workflows.definitions import RuleEffect
+from gobby.workflows.engine._offload import inline_offload_scope
 from gobby.workflows.engine.effects import EffectsMixin
+from gobby.workflows.engine.evaluation import _RuleLoopBridge
 from gobby.workflows.engine.run_command import (
     STDERR_LIMIT_BYTES,
     STDOUT_LIMIT_BYTES,
@@ -79,6 +84,95 @@ async def _apply(effect: RuleEffect, event: HookEvent) -> list[ContextPart]:
         effect, _ROW, {}, {"event": event}, {}, context_parts, [], {}
     )
     return context_parts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_run_command_payload_normalization_off_loop(
+    background: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.hooks.normalization import normalize_tool_fields
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    bridge = _RuleLoopBridge(loop)
+    released = threading.Event()
+    marker: ContextVar[str] = ContextVar("detector-delivery", default="missing")
+    observations: list[tuple[int, str, bool]] = []
+    payloads: list[dict[str, object]] = []
+    tasks: list[asyncio.Task[None]] = []
+    engine = EffectsMixin()
+    event = _event(tool_input={"file_path": str(tmp_path / "web" / "deleted.tsx")})
+    original_data = copy.deepcopy(event.data)
+
+    def normalize(payload: dict[str, Any]) -> None:
+        thread = threading.get_ident()
+        loop.call_soon_threadsafe(released.set)
+        progressed = released.wait(5) if thread != loop_thread else False
+        observations.append((thread, marker.get(), progressed))
+        assert progressed, "daemon loop did not progress during detector normalization"
+        normalize_tool_fields(payload)
+
+    async def execute(
+        _prepared: object, _cwd: str, stdin: bytes, *_args: object, **_kwargs: object
+    ) -> RunCommandResult:
+        payloads.append(json.loads(stdin))
+        return RunCommandResult(
+            status="success",
+            context="detector result",
+            duration_ms=0,
+            exit_code=0,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            timeout_seconds=1,
+            overflow_stream=None,
+            background=False,
+            phase="execution",
+            skill=None,
+            script=None,
+        )
+
+    async def deliver(
+        _command: object, _cwd: str, stdin: bytes, *_args: object, **_kwargs: object
+    ) -> None:
+        payloads.append(json.loads(stdin))
+
+    def schedule(coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    async def apply() -> None:
+        await engine._apply_effect(
+            _effect(background=background), _ROW, {}, {"event": event}, {}, [], [], {}
+        )
+
+    def rule_worker() -> None:
+        with inline_offload_scope(True):
+            asyncio.run(bridge.call(apply))
+
+    monkeypatch.setattr("gobby.workflows.engine.run_command.normalize_tool_fields", normalize)
+    monkeypatch.setattr(engine, "_execute_run_command", execute)
+    monkeypatch.setattr(engine, "_run_command_then_deliver", deliver)
+    monkeypatch.setattr(
+        "gobby.workflows.engine.run_command_effects.create_background_task", schedule
+    )
+    token = marker.set("delivery")
+    try:
+        await asyncio.to_thread(rule_worker)
+        await asyncio.gather(*tasks)
+    finally:
+        released.set()
+        marker.reset(token)
+        bridge.cancel()
+    assert observations and all(thread != loop_thread for thread, _, _ in observations)
+    assert [(context, progressed) for _, context, progressed in observations] == [
+        ("delivery", True)
+    ]
+    assert len(payloads) == 1
+    assert payloads[0]["canonical_tool_kind"] == "write"
+    assert payloads[0]["tool_input"] == original_data["tool_input"]
+    assert event.data == original_data
 
 
 def _materialized_result(scripts_dir: Path, browser_cache: Path) -> SkillMaterializationResult:
