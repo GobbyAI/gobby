@@ -294,6 +294,15 @@ Orchestrator return (gobby#15977, 2026-10-14):
     characters for each agent. The full log stays on the node as the
     retained copy. Rejected: a hub command that fetches a node's log on
     demand, because the exit already carries what the hub's record shows.
+    Plan Adversary gobby#16491's review of 1c0c5e100c (NH-F15, NH-F16) set
+    how the hub keeps them. 3.9 stores a report's records before the inbox
+    holds the report, and a failed store answers 500, so a 200 means they
+    are stored and the node keeps an exit until then (2.8). Each merge is
+    conditional on the report's revision, so an older report finishing
+    late never overwrites a newer record, and an exit's record is final.
+    The node commits an exit's record before it removes the run's roots
+    (2.15). Rejected: merging under the inbox's lock, which also guards
+    every machine's admission and hub-mode 2.6's `take`.
 34. **The hub sanitizes node diagnostics before anything keeps them.**
     Security gobby#16011's review of 1c7d256584 (2026-10-14):
     - The node posts the code-index warning with the prompt as the hub sent
@@ -2517,7 +2526,7 @@ Targets:
 - `tests/agents/test_node_sandbox_record_corpus.py`
 - `crates/gdaemon/tests/node_agents.rs`
 
-**Granularity:** one leaf with six acceptance items across eight
+**Granularity:** one leaf with seven acceptance items across eight
 production files. Reaping and the record share one moment: the record is
 read from the run root's violation log just before the reaper removes that
 root, so neither ships alone (Decision 33). It follows 3.9 so that no node
@@ -2573,11 +2582,18 @@ sends violation `line` or `command` strings before the hub redacts them
   root, which `launch.rs` records from 2.5's `SandboxLaunch` when it
   commits `launched`. `ExitRecord` gains `reaped: bool`, which the report
   never sends.
-- `launch.rs`: `reap_exits(node)` takes each exit with `reaped` false, sets
-  its `sandbox` to `sandbox_record(.., with_events = true)` when the run
-  reached the chokepoint, reaps the runner tree and the roots, and commits
-  `reaped = true`. A root the reaper skipped stays for the start-time
-  sweep. It runs on `changed` and on each report tick.
+- `launch.rs`: `reap_exits(node)` takes each exit with `reaped` false in
+  two commits:
+  1. When the run reached the chokepoint and the exit has no `sandbox`
+     yet, it sets the exit's `sandbox` to `sandbox_record(.., with_events = true)`
+     and commits through `AgentState::commit` before it removes anything.
+  2. It reaps the runner tree and the roots, then commits `reaped = true`.
+
+  After a crash between the two commits, the replay finds the record set,
+  reads no log, reaps what remains, and commits `reaped = true`. The ported
+  reaper counts an absent root as reaped, not as a failed copy. A root the
+  reaper skipped stays for the start-time sweep. `reap_exits` runs on
+  `changed` and on each report tick.
 - `reports.rs`: a report carries only reaped exits, and each agent entry
   carries `sandbox_record(.., with_events = false)` for its run.
 - `serve::run`'s node branch runs the orphan runner reap and the root sweep
@@ -2605,6 +2621,7 @@ Verification planned:
 - 2.15.4 - A runner process naming the run's settings path, and its child, are terminated and then killed after 3 seconds, while a runner of another run is untouched. test: `crates/gdaemon/tests/node_agents.rs::runner_tree_reaped`.
 - 2.15.5 - At start, roots older than an hour with no run record and orphaned runners are reaped, a live run's root stays, and leftover prompt files are removed. test: `crates/gdaemon/tests/node_agents.rs::start_sweeps_orphaned_sandboxes`.
 - 2.15.6 - Each report's agent entry carries its run's count, truncation and denial operations with no events, and an exit of a run that never reached the chokepoint carries `sandbox: null`. test: `crates/gdaemon/tests/node_agents.rs::reports_carry_sandbox_records`.
+- 2.15.7 - An exit whose record was committed before a crash, with its run roots already removed, keeps that record after the restart's replay, which reads no log, commits `reaped = true` and reports the exit with the record. test: `crates/gdaemon/tests/node_agents.rs::reap_replay_keeps_committed_record`.
 
 ## P3: Contract version 2 and its hub consumers (#24148)
 `kind: framing`
@@ -3205,9 +3222,10 @@ Consumers unchanged:
 - `tests/agents/test_spawn_executor.py` — no-edit-reason: its failure-branch test uses the cwd `/isolated` and the message `scoped bootstrap missing`, which the redactor leaves unchanged; re-run as verification.
 - `src/gobby/agents/spawn_executor.py` — no-edit-reason: it re-exports `_prepare_managed_code_index` by name, and the signature is unchanged.
 - `tests/agents/test_spawn_executor_providers.py` — no-edit-reason: it patches `_prepare_managed_code_index` by its dotted path with an `AsyncMock` returning None, which the edit leaves valid; re-run as verification.
+- `tests/agents/test_spawn_resume.py` — no-edit-reason: it replaces `_prepare_managed_code_index` with `patch.object(providers, "_prepare_managed_code_index", AsyncMock(return_value=None))`, which matches the unchanged signature; re-run as verification.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_run_routes.py tests/agents/test_code_index_warning.py tests/agents/test_spawn_executor.py tests/test_wiki_retirement_contract.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_run_routes.py tests/agents/test_code_index_warning.py tests/agents/test_spawn_executor.py tests/agents/test_spawn_executor_providers.py tests/agents/test_spawn_resume.py tests/test_wiki_retirement_contract.py -v`.
 
 **Acceptance:**
 
@@ -3401,11 +3419,18 @@ Verification planned:
 Targets:
 - `src/gobby/hub/remote_sandbox.py`
 - `src/gobby/servers/routes/nodes.py`
+- `src/gobby/storage/agents/_runtime.py::_AgentRunRuntimeMixin.merge_sandbox_metadata`
 - `src/gobby/storage/agents/_sandbox_records.py::sandbox_record`
 - `src/gobby/storage/agents/_sandbox_records.py::sandbox_list_record`
 - `src/gobby/tasks/close_review_delivery.py::_review_sandbox_denials`
 - `tests/hub/test_remote_sandbox.py`
 - `tests/servers/test_node_routes.py`
+
+**Granularity:** one leaf with eight acceptance items across five
+production files. The route order, the guarded merge and the stored-value
+reads are one behaviour: the hub keeps a node run's record as it keeps a
+local run's. The route may not acknowledge a report whose records are not
+stored, and the reads have nothing to show without the merges (Decision 33).
 
 **Research context:**
 - A local run's sandbox record lives under `resume_metadata_json["sandbox"]`,
@@ -3422,6 +3447,21 @@ Targets:
   and fills the rest as `unclassified`. A node run has neither log on the
   hub.
 - 3.1's report carries `sandbox` on each agent entry and exit (Decision 33).
+- `merge_sandbox_metadata` is one `UPDATE` that merges its patch into
+  `resume_metadata_json -> 'sandbox'` with `jsonb ||` and returns the run,
+  or None when no row matched. `sandbox_reaper.py` calls it with
+  `(run_id, patch)`.
+- hub-mode 1.4's report route admits the report, commits its workspace
+  rows with `record_remote_workspaces`, then `put`s it in the inbox and
+  answers `{}`. Two admitted reports of one machine can finish out of
+  order (hub-mode 1.4.5). hub-mode 2.6 settles a node run only from an exit
+  that `take` returns, and the terminal transition
+  (`src/gobby/storage/agents/_lifecycle.py`) freezes the run's
+  `violation_count` from `sandbox_record(.., include_events=False)` before
+  it settles the sessions.
+- On any outcome other than 200 or `stale_report`, the node changes nothing
+  and its next report carries the same exits at a higher revision (2.8,
+  step 5).
 
 **Implementation:**
 - `close_review_delivery.py`: `denial_operations(path, count) -> dict[str, int]`
@@ -3434,17 +3474,49 @@ Targets:
     inside each exit's `recent_violations` through `redact_terminal_output`.
   - `apply_sandbox_records(run_manager, machine_id, report)`: for each
     agent and exit with a `sandbox` whose run belongs to `machine_id`, it
-    calls `merge_sandbox_metadata(run_id, ..)` with `backend: "srt"`,
-    `enforced: true`, the record's identity, count and
-    `denial_operations`, `violation_count_truncated` when true, and an
-    exit's `recent_violations`. It skips an agent record equal to the
-    stored one, so a quiet run costs no write.
+    calls `merge_sandbox_metadata(run_id, .., report_revision=report.revision)`
+    with `backend: "srt"`, `enforced: true`, the record's identity, count
+    and `denial_operations`, `violation_count_truncated` when true, and an
+    exit's `recent_violations`, passing `final=True` for an exit. It skips
+    an agent record equal to the stored one apart from `report_revision`
+    and `report_final`, so a quiet run costs no write. A skip cannot regress
+    a record: a run's violation log only grows while the run lives, so a
+    record from between two equal records equals them. A database error
+    propagates.
+- `_runtime.py`: `merge_sandbox_metadata` gains keyword-only
+  `report_revision: int | None = None` and `final: bool = False`. Without
+  `report_revision` it runs today's statement. With it, the patch also
+  sets `report_revision`, and `report_final: true` when `final`, and the
+  `UPDATE`'s `WHERE` adds two conditions: the stored `report_final` is not
+  true, and `final` is set or the stored `report_revision` (0 when absent)
+  is below `report_revision`. A merge the conditions skip returns None.
+  Under PostgreSQL's READ COMMITTED, an `UPDATE` that waited on a row lock
+  re-checks its `WHERE` against the row the other merge committed, so two
+  reports that merge into one run at once still apply in revision order.
+  An exit's record is final: no live record of any revision and no replay
+  of the exit changes it. `sandbox_record` and `sandbox_list_record`
+  project named keys, so `report_revision` and `report_final` reach no
+  record.
 - `nodes.py`: the report route calls `redact_report_sandbox` right after
-  3.3's `redact_report_panes`, and `apply_sandbox_records` after `put`
-  succeeds. A failure there is logged and the route still answers `{}`.
+  3.3's `redact_report_panes`, before admission. It calls
+  `apply_sandbox_records` after `record_remote_workspaces` commits and
+  before `put`. When that raises, the route logs the machine id, the
+  revision and the exception's type, and never its message or a record
+  value. It answers 500 without calling `put`, so nothing of the report
+  reaches the inbox. The node keeps every exit and sends them again at a
+  higher revision. The retry's merges repeat idempotently: a stored exit is
+  final, so its replay writes nothing, and an agent record writes the
+  same values. So a 200 means every record the report carried is stored,
+  and hub-mode 2.6's settlement and the terminal transition read the
+  exit's record.
   `runtime_version` and the `denial_operations` names merge unredacted
   because 3.1's model has already refused any value that is not a plain
   version or a name the redactor leaves unchanged (Decision 34).
+- Rejected: merging inside the inbox's `put`, because its one lock also
+  guards every machine's `admit` and 2.6's `take`, so database writes
+  would stall every node's reports; and answering 200 after a logged merge
+  failure, because 2.8 drops an exit on 200 and the hub would keep no copy
+  of its record.
 - `_sandbox_records.py`: with no trusted log, `sandbox_record` returns the
   stored `recent_violations`, bounded again to 100 events and 2,048
   characters a command, and `sandbox_list_record` returns the stored count
@@ -3455,12 +3527,16 @@ Consumers unchanged:
 - `tests/storage/test_agent_sandbox_records.py` — no-edit-reason: it builds local records with trusted live and retained logs, which take the unchanged branches; re-run as verification.
 - `tests/tasks/test_close_review_delivery.py` — no-edit-reason: it reads denials from a local log, which `denial_operations` reads with the same loop; re-run as verification.
 - `src/gobby/storage/agents/_models.py` — no-edit-reason: `AgentRun.to_dict`, `AgentRun.to_brief` and `AgentRunListRow.from_row` call `sandbox_record` and `sandbox_list_record` with unchanged signatures, and a node run's stored values reach them through the changed branches.
-- `src/gobby/storage/agents/_lifecycle.py` — no-edit-reason: terminalization writes back the count `sandbox_record` returns; for a node run that is the stored count 3.9 merged, so the write leaves it unchanged.
-- `src/gobby/agents/sandbox_reaper.py` — no-edit-reason: it builds a record with `include_events=False` from a local retention patch, which holds no stored `recent_violations`, and reads its count only when the patch names a retained log.
+- `src/gobby/storage/agents/_lifecycle.py` — no-edit-reason: terminalization writes back the count `sandbox_record` returns; for a node run that is the stored count 3.9 merged, so the write leaves it unchanged, and its `jsonb ||` patch keeps `report_revision` and `report_final`.
+- `src/gobby/agents/sandbox_reaper.py` — no-edit-reason: it builds a record with `include_events=False` from a local retention patch, which holds no stored `recent_violations`, and reads its count only when the patch names a retained log; it calls `merge_sandbox_metadata(run_id, patch)` without the new keywords, which runs today's statement.
+- `src/gobby/storage/agents/__init__.py` — no-edit-reason: it re-exports `sandbox_record` by name, and the signature is unchanged.
+- `tests/agents/test_sandbox_reaper.py` — no-edit-reason: its fake managers define `merge_sandbox_metadata(run_id, updates)`, and the reaper still calls it with those two arguments; re-run as verification.
+- `tests/storage/test_agent_run_live_stats.py` — no-edit-reason: it calls `merge_sandbox_metadata(run.id, {...})` without the new keywords; re-run as verification.
+- `tests/storage/test_storage_agents.py` — no-edit-reason: its merge tests call `merge_sandbox_metadata` without the new keywords, including the empty patch that returns the run unchanged; re-run as verification.
 - `src/gobby/mcp_proxy/tools/agents_payloads.py` — no-edit-reason: it calls `sandbox_record(metadata, include_events=False)` with an unchanged signature and returns a node run's stored count.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_sandbox.py tests/servers/test_node_routes.py tests/storage/test_agent_sandbox_records.py tests/tasks/test_close_review_delivery.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_sandbox.py tests/servers/test_node_routes.py tests/storage/test_agent_sandbox_records.py tests/tasks/test_close_review_delivery.py tests/agents/test_sandbox_reaper.py tests/storage/test_agent_run_live_stats.py tests/storage/test_storage_agents.py -v`.
 
 **Acceptance:**
 
@@ -3469,6 +3545,9 @@ Verification planned:
 - 3.9.3 - A node `task-close-reviewer`'s close review reports the node's denial operations, and a local reviewer's denials still come from its log. test: `tests/hub/test_remote_sandbox.py::test_close_review_uses_node_denials`.
 - 3.9.4 - An exit whose `recent_violations` hold `sk-ABCDEFGHIJKLMNOPQRSTUV` in a `line` and a `command` stores `sk-<redacted>` in their place, and the secret reaches neither the run row, its broadcast nor any log record. test: `tests/servers/test_node_routes.py::test_report_sandbox_events_redacted`.
 - 3.9.5 - A report whose agent `sandbox` has `runtime_version` `sk-ABCDEFGHIJKLMNOPQRSTUV`, and one whose `denial_operations` names `sk-abcdefghijklmnopqrstuv`, each answers 422 `invalid_body`, and neither secret reaches the inbox, the run's sandbox record, a broadcast, any log record or the close review's denial summary. The same report with `runtime_version` `0.0.79` and the operation `file-write-create` merges both unchanged. test: `tests/servers/test_node_routes.py::test_report_secret_sandbox_identity_refused`.
+- 3.9.6 - When merging a report's records fails, the route answers 500 and calls no `put`: the inbox holds nothing from that report, the next `take` returns none of its exits, and no log record carries a record value. The node's next report, at a higher revision with the same exit, answers 200, and the run's record holds that exit's count, operations and events before `take` returns the exit. test: `tests/servers/test_node_routes.py::test_report_sandbox_merge_failure_not_acknowledged`.
+- 3.9.7 - With reports r1 and r2 of one machine admitted and r2's agent record merged first, r1's merge writes nothing, and the run keeps r2's count and operations. test: `tests/hub/test_remote_sandbox.py::test_older_report_never_overwrites_newer`.
+- 3.9.8 - After a run's exit record merges, a live record for that run from an older or a newer revision, and a replay of the exit, write nothing, and the run keeps the exit's count, operations and events. test: `tests/hub/test_remote_sandbox.py::test_exit_record_is_final`.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -3618,6 +3697,23 @@ Verification planned:
   `denial_operations` names had no refusal. 3.1's model now requires a plain
   version and refuses any operation name `redact_terminal_output` changes
   (Decision 34; 3.1.6, 3.9, new 3.9.5).
+- 2026-10-14: Revision for Plan Adversary gobby#16491's review of
+  1c0c5e100c, which #15977 reassigned from the frozen gobby#16791.
+  Security gobby#16011 landed B3 at 1c0c5e100c.
+  - NH-F15: 3.9 merges a report's sandbox records after its workspace rows
+    and before `put`, and a failed merge answers 500 with nothing in the
+    inbox, so 2.8 keeps the exit for the next report (new 3.9.6).
+  - NH-F16: `merge_sandbox_metadata` gains a conditional form keyed on the
+    report's revision, with exit records final, so a late older report
+    never overwrites a newer record (new 3.9.7, 3.9.8). These two are in
+    Decision 33.
+  - NH-F17: 3.5 lists `tests/agents/test_spawn_resume.py` and 3.9 lists
+    `src/gobby/storage/agents/__init__.py` and the callers of
+    `merge_sandbox_metadata` as unchanged consumers. Found while fixing
+    this: 3.5's verification command now runs the two test files its
+    consumer list says it re-runs.
+  - 2.15 commits an exit's record before it reaps the run's roots, and a
+    replay keeps it (new 2.15.7).
 
 ## V2: Verification
 `kind: verification`
