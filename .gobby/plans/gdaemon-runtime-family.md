@@ -79,7 +79,10 @@ criteria in #21559 become this template:
   quiet window first.
 - **Heavy work.** Every granted cargo run sets `CARGO_BUILD_JOBS=3`. Scope runs with
   `-p` (`gobby-core`, `gobby-daemon`, `gobby-runtime`).
-- **Dependencies.** No new external crate enters `Cargo.lock`. axum (0.8,
+- **Dependencies.** No new external crate enters `Cargo.lock`, with one named
+  exception: `icu_casemap` 2.1.1 and its compiled data `icu_casemap_data` 2.1.1,
+  which 5.7's `casefold` port needs and no locked crate provides. A leaf that adds
+  any other package to the lock fails E1's repo gates. axum (0.8,
   `default-features = false`) enters gcore only behind the new `route-family`
   feature. Crypto uses `openssl` (a direct gcore dependency, vendored) and `fernet`
   0.2.2 (already locked).
@@ -3594,10 +3597,16 @@ normalization, which keeps platform-dependent stored bytes for one key.
   `Co`, `Cn`, `Zl`, `Zp` or `Zs`, except the space. `icu_properties` supplies the
   category.
 
-gruntime's manifest adds `icu_casemap` 2.1.1 and `icu_properties` 2.1.2. Both are
-on ICU4X's 2.1 line, which gdaemon already builds through `idna_adapter` with
-`compiled_data` on, so the only new crate in the lock is `icu_casemap_data`.
-Rejected: `unicase`, the only locked case crate, which has no folding API.
+gruntime's manifest adds `icu_casemap` 2.1.1 and `icu_properties` 2.1.2, both on
+ICU4X's 2.1 line, which gdaemon already builds through `idna_adapter` with
+`compiled_data` on. `icu_properties` is already locked. `icu_casemap` 2.1.1 and its
+compiled data, `icu_casemap_data` 2.1.1, enter the lock as the plan's one named
+exception to the dependency constraint (Constraints, Dependencies). Every other
+dependency of `icu_casemap` (`icu_collections`, `icu_locale_core`,
+`icu_properties`, `icu_provider`, `potential_utf`, `writeable` and `zerovec`) is
+already locked. Rejected: `unicase`, the only locked case crate, which has no
+folding API, and hand-porting Unicode's case-folding table, which nothing would
+keep in step with the Unicode version.
 
 Python's Unicode tables are version 15.1 on Python 3.13 and 16.0 on 3.14, Rust's
 standard library uses 17.0, and ICU4X 2.1 carries its own data. A code point
@@ -5570,8 +5579,10 @@ It also ports the CLI path, `CodexCLITextGenerateAdapter.build_command` and
 Cleanup ports `_cleanup_cli_process`: send `SIGTERM` to the group, wait 2 seconds,
 send `SIGKILL` to the group, wait 2 seconds. When the deadline drops the probe
 future, the child's guard runs the same cleanup on a spawned task, as Python's
-cancellation path does. gruntime adds `libc` 0.2, already locked, as a Unix-only
-dependency for the group signals.
+cancellation path does. The group signals use `nix::sys::signal::killpg` with
+`nix::unistd::Pid`. gruntime inherits the workspace's `unsafe_code = "forbid"`
+(3.1), so it makes no raw `libc` call. Rejected: `libc::killpg`, which needs an
+`unsafe` block that the inherited lint refuses.
 
 The text probe sends `Reply with exactly GOBBY_K3_TEXT_OK.` and requires the token
 in the reply. The JSON probe sends `Reply with JSON object {"ok": true} and nothing else.`
@@ -5600,8 +5611,8 @@ that the probes use. The sources are `src/gobby/adapters/codex_impl/client.py`,
 - **Turns.** `turn/start` takes the thread id and its text and `localImage` input.
   Events are read until `turn/completed`, `turn/failed` or `thread/closed`, as
   `run_turn` does; a failed turn fails with `Codex turn failed: <error>`.
-- **Stop.** `SIGTERM`, a 5-second wait, then `SIGKILL`. The guard also stops the
-  process when the deadline drops the future.
+- **Stop.** `SIGTERM` through `nix::sys::signal::kill`, a 5-second wait, then
+  `SIGKILL`. The guard also stops the process when the deadline drops the future.
 
 It also ports the probes built on that client:
 
@@ -5677,7 +5688,8 @@ and `1e+07` are all reachable.
 - `reqwest` 0.12 with `default-features = false` and `json` and `rustls-tls`, as
   gclient already declares it;
 - `png` 0.17, `base64` 0.22, `rand` 0.8 and `tempfile` 3;
-- `libc` 0.2 for Unix;
+- `nix` 0.29 for Unix, with `default-features = false` and feature `signal`,
+  which enables `process`; 0.29.0 is locked through `mac_address`;
 - tokio's `process`, `io-util`, `fs` and `time` features.
 
 All are in `Cargo.lock` already, so the lock changes only gruntime's dependency
@@ -5812,6 +5824,8 @@ Research context:
   `json` and `rustls-tls`, and gdaemon's tests already run `uv run python`.
 - Planned checks:
   - `cargo nextest run -p gobby-runtime --test endpoint_probe`;
+  - `cargo clippy -p gobby-runtime`, which compiles gruntime under the inherited
+    `unsafe_code = "forbid"`;
   - `GOBBY_TEST_PROTECT=1 uv run pytest tests/ai/test_endpoint_probe_corpus.py -v`.
 
 Consumers unchanged:
@@ -6996,7 +7010,9 @@ freshly built and installed binaries, before #21559 closes.
    - `uv run ruff format src/ && uv run ruff check src/ && uv run mypy src/`;
    - `uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`;
    - `cargo fmt --check`, and `cargo clippy` for `gobby-core` (with
-     `route-family`), `gobby-runtime` and `gobby-daemon`.
+     `route-family`), `gobby-runtime` and `gobby-daemon`;
+   - `Cargo.lock` gains no `[[package]]` over the plan's starting tip except
+     `icu_casemap` and `icu_casemap_data` 2.1.1 (Constraints, Dependencies).
 
    Every hand-maintained production file must stay under 1,000 lines.
 
