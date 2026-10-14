@@ -837,6 +837,45 @@ fn detached_gclient() -> Command {
     command
 }
 
+#[test]
+fn non_string_daemon_url_reports_configuration_error() {
+    let home = tempfile::tempdir().expect("isolated bootstrap home");
+    for value in [
+        "123",
+        "1.5",
+        "true",
+        "[http://localhost:60887]",
+        "{host: localhost}",
+    ] {
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            format!("daemon_url: {value}\n"),
+        )
+        .expect("write malformed bootstrap");
+        let output = detached_gclient()
+            .env("GOBBY_HOME", home.path())
+            .env_remove("GOBBY_DAEMON_URL")
+            .env_remove("GOBBY_PORT")
+            .env_remove("GOBBY_DAEMON_PORT")
+            .current_dir(home.path())
+            .output()
+            .expect("run gclient with malformed daemon URL");
+        assert!(!output.status.success(), "invalid value accepted: {value}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("invalid Gobby configuration: daemon_url must be a string"),
+            "{value}: {stderr}"
+        );
+        for misleading in [
+            "failed to read daemon token",
+            "gobby auth login",
+            "--token-file",
+        ] {
+            assert!(!stderr.contains(misleading), "{value}: {stderr}");
+        }
+    }
+}
+
 fn closed_port_url() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
