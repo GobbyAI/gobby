@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, Literal
+
+from gobby.servers.websocket.proxy_relay import bind_proxy_frame, close_frame_quietly
 
 # WRITE_FAULT_NAME is re-exported: e2e fixtures import it from this module.
 from gobby.servers.websocket.terminal_ws_write import WRITE_FAULT_NAME as WRITE_FAULT_NAME
@@ -99,18 +102,6 @@ def _log_proxy_attach_failure(terminal_id: str, code: str, *, exc_info: bool = F
         exc_info=exc_info,
     )
     return code
-
-
-async def _close_frame_quietly(frame: Any) -> None:
-    closer = getattr(frame, "close", None)
-    if not callable(closer):
-        return
-    try:
-        result = closer()
-        if asyncio.iscoroutine(result):
-            await result
-    except Exception:
-        logger.debug("closing failed proxy frame raised", exc_info=True)
 
 
 class TerminalWsMixin(TerminalWriteMixin):
@@ -644,35 +635,68 @@ class TerminalWsMixin(TerminalWriteMixin):
         locator, failure = await self._resolve_attach_locator(row)
         if failure is not None or locator is None:
             return failure
+        # Read once the host settled: an upgrade has published its generation
+        # before it releases attaches.
+        host_generation = getattr(self.terminal_host_manager, "host_generation", None)
+        frame, failure = await self._open_relay_frame(row, locator)
+        if frame is None:
+            return failure
+
+        async def reopen() -> Any | None:
+            return await self._reopen_proxy_frame(row, encoding)
+
+        return await self._hand_off_frame(
+            row,
+            frame,
+            self._proxy().start_proxy(
+                websocket,
+                terminal_id=row.id,
+                attachment_id=record.attachment_id,
+                locator=locator,
+                frame=frame,
+                encoding=encoding,
+                terminal=row,
+                reopen=reopen,
+                host_generation=host_generation,
+            ),
+        )
+
+    async def _reopen_proxy_frame(self, row: Any, encoding: str) -> Any | None:
+        """Open and attach a fresh host frame for a relay an upgrade closed."""
+        locator, failure = await self._resolve_attach_locator(row)
+        if failure is not None or locator is None:
+            return None
+        frame, failure = await self._open_relay_frame(row, locator)
+        if frame is None:
+            return None
+        failure = await self._hand_off_frame(row, frame, bind_proxy_frame(frame, locator, encoding))
+        return frame if failure is None else None
+
+    async def _open_relay_frame(self, row: Any, locator: AttachLocator) -> tuple[Any, str | None]:
         opener = getattr(self, "open_proxy_frame", None)
         if not callable(opener):
-            return _log_proxy_attach_failure(row.id, "proxy_unavailable")
+            return None, _log_proxy_attach_failure(row.id, "proxy_unavailable")
         try:
             frame = await asyncio.wait_for(opener(locator), PROXY_FRAME_OPEN_SECONDS)
         except TimeoutError:
-            return _log_proxy_attach_failure(row.id, "host_open_timeout")
+            return None, _log_proxy_attach_failure(row.id, "host_open_timeout")
         except Exception:
-            return _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
+            return None, _log_proxy_attach_failure(row.id, "host_unavailable", exc_info=True)
         if not frame or not callable(getattr(frame, "read_message", None)):
             # The relay pump requires read_message; anything else dies after
             # the client was already told the attach succeeded.
             if frame is not None:
-                await _close_frame_quietly(frame)
-            return _log_proxy_attach_failure(row.id, "frame_invalid")
+                await close_frame_quietly(frame)
+            return None, _log_proxy_attach_failure(row.id, "frame_invalid")
+        return frame, None
+
+    async def _hand_off_frame(
+        self, row: Any, frame: Any, start: Coroutine[Any, Any, None]
+    ) -> str | None:
+        """Run the frame's handshake step; close the frame unless it succeeds."""
         handed_off = False
         try:
-            await asyncio.wait_for(
-                self._proxy().start_proxy(
-                    websocket,
-                    terminal_id=row.id,
-                    attachment_id=record.attachment_id,
-                    locator=locator,
-                    frame=frame,
-                    encoding=encoding,
-                    terminal=row,
-                ),
-                PROXY_START_SECONDS,
-            )
+            await asyncio.wait_for(start, PROXY_START_SECONDS)
             handed_off = True
         except TimeoutError:
             return _log_proxy_attach_failure(row.id, "proxy_start_timeout")
@@ -682,7 +706,7 @@ class TerminalWsMixin(TerminalWriteMixin):
             return _log_proxy_attach_failure(row.id, "proxy_start_failed", exc_info=True)
         finally:
             if not handed_off:
-                await asyncio.shield(_close_frame_quietly(frame))
+                await asyncio.shield(close_frame_quietly(frame))
         return None
 
     def _leases(self) -> TerminalLeaseRegistry:

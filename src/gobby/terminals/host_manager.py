@@ -115,6 +115,9 @@ class TerminalHostManager(HostShutdown):
         self.spawned_this_construction = False
         self.native_available = False
         self.host_epoch: str | None = None
+        # The host's in-place upgrade generation from its latest ping; the web
+        # relay reconnects only to a later one (None from hosts predating it).
+        self.host_generation: int | None = None
         self.protocol_version: int | None = CONTROL_PROTOCOL_VERSION
         self.capabilities: tuple[str, ...] = ()
         self.host_pid: int | None = None
@@ -612,6 +615,7 @@ class TerminalHostManager(HostShutdown):
             return _Adopt.MISMATCH
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
         self.capabilities = tuple(hello.capabilities)
@@ -646,6 +650,7 @@ class TerminalHostManager(HostShutdown):
     def _publish_spawned_client(self, client: Any, hello: Any, ping: Any) -> None:
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
         self.capabilities = tuple(hello.capabilities)
@@ -782,6 +787,7 @@ class TerminalHostManager(HostShutdown):
         """Make a freshly probed connection current; its hello and ping count as healthy."""
         self._client = client
         self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.capabilities = tuple(hello.capabilities)
         self._record_healthy_ping()
@@ -812,13 +818,16 @@ class TerminalHostManager(HostShutdown):
                     if await self._host_death_continues():
                         continue
                     return
-                await self._close_client(client)
+                # Adopt before the await: the window is already closed, so a
+                # relay waiting on it must find the fresh generation.
                 self._adopt_client(*fresh)
+                await self._close_client(client)
                 continue
             try:
                 ping = await client.ping()
                 self.host_pid = ping.host_pid
                 self.host_epoch = ping.host_epoch
+                self.host_generation = ping.generation
                 await self.upgrade.observe(client, ping, self.capabilities)
                 await self.reconcile()
                 self._record_healthy_ping()
