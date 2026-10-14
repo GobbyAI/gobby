@@ -69,7 +69,7 @@ def resolve_edit_pair(
             return None
         target = Path(cwd) / target
     target = target.resolve(strict=False)
-    root = find_project_root(target.parent)
+    root = find_project_root(target if target.is_dir() else target.parent)
     if root is None:
         return None
     root = root.resolve(strict=False)

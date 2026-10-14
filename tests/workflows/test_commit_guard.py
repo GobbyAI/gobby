@@ -261,6 +261,122 @@ async def test_rule3_resolves_relative_paths_at_tool_workdir(
     assert result.decision == "allow"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "restore -- .",
+        "checkout -- .",
+        "checkout -f",
+        "checkout --force HEAD",
+        "switch -f --detach HEAD",
+        "switch --force --detach HEAD",
+        "switch --discard-changes --detach HEAD",
+    ],
+)
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("owner", ["foreign", "unowned", "requester", "clean"])
+async def test_rule3_root_writes_check_dirty_descendants(
+    guard_harness: GuardHarness, operation: str, nested: bool, owner: str
+) -> None:
+    from gobby.workflows.task_claim_state import resolve_edit_pair
+
+    h = guard_harness
+    _git(h.repo, "add", ".gobby/project.json")
+    _git(h.repo, "commit", "-m", "project marker")
+    root = h.repo
+    if nested:
+        root = h.repo / "nested-checkout"
+        _git(h.repo, "worktree", "add", "--detach", str(root), "HEAD")
+    variables = SessionVariableManager(h.db)
+    for session, path in ((h.current_session, "owned.txt"), (h.foreign_session, "foreign.txt")):
+        variables.merge_variables(
+            session.id,
+            {"session_dirty_file_checkouts": {str(root): [path]}},
+        )
+    path = "owned.txt" if owner == "requester" else "foreign.txt"
+    if owner == "unowned":
+        path = "unowned.txt"
+        (root / path).write_text("base\n", encoding="utf-8")
+        _git(root, "add", path)
+        _git(root, "commit", "-m", "unowned base")
+    if owner != "clean":
+        (root / path).write_text("dirty descendant\n", encoding="utf-8")
+    assert resolve_edit_pair(
+        str(root),
+        str(root),
+        project_id=h.project.id,
+        db=h.db,
+        variables=variables.get_variables(h.current_session.id),
+    ) == (str(root), ".")
+    event = h.event(f"git {operation}", checkout=root)
+    response = await h.handler._evaluate_rules(event)
+    assert event.data["canonical_tool_kind"] == "write"
+    assert event.data["canonical_file_paths"] == [str(root)]
+    assert event.data.get("canonical_write_file_paths", [str(root)]) == [str(root)]
+    assert response.decision == ("block" if owner in {"foreign", "unowned"} else "allow"), (
+        response.reason
+    )
+    if owner in {"foreign", "unowned"}:
+        assert path in (response.reason or "")
+        expected = h.foreign_session.ref if owner == "foreign" else "no live session owns it"
+        assert expected in (response.reason or "")
+    if owner == "clean":
+        foreign_variables = variables.get_variables(h.foreign_session.id)
+        assert "foreign.txt" not in foreign_variables["session_dirty_files"]
+        assert foreign_variables["task_edited_files"][h.foreign_task.id] == ["foreign.txt"]
+
+
+@pytest.mark.asyncio
+async def test_rule3_directory_write_allows_requester_owned_child(
+    guard_harness: GuardHarness,
+) -> None:
+    h = guard_harness
+    (h.repo / "sub").mkdir()
+    (h.repo / "sub/owned.txt").write_text("base\n", encoding="utf-8")
+    _git(h.repo, "add", "sub/owned.txt")
+    _git(h.repo, "commit", "-m", "owned subdirectory base")
+    (h.repo / "sub/owned.txt").write_text("requester dirt\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id,
+        {
+            "session_dirty_files": ["sub/owned.txt"],
+            "session_dirty_file_checkouts": {str(h.repo): ["sub/owned.txt"]},
+        },
+    )
+    response = await h.handler._evaluate_rules(h.event("git restore -- sub"))
+    assert response.decision == "allow", response.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "options",
+    [
+        "-sSTABLE -- foreign.txt",
+        "-s STABLE -- foreign.txt",
+        "--source=STABLE -- foreign.txt",
+        "--source STABLE -- foreign.txt",
+        "--pathspec-from-file -S",
+        "--pathspec-from-file=-S",
+    ],
+)
+async def test_rule3_restore_option_values_do_not_disable_write_guard(
+    guard_harness: GuardHarness, options: str
+) -> None:
+    h = guard_harness
+    _git(h.repo, "branch", "STABLE")
+    (h.repo / "-S").write_text("foreign.txt\n", encoding="utf-8")
+    _git(h.repo, "add", "--", "-S", ".gobby/project.json")
+    _git(h.repo, "commit", "-m", "pathspec input")
+    (h.repo / "foreign.txt").write_text("foreign dirt\n", encoding="utf-8")
+    event = h.event(f"git restore {options}")
+    response = await h.handler._evaluate_rules(event)
+    assert event.data["canonical_tool_kind"] == "write"
+    assert response.decision == "block"
+    assert "foreign.txt" in (response.reason or "")
+    assert h.foreign_session.ref in (response.reason or "")
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
@@ -689,7 +805,7 @@ async def test_normalized_bash_dirty_foreign_edit_blocks(
 @pytest.mark.parametrize("directory_form", ["git_option", "cd"])
 @pytest.mark.parametrize("location", ["foreign.txt", "sibling/foreign.txt", "sub/foreign.txt"])
 @pytest.mark.parametrize("state", ["dirty", "untracked", "clean"])
-async def test_forced_branch_change_execute_kind_defers_to_git(
+async def test_forced_branch_change_checks_dirty_ownership(
     guard_harness: GuardHarness,
     tmp_path: Path,
     operation: str,
@@ -698,6 +814,8 @@ async def test_forced_branch_change_execute_kind_defers_to_git(
     state: str,
 ) -> None:
     harness = guard_harness
+    _git(harness.repo, "add", ".gobby/project.json")
+    _git(harness.repo, "commit", "-m", "project marker")
     target = tmp_path / "other"
     _git(harness.repo, "worktree", "add", "--detach", str(target), "HEAD")
     (target / "sub").mkdir()
@@ -725,8 +843,11 @@ async def test_forced_branch_change_execute_kind_defers_to_git(
     event = harness.event(f"{prefix} {operation}")
     response = await harness.handler._evaluate_rules(event)
     assert event.data["canonical_file_paths"] == [str(target)]
-    assert event.data["canonical_tool_kind"] == "execute"
-    assert response.decision == "allow"
+    assert event.data["canonical_tool_kind"] == "write"
+    assert response.decision == ("allow" if state == "clean" else "block")
+    if state != "clean":
+        assert location in (response.reason or "")
+        assert harness.foreign_session.ref in (response.reason or "")
 
 
 @pytest.mark.asyncio
@@ -786,12 +907,6 @@ async def test_checkout_positional_paths_check_foreign_ownership(
     prefix = f"git -C {target}" if directory_form == "git_option" else "git"
     event = harness.event(f"{prefix} {operation}", checkout=target, workdir=target)
     response = await harness.handler._evaluate_rules(event)
-    if operation.endswith(" ."):
-        # A nested checkout root still resolves inside its containing project.
-        assert response.decision == ("block" if foreign_worktree else "allow")
-        if foreign_worktree:
-            assert "no live session owns it" in (response.reason or "")
-        return
     assert response.decision == "block", response.reason
     assert response.reason is not None
     assert "foreign.txt" in response.reason
@@ -837,6 +952,7 @@ async def test_checkout_unverified_cwd_fails_closed(
     )
     (harness.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     event = harness.event(f"git {operation}")
+    event.cwd = None
     response = await harness.handler._evaluate_rules(event)
     assert event.data["canonical_repo_mutation_scope_unknown"] is True
     assert response.decision == "block", response.reason

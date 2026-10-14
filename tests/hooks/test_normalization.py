@@ -3126,6 +3126,28 @@ class TestExternalNavigationScope:
         assert data["canonical_tool_kind"] == kind
         assert data.get("canonical_file_paths", []) == paths
 
+    @pytest.mark.parametrize(
+        "options, kind",
+        [
+            ("-sSTABLE -- foreign.txt", "write"),
+            ("-s STABLE -- foreign.txt", "write"),
+            ("--source=STABLE -- foreign.txt", "write"),
+            ("--source STABLE -- foreign.txt", "write"),
+            ("--pathspec-from-file -S", "write"),
+            ("--pathspec-from-file=-S", "write"),
+            ("-SsSTABLE -- foreign.txt", "execute"),
+            ("-SWsSTABLE -- foreign.txt", "write"),
+            ("-S --pathspec-from-file -W", "execute"),
+        ],
+    )
+    def test_git_restore_consumes_option_values(self, options: str, kind: str) -> None:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": f"git restore {options}"},
+        }
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (
             "cd docs && python3 - <<'PYEOF'\n"

@@ -254,6 +254,30 @@ def _positional_checkout_is_path(
     return bool(result.stdout) if result.returncode == 0 else None
 
 
+def _git_option_flags(arguments: list[str], value_options: set[str]) -> set[str]:
+    """Read flags without interpreting option values or path operands as flags."""
+    flags: set[str] = set()
+    skip_next = False
+    for argument in arguments:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument == "--":
+            break
+        if argument.startswith("--"):
+            option, separator, _ = argument.partition("=")
+            flags.add(option)
+            skip_next = option in value_options and not separator
+        elif argument.startswith("-") and argument != "-":
+            for index, character in enumerate(argument[1:], start=1):
+                option = f"-{character}"
+                flags.add(option)
+                if option in value_options:
+                    skip_next = index == len(argument) - 1
+                    break
+    return flags
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -281,15 +305,10 @@ def classify_git_mutation(
             for argument in arguments
         ):
             return _ShellSegmentMetadata("write", repo_mutation=True)
-        forced = any(
-            argument in {"--force", "--discard-changes", "--merge"}
-            or (
-                argument.startswith("-")
-                and not argument.startswith("--")
-                and any(flag in argument[1:] for flag in "fm")
-            )
-            for argument in arguments
+        flags = _git_option_flags(
+            arguments, {"-b", "-B", "-c", "-C", "--orphan", "--pathspec-from-file"}
         )
+        forced = bool(flags & {"-f", "--force", "--discard-changes"})
         head_checkout = operation == "checkout" and arguments == ["HEAD"]
         root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
         if root is None:
@@ -299,6 +318,11 @@ def classify_git_mutation(
         extra: dict[str, Any] = {"canonical_edit_file_paths": []}
         if forced:
             extra["canonical_git_force_checkout_roots"] = [str(root)]
+            extra["canonical_git_checkout_mutation"] = True
+            extra["canonical_dirty_edit_paths"] = [str(root)]
+            return _ShellSegmentMetadata(
+                "write", paths=(str(root),), repo_mutation=True, extra=extra
+            )
         # A positional checkout operand can be either a revision or a path,
         # even a tracked file deleted on disk. Retain checkout ownership checks
         # when only the containing worktree root can be proven.
@@ -348,19 +372,15 @@ def classify_git_mutation(
             ):
                 return _ShellSegmentMetadata("execute")
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})
-    options = arguments[: arguments.index("--")] if "--" in arguments else arguments
+    restore_flags = (
+        _git_option_flags(arguments, {"-s", "--source", "--pathspec-from-file"})
+        if operation == "restore"
+        else set()
+    )
     if (
         operation == "restore"
-        and any(
-            argument == "--staged"
-            or (argument.startswith("-") and not argument.startswith("--") and "S" in argument[1:])
-            for argument in options
-        )
-        and not any(
-            argument == "--worktree"
-            or (argument.startswith("-") and not argument.startswith("--") and "W" in argument[1:])
-            for argument in options
-        )
+        and bool(restore_flags & {"-S", "--staged"})
+        and not restore_flags & {"-W", "--worktree"}
     ):
         return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
@@ -370,6 +390,11 @@ def classify_git_mutation(
     if operation in {"add", "checkout", "restore", "rm", "mv"}:
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)
+        if operation == "restore" and "--pathspec-from-file" in restore_flags:
+            root = checkout_root(Path(git_cwd).resolve()) if git_cwd else None
+            return _ShellSegmentMetadata(
+                "write", paths=(str(root),) if root else (), repo_mutation=True
+            )
         if operation == "add":
             candidates = _git_add_positional_args_after(parts, index + 1)
         elif operation in {"rm", "mv"}:

@@ -390,6 +390,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if isinstance(event.data, dict):
                     from gobby.hooks.normalization import normalize_tool_fields
 
+                    event.data.setdefault("cwd", event.cwd)
                     await asyncio.to_thread(normalize_tool_fields, event.data)
 
                 # Load session-scoped variables (canonical store).

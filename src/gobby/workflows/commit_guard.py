@@ -268,7 +268,8 @@ async def foreign_dirty_edit_conflict(
             }
             if not candidates:
                 continue
-            candidates -= await _merge_set(root)
+            merge_paths = await _merge_set(root)
+            candidates -= merge_paths
             if not candidates:
                 continue
             dirty = await task_dirty_paths_async(candidates, root)
@@ -284,11 +285,13 @@ async def foreign_dirty_edit_conflict(
             scoped = scope_foreign_owners(owners, candidates, own)
             clean = {
                 path
-                for path in candidates
+                for path in candidates | set(scoped)
                 if not any(task_edit_path_covers(path, child) for child in dirty)
             }
             await asyncio.to_thread(_release_clean_ledger_entries, db, scoped, clean, root)
             for path in dirty:
+                if path in merge_paths or any(task_edit_path_covers(p, path) for p in own):
+                    continue
                 holders = tuple(
                     owner
                     for ledger in overlapping_task_edit_paths(scoped, [path])
