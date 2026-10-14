@@ -4064,8 +4064,8 @@ async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
         host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
     await host.start()
     if state == "epoch_refused":
-        # Only the Rust host's epoch-adoption matrix emits this reason; the
-        # Python supervisor records it as given and the spawn path reads it.
+        # Only the Rust host's epoch-adoption matrix emits this reason and no
+        # Python path assigns it, so the test sets it for the spawn path to read.
         host.failure_reason = "epoch_refused"
     elif state != "healthy":
         # A misleading free-text error must never steer the spawn path.
