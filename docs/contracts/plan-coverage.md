@@ -820,6 +820,32 @@ Plan archive is system-managed: archiving flips `state` to `archived`, moves
 the plan file to `.gobby/plans/completed/`, records `archived_at`, and removes
 the managed coverage manifest.
 
+## Re-expansion Reconciliation
+
+Re-running expansion apply on an epic that already has output reconciles the
+new manifest with that output when every leaf in both specs carries
+`source_section_id`. Apply does not refuse, reset, or duplicate those leaves.
+Specs with no section identity keep the previous refusal: reset the output
+before applying, which still refuses closed, claimed, committed, or in-progress
+targets.
+
+Reconciliation records a `reconciliation` checkpoint on the new run:
+
+- **Preserve.** A closed completed prior leaf whose section remains is that
+  section's leaf. Apply does not reopen it, edit it, or create another leaf
+  for the section. Coverage QA counts the preserved leaf when its `covers:`
+  label still matches the section.
+- **Reuse.** An open prior leaf that is unclaimed and has not entered a stage
+  is updated in place when the section text changes. No second task is created.
+- **Create.** A section new to the manifest gets a new leaf. Dependency edges
+  in the new spec are wired to preserved and reused leaves as well as to new
+  ones. A phase epic created by the prior run is reused when that phase remains.
+- **Report.** A prior leaf whose section was removed is listed under `removed`
+  and left in place, including when it is closed. A claimed or in-progress open
+  leaf is listed under `untouched` and is not reset, reassigned, or edited.
+  Closed obsolete leaves are not matches; a later apply may create a new leaf
+  for that section.
+
 ## Table-Row Decomposition
 
 Any `deliverable` section whose body uses a markdown table to enumerate work

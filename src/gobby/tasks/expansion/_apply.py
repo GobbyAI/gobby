@@ -18,6 +18,16 @@ from gobby.storage.tasks._transitions import (
 )
 from gobby.tasks.expansion._common import _manifest_stage_names
 from gobby.tasks.expansion._deferrals import create_placeholder_deferral_tasks
+from gobby.tasks.expansion._reconcile import (
+    ReconciliationPlan,
+    adopt,
+    can_reconcile,
+    prepare,
+    record_created,
+    record_reused,
+    reusable_phase_id,
+    update_reused_leaf,
+)
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
@@ -141,7 +151,10 @@ def apply_run(
     with self.db.transaction_immediate(TaskSeqAllocation(project_id=task.project_id)) as conn:
         conn.acquire_additional_lock(ExpansionApplyMutation(parent_task_id=task.id))
         existing_output = self.find_apply_blocking_expansion_output(task.id)
-        if existing_output is not None:
+        reconciliation: ReconciliationPlan | None = None
+        if existing_output is not None and can_reconcile(existing_output, spec):
+            reconciliation = prepare(self, existing_output, spec)
+        elif existing_output is not None:
             raise ValueError(
                 "Expansion output already exists for this task. "
                 "Reset expansion output before applying a new run."
@@ -161,6 +174,14 @@ def apply_run(
         # Create phase subepics first for genuinely multi-phase expansions.
         if multi_phase:
             for phase in phase_list:
+                reused_phase = (
+                    reusable_phase_id(self, existing_output, phase["id"])
+                    if existing_output is not None and reconciliation is not None
+                    else None
+                )
+                if reused_phase is not None:
+                    phase_parent_map[phase["id"]] = reused_phase
+                    continue
                 created_id = _create_task_in_transaction(
                     self.db,
                     conn,
@@ -200,6 +221,22 @@ def apply_run(
             parent_id = phase_parent_map[phase_id]
 
             for task_item in tasks_by_phase[phase_id]:
+                adopted = (
+                    adopt(self, reconciliation, task_item) if reconciliation is not None else None
+                )
+                if adopted is not None and reconciliation is not None:
+                    if adopted.action == "update":
+                        update_reused_leaf(
+                            self,
+                            task_id=adopted.task_id,
+                            task_item=task_item,
+                            plan_ref_block=plan_ref_block,
+                            provenance_label=provenance_label,
+                        )
+                        record_reused(reconciliation, task_item, adopted.task_id)
+                    created_task_map[task_item["id"]] = adopted.task_id
+                    phase_child_ids[phase_id].append(adopted.task_id)
+                    continue
                 raw_description = task_item.get("description") or ""
                 description = (
                     f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
@@ -223,6 +260,8 @@ def apply_run(
                 )
                 created_task_map[task_item["id"]] = created_id
                 phase_child_ids[phase_id].append(created_id)
+                if reconciliation is not None:
+                    record_created(reconciliation, task_item, created_id)
                 if leaf_manifest_specs:
                     self.task_manager.stage_states.insert_new_task_manifest_in_transaction(
                         conn,
@@ -299,6 +338,11 @@ def apply_run(
                 "deferral_task_map": deferral_task_map,
                 "apply_validation": self.validate_applied_run(
                     run_id, compiled_spec=spec, task_id_map=created_task_map
+                ),
+                **(
+                    {"reconciliation": reconciliation.checkpoint()}
+                    if reconciliation is not None
+                    else {}
                 ),
             },
             completed=True,
