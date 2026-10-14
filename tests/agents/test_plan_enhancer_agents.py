@@ -54,17 +54,15 @@ class TestSharedEnhancerContract:
         agent = _load(path)
         assert agent.name == path.stem
 
-    def test_taskless_uses_codex_gpt61_sol_medium(self, taskless: AgentDefinitionBody) -> None:
-        assert taskless.provider == "codex"
-        assert taskless.model == "gpt-6.1-sol"
-        assert taskless.reasoning_effort == "medium"
+    def test_taskless_inherits_launch_model(self, taskless: AgentDefinitionBody) -> None:
+        assert taskless.provider == "inherit"
+        assert taskless.model is None
+        assert taskless.reasoning_effort is None
 
-    def test_stage_native_uses_codex_gpt56_sol_xhigh(
-        self, stage_native: AgentDefinitionBody
-    ) -> None:
-        assert stage_native.provider == "codex"
-        assert stage_native.model == "gpt-5.6-sol"
-        assert stage_native.reasoning_effort == "xhigh"
+    def test_stage_native_inherits_launch_model(self, stage_native: AgentDefinitionBody) -> None:
+        assert stage_native.provider == "inherit"
+        assert stage_native.model is None
+        assert stage_native.reasoning_effort is None
 
     @pytest.mark.parametrize("fixture", ["taskless", "stage_native"])
     def test_blocks_edit_and_write_at_agent_level(

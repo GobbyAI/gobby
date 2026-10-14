@@ -153,6 +153,14 @@ def _matches(condition: str, content: str, **variables: Any) -> bool:
     return bool(evaluator.evaluate(condition))
 
 
+def _code_reviewer_completion_when() -> str:
+    return next(
+        str(handler["when"])
+        for handler in _steps("code-reviewer")["verdict"].on_mcp_success
+        if handler.get("variable") == "_unit_done" and handler.get("value") is True
+    )
+
+
 @pytest.mark.parametrize("name", SEATS)
 def test_seat_carries_the_common_seat_shape(name: str) -> None:
     raw = _raw(name)
@@ -438,6 +446,25 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
     assert _variables(name)["required_skills_loaded"] is False
 
 
+def test_code_reviewer_requires_fresh_intake_for_replacement_sha_and_resume_link() -> None:
+    prompt = _prompt("code-reviewer")
+    steps = _steps("code-reviewer")
+    replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
+    assert "same active task supersedes its old SHA" in replacement
+    assert "First set verdict_ready=false, then candidate_received=false" in replacement
+    assert "return to await" in replacement
+    assert "through Intake and Review" in replacement
+    assert "fresh independent_review_approval receipt for that SHA" in replacement
+    assert "Never reuse the superseded SHA's approval" in replacement
+    resume = prompt.split("- Resume.", 1)[1].split("\n    - ", 1)[0]
+    assert 'action="reviewing"' in resume
+    assert "before landing or review-only completion" in resume
+    assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["verdict"])
+    status = steps["verdict"].status_message
+    assert status is not None
+    assert "set verdict_ready=false, then candidate_received=false" in status
+
+
 def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     variables = _variables("code-reviewer")
     steps = _steps("code-reviewer")
@@ -451,8 +478,14 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     assert variables["candidate_task"] is None
     assert list(steps) == ["load_skills", "await", "review", "verdict"]
     assert _transitions(steps["load_skills"]) == [("await", LOAD_SKILLS_WHEN)]
-    assert _transitions(steps["await"]) == [("review", "vars.candidate_received")]
-    assert _transitions(steps["review"]) == [("verdict", "vars.verdict_ready")]
+    assert _transitions(steps["await"]) == [
+        ("verdict", "vars.candidate_received and vars.verdict_ready"),
+        ("review", "vars.candidate_received"),
+    ]
+    assert _transitions(steps["review"]) == [
+        ("await", "not vars.candidate_received"),
+        ("verdict", "vars.verdict_ready"),
+    ]
     assert _transitions(steps["verdict"]) == [("await", "not vars.candidate_received")]
     assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
         _allowed_mcp_tools(steps["await"])
@@ -462,11 +495,165 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     assert "gobby-agents:send_message" in _allowed_mcp_tools(steps["review"])
     assert 'set_variable(name="candidate_task"' in prompt
     assert 'scope="step"' in prompt
-    assert "against the current `0.5.0` head" in prompt
+    assert "integration branch named by the injected project policy" in prompt
     assert "EVENT=CANDIDATE_VERDICT TASK=#NNNNN" in prompt
     assert "VERDICT=LAND|BOUNCE" in prompt
     assert "HIGH, MEDIUM or LOW" in prompt
     assert "`gcode evidence`" in prompt
+
+
+@pytest.mark.parametrize("step_name", ["review", "verdict"])
+@pytest.mark.parametrize("succeeded", [True, False])
+@pytest.mark.parametrize(
+    ("content", "withdrawn"),
+    [
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24164 NOTE=already reviewed elsewhere", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24188 NOTE=Lane Manager reassignment", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24236 NOTE=Lane Manager reassignment", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate", False),
+        ("Prose EVENT=CANDIDATE_WITHDRAWN TASK=#24164", False),
+        ("EVENT=LAND_PENDING TASK=#24164 NOTE=EVENT=CANDIDATE_WITHDRAWN", False),
+    ],
+)
+async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_receipt(
+    temp_db: PostgresHubDatabase,
+    sample_project: dict[str, Any],
+    step_name: str,
+    succeeded: bool,
+    content: str,
+    withdrawn: bool,
+) -> None:
+    session = SessionManager(temp_db).register(
+        external_id="reviewer-withdrawal",
+        machine_id=get_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    candidate = content.split("TASK=", 1)[1].split(" ", 1)[0] if withdrawn else "#24164"
+    body = _load("code-reviewer")
+    assert body.step_workflow is not None
+    variables = {
+        **body.step_workflow.variables,
+        "candidate_task": candidate,
+        "candidate_sha": "a" * 40,
+        "candidate_received": True,
+        "verdict_ready": step_name == "verdict",
+    }
+    manager = AgentStepInstanceManager(temp_db)
+    manager.save(
+        build_step_instance(
+            body,
+            session_id=session.id,
+            step_workflow_id=None,
+            variables=variables,
+            current_step=step_name,
+        )
+    )
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=session.id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-agents",
+                "tool_name": "send_message",
+                "arguments": {"target": "session", "target_id": "#1", "content": content},
+            },
+            "tool_output": {"success": succeeded},
+        },
+        metadata={},
+    )
+    notice = await RuleEngine(temp_db)._process_step_after_tool(event, session.id, {})
+    instance = manager.get_for_session(session.id)
+    assert instance is not None
+    if withdrawn and succeeded:
+        assert notice is not None and notice.startswith(f"Step transition: {step_name} -> await")
+        assert instance.current_step == "await"
+        assert instance.variables["candidate_task"] is None
+        assert instance.variables["candidate_sha"] is None
+        assert instance.variables["candidate_received"] is False
+        assert instance.variables["verdict_ready"] is False
+    else:
+        assert notice is None
+        assert instance.current_step == step_name
+        assert instance.variables == variables
+    assert temp_db.fetchall("SELECT id FROM task_comments") == []
+
+
+def test_security_reviewer_has_no_step_workflow_to_strand() -> None:
+    definition = _load("security-reviewer")
+    assert definition.step_workflow is None
+    assert definition.execution_mode == "interactive"
+
+
+@pytest.mark.parametrize(
+    ("candidate_received", "verdict_ready", "expected"),
+    [(False, False, "await"), (True, False, None), (True, True, "verdict")],
+)
+def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
+    candidate_received: bool, verdict_ready: bool, expected: str | None
+) -> None:
+    transition = next(
+        (
+            item.to
+            for item in _steps("code-reviewer")["review"].transitions
+            if _matches(
+                item.when or "True",
+                "",
+                candidate_received=candidate_received,
+                verdict_ready=verdict_ready,
+            )
+        ),
+        None,
+    )
+    assert transition == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "resets"),
+    [
+        (
+            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'a' * 40} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=mapping",
+            True,
+        ),
+        ("EVENT=REVIEW_COMPLETE TASK=#43 SHA=abc VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=abc VERDICT=LAND LANDING=REQUIRED", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 NOTE=VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA= VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        ("EVENT=REVIEW_COMPLETE TASK=#42 SHA=def VERDICT=LAND LANDING=NOT_REQUIRED", False),
+        (
+            f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={'b' * 40} VERDICT=LAND LANDING=NOT_REQUIRED",
+            False,
+        ),
+    ],
+)
+def test_review_only_land_requires_explicit_matching_completion(content: str, resets: bool) -> None:
+    assert (
+        _matches(
+            _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha="a" * 40
+        )
+        is resets
+    )
+
+
+def test_code_reviewer_requests_review_only_confirmation_for_unmarked_no_change_land() -> None:
+    prompt = _prompt("code-reviewer")
+    assert "EVENT=REVIEW_ONLY_REQUIRED" in prompt
+    assert "REASON=review_only" in prompt
+
+
+@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
+def test_review_only_land_rejects_malformed_bound_sha(candidate_sha: str | None) -> None:
+    content = (
+        f"EVENT=REVIEW_COMPLETE TASK=#42 SHA={candidate_sha} VERDICT=LAND LANDING=NOT_REQUIRED"
+    )
+    assert not _matches(
+        _code_reviewer_completion_when(), content, candidate_task="#42", candidate_sha=candidate_sha
+    )
 
 
 def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
@@ -476,6 +663,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert _allowed_mcp_tools(verdict) == {
         "gobby-agents:send_message",
         "gobby-tasks:record_close_receipt",
+        "gobby-tasks:link_task_to_session",
         "gobby-tasks-ops:land_commit",
         "gobby-agents:wait_for_coordination",
     }
@@ -516,8 +704,8 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "If the field is absent, report unknown." in prompt
     assert "EVENT=LAND_BLOCKED TASK=#NNNNN" in prompt
     # land_commit refuses a new SHA with review_receipt_missing until it has its own receipt.
-    new_sha = prompt.index("Review a new SHA for the same task")
-    assert "record a fresh `independent_review_approval`" in prompt[new_sha:]
+    new_sha = prompt.index("- Replacement SHA.")
+    assert "fresh independent_review_approval receipt for that SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
 
 
@@ -553,13 +741,16 @@ def test_code_reviewer_resets_only_on_a_bounce_or_landing_for_its_candidate(
 ) -> None:
     handlers = _send_message_resets(_steps("code-reviewer")["verdict"])
 
-    assert {variable: handler["value"] for variable, handler in handlers.items()} == {
+    assert {
+        variable: handlers[variable]["value"]
+        for variable in ("candidate_received", "verdict_ready", "candidate_task", "candidate_sha")
+    } == {
         "candidate_received": False,
         "verdict_ready": False,
         "candidate_task": None,
+        "candidate_sha": None,
     }
-    for handler in handlers.values():
-        assert _matches(handler["when"], content, candidate_task="#42") is resets
+    assert _matches(_code_reviewer_completion_when(), content, candidate_task="#42") is resets
 
 
 def test_archivist_writes_only_the_workspace_digest() -> None:

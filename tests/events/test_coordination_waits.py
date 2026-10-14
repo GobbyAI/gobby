@@ -7,7 +7,7 @@ import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -17,15 +17,18 @@ import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.coordination_waits import CoordinationWaitService
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.coordination_waits import CoordinationWaitManager, coordination_wait_payload
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
+from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.integration
 
@@ -440,6 +443,65 @@ async def test_mcp_registration_and_cancellation(harness: CoordinationHarness) -
         assert row["outcome"] == "waiting"
         cancelled = await registry.call("cancel_coordination_wait", {"wait_id": row["wait_id"]})
         assert cancelled["outcome"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
+    harness: CoordinationHarness,
+) -> None:
+    harness.db.execute(
+        "UPDATE sessions SET source = 'grok', status = 'paused' WHERE id = %s",
+        (harness.waiter,),
+    )
+    LocalAgentRunManager(harness.db).create(
+        parent_session_id=harness.owner,
+        child_session_id=harness.waiter,
+        provider="grok",
+        agent_name="security-reviewer",
+        prompt="Wait for work",
+        resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
+    )
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=SessionManager(harness.db),
+        db=harness.db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    with session_context_for_test(harness.waiter):
+        wait = await registry.call(
+            "wait_for_coordination", {"owner_session": harness.owner, "reply": True}
+        )
+    assert wait["outcome"] == "waiting"
+    terminal = replace(make_memory_terminal(backend="native"), session_id=harness.waiter)
+    terminals = MagicMock()
+    terminals.resolve_live_for_session.return_value = terminal
+    sender = AsyncMock(return_value=utc_now())
+    dispatcher = WakeDispatcher(
+        session_manager=SessionManager(harness.db),
+        ism_manager=harness.messages,
+        terminal_manager=terminals,
+        tmux_sender=sender,
+    )
+    message_id = harness.reply()
+    service = CoordinationWaitService(
+        harness.manager,
+        CompletionEventRegistry(wake_callback=dispatcher.wake),
+        require_machine_id(),
+        lambda: connection_for(harness),
+    )
+    await service.process(wait["wait_id"])
+
+    row = harness.row(wait["wait_id"])
+    assert row["outcome"] == "replied"
+    assert row["message_id"] == message_id
+    assert row["delivered_at"] is not None
+    sender.assert_awaited_once_with(
+        terminal.id,
+        CONTINUE_WAKE_MESSAGE,
+        submit=True,
+        clear_before_submit=True,
+        cli_source="grok",
+    )
 
 
 @pytest.mark.asyncio

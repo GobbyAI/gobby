@@ -129,6 +129,7 @@ def broad_read_blocked(repo: Path, command: str, variables: dict[str, Any] | Non
         "xargs -n 1 cat < list",
         "xargs --max-args=1 cat < list",
         "cat src/long.py | tee >(cat >&2) | head -n 10",
+        "cat src/long.py | tee >(cat |& tee x) | head -n 10",
         "cat src/long.py | tee >(cat >&2; cat > /tmp/copy) | head -n 10",
         "cat src/long.py | tee >(bash -c 'cat >&2') | head -n 10",
         "cat src/long.py | stdbuf -o0 tee /dev/stderr | head -n 10",

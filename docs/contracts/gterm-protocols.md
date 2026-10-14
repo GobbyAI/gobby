@@ -152,19 +152,36 @@ release, a web or proxied holder, and a tmux backend.
 ```json
 {"event": "input_activity", "terminal_id": "t", "host_terminal_id": "ht-1",
  "attachment_id": "att-1", "kind": "input", "bytes": 1, "interrupt": null,
- "submit": false}
+ "submit": false, "effect": "edit"}
 ```
 
 One event per accepted `Input` or `Paste`, with no coalescing. `kind` is
 `input` or `paste`; `interrupt` is `esc` or `ctrl_c` when the whole payload is
 exactly `\x1b` or `\x03`, else `null`. `submit` is `true` when the child reads
-the write as Enter: a CR, or an escape sequence that gterm's key parser reads as
+the write as Enter: a CR outside control reports and bracketed paste, or an
+escape sequence that gterm's key parser reads as
 Enter without modifiers and not as a release, such as kitty's `\x1b[13;1u`. A
 `Paste` counts only when the child has bracketed paste (mode 2004) off, since it
 then receives the text as keystrokes. The composer ledger uses `submit` to tell
 a submitted composer from a draft. The daemon feeds the event to the turn
 observer as a delivered mediated input and lifts the automatic-write
-quarantine, which is the only proof it gets that the operator typed.
+quarantine, which is the proof it gets that operator input was accepted.
+
+`effect` describes the composer effect without exposing the input payload:
+
+- `control`: only focus-in/out, SGR mouse or X10 mouse reports (including wheel
+  reports), or empty input. Coordinates containing CR or arrow bytes remain
+  part of the mouse report.
+- `cursor`: only those control reports plus at least one arrow report, encoded
+  as CSI `\x1b\[[\d;]*[ABCD]` or SS3 `\x1bO[ABCD]`.
+- `edit`: any remaining bytes, including incomplete escapes and editing keys.
+  `Paste` is `edit` unless empty; its content is never classified as reports.
+
+The composer ledger advances its event cursor for all three effects. `control`
+never marks a draft; `cursor` marks one only over held daemon text, whose exact
+content can no longer be trusted. `edit` always records a human draft. `submit`
+provides evidence for a later provider submission record to consume that input;
+it does not immediately clear the draft.
 
 `write` / `write_batch` / `kill` / `resize` / `spawn` carry a per-connection monotonic
 `operation_seq`. A gap is `operation_gap`; an evicted seq is

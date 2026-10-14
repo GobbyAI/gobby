@@ -16,9 +16,11 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
+    _agent_prompt_prefix,
     _prepare_provider_sandbox,
     prepare_claude_spawn,
     prepare_codex_spawn,
+    prepare_grok_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError, render_srt_settings
@@ -29,6 +31,24 @@ from gobby.storage.project_checkouts import (
     MissingMachineContextError,
 )
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.agent_definitions import make_agent_definition
+
+
+def test_spawn_preamble_renders_launch_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    request, _, _ = _sandbox_request()
+    request.agent_name = "assigned-seat"
+    request.session_manager = MagicMock()
+    request.initial_variables = {"seat_context": {"lane": "custom"}}
+    body = make_agent_definition(
+        name="assigned-seat", prompts={"agent": "Assigned lane {{ seat_context.lane }}."}
+    )
+    resolver = MagicMock(return_value=body)
+    monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", resolver)
+
+    assert _agent_prompt_prefix(request) == "Assigned lane custom."
+    resolver.assert_called_once_with(
+        "assigned-seat", request.session_manager._storage.db, project_id="project"
+    )
 
 
 def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
@@ -51,6 +71,58 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         prepared_spawn=spawn_context,
     )
     return request, spawn_context, run_manager
+
+
+@pytest.mark.parametrize("execution_mode", ["one_shot", "interactive"])
+@pytest.mark.asyncio
+async def test_grok_spawn_preserves_standing_seat_lifetime(
+    monkeypatch: pytest.MonkeyPatch, execution_mode: str
+) -> None:
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        provider="grok",
+        agent_name="security-reviewer",
+        model="grok-4.7",
+        effective_reasoning_effort="xhigh",
+        session_manager=MagicMock(),
+        resume_metadata_json={"execution_mode": execution_mode},
+    )
+    sandbox = AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True))
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers._prepare_provider_sandbox", sandbox)
+    record_launch = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", record_launch
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+
+    plan = await prepare_grok_spawn(request)
+
+    assert isinstance(plan, ProviderSpawnPlan)
+    expected = [
+        "grok",
+        "--always-approve",
+        "--no-alt-screen",
+        "--cwd",
+        "/workspace",
+        "--model",
+        "grok-4.7",
+        "--reasoning-effort",
+        "xhigh",
+    ]
+    if execution_mode == "one_shot":
+        expected.append("--single")
+    assert plan.command == [*expected, "work"]
+    assert plan.launch.enforced
+    assert plan.env["GOBBY_SESSION_ID"] == "child"
+    sandbox.assert_awaited_once()
+    assert record_launch.call_args.kwargs["provider_cli_mode"] == (
+        "terminal" if execution_mode == "interactive" else "agent"
+    )
 
 
 @pytest.mark.parametrize("agent_name", ["task-close-reviewer", "backend-developer"])

@@ -104,7 +104,7 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
         return ""
     if not agent_body:
         return ""
-    return agent_body.prompt_for("agent") or ""
+    return agent_body.prompt_for("agent", variables=request.initial_variables) or ""
 
 
 async def _prepare_provider_sandbox(
@@ -378,8 +378,14 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         return sandbox_result
     launch = sandbox_result
     post_sandbox_started = start_spawn_phase()
+    mode = (
+        "terminal"
+        if (request.resume_metadata_json or {}).get("execution_mode") == "interactive"
+        else "agent"
+    )
     cmd, _cmd_env = build_cli_command(
         cli="grok",
+        mode=mode,
         resume_session_id=request.resume_session_id,
         prompt=request.prompt,
         auto_approve=True,
@@ -396,6 +402,7 @@ async def prepare_grok_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spawn
         sandbox_env=launch.provider_env,
         env=env,
         sandbox_launch=launch,
+        provider_cli_mode=mode,
     )
     await asyncio.to_thread(pre_approve_directory, "grok", request.cwd)
     finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)

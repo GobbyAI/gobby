@@ -152,9 +152,9 @@ class TestSyncBundledAgents:
         assert result["errors"] == []
         row = next(item for item in _mgr(definition_db).list_all() if item.name == name)
         body = _parse_body(row)
-        assert body.provider == "grok"
-        assert body.model == "grok-4.7"
-        assert body.reasoning_effort == "xhigh"
+        assert body.provider == "inherit"
+        assert body.model is None
+        assert body.reasoning_effort is None
         assert "codex" not in body.model_dump_json().lower()
 
     @pytest.mark.unit
@@ -1106,11 +1106,11 @@ class TestSyncBundledAgents:
         assert "doc-reviewer" in names
         close_reviewer = mgr.get_by_name("task-close-reviewer")
         assert close_reviewer is not None
-        assert _parse_body(close_reviewer).reasoning_effort == "medium"
+        assert _parse_body(close_reviewer).reasoning_effort is None
         for name in ("reporter", "assistant"):
             status_sender = mgr.get_by_name(name)
             assert status_sender is not None
-            assert _parse_body(status_sender).operator_message_channels == ["gobby-telegram"]
+            assert _parse_body(status_sender).operator_messaging is True
         assert all(
             n in names
             for n in (

@@ -16,7 +16,7 @@ from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
-from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
+from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead, WriteKind
 from tests.events.test_wake import FakeSession
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
@@ -162,6 +162,80 @@ async def test_repeated_withheld_wakes_keep_one_attention_item(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "\x1b[I",
+        "\x1b[O",
+        "\x1b[<0;12;8M",
+        "\x1b[<64;12;8M",
+        "\x1b[M !!",
+        "\x1b[M`!!",
+        "\x1b[A",
+        "\x1bOD",
+    ],
+)
+async def test_non_text_input_allows_following_wake(
+    seat: Seat, composer_ledger: ComposerLedger, payload: str
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effect", ["control", "cursor", "edit"])
+async def test_native_input_effect_controls_following_wake(
+    seat: Seat, composer_ledger: ComposerLedger, effect: str
+) -> None:
+    from gobby.terminals.host_events import decode_host_event
+
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_host_event(
+        decode_host_event(
+            {
+                "event": "input_activity",
+                "terminal_id": TERMINAL_ID,
+                "host_terminal_id": "ht-1",
+                "attachment_id": "att-1",
+                "kind": "input",
+                "bytes": 3,
+                "interrupt": None,
+                "submit": False,
+                "effect": effect,
+                "epoch": HOST_EPOCH,
+                "seq": 1,
+            }
+        )
+    )
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is (effect != "edit")
+    if effect == "edit":
+        assert result["decline_reason"] == "composer_occupied"
+        seat.pane_sender.assert_not_awaited()
+    else:
+        seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [("input", "typed"), ("input", "\x1b[200~paste\x1b[201~"), ("paste", "paste")],
+)
+async def test_text_input_still_withholds_wake(
+    seat: Seat, composer_ledger: ComposerLedger, kind: WriteKind, payload: str
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind=kind, payload=payload)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is False
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_released_composer_delivers_the_wake_and_retires_the_item(
     seat: Seat, composer_ledger: ComposerLedger
 ) -> None:
@@ -179,6 +253,19 @@ async def test_released_composer_delivers_the_wake_and_retires_the_item(
     assert cleared is not None
     assert cleared.state is None
     assert cleared.reason is None
+
+
+@pytest.mark.asyncio
+async def test_arrow_over_held_daemon_text_withholds_wake(
+    seat: Seat, composer_ledger: ComposerLedger
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(TERMINAL_ID, origin="daemon", kind="text", payload="continue")
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
+    assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio

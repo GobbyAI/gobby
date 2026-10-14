@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -143,6 +145,54 @@ def _retain_run_artifact(source: Path, run_id: str, filename: str, gobby_home: P
     return destination
 
 
+def _retain_monitor_backlog(run_id: str, gobby_home: Path) -> Path | None:
+    """Ingest a completed broker snapshot into run-keyed forensic retention.
+
+    Active queues are left to the broker; it publishes a closed snapshot by
+    linking it without overwriting. Broker startup recovers late/crash snapshots.
+    """
+    if re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", run_id) is None:
+        return None
+    source = gobby_home / "runtime" / "srt-sock" / f"{run_id}.srt-backlog.jsonl"
+    info = _lstat(source)
+    if info is None:
+        return None
+    lock_fd = os.open(
+        source.parent / "violations.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600
+    )
+    with os.fdopen(lock_fd, "ab") as lock:
+        lock_info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid():
+            raise OSError("unsafe monitor recovery lock")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        info = _lstat(source)
+        if info is None:
+            return None
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError(f"unsafe monitor backlog for run {run_id}")
+        destination = (
+            gobby_home / SANDBOX_RETENTION_RELATIVE_PATH / f"{run_id}.monitor-backlog.jsonl"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(source_fd, "rb") as evidence:
+            source_info = os.fstat(evidence.fileno())
+            if not stat.S_ISREG(source_info.st_mode) or source_info.st_uid != os.getuid():
+                raise OSError(f"unsafe monitor backlog for run {run_id}")
+            retained_fd = os.open(
+                destination, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600
+            )
+            with os.fdopen(retained_fd, "ab") as retained:
+                retained_info = os.fstat(retained.fileno())
+                if not stat.S_ISREG(retained_info.st_mode) or retained_info.st_uid != os.getuid():
+                    raise OSError(f"unsafe monitor retention for run {run_id}")
+                os.fchmod(retained.fileno(), 0o600)
+                shutil.copyfileobj(evidence, retained)
+        source.unlink()
+        logger.info("Retained SRT monitor backlog for run %s at %s", run_id, destination)
+        return destination
+
+
 def _remove_root(path: Path, *, remove_registered_tmp: bool = True) -> bool:
     root_stat = _lstat(path)
     if root_stat is None:
@@ -210,6 +260,10 @@ def _remove_root(path: Path, *, remove_registered_tmp: bool = True) -> bool:
 
 
 def _reap_roots(run_id: str, roots: Iterable[Path], gobby_home: Path) -> SandboxReapResult:
+    try:
+        _retain_monitor_backlog(run_id, gobby_home)
+    except OSError:
+        logger.exception("Could not retain SRT monitor backlog for run %s", run_id)
     roots_to_remove: list[Path] = []
     violation_logs: list[tuple[tuple[Path, os.stat_result], Path]] = []
     skipped_roots = 0

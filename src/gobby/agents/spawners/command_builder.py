@@ -29,11 +29,12 @@ def build_cli_command(
     """
     Build the CLI command and env for any provider.
 
-    Supports three modes:
+    Supports four modes:
     - "agent": Autonomous subagent (auto-approve, single-shot prompt)
     - "interactive": Multi-turn provider session. Droid uses its terminal UI;
       stream-capable providers use structured I/O without a positional prompt.
     - "headless": Single-turn headless query (not used for web chat)
+    - "terminal": Persistent Grok terminal UI with an initial positional prompt.
 
     Each CLI has different syntax for passing prompts and handling permissions:
 
@@ -56,7 +57,7 @@ def build_cli_command(
         working_directory: Optional working directory (used by Codex -C and Droid --cwd)
         sandbox_args: Optional list of CLI args for sandbox configuration
         model: Optional model name
-        mode: "agent" (default), "interactive", or "headless"
+        mode: "agent" (default), "interactive", "headless", or "terminal"
         output_format: Output format override (e.g., "stream-json")
         env_overrides: Environment variable overrides. Callers are responsible
             for merging inherited environment variables if needed.
@@ -128,7 +129,8 @@ def build_cli_command(
             if sandbox_args:
                 command.extend(sandbox_args)
                 sandbox_args_consumed = True
-            command.append("--single")
+            if mode != "terminal":
+                command.append("--single")
 
     elif cli == "codex":
         # Codex CLI flags

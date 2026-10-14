@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from collections.abc import Mapping
@@ -72,6 +73,11 @@ WriteKind = Literal["text", "key", "paste", "input"]
 STATE_VERSION = 1
 _HUMAN_ORIGINS = frozenset({"operator", "attention"})
 _INTERRUPT_KEYS = frozenset({"escape", "ctrl_c"})
+_CURSOR_KEYS = frozenset({"up", "down", "left", "right"})
+_INPUT_CONTROLS = re.compile(
+    r"\x1b\[M[\s\S]{3}|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[[IO]|"
+    r"(?P<cursor>\x1b\[[\d;]*[ABCD]|\x1bO[ABCD])"
+)
 
 
 @dataclass(frozen=True)
@@ -152,7 +158,7 @@ class ComposerLedger:
             self._entries[terminal_id] = _Entry(clean_seq=self._next())
 
     def observe_host_event(self, event: HostEvent) -> None:
-        """Advance the host cursor; input is human, an exit drops its terminal.
+        """Advance the host cursor; edits are human, an exit drops its terminal.
 
         Another host's event is ignored: the reader resumes on the live host, and a spawn
         may have moved the ledger there while a dead host's stream drained.
@@ -169,6 +175,15 @@ class ComposerLedger:
                 return
             entry = self._entries.get(event.terminal_id)
             if entry is not None:
+                if (
+                    not event.submit
+                    and event.interrupt is None
+                    and (
+                        event.effect == "control"
+                        or (event.effect == "cursor" and entry.pending_seq <= entry.clean_seq)
+                    )
+                ):
+                    return
                 self._human(entry, submit=event.submit, interrupt=event.interrupt is not None)
 
     def observe_write(
@@ -185,12 +200,38 @@ class ComposerLedger:
             if entry is None:
                 return
             if origin in _HUMAN_ORIGINS:
+                text = _INPUT_CONTROLS.sub("", payload)
+                is_submit = (
+                    submit
+                    or (kind == "key" and payload in {"enter", "kpenter"})
+                    or (
+                        kind == "input"
+                        and ("\r" in text or "\x1bOM" in text)
+                        and "\x1b[200~" not in payload
+                    )
+                )
+                is_interrupt = kind == "key" and payload in _INTERRUPT_KEYS
+                has_text = not (kind == "key" and payload in _CURSOR_KEYS) and (
+                    (kind == "paste" and bool(payload)) or "\x1b[200~" in payload or bool(text)
+                )
+                # History recall or cursor movement invalidates a held payload's
+                # exact text, so a retry cannot safely submit it with bare Enter.
+                edits_held = entry.pending_seq > entry.clean_seq and (
+                    (kind == "key" and payload in _CURSOR_KEYS)
+                    or (
+                        kind == "input"
+                        and any(
+                            match.group("cursor") is not None
+                            for match in _INPUT_CONTROLS.finditer(payload)
+                        )
+                    )
+                )
+                if not (is_submit or is_interrupt or has_text or edits_held):
+                    return
                 self._human(
                     entry,
-                    submit=submit
-                    or (kind == "key" and payload == "enter")
-                    or (kind == "input" and "\r" in payload),
-                    interrupt=kind == "key" and payload in _INTERRUPT_KEYS,
+                    submit=is_submit,
+                    interrupt=is_interrupt,
                 )
                 return
             seq = self._next()

@@ -134,6 +134,46 @@ async def test_terminal_run_still_registers_a_coordination_wait(provider: str) -
 
 
 @pytest.mark.asyncio
+async def test_interactive_grok_seat_registers_a_coordination_wait() -> None:
+    registry, _ctx = _registry_for_run(
+        SimpleNamespace(
+            provider="grok",
+            agent_name="security-reviewer",
+            resume_metadata_json={"execution_mode": "interactive", "provider_cli_mode": "terminal"},
+        )
+    )
+    with (
+        patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
+        patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
+    ):
+        payload.return_value = {"success": True, "outcome": "waiting"}
+        result = await registry.call(
+            "wait_for_coordination", {"owner_session": OWNER, "reply": True}
+        )
+
+    assert result == {"success": True, "outcome": "waiting"}
+    manager.return_value.register.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_grok_interactive_intent_without_recorded_terminal_launch_refuses_wait() -> None:
+    registry, _ctx = _registry_for_run(
+        SimpleNamespace(
+            provider="grok",
+            agent_name="security-reviewer",
+            resume_metadata_json={"execution_mode": "interactive"},
+        )
+    )
+    with patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager:
+        result = await registry.call(
+            "wait_for_coordination", {"owner_session": OWNER, "reply": True}
+        )
+    assert result["success"] is False
+    assert result["error_code"] == HEADLESS_WAIT_ERROR_CODE
+    manager.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_session_without_an_agent_run_still_registers_a_coordination_wait() -> None:
     registry, _ctx = _registry(None)
 
