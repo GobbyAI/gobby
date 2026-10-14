@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use gobby_core::postgres_pool::{Pool, PoolSettings};
-use gobby_terminals::leases::{Registry, Viewer};
+use gobby_terminals::leases::{self, Registry, Viewer};
 use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};
 use gobby_terminals::write::{
     BatchOp, BatchResult, BatchRuntime, BatchTarget, BoxFuture, Coordinator, Delivery, Kind,
@@ -367,7 +367,13 @@ fn uncertain(detail: &str) -> Delivery {
 
 async fn controller(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseClaim> {
     let attachment = leases
-        .attach(terminal, Uuid::new_v4(), Viewer::Web, Backend::Native)
+        .attach(
+            terminal,
+            Uuid::new_v4(),
+            Viewer::Web,
+            Backend::Native,
+            leases::Delivery::Proxy,
+        )
         .await?;
     let control = leases.take_control(attachment, true).await?;
     anyhow::ensure!(control.granted, "control granted");
@@ -495,8 +501,8 @@ async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
     assert_eq!(native.payloads(), vec!["held"]);
     assert!(hub.unresolved(row).await?.is_empty());
 
-    // Serialization: a queued operator write waits for the in-flight write on
-    // the same terminal, then revalidates the lease after it acquires the lock.
+    // Serialization: a takeover waits for the in-flight operator write, and a
+    // write queued behind the takeover revalidates after it acquires the lock.
     let (entered_tx, entered) = oneshot::channel();
     let (release, release_rx) = oneshot::channel();
     *native.gate.lock().unwrap() = Some(Gate {
@@ -507,11 +513,19 @@ async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
         let coordinator = coordinator.clone();
         async move {
             coordinator
-                .write(automatic(row, "auto:slow", text("slow")))
+                .write(operator(row, "op:slow", text("slow"), Some(second)))
                 .await
         }
     });
     entered.await?;
+    let takeover = tokio::spawn({
+        let leases = leases.clone();
+        async move { controller(&leases, row).await }
+    });
+    // The test runtime is single-threaded and neither attach nor the terminal
+    // lock does I/O, so one yield parks the takeover on that lock.
+    tokio::task::yield_now().await;
+    assert!(!takeover.is_finished(), "takeover ran during a held write");
     let queued = tokio::spawn({
         let coordinator = coordinator.clone();
         async move {
@@ -520,15 +534,13 @@ async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
                 .await
         }
     });
-    // The test runtime is single-threaded and `write` takes the terminal lock
-    // before any I/O, so one yield parks the queued write on that lock.
     tokio::task::yield_now().await;
     assert!(!queued.is_finished());
     assert_eq!(native.payloads(), vec!["held", "slow"]);
-    let third = controller(&leases, row).await?;
-    assert!(third.generation > second.generation);
     release.send(()).expect("release gate");
     assert_eq!(in_flight.await??, Outcome::Delivered);
+    let third = takeover.await??;
+    assert_eq!(third.generation, second.generation + 1);
     let refused = queued.await?;
     assert!(matches!(refused, Err(Refusal::StaleLease)), "{refused:?}");
     assert_eq!(native.payloads(), vec!["held", "slow"]);
@@ -988,5 +1000,76 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
     );
     assert!(hub.unresolved(duplicated).await?.is_empty());
     assert!(hub.unresolved(quarantined).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn unnamed_keys_are_refused_before_any_latch() -> anyhow::Result<()> {
+    let hub = Hub::new().await?;
+    let row = hub.insert(Backend::Native).await?;
+    let (leases, _events) = Registry::new(16);
+    let leases = Arc::new(leases);
+    let native = FakeRuntime::batching();
+    let tmux = FakeRuntime::new();
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
+    let invalid = |result: &Result<Outcome, Refusal>| {
+        matches!(result, Err(Refusal::Write(WriteFailure { stage: Stage::None, code, .. }))
+            if code == "invalid_key")
+    };
+
+    let refused = coordinator
+        .write(automatic(row, "auto:raw", key("\u{1b}[2~")))
+        .await;
+    assert!(invalid(&refused), "{refused:?}");
+
+    // A sequence is refused whole, naming the bad step, before its first write.
+    let report = coordinator
+        .run_sequence(SequenceRequest {
+            terminal_id: row,
+            action_key: "seq:raw".into(),
+            origin: Origin::Automatic,
+            lease: None,
+            latch: true,
+            steps: vec![
+                SequenceStep::Write(text("a")),
+                SequenceStep::Write(key("ctrl_z")),
+            ],
+        })
+        .await;
+    assert_eq!(report.step, Some(1));
+    assert!(invalid(&report.result), "{report:?}");
+
+    let results = coordinator
+        .run_native_wake_batch(vec![WakeRequest {
+            result_id: "raw".into(),
+            terminal_id: row,
+            clear_action_key: "wake-clear:raw".into(),
+            wake_action_key: "wake:raw".into(),
+            operations: vec![
+                BatchOp {
+                    kind: Kind::Text,
+                    payload: "wake".into(),
+                    delay_ms: 0,
+                },
+                BatchOp {
+                    kind: Kind::Key,
+                    payload: "f13".into(),
+                    delay_ms: 0,
+                },
+            ],
+        }])
+        .await?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].step, WakeStep::Preflight);
+    assert!(
+        matches!(&results[0].outcome, Err(WriteFailure { stage: Stage::None, code, .. })
+            if code == "invalid_key"),
+        "{results:?}"
+    );
+
+    assert!(native.calls().is_empty());
+    let batch = native.batch.as_ref().expect("batch runtime");
+    assert!(batch.calls.lock().unwrap().is_empty());
+    assert!(hub.unresolved(row).await?.is_empty());
     Ok(())
 }

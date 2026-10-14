@@ -19,14 +19,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex, PoisonError, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
 use gobby_core::postgres_pool::{Pool, TransactionError};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, OwnedMutexGuard};
+use tokio::sync::OwnedMutexGuard;
 use uuid::Uuid;
 
 use crate::leases::Registry;
@@ -38,6 +38,40 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 const ACTION_KEY_MAX_BYTES: usize = 256;
 const UNRESOLVED_MAX_ENTRIES: usize = 32;
 const UNRESOLVED_MAX_SERIALIZED_BYTES: usize = 65536;
+
+/// `gobby.terminals.runtime.NamedKey`: the only payloads a `Kind::Key` step
+/// may carry. The native host types any other key name as raw bytes.
+const NAMED_KEYS: &[&str] = &[
+    "enter",
+    "escape",
+    "tab",
+    "backspace",
+    "delete",
+    "ctrl_c",
+    "ctrl_k",
+    "ctrl_l",
+    "ctrl_u",
+    "up",
+    "down",
+    "left",
+    "right",
+    "kp0",
+    "kp1",
+    "kp2",
+    "kp3",
+    "kp4",
+    "kp5",
+    "kp6",
+    "kp7",
+    "kp8",
+    "kp9",
+    "kpdecimal",
+    "kpplus",
+    "kpminus",
+    "kpmul",
+    "kpdiv",
+    "kpenter",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
@@ -291,7 +325,6 @@ pub struct Coordinator {
     pool: Arc<Pool>,
     leases: Arc<Registry>,
     runtimes: Runtimes,
-    locks: StdMutex<HashMap<Uuid, Weak<Mutex<()>>>>,
 }
 
 impl Coordinator {
@@ -300,13 +333,15 @@ impl Coordinator {
             pool,
             leases,
             runtimes,
-            locks: StdMutex::default(),
         }
     }
 
     /// One logical write. Clears its latch only on a delivered outcome or a
     /// refusal that proves no byte was emitted.
     pub async fn write(&self, request: WriteRequest) -> Result<Outcome, Refusal> {
+        if let Some(failure) = invalid_key(request.step.kind, &request.step.payload) {
+            return Err(Refusal::Write(failure));
+        }
         let _held = self.acquire(request.terminal_id).await;
         let terminal = self.require(request.terminal_id).await?;
         let fingerprint = request
@@ -383,6 +418,13 @@ impl Coordinator {
         let id = request.terminal_id;
         let key = request.action_key.as_str();
         let preflight = |error| (None, Err(error));
+        for (index, step) in request.steps.iter().enumerate() {
+            if let SequenceStep::Write(step) = step
+                && let Some(failure) = invalid_key(step.kind, &step.payload)
+            {
+                return Err((Some(index), Err(Refusal::Write(failure))));
+            }
+        }
         let terminal = self.require(id).await.map_err(preflight)?;
         if let Some(blocked) = blocked_automatic(&terminal, key, request.origin) {
             return Ok(blocked);
@@ -485,6 +527,14 @@ impl Coordinator {
                     "duplicate_terminal",
                     "native wake batch targets must be grouped by terminal".into(),
                 );
+                continue;
+            }
+            if let Some(failure) = request
+                .operations
+                .iter()
+                .find_map(|op| invalid_key(op.kind, &op.payload))
+            {
+                results[index] = refuse(&failure.code, failure.detail);
                 continue;
             }
             let Some(terminal) = self.load(id).await? else {
@@ -646,20 +696,10 @@ impl Coordinator {
             .ok_or(Refusal::TerminalNotFound(terminal_id))
     }
 
+    /// The registry's terminal lock, so a control transition waits for this
+    /// write and a later write sees the transition.
     async fn acquire(&self, terminal_id: Uuid) -> OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
-            locks.retain(|_, lock| lock.strong_count() > 0);
-            match locks.get(&terminal_id).and_then(Weak::upgrade) {
-                Some(lock) => lock,
-                None => {
-                    let lock = Arc::new(Mutex::new(()));
-                    locks.insert(terminal_id, Arc::downgrade(&lock));
-                    lock
-                }
-            }
-        };
-        lock.lock_owned().await
+        self.leases.lock(terminal_id).await
     }
 
     async fn load(&self, terminal_id: Uuid) -> Result<Option<Terminal>, Refusal> {
@@ -752,6 +792,15 @@ impl Coordinator {
             .then_some(())
             .ok_or(Refusal::TerminalNotFound(terminal_id))
     }
+}
+
+/// A key step must name a key; refused before any latch or byte.
+fn invalid_key(kind: Kind, payload: &str) -> Option<WriteFailure> {
+    (kind == Kind::Key && !NAMED_KEYS.contains(&payload)).then(|| WriteFailure {
+        stage: Stage::None,
+        code: "invalid_key".into(),
+        detail: "key payload is not a named key".into(),
+    })
 }
 
 fn blocked_automatic(terminal: &Terminal, action_key: &str, origin: Origin) -> Option<Outcome> {
