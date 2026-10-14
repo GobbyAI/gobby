@@ -24,6 +24,7 @@ from gobby.hooks.code_navigation import (
 class _ShellSegment:
     tokens: list[ShellToken]
     separator_before: str | None = None
+    stderr_pipe: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +61,20 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
     segments: list[_ShellSegment] = []
     current: list[ShellToken] = []
     separator_before: str | None = None
+    stderr_pipe = False
     for index, token in enumerate(tokens):
+        if (
+            token.value == "&"
+            and not token.quoted
+            and index > 0
+            and not tokens[index - 1].quoted
+            and tokens[index - 1].value == "|"
+            and not current
+        ):
+            # Preserve the scanner's |, & stream for its other consumers.
+            # Normalization treats the pair as one pipe carrying stderr too.
+            stderr_pipe = True
+            continue
         if token.value == "&" and not token.quoted and 0 < index < len(tokens) - 1:
             previous, following = tokens[index - 1], tokens[index + 1]
             if (
@@ -75,13 +89,14 @@ def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
             if not current and token.value == "\n" and separator_before in {"|", "&&", "||", "&"}:
                 continue
             if current:
-                segments.append(_ShellSegment(current, separator_before))
+                segments.append(_ShellSegment(current, separator_before, stderr_pipe))
                 current = []
+            stderr_pipe = False
             separator_before = token.value
             continue
         current.append(token)
     if current:
-        segments.append(_ShellSegment(current, separator_before))
+        segments.append(_ShellSegment(current, separator_before, stderr_pipe))
     return segments
 
 
@@ -162,11 +177,11 @@ def _bound_pipeline_reads(
         pending = item.extra.get("_canonical_pending_source_reads")
         read_segments = item.extra.get("canonical_code_navigation_segments", ())
         if (
-            navigation.get("canonical_code_navigation_action") == "read"
+            navigation.get("canonical_code_navigation_action") in {"read", "search"}
             and navigation.get("canonical_code_navigation_broad")
             or pending
             or any(
-                segment.get("canonical_code_navigation_action") == "read"
+                segment.get("canonical_code_navigation_action") in {"read", "search"}
                 for segment in read_segments
             )
         ):
@@ -180,9 +195,12 @@ def _bound_pipeline_reads(
                 "stdout"
             ]:
                 extra["_canonical_deferred_source_read"] = {**deferred, **narrowed}
-            elif navigation.get("canonical_code_navigation_action") == "read" and navigation.get(
-                "_canonical_source_read_output_channels", ["stdout"]
-            ) == ["stdout"]:
+            elif navigation.get("canonical_code_navigation_action") in {
+                "read",
+                "search",
+            } and navigation.get("_canonical_source_read_output_channels", ["stdout"]) == [
+                "stdout"
+            ]:
                 extra.update(narrowed)
             if pending:
                 extra["_canonical_pending_source_reads"] = [
@@ -195,7 +213,7 @@ def _bound_pipeline_reads(
             if "canonical_code_navigation_segments" in extra:
                 extra["canonical_code_navigation_segments"] = [
                     {**segment, **narrowed}
-                    if segment.get("canonical_code_navigation_action") == "read"
+                    if segment.get("canonical_code_navigation_action") in {"read", "search"}
                     and segment.get("_canonical_source_read_output_channels", ["stdout"])
                     == ["stdout"]
                     else segment
@@ -214,7 +232,7 @@ def _mark_pipeline_read_escape(
     index: int,
     channels: set[str],
 ) -> None:
-    """A tee copy can expose source independently of the pipeline's stdout."""
+    """A pipeline stage can expose source independently of its stdout."""
     for prior in _pipeline_read_indices(segments, index):
         prior = segment_metadata_positions[prior]
         item = metadata[prior]
@@ -224,14 +242,17 @@ def _mark_pipeline_read_escape(
 
         def exposed(scope: Mapping[str, Any]) -> dict[str, Any]:
             outputs = set(scope.get("_canonical_source_read_output_channels", ("stdout",)))
-            if scope.get("canonical_code_navigation_action") == "read" and "stdout" in outputs:
+            if (
+                scope.get("canonical_code_navigation_action") in {"read", "search"}
+                and "stdout" in outputs
+            ):
                 return {
                     **scope,
                     "_canonical_source_read_output_channels": sorted(outputs | channels),
                 }
             return dict(scope)
 
-        if extra.get("canonical_code_navigation_action") == "read":
+        if extra.get("canonical_code_navigation_action") in {"read", "search"}:
             extra = exposed(extra)
         if "_canonical_deferred_source_read" in extra:
             extra["_canonical_deferred_source_read"] = exposed(

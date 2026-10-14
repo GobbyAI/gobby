@@ -539,16 +539,13 @@ def test_nested_shell_parse_error_write_fails_closed(tmp_path: Path) -> None:
     "body",
     ["echo $$'\\' ; git apply x.patch ; echo '\\'", "git apply x.patch"],
 )
-def test_nested_shell_parse_heredoc_controls_keep_script_execution(
-    tmp_path: Path, body: str
-) -> None:
+def test_nested_shell_parse_heredoc_reports_mutation(tmp_path: Path, body: str) -> None:
     data = _invocation_metadata(
         f"sh <<'EOF'\n{body}\nEOF", tool_cwd=tmp_path, project_path=tmp_path
     )
-    assert data["canonical_tool_kind"] == "execute"
-    assert data["canonical_script_execution"] is True
-    assert not data.get("canonical_repo_mutation")
-    assert data.get("canonical_repo_mutation_scope_unknown") is None
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 @pytest.mark.parametrize(
@@ -865,11 +862,6 @@ def test_quoted_process_substitution_text_is_not_a_write(tmp_path: Path, command
         "env -u HOME bash probe.sh",
         "command -p bash probe.sh",
         "bash /tmp/scratchpad/probe.sh",
-        "bash < /tmp/scratchpad/probe.sh",
-        "bash -s < /tmp/scratchpad/probe.sh",
-        "bash <<'EOF'\ntouch /project/x.py\nEOF",
-        "cat /tmp/scratchpad/probe.sh | bash",
-        "echo 'touch /project/x.py' | sh",
         "bash -s",
         "bash -so pipefail",
         "bash -",
@@ -2205,17 +2197,13 @@ def test_variable_write_in_script_body_has_unknown_scope(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "command",
     [
-        "bash -s < {script}",
-        "cat {script} | bash",
         "source {script}",
         ". {script}",
         # Relative script paths fail closed once the directory may have changed.
         "cd {scratch} && zsh q.sh",
     ],
 )
-def test_readable_script_read_from_stdin_or_sourced_stays_opaque(
-    tmp_path: Path, command: str
-) -> None:
+def test_sourced_or_unresolved_script_stays_opaque(tmp_path: Path, command: str) -> None:
     scratch = tmp_path / "scratchpad"
     script = _script(scratch / "q.sh", "#!/bin/zsh\necho ready\n")
     data = _shell_write_metadata(command.format(scratch=scratch, script=script), tmp_path)

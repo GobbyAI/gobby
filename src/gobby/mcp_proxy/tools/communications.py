@@ -97,7 +97,7 @@ def create_communications_registry(
         if row is None or not row.enabled:
             raise ValueError("Caller is not permitted to message the operator")
         body = AgentDefinitionBody.model_validate({"name": row.name, **row.definition_json})
-        if channel not in body.operator_message_channels:
+        if not body.operator_messaging:
             raise ValueError("Caller is not permitted to message the operator on this channel")
         destination = communications_manager.resolve_operator_conversation(channel)
         conversation = destination.get("conversation_id")
@@ -108,7 +108,7 @@ def create_communications_registry(
     @registry.tool(
         description=(
             "Send markdown directly to the enrolled operator's Telegram DM. Requires an explicit "
-            "operator_message_channels grant in the caller's installed agent definition. "
+            "operator_messaging grant in the caller's installed agent definition. "
             "Takes no destination and does not change the conversation's attached session."
         )
     )
@@ -140,7 +140,7 @@ def create_communications_registry(
     @registry.tool(
         description=(
             "Send an existing workspace file directly to the enrolled operator's Telegram DM. "
-            "Requires an explicit operator_message_channels grant in the installed agent definition. "
+            "Requires an explicit operator_messaging grant in the installed agent definition. "
             "Takes no destination and preserves conversation attachment state."
         )
     )

@@ -260,8 +260,8 @@ def bootstrap_from_mapping(
         hub_daemon_url=hub_daemon_url,
         front_door=_parse_front_door(data.get("front_door"), bind_host),
         api_key=_parse_optional_str(data.get("api_key"), "api_key"),
-        api_key_id=_parse_optional_str(data.get("api_key_id"), "api_key_id"),
-        hub_cert=_parse_optional_str(data.get("hub_cert"), "hub_cert"),
+        api_key_id=_parse_optional_raw_str(data.get("api_key_id"), "api_key_id"),
+        hub_cert=_parse_optional_raw_str(data.get("hub_cert"), "hub_cert"),
     )
 
 
@@ -602,6 +602,12 @@ def _parse_str(value: object, field_name: str) -> str:
 
 
 def _parse_optional_str(value: object, field_name: str) -> str | None:
+    """Strip Python whitespace, including U+001C..U+001F; blank means absent."""
+    text = _parse_optional_raw_str(value, field_name)
+    return text.strip() if text is not None else None
+
+
+def _parse_optional_raw_str(value: object, field_name: str) -> str | None:
     if value is None:
         return None
     text = _parse_str(value, field_name)
@@ -609,9 +615,7 @@ def _parse_optional_str(value: object, field_name: str) -> str | None:
 
 
 def _parse_optional_daemon_url(value: object) -> str | None:
-    if value is None:
-        return None
-    return _parse_str(value, "daemon_url")
+    return _parse_optional_str(value, "daemon_url")
 
 
 def _validate_bootstrap_file_permissions(path: Path) -> None:

@@ -7,21 +7,21 @@ Plan artifact: `.gobby/plans/remove-gobby-build.md`
 ## Context
 `kind: framing`
 
-Josh's decision ac21fdc2 (Telegram, 2026-10-02, through the Assistant), verbatim: "We need to remove Gobby build." Epic #23341, **Remove gobby build**, owns this plan under #22691, **Lane 3 - Runbooks**. Its preconditions are closed: #23337, **Plan pane labels as the only seat name and remove automatic session titles**, and #22895, **Plan runbooks as existing pipelines with placed agent launch**. Runbooks are ordinary tagged pipelines that launch standing seats through `spawn_agent`; nothing in them enters `gobby build`, the dispatcher, or task stages.
+Josh's decision ac21fdc2 (Telegram, 2026-10-02, through the Assistant), verbatim: "We need to remove Gobby build." Epic #23341, **Remove gobby build**, owns this plan under #24317, **Lane 9 - Remove gobby build**. Its preconditions are closed: #23337, **Plan pane labels as the only seat name and remove automatic session titles**, and #22895, **Plan runbooks as existing pipelines with placed agent launch**. Runbooks are ordinary tagged pipelines that launch standing seats through `spawn_agent`; nothing in them enters `gobby build`, the dispatcher, or task stages.
 
-Live state on 0.5.0 (2026-10-08):
+Live state on 0.5.0 (2026-10-13, tip `14043ac8b8`). P1 and 2.1 to 2.3 have landed; Refresh Reconciliation lists their commits.
 
-- `gobby build` has three entry points that share `src/gobby/build/service.py`: the CLI command (`src/gobby/cli/build.py`), the MCP tools `build_task`, `build_stop`, `build_resume`, `build_clean` and `build_restart` (`src/gobby/mcp_proxy/tools/build.py`), and the HTTP routes under `/api/build` (`src/gobby/servers/routes/build.py`).
-- Stage-manifest dispatch lives in `src/gobby/dispatch/`. The system automation loop (`src/gobby/system_automation.py`) drives it, and the cron executor still carries a dead `dispatcher` action. The `gobby:dispatcher` cron job is already listed in `REMOVED_AUTOMATION_JOB_NAMES` (`src/gobby/storage/cron.py`).
-- Task stages exist only for build-entered tasks. `gobby build` materializes a manifest in `task_stage_states` from the stage registry (`src/gobby/install/shared/registry/stages.yaml`, synced to `task_stages_registry`). Expansion copies a manifest to children only when the parent already has stage rows (`derive_child_manifest_specs` in `src/gobby/storage/tasks/_stage_manifest.py`, called from `src/gobby/tasks/expansion/_apply.py`). Once build is gone, nothing writes a stage row.
-- Build profiles (`src/gobby/install/shared/registry/build_profiles.yaml`, table `build_profiles`) shape only new build lifecycles.
-- The spawn cap `max_active_agents` is read through `load_build_config` (`src/gobby/config/build.py`, file-based `build.yaml`, code default 20 in `src/gobby/dispatch/constants.py`) by `agent_slot_cap_refusal` in `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py`.
+- The `gobby build` CLI command, its MCP tools and its `/api/build` HTTP routes are gone with the build skill capability (2.3), and so are the web build, profile and stage-registry views (2.1).
+- The `gobby.build` and `gobby.dispatch` packages remain. The system automation loop (`src/gobby/system_automation.py`) still drives project dispatch, and the cron executor still carries a dead `dispatcher` action. The `gobby:dispatcher` cron job is already listed in `REMOVED_AUTOMATION_JOB_NAMES` (`src/gobby/storage/cron.py`).
+- Task stages came only from `gobby build`, which materialized a manifest in `task_stage_states` from the stage registry (`src/gobby/install/shared/registry/stages.yaml`, synced to `task_stages_registry`). The stage tools can still create and move stage rows until 3.5, and expansion still copies a manifest to children when the parent already has stage rows (`derive_child_manifest_specs` in `src/gobby/storage/tasks/_stage_manifest.py`, called from `src/gobby/tasks/expansion/_apply.py`).
+- Build profiles (`src/gobby/install/shared/registry/build_profiles.yaml`, table `build_profiles`) shaped only build lifecycles.
+- The spawn cap is the `DaemonConfig.max_active_agents` field (`src/gobby/config/app.py`), read by `configured_max_active_agents` in `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py` since 1.1. No spawn path reads `gobby.config.build` any more.
 
 End state: no `gobby build` command, tool or route; no dispatcher; no stage registry, stage manifest, stage verdict or review-transition tool, stage CLI, stage route or web Stages view; no build profiles; no definition that only stage dispatch spawned; and none of their tables or task columns (`allow_automation`, `unattended`, `checkout_mode`, `dispatch_failure_count`). The spawn cap survives as one daemon config field. Task-bound spawn serialization (`task_dispatch_mutex` and its runtime lease), task artifacts, `assigned_agent`, `implementation_domain`, `additional_skills`, `merge_in_progress` and the stored `state_bucket` survive, because spawn, worktree isolation, merge application, the plan CLI, manual expansion and the task queries read them.
 
 Known break this plan removes (accepted by Josh, button adv-name-A, 2026-10-02): once #23339 landed, `plan-adversary` became the planning runbook's Adversary seat, but the seeded `planning` stage row still names it as `reviewer_agent`. Removing the stage registry removes that row.
 
-Downstream: deferred section D1, **Batch spawn retirement**, of `.gobby/plans/spawn-network-override.md` waits on this plan's merge-agent retirement in 3.1 (Decision Record item 2). 1.1 moves `dispatch_batch` into its own module, so D1 deletes that module whole.
+Downstream: section D1, **Batch spawn retirement**, of `.gobby/plans/spawn-network-override.md` waits on this plan's merge-agent retirement in 3.1 (Decision Record item 2). 1.1 moves `dispatch_batch` into its own module, so D1 deletes that module whole.
 
 This plan supersedes `.gobby/plans/merge-orchestrator-removal.md`, which was never registered. The commit that first records this plan moves that file to `.gobby/plans/completed/` with `git mv`.
 
@@ -33,7 +33,7 @@ Historical records stay untouched: `.gobby/plans/completed/*`, `docs/plans/*`, `
 Orchestrator rulings (gobby#14972) on the Writer's recommendations. They are recorded here for Josh's review, and his approval of this plan settles them. Items 1 and 6 date from 2026-10-06; items 2 to 5 date from 2026-10-08 and replace the earlier wording on the same questions.
 
 1. **R1, boundary (2026-10-06).** The stage subsystem goes with the build. That covers the registry, `task_stage_states`, stage verdict and review-transition tools and every stage read surface. Stage history is dropped with its tables and is not archived. Reason: 0.5.0 has no compatibility to keep, and read surfaces would serve a state machine nothing can enter. Rejected: (i) keep stage storage and its read surfaces, which leaves about sixty reader files serving rows nothing writes; (ii-b) export the rows to JSONL before the drop, which is new mechanism with no consumer.
-2. **Supersession (2026-10-08 09:34 CT).** This plan supersedes `merge-orchestrator-removal` (#23460, **Plan the merge-orchestrator removal with no replacement merge orchestration**) in full. That plan was never registered, so it is archived by file move, not by plan archival. Its P1, **Agentless PR and merge stages**, is moot because the stages go here. Its P2 obligations land in 1.2, 2.2 and 3.1. 1.2 deletes the spawn guard's parent-orchestrator exemption. 2.2 deletes the definition and the merge-landscape descriptions, with the split they need. 3.1 retires `merge-worker` with its references, the merge-campaigns guidance and the sweep. Each leaf owns its tests. Its dispatch prompt builder key needs no edit because 2.5 deletes the dispatch package, and its dispatch-mutex-release join is moot because 3.5 deletes that module. Deferred section D1 of `spawn-network-override` waits on 3.1.
+2. **Supersession (2026-10-08 09:34 CT).** This plan supersedes `merge-orchestrator-removal` (#23460, **Plan the merge-orchestrator removal with no replacement merge orchestration**) in full. That plan was never registered, so it is archived by file move, not by plan archival. Its P1, **Agentless PR and merge stages**, is moot because the stages go here. Its P2 obligations land in 1.2, 2.2 and 3.1. 1.2 deletes the spawn guard's parent-orchestrator exemption. 2.2 deletes the definition and the merge-landscape descriptions, with the split they need. 3.1 retires `merge-worker` with its references, the merge-campaigns guidance and the sweep. Each leaf owns its tests. Its dispatch prompt builder key needs no edit because 2.5 deletes the dispatch package, and its dispatch-mutex-release join is moot because 3.5 deletes that module. Section D1 of `spawn-network-override` waits on 3.1.
 3. **Merge agents (2026-10-08 09:46 CT, option A).** `merge-orchestrator` retires in 2.2 and `merge-worker` in 3.1, and the `record_merge_result` and `record_pr_verdict` tools retire with the stage tools in 3.5. Both tools exist to move stage state: `record_pr_verdict` moves the `pr` stage or escalates, and `record_merge_result` completes the `merge` stage. Its other two effects need no replacement: terminal cleanup already releases the dispatch mutex at run end, and its build-artifact cleanup goes with the build package. Operators and seats keep landing a workspace with `merge_worktree` or `merge_clone`. Rejected (option B): keep `merge-worker` as a standalone agent that reports its merge SHA through `end_agent_run`. #23460's ruling 5 does not bind this plan.
 4. **Stage-only definitions (2026-10-08 10:00 CT, option A, the last scope ruling).** 3.2 deletes `planner` and all four `*-old` plan definitions: `plan-adversary-old`, `plan-adversary-taskless-old`, `plan-enhancer-old` and `plan-enhancer-taskless-old`. 3.3 deletes `analyst`, `architect`, `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer` and `trajectory-monitor`. The deprecated `qa-dev` definition, whose only verdict is a development-stage approval, goes with them. 3.4 strips the stage-tool text from the kept `epic-reviewer`, `tech-writer`, `plan-writer`, `plan-enhancer`, `plan-adversary` and `task-close-reviewer` (the 2026-10-08 inventory found no stage-tool text left in `researcher` or `developer`, and found some in `task-close-reviewer`). The `ideate`, `architecture` and `prd` skills stay and lose their stage wording. Rejected (option B): strip the stage text from the eight definitions and keep them. Definitions Josh can hand-spawn from FleetView today that this plan removes: `analyst`, `architect`, `product-manager`, `planner`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`, `merge-orchestrator`, `merge-worker`, `plan-adversary-old`, `plan-adversary-taskless-old`, `plan-enhancer-old` and `plan-enhancer-taskless-old`.
 5. **Schema drop is the final deliverable (2026-10-08).** Per AGENTS.md rules 7 and 10, 6.1 is one gcore migration with its baseline, seed and catalog carriers, one crate rebuild and one cutover. `task_dispatch_mutex`, `assigned_agent`, `implementation_domain` and `additional_skills` stay. Every MCP tool schema and response that exposes a dropped task column loses it, for example `allow_automation` and `checkout_mode` on `create_task`, `update_task` and `get_task`.
@@ -41,7 +41,7 @@ Orchestrator rulings (gobby#14972) on the Writer's recommendations. They are rec
 
 Writer decisions, settled by Josh's approval of this plan:
 
-7. **Spawn cap: move it.** `max_active_agents` becomes a top-level `DaemonConfig` field (default 20). Josh, verbatim (terminal 2026-10-03, through the Assistant): "if we have a config home for it and the work is minimal we can add it, I'm just tired of delays." The field is minimal: `CONFIG_REGISTRY` derives keys from `DaemonConfig`, and the regenerated `runtime_config_contract.json` rides the gcore rebuild that 6.1 already requires. The project-level `build.yaml` override retires with `gobby.config.build`. The local `build.yaml` sets 100, so the operator sets `max_active_agents` to 100 at activation. Rejected: removing the cap and `agent_slot_cap_refusal`. Josh's #23329 ruling only exempts runbooks from slot enforcement, and his later words keep the cap when a home exists.
+7. **Spawn cap: move it (landed in 1.1, `effa69699c` and `aaa697c1ee`).** `max_active_agents` becomes a top-level `DaemonConfig` field (default 20). Josh, verbatim (terminal 2026-10-03, through the Assistant): "if we have a config home for it and the work is minimal we can add it, I'm just tired of delays." The field is minimal: `CONFIG_REGISTRY` derives keys from `DaemonConfig`, and the regenerated `runtime_config_contract.json` rides the gcore rebuild that 6.1 already requires. The project-level `build.yaml` override retires with `gobby.config.build`. The local `build.yaml` sets 100, so the operator sets `max_active_agents` to 100 at activation. Rejected: removing the cap and `agent_slot_cap_refusal`. Josh's #23329 ruling only exempts runbooks from slot enforcement, and his later words keep the cap when a home exists.
 8. **`dispatch_batch` moves out of the spawn factory.** The factory has 876 lines, so 1.1 moves `dispatch_batch` and its batch-only helpers into a new module that reads the new cap; nothing else in the tool changes. D1 then deletes that module whole. Rejected: keeping a reader named for a project, with an unused project argument, only to leave the factory untouched.
 9. **R7, plan review evidence: keep the store, retire the spawned-round binding.** The Orchestrator ruled on 2026-10-08 at 12:42 CT that this plan settles the review-evidence round tools itself: each tool that has no bundled caller once the `*-taskless-old` definitions go is removed in the same phase-3 leaf, and each tool that keeps a caller is named here and stays. The caller check on 2026-10-08 found:
    - `bind_evidence_run` attaches a spawned reviewer run to prepared evidence. Its only callers are the dispatcher's planning spawn, which 2.5 deletes, and the taskless round in `references/plan/review.md`, which 3.2 rewrites. `plan-adversary` lists it only as a blocked tool. 3.2 removes the MCP tool, its audit entry, its blocked-tool entry and its tests.
@@ -65,6 +65,39 @@ Writer decisions, settled by Josh's approval of this plan:
 - **Historical records stay.** Completed plans, reviews, evidence and existing migrations are history and are not edited.
 - **No build during execution.** Nobody starts `gobby build` while this plan executes. 2.2 deletes the agent the PR and merge stages spawn before 2.3 removes the entry surfaces.
 - **Tests.** Executors run focused pytest with `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`, never the full suite, and never heavy runs during quiet hours.
+
+## Refresh Reconciliation
+`kind: framing`
+
+#24318, **Refresh the Remove gobby build plan for Josh's approval**, re-audited every open section against the 0.5.0 tip on 2026-10-13. The 2026-10-08 expansion (`e76f0691dd`) built the task tree under #23341, **Remove gobby build**, and that tree stays. Expansion refuses to run over existing output, and reset refuses closed or committed children, so after Josh approves this refresh the Orchestrator copies each changed section into its leaf's description and validation criteria. Section IDs do not change, so every leaf's `covers:` labels still resolve. No phase or leaf is retired and none is added. The 2026-10-08 M1 manifest is withdrawn, and the Plan Adversary derives a fresh one from the refreshed narrative.
+
+Per phase and leaf:
+
+- P1, #23839 **P1: Survivors leave build and dispatch**: closed; stands as executed.
+  - 1.1, #23845 **Spawn cap and spawn mutex leave build and dispatch**: landed in `effa69699c` and `aaa697c1ee`.
+  - 1.2, #23846 **Spawn drops its dispatch-only hooks**: landed in `acad860266`.
+- P2, #23840 **P2: Build and dispatcher removal**: changes in 2.4 and 2.5.
+  - 2.1, #23847 **Web drops the build, profile and stage-registry views**: landed in `dc3cd4bf59`; stands as executed.
+  - 2.2, #23848 **Merge-orchestrator retires**: landed in `b4b741400c` and `a433982f8a`; stands as executed.
+  - 2.3, #23849 **Build entry surfaces and the build skill capability go**: landed in `1d1e103b3e`, `fa79371023`, `e34072a9dd` and `dd149c5d33`; stands as executed.
+  - 2.4, #23850 **Nothing drives or wakes the dispatcher**: changes. It adds `tests/test_runner_lifecycle.py`, whose pipeline-terminal cases patch the deleted handler, and `tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py`, whose fixture patches the deleted relay and tick. `_stage_state_transitions.py` is now 857 lines.
+  - 2.5, #23851 **Build and dispatch packages and build profiles go**: changes. It adds `tests/config/test_removed_config_migrations.py` and the dispatch spawn case in `tests/mcp_proxy/tools/spawn_agent/test_factory.py`.
+- P3, #23841 **P3: Merge agents, stage-only definitions and stage tools**: changes in 3.2, 3.4 and 3.5.
+  - 3.1, #23852 **Merge-worker retires**: stands.
+  - 3.2, #23853 **Planning definitions retire with the spawned review round**: changes. The `review.md` sentence it rewrites lost its build clause in 2.3, and the Grok template sync test is now parametrized, so the leaf drops one parameter instead of deleting a test.
+  - 3.3, #23854 **Discovery and review stage definitions retire**: stands.
+  - 3.4, #23855 **Kept definitions drop the stage tools**: changes. 2.3 already removed the `build-coordinator` row from `rules/AGENTS.md`.
+  - 3.5, #23856 **Stage tools, review transitions, stage CLI and stage routes go**: changes. The `workflows/hooks.py` delete-lines proof is re-derived, the `task-enforcement` count becomes 20 in `rules/AGENTS.md` and in the `test_worker_safety_rules.py` parametrize that pins it, and `test_lifecycle_session_links.py` is a Target.
+- P4, #23842 **P4: Stage readers and task storage**: changes in both leaves.
+  - 4.1, #23857 **Nothing outside task storage reads or writes stages or the automation columns**: changes. `list_tasks` moved to `_listing.py`, so the `_crud.py` proof is re-derived and `_listing.py` joins the Targets with `attention_roster.py`, `reporter.yaml`, `tests/agents/test_coordination_seat_definitions.py` and `tests/agents/test_task_recovery.py`. The compact list column `stage` becomes `state`.
+  - 4.2, #23858 **Task storage drops stages and the automation columns**: changes. File sizes are refreshed, and `test_reopen_build_state.py` loses one more stage case.
+- P5, #23843 **P5: Guidance and docs**: changes in 5.1.
+  - 5.1, #23859 **Bundled skills teach no build, stage or automation column**: changes. 2.3 already made three of its sentence edits, so those edits and the `plan/overview.md` Target go, and 5.1.3 checks `annotate/SKILL.md` instead.
+  - 5.2, #23860 **Guides, contracts and root docs teach no build, stage or dispatcher**: stands.
+- P6, #23844 **P6: Schema drop**: changes.
+  - 6.1, #23861 **Migration 465 drops the build and stage tables and the automation columns**: changes. Migrations 465 to 468 are taken, so it becomes migration 469, and its title becomes "Migration 469 drops the build and stage tables and the automation columns". It also carries the gdaemon release bump.
+
+The spawn cap is settled: Decision Record item 7 landed in 1.1, and nothing in this plan reopens it.
 
 ## P1: Survivors leave build and dispatch
 `kind: framing`
@@ -455,6 +488,8 @@ Targets:
 - `tests/agents/test_lifecycle_monitor_extra.py::*` — scope-reason: drop the merge-artifact cleanup patch
 - `tests/sessions/test_mailbox.py::*` — scope-reason: drop the build target case and the cross-project coordinator cache cases, and reject `build` as an unknown target
 - `tests/telemetry/test_logging.py::*` — scope-reason: drop the build runner log-surface parameter
+- `tests/test_runner_lifecycle.py::*` — scope-reason: delete the four terminal-dispatch cases that patch the deleted handler
+- `tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py::*` — scope-reason: stop patching the deleted signoff relay and dispatcher tick
 
 This leaf removes every caller that schedules, wakes or ticks the dispatcher, and every import of a `gobby.build` or `gobby.dispatch` helper outside those packages, so 2.5 can delete them.
 
@@ -479,9 +514,11 @@ Hidden consumers:
 - Delete `_dispatcher_tick.py`. `_stage_review.py` drops its four tick calls and deletes the build-coordinator signoff relay: `_relay_signoff_to_build_coordinator_sync`, which messages the coordinator recorded on the task's newest build run, `_schedule_signoff_relay` and their calls in `approve_review` and `reject_review`, together with the `summary_allows_cross_project_coordinator` import and the lazy `gobby.storage.build_history` import. `_stage_ops.py` drops the build merge-artifact cleanup import and call; Decision Record item 3 already covers what that cleanup did.
 - `telemetry/logging.py` removes `gobby.dispatch` and `gobby.build` from `_AUTOMATION_NAMESPACES`.
 
-Split `_stage_state_transitions.py` (854 lines): move the module functions `illegal` and `terminal_after_done` into the new module `_stage_transition_rules.py`. `_stage_state_transitions.py` and `_stage_states.py` import them from there. 4.2 deletes all three modules.
+Split `_stage_state_transitions.py` (857 lines): move the module functions `illegal` and `terminal_after_done` into the new module `_stage_transition_rules.py`. `_stage_state_transitions.py` and `_stage_states.py` import them from there. 4.2 deletes all three modules.
 
 Messaging and relay tests: in `test_mailbox.py`, delete `test_build_target_only_includes_active_agents_in_task_subtree`, `test_agent_cross_project_auth_cache_uses_ttl_and_skips_missing_task`, `test_agent_cross_project_auth_cache_invalidates_missing_sender`, `test_agent_cross_project_auth_cache_is_bounded` and the `BuildHistoryStorage` import, and parametrize `test_rejects_unknown_target` over `"workspace"` and `"build"`. In `test_agent_messaging.py`, `test_send_message_schema_documents_target_parameters` expects the five remaining targets and the phrase "global and project fanout remains queued without live wakes"; delete `test_send_message_build_target_uses_context_project_for_coordinator` and `test_send_message_agent_target_allows_cross_project_coordinator`. Delete `test_review_signoff_coordinator.py`, and in `test_notification_background_tasks.py` delete `test_signoff_relay_runs_synchronously`, `test_signoff_relay_surfaces_non_database_errors` and the `_schedule_signoff_relay` import.
+
+Runner and session-link tests: in `tests/test_runner_lifecycle.py`, delete `TestPipelineEventBroadcasting`, whose four `test_terminal_dispatch_*` cases patch `gobby.hooks.event_handlers._dispatch`. In `tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py`, the `caller` fixture's `_stage_review` patch loop drops `"_schedule_signoff_relay"` and `"schedule_dispatcher_tick"`, because `monkeypatch.setattr` fails on a missing attribute; 3.5 removes the rest of that file's stage-review use.
 
 **Granularity:** one outcome, no module outside `gobby.build` and `gobby.dispatch` imports either package or reads build history. Each caller edit is small, and a partial removal leaves 2.5 blocked on the rest. The two splits are the size rule's required moves.
 
@@ -489,7 +526,7 @@ Messaging and relay tests: in `test_mailbox.py`, delete `test_build_target_only_
 
 - Dispatcher-consumer inventory (2026-10-06). `hooks/event_handlers/_dispatch.py` handles only `stage-pipeline:*` mutex rows, and only `gobby.dispatch.stage_pipeline` creates them.
 - `list_automation_candidates` (`gobby.storage.tasks._automation`) stays here: the dispatcher still imports it until 2.5, and 4.2 deletes it with the epic and ancestor gates.
-- Large files: `src/gobby/storage/cron.py` (867 lines) and `_stage_state_transitions.py` (854 lines) are at or above the 850-line threshold, so each carries a split above. The policy move takes about 25 lines out of `cron.py`; its only outside importers are the scheduler and the cron routes. The two moved stage helpers are about 25 lines; their only outside importer is `_stage_states.py` (395 lines).
+- Large files: `src/gobby/storage/cron.py` (867 lines) and `_stage_state_transitions.py` (857 lines) are at or above the 850-line threshold, so each carries a split above. The policy move takes about 25 lines out of `cron.py`; its only outside importers are the scheduler and the cron routes. The two moved stage helpers are about 25 lines; their only outside importer is `_stage_states.py` (395 lines).
 - The `"dispatcher"` lease-holder strings in `gobby.agents.lifecycle_reconciliation` and `gobby.runner_lifecycle_agents` name a mutex holder, not the dispatcher module, and stay.
 - Build-history readers outside the two packages (2026-10-08): `mailbox.py` (the `build` target and the coordinator allowance), the `_stage_review.py` signoff relay, the build observability tools and routes that 2.3 deletes, and `gobby.tasks.lifecycle_repair`, which 2.3 also deletes. After this leaf, 2.5 can delete `gobby.storage.build_history`. No bundled definition lists `build` in `send_message_targets`, and no skill or rule sends to it.
 - `mailbox.py` has 809 lines and `agent_messaging.py` 487, so neither needs a split.
@@ -543,6 +580,8 @@ Targets:
 - `tests/workflows/test_agent_resolver.py::*` — scope-reason: drop the dispatch skill composition cases
 - `tests/workflows/test_agent_workflow_runtime_cleanup.py::*` — scope-reason: drop the dispatch action and dispatcher cases
 - `tests/worktrees/test_worktree_service.py::*` — scope-reason: drop the build workspace service cases
+- `tests/config/test_removed_config_migrations.py::*` — scope-reason: drop the deleted build config module from the removed-helper cases
+- `tests/mcp_proxy/tools/spawn_agent/test_factory.py::*` — scope-reason: delete the dispatch spawn case
 - `src/gobby/build/__init__.py::*` — operation: delete — scope-reason: the build package goes
 - `src/gobby/build/branch_cleanup.py::*` — operation: delete — scope-reason: the build package goes
 - `src/gobby/build/claim_recovery.py::*` — operation: delete — scope-reason: the build package goes
@@ -665,13 +704,13 @@ Build profiles go with the package that reads them. Delete `gobby.storage.build_
 
 Root instructions: in `AGENTS.md`, drop the `uv run gobby build` development command and the "Dispatch" architecture fact, which points at the deleted `src/gobby/dispatch/AGENTS.md`. In `CLAUDE.md`, drop `src/gobby/dispatch/` from the nested instruction files. 5.2 handles the rest of the root guidance.
 
-Mixed test files drop only their build and dispatch cases; their other cases stay. In `tests/workflows/test_agent_workflow_runtime_cleanup.py` that case is `test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer_dispatch`, which runs the dispatcher heartbeat; the `SpawnAgentAction`, `stage_ops` and `_stage_test_helpers` imports that only it uses go with it.
+Mixed test files drop only their build and dispatch cases; their other cases stay. In `tests/workflows/test_agent_workflow_runtime_cleanup.py` that case is `test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer_dispatch`, which runs the dispatcher heartbeat; the `SpawnAgentAction`, `stage_ops` and `_stage_test_helpers` imports that only it uses go with it. In `tests/config/test_removed_config_migrations.py`, the import becomes `from gobby.config import _loading` and the `(build, "_merge_legacy_cap")` row goes. In `tests/mcp_proxy/tools/spawn_agent/test_factory.py`, delete `TestSpawnAgentParamOverrides.test_state_dispatch_developer_is_one_shot`, which imports `gobby.dispatch.actions`, `gobby.dispatch.spawn` and `tests.dispatch.test_dispatcher`; the class's other cases stay.
 
 **Granularity:** the two packages import each other, so neither can go first, and build profiles go with their only reader. Most Targets are whole-file deletions.
 
 **Research context:**
 
-- Package inventory (2026-10-06, `git ls-files`): 109 files remain in the five directories after 2.3 and 2.4. `tests/build/test_ingress_surface_parity.py` and `tests/dispatch/test_terminal_non_merge.py` import neither package but assert stage-cap ingress and dispatcher terminal-close contracts, so they go with the directories.
+- Package inventory (2026-10-06, rechecked 2026-10-13, `git ls-files`): 109 files remain in the five directories after 2.3 and 2.4. `tests/build/test_ingress_surface_parity.py` and `tests/dispatch/test_terminal_non_merge.py` import neither package but assert stage-cap ingress and dispatcher terminal-close contracts, so they go with the directories.
 - `gobby.config.build` is file-based (`build.yaml`) and is not part of `DaemonConfig`, so its deletion changes no runtime config contract carrier.
 - `gobby.build.profiles` was the only package reader of `gobby.storage.build_profiles`; `gobby.storage.tasks._stage_registry` reads the `build_profiles` table by SQL, not through the module, until 4.2 deletes it.
 - `tests/skills/test_plan_draft_stage_list.py` compares `docs/guides/dispatch.md` with the skippable-stage list in the deleted build config; 5.2 deletes that guide.
@@ -790,7 +829,7 @@ Rules:
 
 Guidance in `references/plan/`:
 
-- `review.md`: delete the paragraph that starts "Call gobby-plans:prepare_plan_review_round immediately before spawning". The static-round paragraph then starts "Open a review round with gobby-plans:prepare_plan_review_round, then bind it once with gobby-plans:bind_static_review_seats:", followed by the existing text from "the evidence owner (the session that prepared the round)". Its sentence "The binding is immutable and exclusive with a run binding." becomes "The binding is immutable." In the next paragraph, "Taskless reviewers never mutate task state; stage-native reviewers use only their authorized verdict transitions." becomes "Reviewers never mutate task state." The sentence "The evidence rounds above belong to spawned taskless reviewers, gobby build stages, and static-seat rounds." becomes "The evidence rounds above are static-seat rounds." In "Coordinator and recovery", "Existing delegated/unattended authority permits coordinator votes with rationale." becomes "Existing delegated authority permits coordinator votes with rationale.", and the paragraph that starts "Spawned taskless reviewers deliver the exact JSON" becomes "The adversary sends the exact JSON result to the Writer and coordinator seats through send_message."
+- `review.md`: delete the paragraph that starts "Call gobby-plans:prepare_plan_review_round immediately before spawning". The static-round paragraph then starts "Open a review round with gobby-plans:prepare_plan_review_round, then bind it once with gobby-plans:bind_static_review_seats:", followed by the existing text from "the evidence owner (the session that prepared the round)". Its sentence "The binding is immutable and exclusive with a run binding." becomes "The binding is immutable." In the next paragraph, "Taskless reviewers never mutate task state; stage-native reviewers use only their authorized verdict transitions." becomes "Reviewers never mutate task state." The sentence "The evidence rounds above belong to spawned taskless reviewers and static-seat rounds." becomes "The evidence rounds above are static-seat rounds." In "Coordinator and recovery", "Existing delegated/unattended authority permits coordinator votes with rationale." becomes "Existing delegated authority permits coordinator votes with rationale.", and the paragraph that starts "Spawned taskless reviewers deliver the exact JSON" becomes "The adversary sends the exact JSON result to the Writer and coordinator seats through send_message."
 - `enhancement.md`: delete the paragraph that starts "Outside the runbook, the coordinator spawns plan-enhancer-taskless-old".
 - `repair.md`: the evidence-recovery bullet "Spawn/bind failure: expire_plan_review_evidence with accurate spawn_failed evidence." becomes "Abandoned static round: expire_plan_review_evidence through a live bound seat, as [review](review.md) describes." Its second sentence stays.
 
@@ -799,7 +838,7 @@ Review evidence (Decision Record item 9): in `src/gobby/mcp_proxy/tools/plans/re
 Tests:
 
 - Delete the nine test files above that pin only deleted definitions.
-- `test_agents_sync.py`: delete `test_taskless_adversary_syncs_grok_xhigh`; `test_sync_with_real_bundled_agents` drops `planner` from its expected names.
+- `test_agents_sync.py`: `test_adversary_templates_sync_grok_xhigh` drops its `"plan-adversary-taskless-old"` parameter and keeps `"plan-adversary"`; `test_sync_with_real_bundled_agents` drops `planner` from its expected names.
 - `test_discovery_agents.py`: delete `test_plan_adversary_documents_task_skill_gate_exclusion` and `test_planner_treats_discovery_markers_as_authoritative_context`.
 - `test_planner_worktree_restrictions.py`: `PLANNERS` keeps `plan-writer`, `plan-enhancer` and `plan-adversary`.
 - `test_plan_seat_definitions.py`: `test_adversary_blocks_all_evidence_round_tools` drops `bind_evidence_run`.
@@ -924,7 +963,7 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/review/epic.md::*` — scope-reason: drop the stage discovery and stage-transition wording
 - `src/gobby/install/shared/skills/gobby/references/review/outcomes.md::*` — scope-reason: the verdict mapping uses the handoff, remediation tasks and escalation
 - `src/gobby/install/shared/workflows/rules/reviewer-lifecycle/terminal-verdict-after-validation.yaml::*` — operation: delete — scope-reason: Decision Record item 13; all three scoped reviewers are gone or no longer call a verdict tool
-- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the group table drops the deleted groups and recounts review-learning
+- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the group table drops the `reviewer-lifecycle` row and recounts review-learning
 - `src/gobby/install/shared/workflows/agents/tech-writer.yaml::*` — scope-reason: the docs leaf closes through close_task only
 - `src/gobby/install/shared/workflows/agents/plan-writer.yaml::*` — scope-reason: drop blocked stage tools
 - `src/gobby/install/shared/workflows/agents/plan-enhancer.yaml::*` — scope-reason: drop blocked stage tools
@@ -956,7 +995,7 @@ Review guidance:
 - `references/review/epic.md`, State and recovery: the first paragraph becomes "An open epic review must respect its owner. If another session owns the work, coordinate through `gobby-agents:send_message` instead of taking its claim." The second paragraph becomes "Open and closed epics share one review path. Skip claiming a closed epic. Deliver the structured findings; blocking findings require remediation tasks under the epic or an explicit reopening of a closed epic. Never call `close_task` from epic review. Closure and delivery belong to the owning lifecycle flow."
 - `references/review/outcomes.md`: line 4 becomes "Read the epic's task state first; load [evidence](evidence.md)." The paragraphs from "For an open epic whose `epic_qa` stage is in progress" through "Review never closes the epic itself." become: "Open and closed epics follow one path. The reviewer delivers the block in its `end_agent_run` handoff and maps the verdict:", the bullets "Approve → the block is the whole verdict.", "Request changes → create a remediation task under the epic for every blocking finding, citing the blocking descendant. On a closed epic whose delivered work must be reworked, `gobby-tasks:reopen_task` replaces the remediation tasks." and "Needs discussion → `gobby-tasks:escalate_task` with a `needs_human:` reason naming the concrete decision.", then "A delegated reviewer owns its verdict and terminates through its agent workflow; the launcher does not repeat it. Review never closes the epic itself, and the `/gobby review` caller acts on the verdict."
 
-Rules: delete `terminal-verdict-after-validation.yaml` (rules `reviewer-terminal-verdict-track-successful-validation`, `reviewer-terminal-verdict-clear-on-verdict` and `reviewer-terminal-verdict-block-turn-end`). In `src/gobby/install/shared/workflows/rules/AGENTS.md`, delete the `build-coordinator` row (2.3 deleted that group) and the `reviewer-lifecycle` row, and set the `review-learning` count to 2 (3.2 and 3.3 deleted three of its five rules).
+Rules: delete `terminal-verdict-after-validation.yaml` (rules `reviewer-terminal-verdict-track-successful-validation`, `reviewer-terminal-verdict-clear-on-verdict` and `reviewer-terminal-verdict-block-turn-end`). In `src/gobby/install/shared/workflows/rules/AGENTS.md`, delete the `reviewer-lifecycle` row (2.3 already deleted the `build-coordinator` row), and set the `review-learning` count to 2 (3.2 and 3.3 deleted three of its five rules).
 
 Other kept definitions:
 
@@ -1015,14 +1054,14 @@ Targets:
 - `src/gobby/cli/__init__.py::*` — scope-reason: drop the `stages` lazy command entry
 - `src/gobby/cli/tasks/main.py::*` — scope-reason: drop the stages, advance and review registrations
 - `src/gobby/workflows/enforcement/blocking.py::*` — scope-reason: the task-ops mutation set drops the three review tools
-- `src/gobby/workflows/hooks.py::*` — operation: delete-lines — base-blob: 19638420d44a56d4b023d953f46804de2c3484ef — lines: 507-509 — scope-reason: the commit-gate tool set drops the three review tools
+- `src/gobby/workflows/hooks.py::*` — operation: delete-lines — base-blob: 32e029092083b8ee765210ee906c758664426a14 — lines: 568-570 — scope-reason: the commit-gate tool set drops the three review tools
 - `src/gobby/storage/tasks/_updates.py::*` — scope-reason: the update_task refusal hints name only surviving tools
 - `src/gobby/tasks/expansion_qa_coverage.py::*` — scope-reason: coverage results drop the stage review action
 - `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py::*` — operation: delete-lines — base-blob: 44055d98e20864e941d4d0f62fcea65521bfe9f2 — lines: 222-238, 307, 349, 412-419, 759 — scope-reason: drop the spawned-caller probe and the internal stage pipeline flag
 - `src/gobby/install/shared/workflows/rules/task-enforcement/block-needs-review-interactive.yaml::*` — operation: delete — scope-reason: its only rule blocks the three review tools for interactive sessions
 - `src/gobby/install/shared/workflows/rules/task-enforcement/require-commit-before-status.yaml::*` — scope-reason: drop the three review tools
 - `src/gobby/install/shared/workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml::*` — scope-reason: the task-transition rule drops the three review tools
-- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the task-enforcement rule count drops to 19
+- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: the task-enforcement rule count drops to 20
 - `src/gobby/install/shared/skills/gobby/references/plan/enhancement.md::*` — scope-reason: the autonomous enhancer no longer records through `record_plan_enhancement`
 - `docs/reference-audit/tasks.json::*` — scope-reason: drop the stage tool, stage CLI and backfill entries
 - `docs/reference-audit/plan.json::*` — scope-reason: drop the `record_plan_enhancement` and backfill entries and the delegated review tools
@@ -1061,6 +1100,7 @@ Targets:
 - `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py::*` — scope-reason: delete the review transition tool classes
 - `tests/mcp_proxy/tools/tasks/test_create_task.py::*` — scope-reason: delete the `initialize_task_manifest` cases
 - `tests/mcp_proxy/tools/tasks/test_checkout_unresolved_envelopes.py::*` — scope-reason: delete the `submit_for_review` case
+- `tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py::*` — scope-reason: delete the review and enhancement cases and the stage-review fixture wiring
 - `tests/mcp_proxy/tools/test_read_only_classification.py::*` — scope-reason: drop the three read-only stage tools
 - `tests/mcp_proxy/tools/test_tasks_registry_edge_cases.py::*` — scope-reason: delete the two stage tool schema cases
 - `tests/mcp_proxy/services/test_direct_tool_session_activation.py::*` — scope-reason: build the interactive-only block inline instead of loading the deleted rule
@@ -1068,6 +1108,7 @@ Targets:
 - `tests/workflows/test_monolith_guard.py::*` — scope-reason: the task-transition rule names two tools
 - `tests/framing_corpus.py::*` — scope-reason: drop the deleted rule name
 - `tests/workflows/test_retired_bundled_definitions.py::*` — scope-reason: list the deleted rule
+- `tests/workflows/test_worker_safety_rules.py::*` — scope-reason: the task-enforcement rule-reference count drops from 21 to 20
 - `tests/agents/test_bundled_agent_contract.py`
 - `tests/tasks/test_expansion_qa_coverage.py::*` — scope-reason: coverage results carry no review action
 - `tests/workflows/test_expansion_qa_rejection.py::*` — scope-reason: assert pass state and failures instead of a review action
@@ -1103,12 +1144,12 @@ Rules:
 - Delete `block-needs-review-interactive.yaml`.
 - `require-commit-before-status`: `mcp_tools` keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`.
 - `require-monolith-resolution-before-task-transition` in `require-same-session-decomposition.yaml`: `mcp_tools` keeps the same two tools, and the description becomes "Block task completion while owned source is over budget".
-- `rules/AGENTS.md`: the `task-enforcement` count becomes 19.
+- `rules/AGENTS.md`: the `task-enforcement` count becomes 20.
 
 Gates and hints:
 
 - `blocking.py`: in `TASK_MUTATION_TOOLS_BY_SERVER`, the `gobby-tasks-ops` set keeps `set_landing_freeze` and `land_commit`.
-- `workflows/hooks.py` (859 lines): the delete-lines proof removes lines 507-509, the three `gobby-tasks-ops` review identities in the commit-gate tool set, which keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`. The file ends at 856 lines, and no other leaf in this plan edits it.
+- `workflows/hooks.py` (924 lines): the delete-lines proof removes lines 568-570, the three `gobby-tasks-ops` review identities in the commit-gate tool set, which keeps `gobby-tasks:close_task` and `gobby-tasks:de_escalate_task`. The file ends at 921 lines, and no other leaf in this plan edits it.
 - `_updates.py`: the legacy-state hint becomes "Use close_task, reopen_task, or escalate_task instead." and the stage-or-ownership hint becomes "Use claim_task, release_task_claim, escalate_task, de_escalate_task, close_task, or reopen_task instead." The refused field lists change in P4.
 
 Expansion coverage:
@@ -1135,6 +1176,7 @@ Tests:
 - `test_task_lifecycle_coverage.py`: delete `TestMarkTaskReviewApproved`, `TestMarkTaskNeedsReview` and `_create_stage_ops_registry`. `_make_stage_state` and its stage imports stay until 4.2.
 - `test_create_task.py`: delete `test_initialize_task_manifest_persists_explicit_cap`, `test_initialize_task_manifest_rejects_unknown_stage` and the `create_stage_ops_registry` import, and the `stage_row` import if nothing else uses it.
 - `test_checkout_unresolved_envelopes.py`: delete `test_submit_for_review_returns_checkout_unresolved`.
+- `test_lifecycle_session_links.py`: drop `_stage_review` from the `gobby.mcp_proxy.tools.tasks` import. In the `caller` fixture, the manager patch loop drops `submit_for_review`, `approve_review`, `reject_review` and `record_plan_enhancement`, `clear_prior_claim_session_variables` and `notify_parent_on_task_state_change` are patched on `_lifecycle_status` only, and the remaining `_stage_review` patches and the `register_review_stage_tools` call go. `CASES` drops its `submit`, `approve`, `reject`, `enhance-with-suggestions` and `enhance-converged` parameters.
 - `test_read_only_classification.py`: `TASK_READ_ONLY_TOOLS` drops `get_task_stages`, `list_stages_registry` and `get_task_type_defaults`.
 - `test_tasks_registry_edge_cases.py`: delete `test_stage_mutation_tools_have_precise_output_schema` and `test_set_task_type_defaults_rejects_invalid_payload`.
 - `test_direct_tool_session_activation.py`: `_load_interactive_review_block_rule` becomes `_load_interactive_only_block_rule`, which creates a rule named `interactive-only-close-block` with `event: before_tool`, `when: "not variables.get('is_spawned_agent')"` and one block effect on `gobby-tasks:close_task`. The two tests become `test_direct_mcp_tool_reconciles_spawned_session_before_rules` and `test_direct_mcp_tool_still_blocks_interactive_session`; both call `gobby-tasks` `close_task` with `{"task_id": "#1"}`, and the second asserts `interactive-only-close-block` in the error. Imports only the old helper used go.
@@ -1142,6 +1184,7 @@ Tests:
 - `test_monolith_guard.py`: `test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance` expects `{"gobby-tasks:close_task", "gobby-tasks:de_escalate_task"}`.
 - `tests/framing_corpus.py`: drop `block-needs-review-interactive`.
 - `test_retired_bundled_definitions.py`: add `block-needs-review-interactive` to `RETIRED_RULES`.
+- `test_worker_safety_rules.py`: the `test_rule_reference_counts_match_yaml` parametrize row becomes `("task-enforcement", 20)`, and `("worker-safety", 58)` stays.
 - `test_bundled_agent_contract.py`: `REMOVED_LIFECYCLE_TOOLS` adds the 19 stage tools and `backfill_plan_review_lessons`.
 - `test_expansion_qa_coverage.py`: `test_hash_prefixed_root_ref_matches_registry_written_manifest` asserts `result["qa_result"]["scope"]["root_task"] == _ROOT_REF` instead of the review action argument. Delete `test_interactive_coverage_persists_inapplicable_review_action` and `test_spawned_coverage_persists_legacy_review_action_shape`.
 - `test_expansion_qa_rejection.py`: `test_missing_row_triggers_rejection` asserts `result["passed"] is False` and one failure with `section_id` `A1`, `item_id` `A1.1`, `status` `invalid`, `detail` "artifact src/example.py was not referenced" and `leaves` `["#13244"]`. `test_zero_missing_invalid_triggers_approval` asserts `result["passed"] is True`, an empty `result["qa_result"]["failures"]` and no `review_action` key.
@@ -1152,13 +1195,14 @@ Tests:
 **Research context:**
 
 - Inventory (2026-10-08, `rg` over `src/` and `tests/` for the 20 tool names and the deleted module paths): every production importer of the deleted modules is a Target above, except `_stage_ops.py`'s `gobby.build.controls` import and `_stage_review.py`'s dispatcher tick and coordinator relay, which 2.4 removes, and the `_stage_ops` case in `test_agent_workflow_runtime_cleanup.py`, which 2.5 deletes with the dispatcher.
+- Consumer refresh (2026-10-13, an import sweep that reads multi-line imports): `tests/mcp_proxy/tools/tasks/test_lifecycle_session_links.py` imports `_stage_review` and registers its tools, so it is a Target here after 2.4's fixture edit.
 - Storage-level stage callers stay until P4: `task_manager.stage_states` and the manager's review transitions in `tests/storage/`, `tests/storage/test_stage_review_findings.py`, `tests/review_learning/test_round_diff.py`, `tests/mcp_proxy/tools/test_hub.py`, `tests/integration/test_hub_query.py`, `tests/servers/routes/test_agent_spawn_routes.py`, `tests/workflows/test_condition_helpers*.py`, `test_pipeline_heartbeat*.py`, `tests/agents/test_lifecycle_monitor*.py` and the expansion apply tests. `src/gobby/agents/task_recovery.py`, `tasks/expansion/_reset.py` and `workflows/pipeline_heartbeat.py` call stage storage methods, not the tools.
 - Tests that name these tools as arbitrary strings, synthetic handlers or absence checks stay: `tests/workflows/test_handler_route_lint.py`, `test_bundled_agent_lifecycle_copy.py`, `test_step_enforcement.py`, `test_stop_gates_rules.py`, `test_agent_workflow_completion.py`, `tests/storage/tasks/test_review_tools_call_site_audit.py`, `tests/test_plan_prose_review_tool_descriptions.py`, `tests/mcp_proxy/services/test_tool_proxy_validation.py`, `tests/agents/test_prompt_detector.py`, `tests/ai/test_embedding_switch_runner.py`, `tests/mcp_proxy/tools/test_apply_persona.py`, `tests/hooks/test_session_activation_reconciliation.py` and `tests/mcp_proxy/tools/test_tasks_crud_coverage.py`.
 - `FINDING_ITEM_SCHEMA` in `src/gobby/plans/review_findings.py` loses its production caller, the `reject_review` findings parameter, in this leaf. `render_rejection_section` in the same module keeps a caller in `storage/tasks/_review_transitions.py`, so 4.2 deletes the dead schema and rendering code together.
 - `review_learning.recorders.mint_plan_review_lessons` stays with only test callers, as part of the stage-bound evidence remainder that Decision Record item 9 keeps.
 - After 3.4 no kept definition or `SKILL.md` names any of the 20 tools (`rg`, 2026-10-08), so the substring scan behind `REMOVED_LIFECYCLE_TOOLS` passes.
 - The web tool-block editor's placeholder text names `submit_for_review`; 4.1 changes it with the other web readers.
-- Large files: `workflows/hooks.py` (859 lines) and `_expansion_registry.py` (890 lines) each take one delete-lines proof here. Neither contains stage, column or dispatch vocabulary that a later leaf removes. No other production Target reaches 850 lines (`blocking.py` 653, `expansion_qa_coverage.py` 533, `src/gobby/servers/routes/tasks.py` 526, `_updates.py` 412).
+- Large files: `workflows/hooks.py` (924 lines) and `_expansion_registry.py` (890 lines) each take one delete-lines proof here. Neither contains stage, column or dispatch vocabulary that a later leaf removes. No other production Target reaches 850 lines (`blocking.py` 653, `expansion_qa_coverage.py` 533, `src/gobby/servers/routes/tasks.py` 526, `_updates.py` 412).
 - `sync_bundled_rules` soft-deletes the installed `block-needs-review-interactive` row at the next sync.
 - Planned checks: focused pytest on every edited test Target plus `tests/agents/test_bundled_agent_contract.py`, `tests/skills/test_reference_library.py`, `tests/mcp_proxy/test_registries.py`, `tests/workflows/test_close_validator_allowlist.py` and `tests/cli/`; ruff, format check and mypy on `src/`; `uv run python -c "import gobby.runner"`.
 
@@ -1167,7 +1211,7 @@ Tests:
 - 3.5.1 - gobby-tasks and gobby-tasks-ops register none of the 20 removed tools, and their registered inventory matches the independent classification. test: `tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification`. test: `tests/mcp_proxy/tools/test_read_only_classification.py::test_task_ops_read_only_classification_is_exact`.
 - 3.5.2 - No bundled definition or skill names a removed tool, and every tool a definition names is registered. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools`. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
 - 3.5.3 - The daemon serves no `/api/stages` route and no per-task stage route, and the CLI has no stage or review command. behavior: "create_stages_router" absent from `src/gobby/servers/_app_routes.py`. behavior: "register_task_stage_routes" absent from `src/gobby/servers/routes/tasks.py`. behavior: "stages" absent from `src/gobby/cli/__init__.py`. file: `src/gobby/cli/tasks/main.py`.
-- 3.5.4 - The interactive review block is gone, and the commit and monolith gates block only `close_task` and `de_escalate_task`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`. test: `tests/workflows/test_monolith_guard.py::test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance`.
+- 3.5.4 - The interactive review block is gone, and the commit and monolith gates block only `close_task` and `de_escalate_task`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`. test: `tests/workflows/test_monolith_guard.py::test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance`. test: `tests/workflows/test_worker_safety_rules.py::test_rule_reference_counts_match_yaml`.
 - 3.5.5 - Expansion coverage reports pass state and failures without a stage review action, and the start tool has no stage pipeline flag. test: `tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection`. test: `tests/mcp_proxy/tools/tasks/test_mcp_proxy_tools_tasks_expansion.py::test_start_expansion_schema_accepts_reset_output`.
 - 3.5.6 - The capability audits cite no deleted module or command, and the reference library passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
 
@@ -1182,7 +1226,8 @@ After P3 no tool, command or route writes a stage row, but the task projection, 
 Targets:
 - `src/gobby/tasks/state_semantics.py::*` — scope-reason: the task projection drops the current stage, merge readiness and the automation columns
 - `src/gobby/tasks/isolation.py::*` — operation: delete — scope-reason: validates only the task checkout-mode column
-- `src/gobby/mcp_proxy/tools/tasks/_crud.py::*` — operation: delete-lines — base-blob: 71dd27d4e0e992fec61e284c887957527b1bda9c — lines: 38, 533-534, 618-626, 720-730, 765, 793-797, 800, 815, 832-836 — scope-reason: update_task drops the automation fields and list_tasks drops the stage filter
+- `src/gobby/mcp_proxy/tools/tasks/_crud.py::*` — operation: delete-lines — base-blob: 5cbb0a69f2ff60d13773c720de8e8f5ad98cc1d8 — lines: 38, 545-546, 630-638, 732-742 — scope-reason: update_task drops the automation fields
+- `src/gobby/mcp_proxy/tools/tasks/_listing.py::*` — scope-reason: list_tasks drops the stage filter, and its compact column takes the name of the state object it holds
 - `src/gobby/mcp_proxy/tools/tasks/_formatters.py::*` — scope-reason: task payloads drop the current stage and the automation columns
 - `src/gobby/mcp_proxy/tools/tasks/_search.py::*` — scope-reason: search_tasks drops the stage filter
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py::*` — scope-reason: de_escalate_task drops its two stage options
@@ -1193,6 +1238,7 @@ Targets:
 - `src/gobby/servers/routes/tasks.py::*` — scope-reason: task payloads, list parameters and update fields drop stages and the automation columns
 - `src/gobby/servers/routes/tasks_assignment.py::*` — scope-reason: the assignment payload drops the current stage
 - `src/gobby/servers/routes/tasks_lifecycle_routes.py::*` — scope-reason: the de-escalation request drops its two stage fields
+- `src/gobby/servers/routes/attention_roster.py::*` — scope-reason: the roster task payload drops the task stage
 - `src/gobby/servers/routes/admin/_stats.py::*` — scope-reason: task stats drop the stage join and the two review states
 - `src/gobby/servers/routes/admin/_health.py::*` — scope-reason: task state counts drop the two review states
 - `src/gobby/cli/tasks/_stage_filters.py::*` — operation: delete — scope-reason: the `tasks list` stage filter
@@ -1218,6 +1264,7 @@ Targets:
 - `src/gobby/workflows/pipeline_heartbeat.py::*` — scope-reason: stale recovery releases the claim without stage moves
 - `src/gobby/storage/attention.py::*` — scope-reason: attention rows drop the stage join
 - `src/gobby/sync/tasks.py::*` — scope-reason: the task export and import drop the automation columns
+- `src/gobby/install/shared/workflows/agents/reporter.yaml::*` — scope-reason: the reporter decodes the renamed state column, which has no current stage
 - `src/gobby/tasks/expansion/_apply.py::*` — scope-reason: expansion stops copying stage manifests and automation columns to children
 - `src/gobby/tasks/expansion/_common.py::*` — scope-reason: drop the stage manifest helpers
 - `src/gobby/tasks/expansion/_compile.py::*` — scope-reason: drop the stage spec compilation
@@ -1288,6 +1335,8 @@ Targets:
 - `tests/workflows/test_condition_helpers_task_state.py::*` — scope-reason: the task state helper reads no stage
 - `tests/servers/test_attention_roster.py::*` — scope-reason: attention rows have no task stage
 - `tests/agents/test_attention_metadata.py::*` — scope-reason: attention rows have no task stage
+- `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: the reporter assertions follow the renamed state column
+- `tests/agents/test_task_recovery.py::*` — scope-reason: recovery has no stage failure branch or dispatch failure count
 
 **Granularity:** one outcome, no code outside `gobby.storage.tasks` reads or writes a stage or an automation column. The task projection in `state_semantics.py` feeds every payload, CLI view, session summary and web type in this list, so changing it without its readers breaks them, and the readers share the list filters that end in storage's `current_stage_state` parameter.
 
@@ -1303,10 +1352,12 @@ The stage projection (Decision Record item 1):
 
 Task tools, routes and CLI:
 
-- `_crud.py` (969 lines): the delete-lines proof removes the isolation import (38), the `allow_automation` and `checkout_mode` parameters of `update_task` (533-534), their handling (618-626), their schema properties (720-730), the `current_stage_state` parameter of `list_tasks` (765), its comma split (793-797), its two pass-throughs (800, 815) and its schema property (832-836). The file ends at 933 lines, and no other leaf in this plan edits it.
+- `_crud.py` (862 lines): the delete-lines proof removes the isolation import (38), the `allow_automation` and `checkout_mode` parameters of `update_task` (545-546), their handling (630-638) and their schema properties (732-742). The file ends at 839 lines, and no other leaf in this plan edits it.
+- `_listing.py` (373 lines) now holds `list_tasks`. It drops the `current_stage_state` parameter, its comma split, its three pass-throughs and its schema property. The compact format's `"stage"` column carries `task_discovery_payload(task)["state"]`, the state object, so it is renamed `"state"`.
+- `reporter.yaml`: "Decode compact rows by their returned columns, including the stage object. A null current_stage means no recorded stage; use is_closed, is_claimed, is_blocked and is_escalated to describe the task's known state." becomes "Decode compact rows by their returned columns, including the state object. Use is_closed, is_claimed, is_blocked and is_escalated to describe the task's known state."
 - `_formatters.py` drops `current_stage` and the three automation columns from the task payloads. `_search.py` drops the `current_stage_state` parameter, its comma split, its pass-through and its schema property.
 - `_lifecycle_status.py`: `de_escalate_task` drops `reset_stage_attempts` and `restore_stage_from_history` with their docstring lines, pass-throughs and schema properties. `tasks_lifecycle_routes.py` drops the same two request fields and pass-throughs.
-- `src/gobby/servers/routes/tasks.py`: drop the `StageState`, `stage_state_view` and isolation imports, `_stage_view`, `_stage_views_for_tasks`, `_normalize_stage_filters`, the list route's `current_stage_state`, `stage`, `stage_state` and `include_stages` parameters with their handling, and the `allow_automation` and `checkout_mode` update fields with the checkout validation. `tasks_assignment.py` drops `task_stage` from its payload and derives the task status from `is_closed` and `is_escalated`.
+- `src/gobby/servers/routes/tasks.py`: drop the `StageState`, `stage_state_view` and isolation imports, `_stage_view`, `_stage_views_for_tasks`, `_normalize_stage_filters`, the list route's `current_stage_state`, `stage`, `stage_state` and `include_stages` parameters with their handling, and the `allow_automation` and `checkout_mode` update fields with the checkout validation. `tasks_assignment.py` drops `task_stage` from its payload and derives the task status from `is_closed` and `is_escalated`. `src/gobby/servers/routes/attention_roster.py`: `_task_payload` drops its `"stage"` key, because the attention row model drops `task_stage`.
 - CLI: delete `_stage_filters.py`. `crud.py` drops the `--stage`, `--state` and `--group stage` list options, the `--checkout-mode` update option, the de-escalation `--reset-stage-attempts` and `--restore-stage-from-history` flags and the isolation service. `_crud_common.py` drops `current_stage_display` and `CHECKOUT_MODE_CHOICE`. `_crud_detail.py` drops the stage and merge-ready lines. `_crud_listing.py` drops the stage filter parameters and the stage and merge-ready counts from stats. `_crud_mutations.py` drops the checkout-mode update and the two de-escalation flags. `_crud_services.py` drops `validate_task_isolation_artifacts`. `src/gobby/cli/tasks/_utils/listing.py` drops `_stage_key`, and `src/gobby/cli/tasks/_utils/rendering.py` maps the projected state to its letter, with no review letters. `ai.py` and `search.py` print the projected state.
 - Delete `gobby.tasks.isolation`; `_crud.py`, `src/gobby/servers/routes/tasks.py` and the CLI service were its only importers.
 
@@ -1332,6 +1383,8 @@ Tests:
 - `test_lifecycle_enums.py` keeps `assigned_agent`, `implementation_domain` and `additional_skills` in its field and serializer checks, deletes `test_isolation_is_str_enum_with_dispatch_values`, and stops reading `CheckoutMode`. `test_storage_tasks.py` drops `_start_current_stage`, the `current_stage_state` import, the stage-state rows of its projection table and the stage filter and stage count cases.
 - `test_session_lookup_metadata.py` deletes `test_task_context_uses_stage_native_state`. `test_agent_spawn_routes.py` deletes `test_spawn_web_chat_preserves_review_status` and `_submit_for_development_review`; `test_spawn_web_chat_does_not_steal_claimed_review_task` keeps its claimed task and drops the review setup and stage assertion. `test_hooks.py`'s `test_turn_end_rebuilds_review_claims_for_after_agent` drops `set_stage_state` and the `current_stage_state` assertion, and its claim rebuild assertions stay. `test_condition_helpers_task_state.py` deletes the two current-stage cases and their stage helper. `test_parallel_dispatch.py`'s `test_in_progress_files_excluded` serves its in-progress task from the claimed-task query.
 - The web activity tests drop `current_stage`, `is_merge_ready` and the review states from fixtures, and the `include_stages=1` request expectations.
+- `test_coordination_seat_definitions.py`: `test_reporter_bounds_queue_resolution_and_names_unreadable_rows` asserts "state object" and drops the "A null current_stage means no recorded stage" assertion. `test_attention_roster.py` drops the `task_stage` row field and the `"stage": None` expectations.
+- `test_task_recovery.py`: `test_restarted_recovery_preserves_rebound_session_claim` drops its `in_progress` parameter, the `StageManifestSpec` import, the manifest setup and the stage and `dispatch_failure_count` assertions.
 
 **Research context:**
 
@@ -1339,13 +1392,14 @@ Tests:
 - Session-task actions `needs_review` and `review_approved` in `storage/session_tasks.py` and `sessions/handoff_summary.py` classify recorded rows and stay.
 - Stage storage, `_stage_test_helpers.py` and the stage storage tests stay for 4.2, which deletes them with the storage. The test Targets of this leaf stop calling them here.
 - Identifier matches that stay: `needs_review` verdicts in plan review evidence, the agent `checkout_mode` keys, the `.status` mocks in `test_spawn_agent_impl_provider.py`, the dict in `test_result_offload.py` and the mock attribute in `test_safe_evaluator.py`.
-- Large files: `_crud.py` (969 lines) takes its delete-lines proof here. No other production Target reaches 850 lines.
+- Consumer refresh (2026-10-13): `list_tasks` moved from `_crud.py` to `_listing.py`, and its compact format added the `stage` column that `reporter.yaml` decodes. `attention_roster.py` reads the attention row's `task_stage`, and `tests/agents/test_task_recovery.py` builds a stage manifest and asserts the dispatch failure count. Each is a Target here. gclient reads no task stage from the roster, so its fixtures stay.
+- Large files: `_crud.py` (862 lines) takes its delete-lines proof here. No other production Target reaches 850 lines.
 - Planned checks: focused pytest on every test Target plus `tests/mcp_proxy/tools/tasks/`, `tests/cli/`, `tests/servers/routes/` and `tests/tasks/`; ruff, format check and mypy on `src/`; `npm run typecheck`, `npm run lint` and the vitest files above in `web/`.
 
 **Acceptance:**
 
 - 4.1.1 - The task projection has no current stage, merge readiness or automation column, and projected state is closed, escalated or ready. test: `tests/tasks/test_serialize_task_state.py::test_new_shape`. file: `src/gobby/tasks/state_semantics.py`. behavior: "current_stage" absent from `src/gobby/tasks/state_semantics.py`.
-- 4.1.2 - Task tools, routes and the CLI accept no stage filter and no automation field. behavior: "current_stage_state" absent from `src/gobby/mcp_proxy/tools/tasks/_crud.py`. behavior: "include_stages" absent from `src/gobby/servers/routes/tasks.py`. behavior: "checkout_mode" absent from `src/gobby/cli/tasks/crud.py`. test: `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::test_no_legacy_fields`.
+- 4.1.2 - Task tools, routes and the CLI accept no stage filter and no automation field. behavior: "current_stage_state" absent from `src/gobby/mcp_proxy/tools/tasks/_listing.py`. behavior: "include_stages" absent from `src/gobby/servers/routes/tasks.py`. behavior: "checkout_mode" absent from `src/gobby/cli/tasks/crud.py`. test: `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::test_no_legacy_fields`.
 - 4.1.3 - Agent recovery and the pipeline heartbeat release stale claims without stage moves or dispatch failure counts. test: `tests/workflows/test_pipeline_heartbeat.py::test_stale_task_with_terminal_agent_run_recovered`. behavior: "dispatch_failure_count" absent from `src/gobby/agents/task_recovery.py`.
 - 4.1.4 - The web task model has no stage types or automation columns, and the web checks pass. file: `web/src/types/tasks.ts`. behavior: "current_stage" absent from `web/src/types/tasks.ts`. behavior: "include_stages" absent from `web/src/components/activity/TasksTab.tsx`. test: `web/src/lib/__tests__/taskState.test.ts::taskState helpers`.
 
@@ -1448,7 +1502,7 @@ Targets:
 
 **Granularity:** one outcome, task storage holds no stage state and no automation column. `LocalTaskManager` exposes the stage managers, the manifest setup, the build cascade and the column parameters together, and `_manager.py`, `_queries.py` and `_models.py` each carry both, so a split would edit the same files twice for one check.
 
-Move the close helpers out of `_stage_utils.py` into the new module `src/gobby/storage/tasks/_close.py`, and point `_manager.py` and `_transitions.py` at it. `_manager.py` (882 lines) then loses its stage and column code and ends near 775 lines. The move carries `_LEGACY_VALIDATION_CRITERIA`, `_TERMINAL_PARENT_CLOSE_REASONS`, `_session_exists`, `_close_task_in_txn`, `_close_eligible_ancestors`, `close_eligible_parent_chain` and `_schedule_ancestor_epic_archive`, with `_now` replaced by `utc_now`. Three things stay behind with the stage code:
+Move the close helpers out of `_stage_utils.py` into the new module `src/gobby/storage/tasks/_close.py`, and point `_manager.py` and `_transitions.py` at it. `_manager.py` (901 lines) then loses its stage and column code and ends near 795 lines. The move carries `_LEGACY_VALIDATION_CRITERIA`, `_TERMINAL_PARENT_CLOSE_REASONS`, `_session_exists`, `_close_task_in_txn`, `_close_eligible_ancestors`, `close_eligible_parent_chain` and `_schedule_ancestor_epic_archive`, with `_now` replaced by `utc_now`. Three things stay behind with the stage code:
 
 - `_close_task_in_txn` stops calling `_complete_terminal_delivery_stage_for_close` and drops the `cascade_descendants` parameter and `_cascade_close_descendants`. Only `complete_stage` passed `True`.
 - `close_eligible_parent_chain` drops the unfinished-stage guard, so a parent with no open child closes as it does today without a manifest.
@@ -1473,7 +1527,7 @@ Automation columns:
 
 Tests:
 
-- Delete the 25 test files above. The close tests import from `gobby.storage.tasks._close`. `test_close_eligible_ancestors.py` deletes `test_parent_with_unfinished_stages_survives_its_last_child` and `test_parent_with_a_finished_manifest_still_closes`; `test_legacy_validation_criteria_close.py` deletes `test_forced_cascade_closes_legacy_descendants`; `test_reopen_build_state.py` deletes `test_reopen_resets_inactive_open_non_ready_stage` and `test_reopen_blocks_allow_automation_with_build_stop_instruction`, and its lease and agent run cases expect the new refusal.
+- Delete the 25 test files above. The close tests import from `gobby.storage.tasks._close`. `test_close_eligible_ancestors.py` deletes `test_parent_with_unfinished_stages_survives_its_last_child` and `test_parent_with_a_finished_manifest_still_closes`; `test_legacy_validation_criteria_close.py` deletes `test_forced_cascade_closes_legacy_descendants`; `test_reopen_build_state.py` deletes `test_reopen_resets_inactive_open_non_ready_stage`, `test_reopen_blocks_allow_automation_with_build_stop_instruction` and `test_move_to_stage_withdraws_a_closed_task_memory_review`, its lease and agent run cases drop their stage setup and expect the new refusal, `test_reopen_ignores_expired_dispatch_mutex` drops its stage setup and stage assertion, and the `_stage_test_helpers` import goes. The memory-review withdrawal on reopen stays with its own cases.
 - `test_round_diff.py` deletes `test_approval_evidence_finalization` and the stage review helper imports. `test_manager_surface_parity.py` deletes `test_subtree_cascade_serializes_overlapping_subtrees`. `test_review_repairs_validation.py` deletes its two rejection renderer cases. `test_task_lifecycle_coverage.py` deletes `_make_stage_state` and its stage imports.
 - The other test Targets drop stage setup, stage hydration patches, `stages=` fixture fields and automation column fields; their remaining assertions stay.
 
@@ -1481,7 +1535,7 @@ Tests:
 
 - Inventory (2026-10-08): a sweep of `src/` and `tests/` for every symbol, table and parameter above after the 4.1 edits. Outside the files above, `stages=` and `.stages` in `tests/mcp_proxy/tools/spawn_agent/` are `SimpleNamespace` and mock attributes, `handoffs.stages` in `tests/agents/test_spawn_executor_placement_bind.py` is pipeline handoff state, `task_stage_states` in `tests/scripts/test_schema_diff.py` is fixture SQL and `stages.yaml` in `tests/plans/test_semantic_lint.py` is plan text; all stay.
 - `tests/phase2_stage_contract_helpers.py` stays for `tests/plans/test_strategy_plan_mcp_split_headers.py`, which pins a completed plan.
-- Large files: `_manager.py` (882 lines) takes the move above. No other production Target reaches 850 lines (`_transitions.py` 708, `_queries.py` 589).
+- Large files: `_manager.py` (901 lines) takes the move above. No other production Target reaches 850 lines (`_transitions.py` 733, `_queries.py` 642).
 - Planned checks: focused pytest on every test Target plus `tests/storage/` and `tests/mcp_proxy/tools/tasks/`; ruff, format check and mypy on `src/`.
 
 **Acceptance:**
@@ -1506,7 +1560,6 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/tasks/live-work.md`
 - `src/gobby/install/shared/skills/gobby/references/review/evidence.md`
 - `src/gobby/install/shared/skills/gobby/references/review/overview.md`
-- `src/gobby/install/shared/skills/gobby/references/plan/overview.md`
 - `src/gobby/install/shared/skills/annotate/SKILL.md`
 - `src/gobby/install/shared/skills/tech-writer/SKILL.md`
 - `src/gobby/install/shared/skills/ideate/SKILL.md`
@@ -1536,11 +1589,10 @@ Targets:
 **Granularity:** one outcome, no bundled skill teaches a removed surface. The catalog topic and its file go together because the reference-library contract requires the catalog topics to match the files on disk.
 
 - Delete `src/gobby/install/shared/skills/gobby/references/tasks/reviews.md`, which documents only stage manifests, stage reviews and the stage CLI, and drop its `reviews` topic from the tasks capability in `catalog.json`. 3.5 already dropped the audit entries that cite it, and 3.4 dropped the link from the review outcomes reference.
-- `tasks/overview.md`: the topic list drops `reviews`, and "For plan expansion use `$gobby plan`; for dispatch use `$gobby build`." becomes "For plan expansion use `$gobby plan`." "`list_tasks` for parent, label, project, closed-state, or current-stage filters." becomes "`list_tasks` for parent, label, project or closed-state filters.", and "Task state projects ownership, ordered stages, closure, escalation, and blockers." becomes "Task state projects ownership, closure, escalation, and blockers."
+- `tasks/overview.md`: the topic list drops `reviews`. "`list_tasks` for parent, label, project, closed-state, or current-stage filters." becomes "`list_tasks` for parent, label, project or closed-state filters.", and "Task state projects ownership, ordered stages, closure, escalation, and blockers." becomes "Task state projects ownership, closure, escalation, and blockers."
 - `tasks/live-work.md`: delete the sentence "Set `allow_automation=false` and `checkout_mode="none"` through `update_task`; confirm `unattended=false` and the returned settings before editing." The next sentence stays.
 - `review/evidence.md`: the first paragraph ends "artifact readers; load [source control](../source-control/overview.md) for implementation diffs."
-- `review/overview.md`: "`$gobby review <epic-ref>` selects an epic review, independent of `gobby build`." becomes "`$gobby review <epic-ref>` selects an epic review." "Discover feedback evidence through `gobby-feedback`, task records through `gobby-tasks`, and stage decisions through `gobby-tasks-ops`." becomes "Discover feedback evidence through `gobby-feedback` and task records through `gobby-tasks`."
-- `plan/overview.md`: delete the two sentences "Unattended `gobby build` retains its stage-manifest sequence, installed review policy and configured round counts. Do not inject interactive menus into it."
+- `review/overview.md`: "Discover feedback evidence through `gobby-feedback`, task records through `gobby-tasks`, and stage decisions through `gobby-tasks-ops`." becomes "Discover feedback evidence through `gobby-feedback` and task records through `gobby-tasks`."
 - `annotate/SKILL.md`: "it does not claim tasks, implement changes, enable dispatch, or run `gobby build`." becomes "it does not claim tasks or implement changes."
 - `tech-writer/SKILL.md`: check 5 becomes "Architecture references align with current `CLAUDE.md` and `AGENTS.md` (plan-coverage contract)."
 - The methodology skills stay (Decision Record item 4) and stop naming deleted definitions and stages. Descriptions: `ideate` "Internal methodology for ideation.", `architecture` "Internal methodology for architecture work.", `prd` "Internal methodology for a Product Reference Document.", `research` "Internal methodology for research.", each followed by its existing "Produces ..." sentence, where `research` ends "for architecture and PRD work". The role lines become "Use this skill for ideation work.", "Use this skill for architecture work. It covers both marker sections the architecture work owns:", "Use this skill for PRD work." and "Use this skill when acting as the `researcher` agent." In `ideate/SKILL.md`, "downstream stages can rely on" becomes "downstream work can rely on". The discovery marker blocks and the methodology sections stay.
@@ -1571,6 +1623,7 @@ Tests:
 **Research context:**
 
 - Inventory (2026-10-08): `p5/sweep_5.py` over `src/gobby/install/shared/skills/`, `docs/`, the root `AGENTS.md`, `CLAUDE.md` and `README.md` for the build, stage, dispatch, review-state and deleted-definition names. Earlier leaves own the build capability and catalog build entries (2.3), `references/agents/messaging.md` (2.4), `intro/overview.md` (2.3), `plan/enhancement.md` (3.2, 3.5), `plan/review.md` (3.2), `review/epic.md` and `review/outcomes.md` (3.4) and `merge-campaigns.md` (2.2, 3.1).
+- Refresh (2026-10-13): 2.3 already removed the `$gobby build` dispatch clause from `tasks/overview.md`, the "independent of `gobby build`" clause from `review/overview.md` and the unattended-build sentences from `plan/overview.md`, so this leaf no longer edits those three sentences or `plan/overview.md`. Every other old-text claim above still matches the tip.
 - Matches that stay: `dispatcher` and `build` in the kotlin, scala, dart and javascript skills (language build tools and event dispatchers), `admin/installation`, `integrations/plugins`, `rules/effects` and the `impeccable` "unattended" wording.
 - Second inventory (2026-10-08, after Plan Adversary F5): `p5/sweep_5.py` matches phrases and skipped `tests/skills/scenarios/`, so it missed generic build, dispatch and stage wording. A word-boundary `gcode grep -wiE 'build|dispatch|dispatcher|stages?'` over `src/gobby/install/shared/skills/gobby/references/` and a build, stage and dispatch grep over `tests/skills/scenarios/` found the plan, agent, commit, task, config and pipelines lines above and the two recorded scenarios. `tests/skills/test_pipelines_and_cron_skill.py` pins the old pipelines sentence.
 - Word matches that stay: git staging and handoff staging (`source-control/commits.md` step 3, `sessions/`, `admin/backups.md`, `admin/installation.md`, `rules/effects.md`), the skill router's dispatch, dynamic dispatch in `code-index/impact.md`, pipeline child dispatch in `pipelines/history.md`, native component builds in `development/` and `admin/gclient-visual-capture.md`, hook stages and native dispatch in `integrations/hooks.md`, the review-pipeline dispatch in `review/overview.md`, and plain-verb uses in `sessions/waits.md` and `plan/repair.md`. In `tests/skills/scenarios/`, the coderabbit prompt's `tests/dispatch/test_runtime_dispatch_mutex.py` is prompt text the recorded run never opens.
@@ -1581,7 +1634,7 @@ Tests:
 
 - 5.1.1 - The tasks capability has no `reviews` topic, and the reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby/catalog.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
 - 5.1.2 - The live-work guidance sets no automation column. behavior: "allow_automation" absent from `src/gobby/install/shared/skills/gobby/references/tasks/live-work.md`. test: `tests/skills/test_live_session_skill.py::test_live_session_skill_defines_complete_lifecycle_and_recovery`.
-- 5.1.3 - No skill names `gobby build` or a deleted definition as its user. behavior: "gobby build" absent from `src/gobby/install/shared/skills/gobby/references/plan/overview.md`. behavior: "qa-reviewer" absent from `src/gobby/install/shared/skills/proportionality/SKILL.md`. behavior: "analyst" absent from `src/gobby/install/shared/skills/ideate/SKILL.md`. test: `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists`.
+- 5.1.3 - No skill names `gobby build` or a deleted definition as its user. behavior: "gobby build" absent from `src/gobby/install/shared/skills/annotate/SKILL.md`. behavior: "qa-reviewer" absent from `src/gobby/install/shared/skills/proportionality/SKILL.md`. behavior: "analyst" absent from `src/gobby/install/shared/skills/ideate/SKILL.md`. test: `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists`.
 - 5.1.4 - The recorded plan and pipelines scenarios offer no build route, and their harness tests pass. behavior: "gobby build" absent from `tests/skills/scenarios/plan/optional-review-approval.yaml`. behavior: "build_dispatch" absent from `tests/skills/scenarios/pipelines-and-cron/select-automation-path.yaml`. test: `tests/skills/test_skill_tdd_harness.py::test_plan_optional_reviews_do_not_bypass_mandatory_approval_gates`. test: `tests/skills/test_skill_tdd_harness.py::test_pipelines_and_cron_selects_current_automation_paths`.
 - 5.1.5 - The pipelines, plan and task references route no work to build or stages. behavior: "build capability" absent from `src/gobby/install/shared/skills/gobby/references/pipelines/overview.md`. behavior: "authorized build" absent from `src/gobby/install/shared/skills/gobby/references/plan/approval.md`. behavior: "current-stage" absent from `src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md`. test: `tests/skills/test_pipelines_and_cron_skill.py::test_separates_automation_paths_and_omits_retired_content`.
 
@@ -1684,19 +1737,19 @@ Audits (each anchor follows its heading):
 
 After P5 nothing reads or writes the build and stage tables or the automation columns. 6.1 drops them in one gcore migration with its derived carriers (Decision Record items 5 and 10 to 12). The Orchestrator then runs the single rebuild, promotion and restart (Constraints).
 
-### 6.1 Migration 465 drops the build and stage tables and the automation columns (depends: 5.2) [category: code]
+### 6.1 Migration 469 drops the build and stage tables and the automation columns (depends: 5.2) [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/465_retire_build_and_stages.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register migration 465
+- `crates/gcore/assets/schema/migrations/469_retire_build_and_stages.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register migration 469
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated derived carrier without the dropped objects
 - `crates/gcore/assets/schema/seed.manifest.json::*` — scope-reason: drop the two stage seed tables
-- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the embedded schema identity moves to 465
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: the embedded schema identity moves to 469
 - `crates/gcore/src/schema/verify.rs::*` — scope-reason: drop the live-mutable fields of the two stage seed tables
-- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: the 460 test applies through 460 only, and a new test covers 465
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest embedded asset is 465
-- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: the reported latest version is 465
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: the 460 test applies through 460 only, and a new test covers 469
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest embedded asset is 469
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: the reported latest version is 469
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated identity projection
 - `tests/contracts/http/runtime_handshake.json::*` — scope-reason: the handshake reports the new identity
 - `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: the grant fixture carries the new identity
@@ -1709,10 +1762,13 @@ Targets:
 - `scripts/schema_sql_lexer.py`
 - `tests/fixtures/postgres.py::*` — scope-reason: the seed docstring drops the stage tables
 - `tests/fixtures/test_postgres_db_reset.py::*` — scope-reason: the seed revert case mutates a projects row
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: the gdaemon pin follows the release bump
 
 **Granularity:** one outcome, the schema holds no build or stage table and no automation column. The migration, its registration and every carrier that hashes or lists the embedded assets change together, because the gcore contract tests fail on any partial set.
 
-`crates/gcore/assets/schema/baseline.sql` stays frozen; the migration carries the whole drop. `465_retire_build_and_stages.sql`:
+`crates/gcore/assets/schema/baseline.sql` stays frozen; the migration carries the whole drop. `469_retire_build_and_stages.sql`:
 
 ```sql
 DROP TABLE task_stage_states;
@@ -1750,28 +1806,31 @@ Dropping `task_stage_states` drops its three bucket triggers before their functi
 
 Carriers, following the 462 and 464 commits:
 
-- `assets.rs` appends an `EmbeddedMigration` for version 465 with its filename, the file's SHA-256 checksum and `include_str!`.
+- `assets.rs` appends an `EmbeddedMigration` for version 469 with its filename, the file's SHA-256 checksum and `include_str!`.
 - `seed.manifest.json` drops the `task_stages_registry` and `task_type_default_stages` keys; `projects` and `sessions` stay. `verify.rs`'s `is_live_mutable_seed_field` drops the same two arms.
 - Regenerate `catalog.manifest.json` with `UPDATE_GCORE_SCHEMA_MANIFEST=1 GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core --test catalog_manifest_freshness catalog_manifest_is_fresh_for_embedded_assets`, then rerun it without `UPDATE_GCORE_SCHEMA_MANIFEST`.
-- Read the new identity from `cargo run -p gobby-daemon --bin gdaemon -- schema version --json`. `bundle.rs` takes the new latest checksum, assets root hash and `latest_version: 465`; `schema_contract.rs` asserts version 465 and filename `465_retire_build_and_stages.sql`; `cli_contract.rs` asserts `latest_version` 465. Regenerate `schema_expected_identity.json` with `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/debug/gdaemon`, and update the identity fields in `runtime_handshake.json` and the five golden grant files.
-- `runner_tests.rs`: `checkout_mode_migration_preserves_modes_and_agent_settings` replaces both of its full `SchemaRunner::new(...).apply()` calls with `SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..=migration_index])`, so it applies through 460 and still reads `checkout_mode`. New test `build_and_stage_retirement_rebuckets_tasks_and_drops_tables` applies through 464, inserts a task with an `in_progress` stage row (its bucket becomes `in_progress`), applies every migration, and asserts the six tables and four columns are gone, `refresh_task_state_bucket_from_stage()` is gone, the task's bucket is `ready`, and an `in_progress` bucket violates the check.
+- Read the new identity from `cargo run -p gobby-daemon --bin gdaemon -- schema version --json`. `bundle.rs` takes the new latest checksum, assets root hash and `latest_version: 469`; `schema_contract.rs` asserts version 469 and filename `469_retire_build_and_stages.sql`; `cli_contract.rs` asserts `latest_version` 469. Regenerate `schema_expected_identity.json` with `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/debug/gdaemon`, and update the identity fields in `runtime_handshake.json` and the five golden grant files.
+- `runner_tests.rs`: `checkout_mode_migration_preserves_modes_and_agent_settings` replaces both of its full `SchemaRunner::new(...).apply()` calls with `SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..=migration_index])`, so it applies through 460 and still reads `checkout_mode`. New test `build_and_stage_retirement_rebuckets_tasks_and_drops_tables` applies through 468, inserts a task with an `in_progress` stage row (its bucket becomes `in_progress`), applies every migration, and asserts the six tables and four columns are gone, `refresh_task_state_bucket_from_stage()` is gone, the task's bucket is `ready`, and an `in_progress` bucket violates the check.
 - `scripts/flatten_schema.py`'s `_SEED_TABLES` drops the two stage tables. `scripts/schema_diff.py` drops `_STAGE_REGISTRY_DEFINITION_COLUMNS` and the two stage `SeedTableSpec` entries.
 - Split `scripts/schema_diff.py`: move `_split_sql_statements`, `_split_top_level_commas` and the scanners they call (`_skip_line_comment`, `_skip_block_comment`, `_skip_single_quoted_string`, `_skip_double_quoted_identifier`, `_dollar_quote_tag_at`, `_is_identifier_start` and `_is_identifier_continuation`, lines 82-203 and 218-250 today) unchanged into the new module `scripts/schema_sql_lexer.py`. `scripts/schema_diff.py` imports the two splitters back through the `if __package__` import form that `scripts/flatten_schema.py` uses, so every importer of `scripts.schema_diff` keeps its imports. With the stage removals the file ends near 710 lines.
 - `tests/fixtures/postgres.py`: the canonical seed docstring names `projects` and `sessions`. `test_postgres_db_reset.py::test_seed_rows_survive_reset` mutates the `name` of a seeded `projects` row in place of the `task_type_default_stages` position, asserts the reset restores it, and its docstring and its `postgres_canonical_seed` assertion name `projects`.
 
+Release: the new migration ships in the gdaemon binary, so this leaf's commit is the gdaemon release commit. `crates/gdaemon/Cargo.toml` takes a patch bump of 0.0.1 from its version when the leaf starts (0.4.21 on 2026-10-13), `Cargo.lock` takes the matching `gobby-daemon` entry, and `MANAGED_BIN_VERSION_PINS["gdaemon"]` in `version_pins.py` takes the same version.
+
 **Research context:**
 
-- Carrier set from the 462 (`6926cd6352`) and 464 (`5596ae1394`) commits. The latest migration is 464. `crates/gdaemon/Cargo.toml` and `src/gobby/install/version_pins.py` are version bumps that 462 did without, so 6.1 leaves them to the Orchestrator's activation.
+- Carrier set from the 462 (`6926cd6352`) and 464 (`5596ae1394`) commits. The latest migration on 2026-10-13 is 468 (`3fa292372e`), and migrations 465 to 468 touch none of the objects this migration drops. If another migration lands before this leaf, take the next free version and move every 469 reference with it: the filename, `assets.rs`, the identity carriers, the tests and V2. The crate release policy puts the version bump in the release commit, and activation builds and promotes without authoring a commit (Orchestrator ruling, 2026-10-13), so the leaf carries the gdaemon bump. Migration 467's commit (`b776efac5f`) bumped in the leaf; 462 and 468 did not.
 - Inventory (2026-10-08): `p6/sweep_6.py` over `src/`, `tests/`, `scripts/` and `crates/gcore/` for the dropped tables, columns, index and functions, minus earlier-leaf Targets, plus `git grep` over `crates/`, `scripts/`, `tests/fixtures/`, `tests/contracts/` and `tests/runtime_grants/` for the four column names. `tests/scripts/test_schema_diff.py` stays because its `task_stage_states` hits are synthetic fixture SQL.
 - Large files: `scripts/schema_diff.py` (896 lines) needs the split above. `scripts/` is outside the code index, and the delete-lines proof needs a `::*` Target, which the validator refuses for an unindexed file. The moved block has no caller in `schema_diff.py` outside the two splitters, and its test module imports none of the moved names. `runner_tests.rs` is a test module and `verify.rs` has 722 lines.
-- Planned checks: `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract`; focused pytest on `tests/fixtures/test_postgres_db_reset.py`, `tests/scripts/`, `tests/storage/test_schema_contract.py`, `tests/runtime_grants/` and `tests/contracts/`; ruff and format check on `scripts/schema_diff.py`, `scripts/schema_sql_lexer.py` and `scripts/flatten_schema.py`.
+- Planned checks: `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract`; focused pytest on `tests/fixtures/test_postgres_db_reset.py`, `tests/install/test_version_pins.py`, `tests/scripts/`, `tests/storage/test_schema_contract.py`, `tests/runtime_grants/` and `tests/contracts/`; ruff and format check on `scripts/schema_diff.py`, `scripts/schema_sql_lexer.py` and `scripts/flatten_schema.py`.
 
 **Acceptance:**
 
-- 6.1.1 - Migration 465 drops the six build and stage tables, the four automation columns and the stage bucket function, and re-buckets stage-derived tasks to `ready`. file: `crates/gcore/assets/schema/migrations/465_retire_build_and_stages.sql`. test: `crates/gcore/src/schema/runner_tests.rs::build_and_stage_retirement_rebuckets_tasks_and_drops_tables`.
+- 6.1.1 - Migration 469 drops the six build and stage tables, the four automation columns and the stage bucket function, and re-buckets stage-derived tasks to `ready`. file: `crates/gcore/assets/schema/migrations/469_retire_build_and_stages.sql`. test: `crates/gcore/src/schema/runner_tests.rs::build_and_stage_retirement_rebuckets_tasks_and_drops_tables`.
 - 6.1.2 - The 460 migration test still proves its column rename by applying through 460 only. test: `crates/gcore/src/schema/runner_tests.rs::checkout_mode_migration_preserves_modes_and_agent_settings`.
-- 6.1.3 - The embedded identity, the catalog manifest and every identity carrier agree on 465. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+- 6.1.3 - The embedded identity, the catalog manifest and every identity carrier agree on 469. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`. test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 - 6.1.4 - Seed verification and the test reset know only the `projects` and `sessions` seed tables. behavior: "task_stages_registry" absent from `crates/gcore/assets/schema/seed.manifest.json`. test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset`.
+- 6.1.5 - The leaf releases gdaemon: its crate version is one patch above its version when the leaf started, and the managed binary pin matches it. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`. file: `crates/gdaemon/Cargo.toml`.
 
 ## V2: Verification
 `kind: verification`
@@ -1784,7 +1843,7 @@ These are completion gates for the implementation. Except for plan validation, n
 - The web checks named in 2.1 and 4.1 must pass after those leaves.
 - `GOBBY_SCHEMA_TEST_DATABASE_URL=<isolated test hub> cargo test -p gobby-core` and `cargo test -p gobby-daemon --test cli_contract` must pass after 6.1.
 - `tests/skills/test_reference_library.py::test_reference_contract_3_2_1` must pass after every leaf that edits a skill, guide or audit.
-- After 6.1 lands, the Orchestrator's rebuild, promotion and restart must start the daemon at schema 465, and `gobby status` must report healthy.
+- After 6.1 lands, the Orchestrator's rebuild, promotion and restart must start the daemon at schema 469, and `gobby status` must report healthy.
 - A final sweep of `src/`, `tests/`, `web/src/`, `crates/gcore/src/` and the live guides for `gobby build`, `task_stage_states`, `allow_automation` and `submit_for_review` must classify every match. A match passes only when it is the history named in Context or a fixture, runtime primitive or test caller that a leaf's Research context lists as staying. Every other match is a retired surface and fails the gate.
 
 ## V1 Plan Changelog
@@ -1796,538 +1855,6 @@ These are completion gates for the implementation. Except for plan validation, n
 - 2026-10-08: Writer repairs for F4 and N1: 2.3 drops the build advice from worktree evidence and deletes the build command matcher, and V2 classifies every sweep match.
 - 2026-10-08: Writer repair for F5: 5.1 retires the build route from the recorded plan and pipelines scenarios and the build and stage wording from the remaining plan, agent, commit, task, config and pipelines references; 2.3 lists the normalization fixture that stays.
 - 2026-10-08: Plan Adversary gobby#15401 consensus on 9623014b627262faa678b496154893db0b8d9a05: F1 to F5 and N1 resolved, no blocking finding remains.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Spawn cap and spawn mutex leave build and dispatch
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: `DaemonConfig` has a `max_active_agents` field with
-    default 20 and minimum 1, and the regenerated contract lists the key. symbol:
-    `DaemonConfig`. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
-
-    1.1.2: A spawn reaches the configured cap from live daemon config, not from `build.yaml`,
-    and the field default applies without a runtime. symbol: `configured_max_active_agents`.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py::test_slot_cap_reads_daemon_config_max_active_agents`.
-
-    1.1.3: `_spawn_guards.py` imports nothing from `gobby.config.build` or `gobby.dispatch`,
-    and `DISPATCH_TTL_SECONDS` lives in `gobby.storage.tasks._runtime_mutex`. file:
-    `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py`. test: `tests/mcp_proxy/tools/spawn_agent/test_spawn_guards.py::test_spawn_guards_import_no_build_or_dispatch`.
-
-    1.1.4: `dispatch_batch` is registered from its own module and bounds its concurrency
-    with `configured_max_active_agents()`. symbol: `register_dispatch_batch`. test:
-    `tests/mcp_proxy/tools/test_parallel_dispatch.py::test_dispatch_batch_respects_configured_cap`.
-
-    1.1.5: The configuration guide documents `max_active_agents` under Spawn Cap,
-    no longer describes the per-project build config file, and its audit pins the
-    new anchor. behavior: "max_active_agents" in `docs/guides/configuration.md`. behavior:
-    "build-defaults" absent from `docs/reference-audit/config.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
-
-    1.1.6: The recorded config schema and values responses carry `max_active_agents`,
-    and the config corpus cases replay equal. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.'
-  labels:
-  - covers:remove-gobby-build:1.1:1.1.1
-  - covers:remove-gobby-build:1.1:1.1.2
-  - covers:remove-gobby-build:1.1:1.1.3
-  - covers:remove-gobby-build:1.1:1.1.4
-  - covers:remove-gobby-build:1.1:1.1.5
-  - covers:remove-gobby-build:1.1:1.1.6
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Spawn drops its dispatch-only hooks
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: A second active run on the same task is refused even
-    when the requester is a `merge-worker` spawned by that run''s session. test: `tests/mcp_proxy/tools/spawn_agent/test_mcp_proxy_tools_spawn_agent_dedup.py::test_merge_worker_spawn_refuses_active_same_task_run`.
-
-    1.2.2: The plan gate covers `plan-adversary` only and has no repair channel. symbol:
-    `PLANNING_AGENTS`. test: `tests/tasks/test_plan_gate.py::test_planning_agents_constant`.
-
-    1.2.3: A `plan-adversary` spawn against a malformed plan still returns a structured
-    refusal. test: `tests/tasks/test_plan_gate.py::test_plan_adversary_spawn_against_malformed_plan_returns_structured_failure`.
-
-    1.2.4: An isolated spawn''s code-index preflight is best effort, and a preflight
-    failure records a warning instead of failing the spawn. symbol: `code_index_preflight_mode`.
-    test: `tests/agents/test_spawn_executor.py::test_best_effort_preflight_records_warning_without_operator_credentials`.'
-  labels:
-  - covers:remove-gobby-build:1.2:1.2.1
-  - covers:remove-gobby-build:1.2:1.2.2
-  - covers:remove-gobby-build:1.2:1.2.3
-  - covers:remove-gobby-build:1.2:1.2.4
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Web drops the build, profile and stage-registry views
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.1.1: The Activity panel offers no Stages tab, and no web
-    source imports the stage-registry hook. file: `web/src/components/activity/ActivityPanelTabs.tsx`.
-    behavior: "stages" tab absent from `web/src/components/activity/ActivityPanelTabs.tsx`.
-
-    2.1.2: The task quick menu offers no build actions, and no web source calls a
-    build or profile endpoint. file: `web/src/components/activity/TaskQuickMenu.tsx`.
-    behavior: "/api/build" absent from `web/src/components/activity/TasksTabActions.ts`.
-
-    2.1.3: The Tasks tab filters by status only, and the task type has no build state.
-    file: `web/src/types/tasks.ts`. behavior: "build_state" absent from `web/src/types/tasks.ts`.
-
-    2.1.4: The web unit tests, type check, lint and the two named Playwright specs
-    pass. file: `web/src/__tests__/styleRatchet.test.ts`.'
-  labels:
-  - covers:remove-gobby-build:2.1:2.1.1
-  - covers:remove-gobby-build:2.1:2.1.2
-  - covers:remove-gobby-build:2.1:2.1.3
-  - covers:remove-gobby-build:2.1:2.1.4
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: frontend
-- title: Merge-orchestrator retires
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '2.2.1: The bundled definitions no longer include `merge-orchestrator`.
-    test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles`.
-
-    2.2.2: `verify_in_worktree` still rejects unscoped test commands after the helper
-    move. test: `tests/mcp_proxy/tools/test_merge_landscape.py::test_verify_in_worktree_rejects_unscoped_test_commands`.
-
-    2.2.3: No bundled definition, skill reference or merge-landscape tool description
-    names merge-orchestrator. file: `src/gobby/mcp_proxy/tools/merge_landscape.py`.
-    behavior: "merge-orchestrator" absent from `src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md`.'
-  labels:
-  - covers:remove-gobby-build:2.2:2.2.1
-  - covers:remove-gobby-build:2.2:2.2.2
-  - covers:remove-gobby-build:2.2:2.2.3
-  tdd: true
-  source_section: '2.2'
-  implementation_domain: backend
-- title: Build entry surfaces and the build skill capability go
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.1'
-  - '2.2'
-  validation_criteria: '2.3.1: The CLI has no `build`, `profiles` or `tasks repair-lifecycle`
-    command, and `gobby cron` and `gobby pipelines` still report daemon errors. symbol:
-    `_daemon_error_message`. test: `tests/cli/test_cron_cli.py::TestCronRun::test_run_daemon_rejection`.
-
-    2.3.2: No build, profile or build-observability MCP tool is registered. file:
-    `src/gobby/mcp_proxy/registries.py`. test: `tests/mcp_proxy/test_registries.py::test_setup_tasks_ops_registry_omits_legacy_front_half_tick`.
-
-    2.3.3: The daemon serves no `/api/build` or `/api/profiles` route. file: `src/gobby/servers/_app_routes.py`.
-    behavior: "build_router" absent from `src/gobby/servers/_app_routes.py`.
-
-    2.3.4: The gobby skill catalog has no build capability, and the reference-library
-    contract passes. file: `src/gobby/install/shared/skills/gobby/catalog.json`. test:
-    `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
-
-    2.3.5: Worktree evidence keeps its missing-base recovery without `gobby build`,
-    and the rule evaluator exposes no build command matcher. behavior: "gobby build"
-    absent from `src/gobby/plans/evidence.py`. behavior: "is_gobby_build_command"
-    absent from `src/gobby/workflows/safe_evaluator.py`. test: `tests/plans/test_evidence_worktree_diff.py::test_invalid_when_base_sha_null`.'
-  labels:
-  - covers:remove-gobby-build:2.3:2.3.1
-  - covers:remove-gobby-build:2.3:2.3.2
-  - covers:remove-gobby-build:2.3:2.3.3
-  - covers:remove-gobby-build:2.3:2.3.4
-  - covers:remove-gobby-build:2.3:2.3.5
-  tdd: true
-  source_section: '2.3'
-  implementation_domain: backend
-- title: Nothing drives or wakes the dispatcher
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.3'
-  validation_criteria: '2.4.1: The automation loop sweeps stale claims and runs pipeline
-    maintenance without dispatching projects, and its snapshot has no dispatch keys.
-    symbol: `SystemAutomationLoop`. test: `tests/scheduler/test_system_automation_loop.py::test_pipeline_maintenance_uses_single_stale_task_scan`.
-
-    2.4.2: The cron executor and cron storage accept no `dispatcher` action type.
-    file: `src/gobby/storage/cron_models.py`. behavior: "dispatcher" absent from `src/gobby/storage/cron_models.py`.
-
-    2.4.3: Closing a task and moving a stage schedule no dispatcher wake. symbol:
-    `close_task`. behavior: "wake_dispatcher_for_task_change" absent from `src/gobby/storage/tasks/_lifecycle.py`.
-
-    2.4.4: Outside `gobby.build` and `gobby.dispatch`, no production module imports
-    either package. file: `src/gobby/system_automation.py`. behavior: "gobby.build"
-    absent from `src/gobby/mcp_proxy/tools/tasks/_stage_review.py`.
-
-    2.4.5: `send_message` rejects `target="build"` as an unknown target, and its schema
-    lists five targets. test: `tests/sessions/test_mailbox.py::TestMailboxBroadcast::test_rejects_unknown_target`.
-    test: `tests/mcp_proxy/tools/test_agent_messaging.py::TestSendMessage::test_send_message_schema_documents_target_parameters`.
-
-    2.4.6: The loop descriptions name no task dispatch, and the config corpus cases
-    replay equal. behavior: "automation dispatch" absent from `tests/contracts/http/config_schema.json`.
-    test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.'
-  labels:
-  - covers:remove-gobby-build:2.4:2.4.1
-  - covers:remove-gobby-build:2.4:2.4.2
-  - covers:remove-gobby-build:2.4:2.4.3
-  - covers:remove-gobby-build:2.4:2.4.4
-  - covers:remove-gobby-build:2.4:2.4.5
-  - covers:remove-gobby-build:2.4:2.4.6
-  tdd: true
-  source_section: '2.4'
-  implementation_domain: backend
-- title: Build and dispatch packages and build profiles go
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.4'
-  validation_criteria: '2.5.1: `src/gobby/build`, `src/gobby/dispatch`, `src/gobby/config/build.py`
-    and `src/gobby/storage/build_history.py` no longer exist, and the daemon modules
-    import without them. file: `src/gobby/runner_init/storage.py`. behavior: "build_profiles"
-    absent from `src/gobby/runner_init/storage.py`.
-
-    2.5.2: The bundled agent contract still passes from its new location. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
-
-    2.5.3: The runtime dispatch mutex tests pass against the storage module. test:
-    `tests/storage/tasks/test_runtime_dispatch_mutex.py::test_acquire_link_release_round_trip`.
-
-    2.5.4: Registry sync and its integrity check know no build profile category. file:
-    `src/gobby/sync/integrity.py`. test: `tests/sync/test_integrity.py::TestGetDirtyContentTypes::test_content_type_dirs_matches_sync_targets`.
-
-    2.5.5: The root instructions point at no dispatch package. file: `CLAUDE.md`.
-    behavior: "src/gobby/dispatch" absent from `AGENTS.md`.'
-  labels:
-  - covers:remove-gobby-build:2.5:2.5.1
-  - covers:remove-gobby-build:2.5:2.5.2
-  - covers:remove-gobby-build:2.5:2.5.3
-  - covers:remove-gobby-build:2.5:2.5.4
-  - covers:remove-gobby-build:2.5:2.5.5
-  tdd: true
-  source_section: '2.5'
-  implementation_domain: backend
-- title: Merge-worker retires
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.5'
-  validation_criteria: '3.1.1: No bundled definition named `merge-worker` exists,
-    and the bundled agent contract passes without it. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles`.
-    test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
-
-    3.1.2: The merge-campaigns guidance lands workspaces directly and names no worker,
-    wait or `record_merge_result`. file: `src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md`.
-    behavior: "merge-worker" absent from `src/gobby/install/shared/skills/gobby/references/source-control/merge-campaigns.md`.
-
-    3.1.3: The reference-library contract passes after the rewrite. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.'
-  labels:
-  - covers:remove-gobby-build:3.1:3.1.1
-  - covers:remove-gobby-build:3.1:3.1.2
-  - covers:remove-gobby-build:3.1:3.1.3
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Planning definitions retire with the spawned review round
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: No bundled definition named `planner`, `plan-adversary-old`,
-    `plan-adversary-taskless-old`, `plan-enhancer-old` or `plan-enhancer-taskless-old`
-    exists. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles`.
-
-    3.2.2: The planner and plan-enhancer lesson rules are gone, and the plan memory
-    guard names only `plan-adversary`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`.
-    test: `tests/workflows/test_memory_lifecycle_rules.py::TestGuardPlanMemoryWrites::test_condition_covers_planning_contexts_without_recall_gate`.
-
-    3.2.3: gobby-plans no longer registers `bind_evidence_run`, and its other review-evidence
-    tools keep their schemas. test: `tests/mcp_proxy/test_plans_tools.py::test_plan_tool_schemas_and_happy_path`.
-
-    3.2.4: The review guidance opens a static-seat round with `prepare_plan_review_round`,
-    names no taskless reviewer, and teaches no stage verdict or spawned-run delivery.
-    behavior: "plan-adversary-taskless-old" absent from `src/gobby/install/shared/skills/gobby/references/plan/review.md`.
-    behavior: "approve_review" absent from `src/gobby/install/shared/skills/gobby/references/plan/review.md`.
-    behavior: "end_agent_run" absent from `src/gobby/install/shared/skills/gobby/references/plan/review.md`.
-    test: `tests/skills/test_review_learning_skill.py::test_plan_skill_documents_parallel_review_contract`.
-
-    3.2.5: The reference-library contract and the bundled agent contract pass. test:
-    `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`. test:
-    `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.'
-  labels:
-  - covers:remove-gobby-build:3.2:3.2.1
-  - covers:remove-gobby-build:3.2:3.2.2
-  - covers:remove-gobby-build:3.2:3.2.3
-  - covers:remove-gobby-build:3.2:3.2.4
-  - covers:remove-gobby-build:3.2:3.2.5
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: Discovery and review stage definitions retire
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.2'
-  validation_criteria: '3.3.1: No bundled definition named `analyst`, `architect`,
-    `product-manager`, `expansion-qa`, `qa-reviewer`, `doc-reviewer`, `trajectory-monitor`
-    or `qa-dev` exists, in the active or the deprecated bundle. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles`.
-
-    3.3.2: The qa-reviewer lesson rule is gone, and the push guard scopes only `developer`.
-    test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`.
-    test: `tests/workflows/test_worker_safety_rules.py::TestWorkerSafetySync::test_agent_scope_persists_through_sync`.
-
-    3.3.3: Bundled sync installs the surviving definitions and repairs only `researcher`
-    placeholders. test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_with_real_bundled_agents`.
-    test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_enables_legacy_discovery_placeholder`.
-
-    3.3.4: The bundled agent contract passes without the eight definitions. test:
-    `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
-
-    3.3.5: The discovery methodology skills keep their contract test after their definitions
-    go. test: `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists`.'
-  labels:
-  - covers:remove-gobby-build:3.3:3.3.1
-  - covers:remove-gobby-build:3.3:3.3.2
-  - covers:remove-gobby-build:3.3:3.3.3
-  - covers:remove-gobby-build:3.3:3.3.4
-  - covers:remove-gobby-build:3.3:3.3.5
-  tdd: true
-  source_section: '3.3'
-  implementation_domain: backend
-- title: Kept definitions drop the stage tools
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.3'
-  validation_criteria: '3.4.1: `epic-reviewer` reviews open and closed epics on one
-    `review` step that blocks no stage tool, and its run ends with `end_agent_run`.
-    test: `tests/agents/test_epic_reviewer_definition.py::test_review_step_ends_the_run_without_stage_tools`.
-    test: `tests/agents/test_epic_reviewer_definition.py::test_closed_epic_reviews_on_the_review_step_with_reopen_permission`.
-
-    3.4.2: The verdict mapping names the handoff, remediation tasks and escalation,
-    and no stage tool. test: `tests/skills/test_review_skill.py::test_epic_review_references_pin_routing_and_verdict_mapping`.
-
-    3.4.3: The reviewer terminal-verdict rules are gone. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`.
-
-    3.4.4: `tech-writer` hands off through `close_task` only. test: `tests/agents/test_tech_writer_definition.py::test_handoff_transitions_to_end_agent_run_termination`.
-
-    3.4.5: No bundled definition names a stage tool. behavior: "complete_stage", "fail_stage",
-    "submit_for_review", "approve_review", "reject_review" and "record_plan_enhancement"
-    absent from `src/gobby/install/shared/workflows/agents/`. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.'
-  labels:
-  - covers:remove-gobby-build:3.4:3.4.1
-  - covers:remove-gobby-build:3.4:3.4.2
-  - covers:remove-gobby-build:3.4:3.4.3
-  - covers:remove-gobby-build:3.4:3.4.4
-  - covers:remove-gobby-build:3.4:3.4.5
-  tdd: true
-  source_section: '3.4'
-  implementation_domain: backend
-- title: Stage tools, review transitions, stage CLI and stage routes go
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.4'
-  validation_criteria: '3.5.1: gobby-tasks and gobby-tasks-ops register none of the
-    20 removed tools, and their registered inventory matches the independent classification.
-    test: `tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification`.
-    test: `tests/mcp_proxy/tools/test_read_only_classification.py::test_task_ops_read_only_classification_is_exact`.
-
-    3.5.2: No bundled definition or skill names a removed tool, and every tool a definition
-    names is registered. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools`.
-    test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
-
-    3.5.3: The daemon serves no `/api/stages` route and no per-task stage route, and
-    the CLI has no stage or review command. behavior: "create_stages_router" absent
-    from `src/gobby/servers/_app_routes.py`. behavior: "register_task_stage_routes"
-    absent from `src/gobby/servers/routes/tasks.py`. behavior: "stages" absent from
-    `src/gobby/cli/__init__.py`. file: `src/gobby/cli/tasks/main.py`.
-
-    3.5.4: The interactive review block is gone, and the commit and monolith gates
-    block only `close_task` and `de_escalate_task`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`.
-    test: `tests/workflows/test_monolith_guard.py::test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance`.
-
-    3.5.5: Expansion coverage reports pass state and failures without a stage review
-    action, and the start tool has no stage pipeline flag. test: `tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection`.
-    test: `tests/mcp_proxy/tools/tasks/test_mcp_proxy_tools_tasks_expansion.py::test_start_expansion_schema_accepts_reset_output`.
-
-    3.5.6: The capability audits cite no deleted module or command, and the reference
-    library passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.'
-  labels:
-  - covers:remove-gobby-build:3.5:3.5.1
-  - covers:remove-gobby-build:3.5:3.5.2
-  - covers:remove-gobby-build:3.5:3.5.3
-  - covers:remove-gobby-build:3.5:3.5.4
-  - covers:remove-gobby-build:3.5:3.5.5
-  - covers:remove-gobby-build:3.5:3.5.6
-  tdd: true
-  source_section: '3.5'
-  implementation_domain: backend
-- title: Nothing outside task storage reads or writes stages or the automation columns
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.5'
-  validation_criteria: '4.1.1: The task projection has no current stage, merge readiness
-    or automation column, and projected state is closed, escalated or ready. test:
-    `tests/tasks/test_serialize_task_state.py::test_new_shape`. file: `src/gobby/tasks/state_semantics.py`.
-    behavior: "current_stage" absent from `src/gobby/tasks/state_semantics.py`.
-
-    4.1.2: Task tools, routes and the CLI accept no stage filter and no automation
-    field. behavior: "current_stage_state" absent from `src/gobby/mcp_proxy/tools/tasks/_crud.py`.
-    behavior: "include_stages" absent from `src/gobby/servers/routes/tasks.py`. behavior:
-    "checkout_mode" absent from `src/gobby/cli/tasks/crud.py`. test: `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::test_no_legacy_fields`.
-
-    4.1.3: Agent recovery and the pipeline heartbeat release stale claims without
-    stage moves or dispatch failure counts. test: `tests/workflows/test_pipeline_heartbeat.py::test_stale_task_with_terminal_agent_run_recovered`.
-    behavior: "dispatch_failure_count" absent from `src/gobby/agents/task_recovery.py`.
-
-    4.1.4: The web task model has no stage types or automation columns, and the web
-    checks pass. file: `web/src/types/tasks.ts`. behavior: "current_stage" absent
-    from `web/src/types/tasks.ts`. behavior: "include_stages" absent from `web/src/components/activity/TasksTab.tsx`.
-    test: `web/src/lib/__tests__/taskState.test.ts::taskState helpers`.'
-  labels:
-  - covers:remove-gobby-build:4.1:4.1.1
-  - covers:remove-gobby-build:4.1:4.1.2
-  - covers:remove-gobby-build:4.1:4.1.3
-  - covers:remove-gobby-build:4.1:4.1.4
-  tdd: true
-  source_section: '4.1'
-  implementation_domain: fullstack
-- title: Task storage drops stages and the automation columns
-  category: code
-  task_type: feature
-  depends_on:
-  - '4.1'
-  validation_criteria: '4.2.1: Task storage has no stage modules, stage managers or
-    bundled stage registry, and startup syncs none. behavior: "stages_registry" absent
-    from `src/gobby/storage/tasks/_manager.py`. behavior: "StageRegistryLoader" absent
-    from `src/gobby/runner_init/storage.py`. test: `tests/storage/tasks/test_storage_tasks_manager.py::test_create_task_is_metadata_only`.
-
-    4.2.2: Closing the last open child closes its eligible ancestors through the close
-    module, with no stage guard. file: `src/gobby/storage/tasks/_close.py`. test:
-    `tests/storage/tasks/test_close_eligible_ancestors.py::test_last_sibling_close_closes_parent`.
-    test: `tests/storage/tasks/test_close_eligible_ancestors.py::test_three_level_last_leaf_closes_phase_and_epic`.
-
-    4.2.3: The task model and update path carry no automation column. behavior: "allow_automation"
-    absent from `src/gobby/storage/tasks/_models.py`. behavior: "checkout_mode" absent
-    from `src/gobby/storage/tasks/_updates.py`. test: `tests/storage/tasks/test_storage_tasks_manager.py::test_update_task_persists_normalized_validation_criteria`.
-
-    4.2.4: Reopen refuses an active agent run or dispatch lease without naming the
-    build. behavior: "gobby build stop" absent from `src/gobby/storage/tasks/_transitions.py`.
-    test: `tests/storage/tasks/test_reopen_build_state.py::test_reopen_blocks_active_dispatch_mutex`.
-    test: `tests/storage/tasks/test_reopen_build_state.py::test_reopen_blocks_active_agent_run`.'
-  labels:
-  - covers:remove-gobby-build:4.2:4.2.1
-  - covers:remove-gobby-build:4.2:4.2.2
-  - covers:remove-gobby-build:4.2:4.2.3
-  - covers:remove-gobby-build:4.2:4.2.4
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: backend
-- title: Bundled skills teach no build, stage or automation column
-  category: docs
-  task_type: feature
-  depends_on:
-  - '4.2'
-  validation_criteria: '5.1.1: The tasks capability has no `reviews` topic, and the
-    reference library passes. behavior: "reviews.md" absent from `src/gobby/install/shared/skills/gobby/catalog.json`.
-    test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
-
-    5.1.2: The live-work guidance sets no automation column. behavior: "allow_automation"
-    absent from `src/gobby/install/shared/skills/gobby/references/tasks/live-work.md`.
-    test: `tests/skills/test_live_session_skill.py::test_live_session_skill_defines_complete_lifecycle_and_recovery`.
-
-    5.1.3: No skill names `gobby build` or a deleted definition as its user. behavior:
-    "gobby build" absent from `src/gobby/install/shared/skills/gobby/references/plan/overview.md`.
-    behavior: "qa-reviewer" absent from `src/gobby/install/shared/skills/proportionality/SKILL.md`.
-    behavior: "analyst" absent from `src/gobby/install/shared/skills/ideate/SKILL.md`.
-    test: `tests/skills/test_discovery_methodology_skills.py::test_discovery_methodology_skill_exists`.
-
-    5.1.4: The recorded plan and pipelines scenarios offer no build route, and their
-    harness tests pass. behavior: "gobby build" absent from `tests/skills/scenarios/plan/optional-review-approval.yaml`.
-    behavior: "build_dispatch" absent from `tests/skills/scenarios/pipelines-and-cron/select-automation-path.yaml`.
-    test: `tests/skills/test_skill_tdd_harness.py::test_plan_optional_reviews_do_not_bypass_mandatory_approval_gates`.
-    test: `tests/skills/test_skill_tdd_harness.py::test_pipelines_and_cron_selects_current_automation_paths`.
-
-    5.1.5: The pipelines, plan and task references route no work to build or stages.
-    behavior: "build capability" absent from `src/gobby/install/shared/skills/gobby/references/pipelines/overview.md`.
-    behavior: "authorized build" absent from `src/gobby/install/shared/skills/gobby/references/plan/approval.md`.
-    behavior: "current-stage" absent from `src/gobby/install/shared/skills/gobby/references/tasks/dependencies.md`.
-    test: `tests/skills/test_pipelines_and_cron_skill.py::test_separates_automation_paths_and_omits_retired_content`.'
-  labels:
-  - covers:remove-gobby-build:5.1:5.1.1
-  - covers:remove-gobby-build:5.1:5.1.2
-  - covers:remove-gobby-build:5.1:5.1.3
-  - covers:remove-gobby-build:5.1:5.1.4
-  - covers:remove-gobby-build:5.1:5.1.5
-  tdd: false
-  source_section: '5.1'
-  assigned_agent: tech-writer
-- title: Guides, contracts and root docs teach no build, stage or dispatcher
-  category: docs
-  task_type: feature
-  depends_on:
-  - '5.1'
-  validation_criteria: '5.2.1: The dispatch guide is gone, and the reference library
-    passes with every audit anchor following its renamed or removed heading. behavior:
-    "dispatch.md" absent from `docs/guides/README.md`. behavior: "tasks-and-stages"
-    absent from `docs/reference-audit/tasks.json`. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
-
-    5.2.2: The root README and instructions teach no build loop or stage review. behavior:
-    "let the build loop run" absent from `README.md`. behavior: "submit_for_review"
-    absent from `AGENTS.md`.
-
-    5.2.3: The task, CLI and HTTP guides document no stage manifest, stage command
-    or build route. behavior: "## Stage Manifests" absent from `docs/guides/tasks.md`.
-    behavior: "gobby tasks advance" absent from `docs/guides/cli-commands.md`. behavior:
-    "/api/build" absent from `docs/guides/http-endpoints.md`.
-
-    5.2.4: The orchestration guide documents the spawn cap as daemon config. behavior:
-    "max_active_agents" in `docs/guides/orchestration.md`. behavior: "dispatch.md"
-    absent from `docs/guides/orchestration.md`.
-
-    5.2.5: The plan contract and planning guide name no taskless or `-old` definition
-    and no spawned reviewer run. behavior: "taskless-old" absent from `docs/contracts/plan-coverage.md`.
-    behavior: "taskless adversary" absent from `docs/contracts/plan-coverage.md`.
-    behavior: "enhancer-old" absent from `docs/guides/plans-and-plan-mode.md`. behavior:
-    "end_agent_run" absent from `docs/guides/plans-and-plan-mode.md`.'
-  labels:
-  - covers:remove-gobby-build:5.2:5.2.1
-  - covers:remove-gobby-build:5.2:5.2.2
-  - covers:remove-gobby-build:5.2:5.2.3
-  - covers:remove-gobby-build:5.2:5.2.4
-  - covers:remove-gobby-build:5.2:5.2.5
-  tdd: false
-  source_section: '5.2'
-  assigned_agent: tech-writer
-- title: Migration 465 drops the build and stage tables and the automation columns
-  category: code
-  task_type: feature
-  depends_on:
-  - '5.2'
-  validation_criteria: '6.1.1: Migration 465 drops the six build and stage tables,
-    the four automation columns and the stage bucket function, and re-buckets stage-derived
-    tasks to `ready`. file: `crates/gcore/assets/schema/migrations/465_retire_build_and_stages.sql`.
-    test: `crates/gcore/src/schema/runner_tests.rs::build_and_stage_retirement_rebuckets_tasks_and_drops_tables`.
-
-    6.1.2: The 460 migration test still proves its column rename by applying through
-    460 only. test: `crates/gcore/src/schema/runner_tests.rs::checkout_mode_migration_preserves_modes_and_agent_settings`.
-
-    6.1.3: The embedded identity, the catalog manifest and every identity carrier
-    agree on 465. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
-    test: `crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets`.
-    test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
-
-    6.1.4: Seed verification and the test reset know only the `projects` and `sessions`
-    seed tables. behavior: "task_stages_registry" absent from `crates/gcore/assets/schema/seed.manifest.json`.
-    test: `tests/fixtures/test_postgres_db_reset.py::test_seed_rows_survive_reset`.'
-  labels:
-  - covers:remove-gobby-build:6.1:6.1.1
-  - covers:remove-gobby-build:6.1:6.1.2
-  - covers:remove-gobby-build:6.1:6.1.3
-  - covers:remove-gobby-build:6.1:6.1.4
-  tdd: true
-  source_section: '6.1'
-  implementation_domain: backend
-```
+- 2026-10-13: Plan Writer gobby#16740 refresh for #24318, **Refresh the Remove gobby build plan for Josh's approval**, against tip `14043ac8b8`. Context and Decision Record item 7 record what landed, and Refresh Reconciliation gives each leaf's disposition. 2.4, 2.5, 3.5 and 4.1 take the consumers that landed after 2026-10-08, 3.5 and 4.1 re-derive their delete-lines proofs, 3.2, 3.4, 4.2 and 5.1 drop or update text that has already changed, and 6.1 becomes migration 469. The stale M1 is withdrawn for re-derivation.
+- 2026-10-13: Plan Adversary gobby#16804 consensus on 8416a4897c22c2fbb0b8f96b7538cf4d82b7edc6 for #24318: PA-1 resolved (3.5 owns the `test_worker_safety_rules.py` task-enforcement count pin), no blocking finding remains.
+- 2026-10-13: Writer repair for the no-deferrals audit (memory 878d0c35) on the Orchestrator's ruling: 6.1 carries the gdaemon release bump (crate version, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`) instead of leaving it to activation, with acceptance 6.1.5. The two cross-references to `spawn-network-override` section D1 drop the word "deferred", since that section is the other plan's. Decision Record item 9's review-evidence remainder is with Josh for a decision, and M1 waits on his answer.

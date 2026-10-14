@@ -28,6 +28,64 @@ from tests.fixtures.agent_definitions import make_agent_definition
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
+@pytest.mark.parametrize(
+    ("assignment", "error"),
+    [
+        ({"_agent_type": "privileged"}, "Unknown seat_context assignment key"),
+        ({"lane": "other"}, "seat_context lane differs from launch lane"),
+    ],
+)
+async def test_invalid_assignment_refuses_before_allocations(
+    assignment: dict[str, str], error: str
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+
+    runner = MagicMock()
+    db = MagicMock()
+    registry = _factory.create_spawn_agent_registry(runner, db=db)
+    with patch.object(_factory, "spawn_agent_impl", AsyncMock()) as launch:
+        result = await registry.call(
+            "spawn_agent", {"prompt": "work", "lane": "selected", "seat_context": assignment}
+        )
+    assert result == {"success": False, "error": error}
+    launch.assert_not_awaited()
+    assert db.mock_calls == []
+    assert runner.mock_calls == []
+
+
+async def test_launch_assignment_overrides_definition_variables() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _factory
+    from tests.fixtures.agent_definitions import make_agent_workflows
+
+    body = make_agent_definition(
+        name="default",
+        prompts={"agent": "Work."},
+        workflows=make_agent_workflows(variables={"seat_context": {"lane": "default"}}),
+    )
+    assignment = {"lane": "selected", "lane_epic": "project#42", "worktree": "workspace"}
+    launch = AsyncMock(return_value={"success": True, "run_id": "assignment-launch"})
+    registry = _factory.create_spawn_agent_registry(MagicMock())
+    with (
+        patch.object(_factory, "_load_agent_body", return_value=body),
+        patch.object(_factory, "spawn_agent_impl", launch),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_request_principal",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_guards.get_current_session_id",
+            return_value=None,
+        ),
+    ):
+        result = await registry.call(
+            "spawn_agent", {"prompt": "work", "lane": "selected", "seat_context": assignment}
+        )
+    assert result["success"] is True
+    assert launch.await_args is not None
+    assert launch.await_args.kwargs["initial_variables"]["seat_context"] == assignment
+    assert body.workflows.variables["seat_context"] == {"lane": "default"}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("network", ["none", "trusted", None])
 async def test_single_spawn_network_is_launch_local(network: str | None) -> None:

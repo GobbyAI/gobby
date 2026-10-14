@@ -305,6 +305,43 @@ async def test_resumed_opt_out_run_skips_pre_commit_prewarm(
     assert prepare_sandbox.await_args.kwargs["prewarm_pre_commit_store"] is expected
 
 
+@pytest.mark.parametrize(
+    ("execution_mode", "expected_mode", "headless"),
+    [("interactive", "terminal", False), ("one_shot", "agent", True)],
+)
+@pytest.mark.asyncio
+async def test_grok_resume_records_actual_terminal_lifetime(
+    monkeypatch: pytest.MonkeyPatch, execution_mode: str, expected_mode: str, headless: bool
+) -> None:
+    from gobby.agents.provider_capabilities import agent_run_is_headless
+
+    metadata = _resume_metadata()
+    metadata.update(provider="grok", execution_mode=execution_mode, provider_cli_mode="terminal")
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=AsyncMock())
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="grok", agent_name="security-reviewer"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success
+    command = runner._test_runtime.last_request.command
+    assert ("--single" in command) is headless
+    assert command[command.index("--resume") + 1] == "native-123"
+    assert command[-1] == "Continue"
+    successor = prepare.call_args.kwargs["resume_metadata_json"]
+    assert successor["provider_cli_mode"] == expected_mode
+    assert (
+        agent_run_is_headless(SimpleNamespace(provider="grok", resume_metadata_json=successor))
+        is headless
+    )
+
+
 @pytest.mark.asyncio
 async def test_claude_resume_keeps_prompt_in_argv(
     monkeypatch: pytest.MonkeyPatch,

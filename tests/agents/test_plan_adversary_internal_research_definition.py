@@ -32,16 +32,16 @@ def _review(agent: dict[str, Any]) -> dict[str, Any]:
     return next(step for step in agent["step_workflow"]["steps"] if step["name"] == "review")
 
 
-def test_adversary_agents_pin_the_reviewer_model() -> None:
-    """The agent definition owns the reviewer model, not the coordinator skill."""
+def test_adversary_agents_inherit_the_reviewer_model() -> None:
+    """Project launch configuration owns model choices; bundled roles stay generic."""
     tasked = _agent("plan-adversary-old")
-    assert tasked["provider"] == "codex"
-    assert tasked["model"] == "gpt-5.6-sol"
+    assert tasked["provider"] == "inherit"
+    assert tasked.get("model") is None
     taskless = _agent("plan-adversary-taskless-old")
-    assert taskless["provider"] == "grok"
-    assert taskless["model"] == "grok-4.7"
+    assert taskless["provider"] == "inherit"
+    assert taskless.get("model") is None
     for agent in (tasked, taskless):
-        assert agent["reasoning_effort"] == "xhigh"
+        assert agent.get("reasoning_effort") is None
         assert agent["reasoning_required"] is False
         assert agent["checkout_mode"] == "none"
 

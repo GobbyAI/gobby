@@ -22,6 +22,27 @@ from gobby.agents.sandbox_reaper import (
 
 pytestmark = pytest.mark.unit
 
+
+async def test_reap_retains_monitor_backlog_and_preserves_earlier_evidence(tmp_path: Path) -> None:
+    gobby_home = tmp_path / "gobby"
+    source = gobby_home / "runtime/srt-sock/monitor-run.srt-backlog.jsonl"
+    source.parent.mkdir(parents=True)
+    evidence = '{"monitorBacklog":{"runKey":"monitor-run"}}\n{"id":9,"message":"deny"}\n'
+    source.write_text(evidence)
+    source.chmod(0o600)
+    retained = gobby_home / "logs/sandbox-violations/monitor-run.monitor-backlog.jsonl"
+    retained.parent.mkdir(parents=True)
+    earlier = '{"id":1,"message":"earlier"}\n'
+    retained.write_text(earlier)
+    retained.chmod(0o644)
+
+    await reap_sandbox_run_roots("monitor-run", gobby_home=gobby_home)
+
+    assert retained.read_text() == earlier + evidence
+    assert retained.stat().st_mode & 0o777 == 0o600
+    assert not source.exists()
+
+
 _NOW = 2_000_000_000.0
 
 

@@ -8,10 +8,8 @@ version: "2.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: grok
+provider: inherit
 execution_mode: interactive
-model: grok-4.7
-reasoning_effort: xhigh
 reasoning_required: false
 checkout_mode: none
 send_message_targets: [parent, session]

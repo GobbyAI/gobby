@@ -5,13 +5,8 @@ version: "2.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-# Provider and model are overridden at launch by the first gobby_tasks.validation
-# candidate; these defaults mirror that feature's feature_mid profile for direct
-# spawns. Pin the mid-profile reasoning default so direct spawns are deterministic;
-# a validation candidate may still override it with its own concrete effort.
-provider: codex
-model: gpt-6-luna
-reasoning_effort: medium
+# Validation candidates supply concrete launch choices; direct spawns inherit.
+provider: inherit
 checkout_mode: none
 prewarm_pre_commit_store: false
 blocked_mcp_tools:

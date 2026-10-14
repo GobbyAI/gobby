@@ -15,6 +15,7 @@ from gobby.hooks._normalization_shell import (
     _literal_cd_target,
     _quoted_tilde_word,
     _strip_shell_wrappers,
+    is_dynamic_program_word,
     scan_shell_command,
 )
 from gobby.hooks.shell_execution import SHELL_WRAPPER_DEPTH
@@ -498,11 +499,7 @@ class ShellDirectoryState:
     def _changes_directory(self, parts: list[str], depth: int = 0) -> bool:
         if not parts:
             return False
-        if (
-            not parts[0].startswith("((")
-            and not re.match(r"\[\[\s", parts[0])
-            and (_contains_unexpanded_shell_reference(parts[0]) or "`" in parts[0])
-        ):
+        if is_dynamic_program_word(parts[0]):
             return True
         if self._clears_stack(parts):
             return True

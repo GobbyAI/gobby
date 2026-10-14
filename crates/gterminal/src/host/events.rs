@@ -7,6 +7,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Mutex};
 
+use super::activity::InputEffect;
 use super::backpressure;
 use crate::protocol::EVENT_QUEUE_ENTRIES;
 
@@ -31,6 +32,7 @@ pub(crate) struct HostEvents {
 
 /// One accepted `Input`/`Paste` from a granted frame stream.
 pub(crate) struct InputActivity {
+    pub effect: InputEffect,
     pub terminal_id: String,
     pub host_terminal_id: String,
     /// The daemon attachment id that held the grant.
@@ -153,6 +155,7 @@ impl HostEvents {
             "bytes": activity.bytes,
             "interrupt": activity.interrupt,
             "submit": activity.submit,
+            "effect": activity.effect,
         }))
         .await;
     }

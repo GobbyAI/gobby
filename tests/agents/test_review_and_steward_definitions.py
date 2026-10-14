@@ -15,9 +15,11 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import validate_workflow_definition_data
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -165,7 +167,7 @@ def test_no_send_keys_resolves_for_every_new_seat_except_the_steward(
 
 @pytest.mark.parametrize("name", NEW_SEATS)
 def test_new_seat_prompts_open_with_a_role_and_copy_the_shared_sections(name: str) -> None:
-    prompt = _raw(name)["prompts"]["agent"]
+    prompt = AgentDefinitionBody.model_validate(_raw(name)).prompt_for("agent")
 
     assert prompt.lstrip().startswith("## Role")
     for heading in COPIED_HEADINGS:
@@ -188,6 +190,27 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
         "Never fix what you review",
     ):
         assert phrase in prompt, phrase
+
+
+def test_security_reviewer_grok_resolution_preserves_seat_authority(temp_db: HubDatabase) -> None:
+    AgentDefinitionManager(temp_db).create("security-reviewer", _raw("security-reviewer"))
+    body = resolve_agent("security-reviewer", temp_db, cli_source="grok")
+
+    assert body is not None
+    assert body.provider == "grok"
+    assert body.model_dump(exclude={"provider"}) == _load("security-reviewer").model_dump(
+        exclude={"provider"}
+    )
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    selected = {
+        row.name
+        for row in RuleDefinitionManager(temp_db).list_all()
+        if rule_matches_agent(body, row)
+    }
+    assert {"no-send-keys", "scope-spawned-agent-send-message"} <= selected
+    assert set(body.blocked_tools) == WRITE_BLOCKED_TOOLS
+    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    assert body.send_message_targets == ["parent", "session"]
 
 
 def test_debugger_reports_one_verdict_and_never_commits_a_fix() -> None:
@@ -236,7 +259,8 @@ def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
 
     for phrase in (
         "gobby-agents:list_running_agents",
-        'gobby-communications:send_operator_message(channel="gobby-telegram", '
+        "gobby-communications:resolve_operator_conversation",
+        "gobby-communications:send_operator_message(channel=<configured operator channel>, "
         "content=<whole markdown report>)",
         "only success=true confirms delivery",
         "If direct delivery fails or is unavailable",
@@ -250,7 +274,7 @@ def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
         "gobby-agents:end_agent_run",
         "passing current_state containing mode, elapsed time",
         "direct message_id or fallback message_id, delivery status, and any gaps",
-        "next_steps says the next tick is due in 30 minutes",
+        "next_steps names the next tick only when a configured cadence supplies it",
         "If both delivery paths fail",
     ):
         assert phrase in prompt, phrase

@@ -2,12 +2,15 @@ tags: [worker-safety, enforcement, default, gobby]
 
 rules:
   no-remote-exec:
-    description: "Block piping remote scripts to shell."
+    description: "Block executing fetched output while allowing proven data captures."
     event: before_tool
     enabled: true
     priority: 40
+    when: "remote_fetch_execution(tool_input.get('command', ''))"
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(curl|wget)\\s+.*\\|\\s*(ba)?sh|\\$\\(\\s*(curl|wget)|<\\(\\s*(curl|wget)"
-        reason: "Piping remote scripts to shell is never allowed."
+        # The parser condition owns execution and per-capture data exemptions.
+        # A whole-command regex exemption could hide an executable sibling.
+        command_pattern: "(?s)."
+        reason: "Executing fetched output as code is never allowed."

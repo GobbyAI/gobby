@@ -8,6 +8,11 @@ from gobby.utils.dependency_requirements import SRT_RELEASE
 HTTP_PROXY_PATH = Path("node_modules/@anthropic-ai/sandbox-runtime/dist/sandbox/http-proxy.js")
 MUX_PROXY_PATH = HTTP_PROXY_PATH.with_name("mux-proxy.js")
 MACOS_PROFILE_PATH = HTTP_PROXY_PATH.with_name("macos-sandbox-utils.js")
+_MONITOR_NEEDLE = b"const logProcess = spawn('log', ["
+_MONITOR_REPLACEMENT = (
+    b"const logProcess = globalThis.gobbySrtLogTransport"
+    b" ? globalThis.gobbySrtLogTransport(sessionSuffix) : spawn('log', ["
+)
 _PATCHES = (
     (
         HTTP_PROXY_PATH,
@@ -60,6 +65,10 @@ def apply_srt_proxy_patch(root: Path) -> None:
                 f"managed SRT {relative_path.name} does not match the pinned upstream source"
             )
         patched = original.replace(needle, replacement)
+        if relative_path == MACOS_PROFILE_PATH:
+            if patched.count(_MONITOR_NEEDLE) != 1:
+                raise ValueError("managed SRT macOS monitor does not match pinned source")
+            patched = patched.replace(_MONITOR_NEEDLE, _MONITOR_REPLACEMENT)
         if hashlib.sha256(patched).hexdigest() != expected:
             raise ValueError(f"managed SRT {relative_path.name} patch checksum mismatch")
         patches.append((path, patched))

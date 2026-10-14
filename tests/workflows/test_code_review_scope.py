@@ -430,6 +430,7 @@ async def test_git_failure_stays_gated(repo: Path, tmp_path: Path) -> None:
         "sudo git commit -m docs",
         "GIT_ICASE_PATHSPECS=1 git commit docs -m docs",
         "git --work-tree=/elsewhere commit -m docs",
+        "git -C 'literal`directory' commit -m docs -- docs/guide.md",
         "git commit -a docs/guide.md -m docs",
         "",
     ],

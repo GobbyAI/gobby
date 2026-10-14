@@ -17,6 +17,7 @@ struct Case {
     hub_cert: Option<String>,
     database_url: Option<String>,
     api_key: Option<String>,
+    daemon_url: Option<String>,
     files_home: Option<String>,
     error: Option<String>,
 }
@@ -55,6 +56,7 @@ fn shared_vectors_match_python() -> Result<()> {
                     bootstrap.hub_cert,
                     bootstrap.database_url,
                     bootstrap.api_key,
+                    bootstrap.daemon_url,
                 ))
             }
             Ok(None) => Err("expected nonempty bootstrap mapping".to_owned()),
@@ -68,6 +70,7 @@ fn shared_vectors_match_python() -> Result<()> {
                 case.hub_cert,
                 case.database_url,
                 case.api_key,
+                case.daemon_url,
             )),
         };
         if actual != expected {
@@ -90,6 +93,26 @@ fn shared_vectors_match_python() -> Result<()> {
         }
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn blank_daemon_url_falls_back_to_local_endpoint() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("bootstrap.yaml");
+    for value in ["", " \t\r\n ", "\u{1c}", "\u{1d}", "\u{1e}", "\u{1f}"] {
+        let yaml = serde_yaml::to_string(&serde_json::json!({
+            "daemon_url": value,
+            "bind_host": "localhost",
+            "daemon_port": 61234,
+        }))?;
+        std::fs::write(&path, yaml)?;
+        assert_eq!(
+            gobby_core::daemon_url::daemon_url_at(&path),
+            "http://127.0.0.1:61234",
+            "blank daemon_url {value:?} must use the local endpoint"
+        );
+    }
     Ok(())
 }
 

@@ -21,6 +21,11 @@ from gobby.workflows.sync_rules import sync_rule_file
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("command", ["true |& claude -p hi", "true |& codex exec hi"])
+def test_stderr_pipeline_keeps_provider_launch_guard(command: str) -> None:
+    assert blocks_direct_provider_launch("Bash", {"command": command})
+
+
 @pytest.mark.parametrize(
     "command",
     [

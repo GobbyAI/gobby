@@ -1,6 +1,266 @@
 {
     "cases": [
         {
+            "name": "database_url_leading_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": " \t\r\npostgresql://db.example/gobby"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "database_url_trailing_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": "postgresql://db.example/gobby \t\r\n"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "database_url_mixed_separator_001c",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": "\u001cpostgresql://db.example/gobby\u001c"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "database_url_mixed_separator_001d",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": "\u001dpostgresql://db.example/gobby\u001d"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "database_url_mixed_separator_001e",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": "\u001epostgresql://db.example/gobby\u001e"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "database_url_mixed_separator_001f",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "database_url": "\u001fpostgresql://db.example/gobby\u001f"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "database_url": "postgresql://db.example/gobby"
+        },
+        {
+            "name": "api_key_leading_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": " \t\r\ngobby_fixture_key"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "api_key_trailing_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": "gobby_fixture_key \t\r\n"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "api_key_mixed_separator_001c",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": "\u001cgobby_fixture_key\u001c"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "api_key_mixed_separator_001d",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": "\u001dgobby_fixture_key\u001d"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "api_key_mixed_separator_001e",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": "\u001egobby_fixture_key\u001e"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "api_key_mixed_separator_001f",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key": "\u001fgobby_fixture_key\u001f"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key": "gobby_fixture_key"
+        },
+        {
+            "name": "daemon_url_leading_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": " \t\r\nhttps://daemon.example:443"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_trailing_ascii",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "https://daemon.example:443 \t\r\n"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_mixed_separator_001c",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001chttps://daemon.example:443\u001c"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_mixed_separator_001d",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001dhttps://daemon.example:443\u001d"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_mixed_separator_001e",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001ehttps://daemon.example:443\u001e"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_mixed_separator_001f",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001fhttps://daemon.example:443\u001f"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": "https://daemon.example:443"
+        },
+        {
+            "name": "daemon_url_empty_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": ""
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "daemon_url_ascii_blank_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": " \t\r\n "
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "daemon_url_separator_001c_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001c"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "daemon_url_separator_001d_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001d"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "daemon_url_separator_001e_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001e"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "daemon_url_separator_001f_absent",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "daemon_url": "\u001f"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "daemon_url": null
+        },
+        {
+            "name": "hub_cert_mixed_padding_preserved",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "hub_cert": "\u001c cert.pem \u001f"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "hub_cert": "\u001c cert.pem \u001f"
+        },
+        {
+            "name": "api_key_id_mixed_padding_preserved",
+            "bootstrap": {
+                "files_home": "/tmp/gobby-vector-files",
+                "api_key_id": "\u001d key-id \u001e"
+            },
+            "mode": "standalone",
+            "hub_daemon_url": null,
+            "api_key_id": "\u001d key-id \u001e"
+        },
+        {
             "name": "hub_cert_file_separator_only_absent",
             "bootstrap": {"files_home": "/tmp/gobby-vector-files", "hub_cert": "\u001c"},
             "mode": "standalone",

@@ -284,6 +284,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 "_persona_name",
                 "_agent_type",
                 "_agent_definition_drift",
+                "seat_context",
+                "project_policy",
             ),
         )
 
@@ -336,7 +338,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         )
         if not agent_body.supports_surface(definition_surface):
             return
-        preamble = agent_body.prompt_for(prompt_surface)
+        preamble = agent_body.prompt_for(prompt_surface, variables=variables)
         drift = variables.get("_agent_definition_drift")
         if isinstance(drift, str) and drift:
             preamble = f"{preamble}\n\n{drift}"
