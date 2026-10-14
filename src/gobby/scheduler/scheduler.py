@@ -293,6 +293,10 @@ class CronScheduler:
         await self._run_db(self._sweep_stale_running_runs, config)
         await self._run_db(self._sweep_orphaned_active_runs)
 
+        # Cron sessions are deterministic parents, not standing seats. Reap them
+        # even when no enabled jobs are due (including a disabled status reporter).
+        await self._run_db(self.executor.reap_finished_cron_sessions, self._machine_id)
+
         due_jobs = await self._run_db(self.storage.get_due_jobs)
         if not due_jobs:
             return

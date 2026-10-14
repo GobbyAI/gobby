@@ -45,6 +45,37 @@ def hydrate_run_children(db: HubDatabase, runs: Sequence[CronRun]) -> list[CronR
     return hydrated
 
 
+def finished_cron_session_ids(db: HubDatabase, machine_id: str) -> list[str]:
+    """Find this machine's cron parents whose durable work has finished.
+
+    A dispatched run is not finished until its linked child is terminal. Missing
+    children remain unresolved; approval and interrupted execution retain their parent.
+    """
+    rows = db.fetchall(
+        """
+        SELECT cr.*, s.id AS cron_session_id
+          FROM cron_runs cr
+          JOIN cron_jobs cj ON cj.id = cr.cron_job_id
+          JOIN sessions s ON s.project_id = cj.project_id
+           AND s.machine_id = cr.machine_id
+           AND s.source = 'cron'
+           AND starts_with(s.external_id, 'cron-' || cj.id::text || '-' || cr.id::text || '-')
+         WHERE cr.machine_id = %s
+           AND cr.status IN ('dispatched', 'completed', 'failed', 'skipped')
+           AND s.status NOT IN ('deleted', 'expired')
+         ORDER BY s.created_at, s.id
+        """,
+        (machine_id,),
+    )
+    runs = hydrate_run_children(db, [CronRun.from_row(row) for row in rows])
+    return [
+        str(row["cron_session_id"])
+        for row, run in zip(rows, runs, strict=True)
+        if (run.child is not None and run.child.terminal)
+        or (run.child is None and run.status in {"completed", "failed", "skipped"})
+    ]
+
+
 def active_children_for_job(
     db: HubDatabase,
     job_id: str,
