@@ -21,7 +21,8 @@ from gobby.install.bin_freshness_promotion import (
     workspace_binary_is_current,
     write_source_hash,
 )
-from gobby.install.bin_set_coherence import _codesign_workspace_binary
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
+from gobby.install.bin_set_coherence import BinarySetCoherenceError, _codesign_workspace_binary
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.paths import get_gobby_home
@@ -363,42 +364,49 @@ def install_gterm(module: Any, force: bool = False) -> dict[str, Any]:
     bin_dir.mkdir(parents=True, exist_ok=True)
     method = None
 
-    if not published:
-        if force:
-            clear_source_hash(bin_dir, "gterm")
-        outcome = module._install_gterm_from_submodule(bin_dir)
-        if not outcome:
-            if force or not gterm_path.exists():
-                raise ManagedBinaryReleaseMissing("gterm")
-            local_version = installed_version or "unknown"
-            module._write_gterm_version_stamp(bin_dir, local_version)
+    try:
+        if not published:
+            if force:
+                clear_source_hash(bin_dir, "gterm")
+            outcome = module._install_gterm_from_submodule(bin_dir)
+            if not outcome:
+                if force or not gterm_path.exists():
+                    raise ManagedBinaryReleaseMissing("gterm")
+                local_version = installed_version or "unknown"
+                module._write_gterm_version_stamp(bin_dir, local_version)
+                return {
+                    "installed": False,
+                    "skipped": True,
+                    "version": local_version,
+                    "method": "local",
+                    "reason": "unverified: local build unavailable",
+                }
+            if outcome == "current":
+                local_version = installed_version or "unknown"
+                module._write_gterm_version_stamp(bin_dir, local_version)
+                return {
+                    "installed": False,
+                    "skipped": True,
+                    "version": local_version,
+                    "method": "local",
+                }
+            method = "workspace"
+        elif module._install_gterm_from_github(bin_dir, target, target_version):
+            method = "github"
+        elif module._install_gterm_from_cargo_binstall(bin_dir, target_version):
+            method = "cargo-binstall"
+        elif module._install_gterm_from_cargo_install(bin_dir, target_version):
+            method = "cargo-install"
+        elif module._install_gterm_from_cargo_git(bin_dir):
+            method = "cargo-git"
+        else:
             return {
                 "installed": False,
-                "skipped": True,
-                "version": local_version,
-                "method": "local",
-                "reason": "unverified: local build unavailable",
+                "skipped": False,
+                "reason": "all installation methods failed",
             }
-        if outcome == "current":
-            local_version = installed_version or "unknown"
-            module._write_gterm_version_stamp(bin_dir, local_version)
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": local_version,
-                "method": "local",
-            }
-        method = "workspace"
-    elif module._install_gterm_from_github(bin_dir, target, target_version):
-        method = "github"
-    elif module._install_gterm_from_cargo_binstall(bin_dir, target_version):
-        method = "cargo-binstall"
-    elif module._install_gterm_from_cargo_install(bin_dir, target_version):
-        method = "cargo-install"
-    elif module._install_gterm_from_cargo_git(bin_dir):
-        method = "cargo-git"
-    else:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
+    except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
+        return {"installed": False, "skipped": False, "reason": str(exc)}
 
     gterm_path.chmod(0o755)
 

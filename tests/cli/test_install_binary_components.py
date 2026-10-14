@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import click
 import pytest
 
-from gobby.cli import install_components
+from gobby.cli import install_components, install_setup
 from gobby.cli.install_components import run_install_components
 from gobby.cli.install_files_home import (
     _install_maintenance_block_message,
@@ -29,13 +29,18 @@ from gobby.cli.install_setup import (
 from gobby.cli.runtime import CliRuntime
 from gobby.install.bin_freshness_promotion import native_bin_predates_source
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
+from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.runner_pid_file import ProbeState
 from gobby.utils import deps
 
 
 @pytest.mark.parametrize("component", ["gclient", "gterm"])
+@pytest.mark.parametrize("error_type", [BinaryReleaseVersionError, BinarySetCoherenceError])
 def test_component_release_refusal_is_a_cli_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, component: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    component: str,
+    error_type: type[RuntimeError],
 ) -> None:
     destination = tmp_path / "bin" / component
     destination.parent.mkdir()
@@ -43,7 +48,7 @@ def test_component_release_refusal_is_a_cli_error(
     remedy = f"{component}: changed source; bump its patch version before promotion"
 
     def refuse(_bin_dir: Path) -> str:
-        raise BinaryReleaseVersionError(remedy)
+        raise error_type(remedy)
 
     monkeypatch.setattr(f"gobby.cli.install_setup._install_{component}_from_submodule", refuse)
     with pytest.raises(click.ClickException, match=remedy):
@@ -56,6 +61,49 @@ def test_component_release_refusal_is_a_cli_error(
             bin_dir=destination.parent,
         )
     assert destination.read_bytes() == b"installed"
+
+
+@pytest.mark.parametrize("component", ["gclient", "gterm"])
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("error_type", [BinaryReleaseVersionError, BinarySetCoherenceError])
+def test_client_setup_refusal_is_a_failure_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    component: str,
+    published: bool,
+    error_type: type[RuntimeError],
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = bin_dir / component
+    installed.write_bytes(b"installed")
+    receipt = bin_dir / f".{component}-release-identity.json"
+    receipt.write_text('{"source_identity":"old-tree"}')
+    original = installed.read_bytes(), receipt.read_bytes()
+    remedy = f"{component}: changed source; bump its patch version before promotion"
+
+    def refuse(*_args: object, **_kwargs: object) -> str:
+        raise error_type(remedy)
+
+    monkeypatch.setattr(f"gobby.cli.install_setup_{component}.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        f"gobby.cli.install_setup_{component}.is_published", lambda _name: published
+    )
+    monkeypatch.setattr("gobby.cli.install_setup.sys.platform", "darwin")
+    monkeypatch.setattr(install_setup, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr(
+        f"gobby.cli.install_setup._get_installed_{component}_version", lambda _dir: None
+    )
+    monkeypatch.setattr(f"gobby.cli.install_setup._install_{component}_from_submodule", refuse)
+    monkeypatch.setattr(f"gobby.cli.install_setup._install_{component}_from_github", refuse)
+    installer = {"gclient": install_setup._install_gclient, "gterm": install_setup._install_gterm}[
+        component
+    ]
+
+    result = installer(force=True)
+
+    assert result == {"installed": False, "skipped": False, "reason": remedy}
+    assert (installed.read_bytes(), receipt.read_bytes()) == original
 
 
 def test_binary_components_promote_while_a_daemon_singleton_is_live(
@@ -260,6 +308,7 @@ def test_submodule_install_ad_hoc_signs_the_staged_binary(
         _REAL_REPLACE(src, dst)
 
     with (
+        patch(f"{module_name}.cargo_release_dir", return_value=source.parent),
         patch("gobby.cli.install_setup.shutil.which", side_effect=_which_build_tools),
         patch("gobby.cli.install_setup.subprocess.run", side_effect=_run_except_cargo),
         patch(

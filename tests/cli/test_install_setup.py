@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from gobby.agents.srt_runtime import SrtRuntimeError
+from gobby.cli import install_setup, install_setup_gcode
 from gobby.cli.install_release import (
     _download_release_binary,
     _extract_binary_from_release_archive,
@@ -41,9 +42,11 @@ from gobby.cli.install_setup import (
 )
 from gobby.cli.installers.hook_commands import build_hook_command
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.install.bin_release_identity import release_identity_path
 from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.storage import schema_contract
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from tests.fixtures.fake_hub import fake_database_url
 
@@ -792,6 +795,71 @@ class TestReleaseTagHelpers:
         assert not (tmp_path / "gcode").exists()
 
 
+@pytest.mark.parametrize("coherence_refusal", [False, True])
+def test_install_gcode_workspace_refusal_preserves_installed_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, coherence_refusal: bool
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "crates" / "gcode").mkdir(parents=True)
+    (workspace / "Cargo.toml").write_text("[workspace]\n")
+    (workspace / "crates" / "gcode" / "Cargo.toml").write_text("[package]\n")
+    source = workspace / "target" / "release" / "gcode"
+    source.parent.mkdir(parents=True)
+    source.write_text("#!/bin/sh\necho 'gcode " + GCODE_PIN + "'\n")
+    source.chmod(0o755)
+    bin_dir = tmp_path / "home" / "bin"
+    bin_dir.mkdir(parents=True)
+    installed = bin_dir / "gcode"
+    installed.write_text("#!/bin/sh\necho 'gcode " + GCODE_PIN + "'\n# old build\n")
+    installed.chmod(0o755)
+    receipt = release_identity_path(bin_dir, "gcode")
+    receipt.write_text(json.dumps({"version": GCODE_PIN, "source_identity": "old-tree"}))
+    original = installed.read_bytes(), receipt.read_bytes()
+    identity = schema_contract.expected_schema_identity()
+    (bin_dir / ".gdaemon-schema-identity.json").write_text(json.dumps(identity))
+    candidate_identity = (
+        {**identity, "latest_checksum": "f" * 64} if coherence_refusal else identity
+    )
+    monkeypatch.setattr(install_setup_gcode, "get_gobby_home", lambda: bin_dir.parent)
+    monkeypatch.setattr(
+        install_setup_gcode, "__file__", str(workspace / "src/gobby/cli/installer.py")
+    )
+    monkeypatch.setattr(install_setup_gcode, "cargo_release_dir", lambda _root: source.parent)
+    monkeypatch.setattr(install_setup, "shutil", SimpleNamespace(which=lambda _name: "cargo"))
+    monkeypatch.setattr("gobby.cli.install_setup.sys.platform", "darwin")
+    monkeypatch.setattr(install_setup, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr(
+        install_setup,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_set_coherence.probe_set_member_identity",
+        lambda *_args: candidate_identity,
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_release_identity.workspace_source_identity", lambda *_args: "new-tree"
+    )
+
+    result = _install_gcode(force=True)
+
+    assert result["installed"] is False
+    assert result["skipped"] is False
+    if coherence_refusal:
+        assert "workspace binary set promotion refused" in result["reason"]
+        assert "rebuild and install all three together" in result["reason"]
+    else:
+        assert result["reason"] == (
+            "gcode: changed or unverified source under installed version "
+            + GCODE_PIN
+            + "; bump its patch version before promotion"
+        )
+    assert (installed.read_bytes(), receipt.read_bytes()) == original
+
+
 class TestGcodeHelpers:
     def test_get_installed_gcode_version(self, tmp_path: Path) -> None:
         assert _get_installed_gcode_version(tmp_path) is None
@@ -860,6 +928,7 @@ class TestGcodeHelpers:
         lock = MagicMock()
 
         with (
+            patch("gobby.cli.install_setup_gcode.cargo_release_dir", return_value=source.parent),
             patch(
                 "gobby.cli.install_setup.shutil",
                 SimpleNamespace(which=MagicMock(return_value="/usr/bin/cargo")),
