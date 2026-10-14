@@ -1,0 +1,1980 @@
+header:
+  plan_id: node-halves
+  plan_hash: 90c523e3f5034030465598afe6fabdf9781322e632e32e445233e5a5558a12e7
+  root_task_ref: '24148'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-14T15:08:25Z'
+  task_tree_source: db
+  task_tree_source_hash: 8ffc1d44a96cfacf5c3ba86e7172b4da35c610d2cde4c4b1711b7041bc866b3b
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: bd3169c017a559bd5bb4045d7f7a78620eef33ca2872e937cddbe081ad5b5a7e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24364'
+    validation_criteria_snippet: '1.1.1: `docs/contracts/hook-ingress.md` states the
+      request, every response shape listed above, the replay rule, the receipt-ack
+      file body and the node forwardi...'
+    matched_artifact_ref: tests/contracts/test_hook_ingress_doc.py::test_doc_states_frozen_contract
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 73d78faa082b9d90e982ee27a36bed3ea134eee5472ed96041c5e0990432d68f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24364'
+    validation_criteria_snippet: '1.1.1: `docs/contracts/hook-ingress.md` states the
+      request, every response shape listed above, the replay rule, the receipt-ack
+      file body and the node forwardi...'
+    matched_artifact_ref: tests/contracts/test_http_corpus.py::test_case_replays_equal
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 5bb3f6a09320d508fdd114da8afe5a9abc4d760f3ef305e8af3b2373f30b0163
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24364'
+    validation_criteria_snippet: '1.1.1: `docs/contracts/hook-ingress.md` states the
+      request, every response shape listed above, the replay rule, the receipt-ack
+      file body and the node forwardi...'
+    matched_artifact_ref: tests/contracts/test_http_corpus.py::test_manifest_contract
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: bf431c63ba3060adc684f1834dd9fe46df1141908f4a65554cc19e0e07a9e359
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_claim_is_exclusive
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: bac0d71d79675bdca388f1e6e9a28579cf1316c943a5f7e2bc401f0854342b36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_mutations_require_owner_token
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 11c66272d057a6061bef120e3ea59968192e19bd990abac7598810bbc5881b3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_stale_and_malformed_markers
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 83713b3ef5f5178852446eff24ec6b6a118f3624a8e2461e278505c9aa47b650
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_stop_block_replay_window
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: ebd740a0ce0f8ea0a60c8c0134ab5382ec420d9cd6a873e0553e0edd29db58ea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_prune_retention
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: f5658e2317541eb9a48a9b33bbbad2091526b55ee72155f397b7c941de596ce7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24365'
+    validation_criteria_snippet: '1.2.1: A claim creates a Python-format processing
+      marker and a second claim of the same id fails while the first holds it. test:
+      `crates/gdaemon/tests/node_hoo...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ledger_reads_python_markers
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: fd93e29bb7258915a4623b9fb48eebdf4c88dc2d5df0661a10e7feccd6855152
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24366'
+    validation_criteria_snippet: '1.3.1: `decide_replay` returns `retain`, `requeued`,
+      `unlink`, `archived`, `below_floor` and `execute` in the drain''s order for
+      the matching hub state, with a ...'
+    matched_artifact_ref: tests/hooks/test_replay_decision.py::test_decision_order
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 1b0f6f1988b167ca81bdaa6a57e65ceda32ff5c1879367f8c041dc5f5723f667
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24366'
+    validation_criteria_snippet: '1.3.1: `decide_replay` returns `retain`, `requeued`,
+      `unlink`, `archived`, `below_floor` and `execute` in the drain''s order for
+      the matching hub state, with a ...'
+    matched_artifact_ref: tests/hooks/test_replay_decision.py::test_foreign_rows_are_unknown
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 1da3b7aba6993b5708648e52ca2b6be83ac36cc75ce7c3bc8dcbd749e5855ecc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24366'
+    validation_criteria_snippet: '1.3.1: `decide_replay` returns `retain`, `requeued`,
+      `unlink`, `archived`, `below_floor` and `execute` in the drain''s order for
+      the matching hub state, with a ...'
+    matched_artifact_ref: tests/hooks/test_replay_decision.py::test_local_drain_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 2287824369b60b655476622e4cd9cb858fbc0b570dca37d61a62270621c3ede6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24366'
+    validation_criteria_snippet: '1.3.1: `decide_replay` returns `retain`, `requeued`,
+      `unlink`, `archived`, `below_floor` and `execute` in the drain''s order for
+      the matching hub state, with a ...'
+    matched_artifact_ref: tests/servers/test_node_hook_routes.py::test_replay_route
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: fac7486840361f8535658c6da54a951d8374fd27c93ff5ed836877fade652d3a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24366'
+    validation_criteria_snippet: '1.3.1: `decide_replay` returns `retain`, `requeued`,
+      `unlink`, `archived`, `below_floor` and `execute` in the drain''s order for
+      the matching hub state, with a ...'
+    matched_artifact_ref: tests/servers/test_node_hook_routes.py::test_receipts_route
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: b511c08994a33bc7a2ea33fc309a9dc7815cd0efb20dcc39d3bca416965a0f75
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24367'
+    validation_criteria_snippet: '1.4.1: A receipt-ack file is claimed once, posted
+      with the node key, and on 2xx its carrying envelopes and its own id are marked
+      processed and the claim is rem...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::receipts_ack_forwarded_and_terminalized
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 3dd14e41097a4e65dee3faae33f208def949b21f8304d40bda483509144b7329
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24367'
+    validation_criteria_snippet: '1.4.1: A receipt-ack file is claimed once, posted
+      with the node key, and on 2xx its carrying envelopes and its own id are marked
+      processed and the claim is rem...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::receipts_failed_post_and_orphan_restore
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: fae4f685eeac3cdd3326068b80546c4d72128d54ba92ea274c7db51c9225efa1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_forwards_and_finalizes
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 4ef0d93a7518c65b21b0ecf41b4926cc770be25b0a1680d48634fae4e8e462fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_dedupes_retries
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: 72d35f4e217aeb3e26b875101610a4b293c1468f4288f9ff263703fd6d6aec86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_failure_dispositions
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 0d92a4e186a016f7489fa1e0f47881747d67f6bb5cda35baaecf510980abd2c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_sweeps_receipts_first
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: aac6085f1a1fde9b093696386cb5541c22d60ccb663a75e11295430466b660a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.6
+  plan_node_hash: cb490d00dfc0303da29c49630908628ef82001c8bf64a4f725f8313c231b5892
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_disconnect_finalizes_and_releases
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.7
+  plan_node_hash: 971bd47467d8eede4aa0c1a1ddde054a77621ee6587178d73b1179719e1a3cce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24368'
+    validation_criteria_snippet: '1.5.1: A hook with an envelope id is claimed, forwarded
+      with ghook''s key, finalized with the hub''s response, and answered with the
+      hub''s bytes. test: `crates/g...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::ingress_unledgered_passthrough
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 8159f59eb249648fadb8f472814d34db88a4e9efb8be8dd2430d1c020af50ecc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24369'
+    validation_criteria_snippet: '1.6.1: The drain applies every replay disposition
+      to the spool file as specified, and an `execute` envelope is forwarded, marked
+      processed and rechecked withou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::drain_applies_dispositions
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: 2a125ff0837b8c7b049b50aa845af73010590425e799564d18f45124afbf6c66
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24369'
+    validation_criteria_snippet: '1.6.1: The drain applies every replay disposition
+      to the spool file as specified, and an `execute` envelope is forwarded, marked
+      processed and rechecked withou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::drain_skips_live_and_sweeps_receipts
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: 2826b29ae6a70bed7518d853e59af78ccb86de5fb8e413771a6e31395640410b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24369'
+    validation_criteria_snippet: '1.6.1: The drain applies every replay disposition
+      to the spool file as specified, and an `execute` envelope is forwarded, marked
+      processed and rechecked withou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::boot_releases_dead_processing_markers
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: fb004bd43afd9904c994e84041d5d46a431cf147c3db2492830fe437d886101a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24369'
+    validation_criteria_snippet: '1.6.1: The drain applies every replay disposition
+      to the spool file as specified, and an `execute` envelope is forwarded, marked
+      processed and rechecked withou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::node_registers_hook_jobs
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.5
+  plan_node_hash: 764e23eff46d5c766cb6a4d0d31930f1fbe9e4fcd93b6672848677e5ec63fdda
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24369'
+    validation_criteria_snippet: '1.6.1: The drain applies every replay disposition
+      to the spool file as specified, and an `execute` envelope is forwarded, marked
+      processed and rechecked withou...'
+    matched_artifact_ref: crates/gdaemon/tests/node_hooks.rs::prune_markers_and_temp_files
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 70ecc14b4196caecf9d33bd449ce4777d0eb362cef0368b0f3ce14714b5e6e42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24370'
+    validation_criteria_snippet: '2.1.1: Agent state round-trips through `agents.json`
+      across a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::agent_state_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 52ad4f54ec8329cd140ca50537b790aa4dfa92f5909d05e3c9365bef230eee1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24370'
+    validation_criteria_snippet: '2.1.1: Agent state round-trips through `agents.json`
+      across a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::revision_never_repeats_after_restart
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: f306005be20f3fb29f57273852570a7008a3fafc183db4303f4ff0be64fbc2d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24370'
+    validation_criteria_snippet: '2.1.1: Agent state round-trips through `agents.json`
+      across a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::prepare_refuses_unreadable_agent_state
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: b4421a85fb8091113d13c0f07858967612c99e94704057167ca49ca7ed1ca80a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24370'
+    validation_criteria_snippet: '2.1.1: Agent state round-trips through `agents.json`
+      across a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::cancel_records_survive_restart_and_expire
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: db005ac9397c31e7313a0f973ea169c9297d74e4c030e085bb6dafc5b45fe89d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24370'
+    validation_criteria_snippet: '2.1.1: Agent state round-trips through `agents.json`
+      across a reopen, and the file is written by rename with mode 0600. test: `crates/gdaemon/tests/node_agents...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::restart_fails_unlaunched_runs
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: fffc9efd8ff610d0db612f62819b394477802e6a7c73fdebbb3f5f1d199410a3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24371'
+    validation_criteria_snippet: '2.2.1: The node''s epoch authority bumps and persists
+      the numeric host epoch exactly once per new host epoch string. test: `crates/gdaemon/tests/node_agents.rs:...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::host_epoch_counter_follows_epoch
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: efb769e115fcbd5b75ca7987e400f870d4e325ed61d74719e52beb0745de97a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24371'
+    validation_criteria_snippet: '2.2.1: The node''s epoch authority bumps and persists
+      the numeric host epoch exactly once per new host epoch string. test: `crates/gdaemon/tests/node_agents.rs:...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::node_adopts_terminal_host
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: b41b17ca553b2f2e597784eea9a6ecdedae9f26f8d92801117b6eed76d3cedd3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24371'
+    validation_criteria_snippet: '2.2.1: The node''s epoch authority bumps and persists
+      the numeric host epoch exactly once per new host epoch string. test: `crates/gdaemon/tests/node_agents.rs:...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::host_control_reconnects
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 2de10a9a408f40019ce3f0495356cc7eac7c6a3a6cfbd2b83994dc69fc6e3f12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::worktree_prepared_with_record_first
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 15bea45eb60a249bde5dcf7c0a8158dea9f24938bcce258ea0f0414633a6507d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::clone_prepared_with_record_first
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 12ecd0865cf7f5d671ba5565eeb8c2cad4b85a0645e61a1acdebfa211e609a46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::workspace_repair_per_provider
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 98874b334f5d8e016bc7f819a515b207adf1cd716fcfb9f56a5af695921d2602
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::failed_removal_keeps_record_and_retries
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 250d45a0b51771f748998d7d7f3c3614534f92f81d2a20bc15799c367f67c095
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::restart_at_each_boundary_cleans_up
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 849d68de0d0905d993913a4c0ee49a28076ca62a33af0ce0842afd48efd26ede
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::droid_hooks_match_python_golden
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.7
+  plan_node_hash: 431557d7e2ffb14827e5c4a4e8d2e4de6f70616b23ed723b53aed445a5412c31
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: tests/agents/test_node_isolation_golden.py::test_droid_hooks_golden_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.8
+  plan_node_hash: 35ad87e9ed3ffcc8014f834ad168b861768aa31e05d961f7d12c762f9273a9b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::python_seed_matches_python_steps
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.9
+  plan_node_hash: 0a83cc4ea4817b80eb3bdbb2d45619d1defe27dcfa32a22e1c7cc3d1925c41e5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::mcp_config_names_gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.10
+  plan_node_hash: fbafda344677d6bfab6744aedfa7a741bb00bdb76843c30d49d27f070c29b519
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24372'
+    validation_criteria_snippet: '2.3.1: Worktree preparation commits its record before
+      the first filesystem effect and creates a path and branch that embed `run_id`
+      from the requested or curre...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::existing_workspace_used_in_place
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 9ee79819daee16863d3c4b4982663c578a2d8068c025296cce9b2cc524dd6236
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24373'
+    validation_criteria_snippet: '2.4.1: The Python oracle''s output for every corpus
+      case equals the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+      ...'
+    matched_artifact_ref: tests/agents/test_node_srt_corpus.py::test_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 7339fc0c2cbf2f5488f881969b4f012e71c7c99e8ff8a157ee3f918f2037e9ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24373'
+    validation_criteria_snippet: '2.4.1: The Python oracle''s output for every corpus
+      case equals the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+      ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::srt_settings_match_python_corpus
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 035c879a6c3e850afa48b899bf22642a413371aef20884bd28f1ceb292c10267
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24373'
+    validation_criteria_snippet: '2.4.1: The Python oracle''s output for every corpus
+      case equals the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+      ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::srt_spawn_time_grants
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: 6b8d443352d296dd9d8c1a128194bbf4b3d3155c1c331dbad990561dcf8616ec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24373'
+    validation_criteria_snippet: '2.4.1: The Python oracle''s output for every corpus
+      case equals the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+      ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::srt_policy_refuses_sensitive_grants
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: 00b39fa62680a9b56b881b788e183133349c98f1ff76a911fd3d5a3ed33b0ac8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24373'
+    validation_criteria_snippet: '2.4.1: The Python oracle''s output for every corpus
+      case equals the committed corpus. test: `tests/agents/test_node_srt_corpus.py::test_corpus_matches_python`.
+      ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pre_commit_store_prewarm
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 95b2c465d8809f83d0ac35a33f3749bb5aba4cbdd7af291190aa8c80370dc459
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_wraps_once
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: 6992e7001d3692aad29fcc66cad1662c4fb7f5e10ddeeb9202407616ca88ff1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_refuses_unverified_install
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 2dde5b946a209537844ce99acf8f41b4335d4dd7ba1151ed9b66c330b1557142
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_grok_home
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 713f7d4f2a0c1cce3260fe18c739b98c3643d97228cec1001f4ffa5ead71aed9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::srt_version_matches_python_pin
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: c9bd99a7a9f13fd6c76e6eaf6aa135d01969f034183205bd9ed4e8df2044618f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_claude_reviewer_home
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.6
+  plan_node_hash: bca67d1690ccc933ca7c0ef256b1aac73b3120f075748296a64a59cf022fa38d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_droid_ps_shim
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.7
+  plan_node_hash: 3e5bd13d9f2ffc6742373866895d71efa1002753dd72b7cdc535bc01a9c4a47e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_shared_srt_monitor
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.8
+  plan_node_hash: 4c5d5f053f18b3843e14fa713a4773fae91cf0911ca728e2746fb9d17b8eb5c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24374'
+    validation_criteria_snippet: '2.5.1: A verified install yields the wrapped argv
+      `[node, runner, --settings, <settings>, --violations, <violations>, --, <provider
+      executable>, ...]` with bot...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::chokepoint_codex_shell_snapshot_off
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: 73e99c22f3e938f265e55d6f8f5b0dedcff5275b746bc4be8dc534ec18cab676
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: tests/agents/test_node_launch_corpus.py::test_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: 51cb9a330714c9584bc844d2ebc5b566e67b0b20e38d52cff527ff18c277e57d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::provider_commands_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: a9321b4f321fefa8ba261c69f3b2f299305da1d14821fe319642ccbd083e6f74
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::provider_env_layers
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: e237cd0ce44dd900e6c510865671fd5dcb1d7136fcb1bba7ece48c236dc5cfbb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::codex_prompt_placement
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: be4db9ce485640db4455e9608b4517c82006c664cbafb361ba5e686c6dfcf558
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::agy_version_gate
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.6
+  plan_node_hash: c91e600f6abd25f51da37c2cd721afd014de96caf6b58d86c233a9c9c9de2168
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::launch_seeds_provider_trust
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.7
+  plan_node_hash: 408ed2104fb8acb691a954c5a005e5dccebf5787898e911e09311398919479e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::launch_spawns_and_commits
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.8
+  plan_node_hash: e8038451546056566dc5f5f02e5542dc82a05d0c49422432750b3a0e08e1b10d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::exit_events_record_exits
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.9
+  plan_node_hash: e8a1c5c9f23928cb70c890f9e90051183b4ced0e1afb6572170c852a253bdc5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::reconcile_after_restart
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.10
+  plan_node_hash: 134c1d6deb03b0672637cb72715068ae59e213cee8fb4a997f7207b3cd6cc17c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24375'
+    validation_criteria_snippet: '2.6.1: The Python command builder, codex overrides
+      and native env policy produce the committed launch corpus. test: `tests/agents/test_node_launch_corpus.py::t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::launch_removes_prompt_file
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.1
+  plan_node_hash: 907d64831543ed08186d86765c97560feb030c113df4beeab40799ef7d692fda
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::dispatch_rejects_bad_frames
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.2
+  plan_node_hash: 5a2ee162cac999d612f554f6e2c4783dcfd786e7dbeec9b20353d4fde6752d6f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::spawn_accepts_before_preparing
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.3
+  plan_node_hash: 83d43547ce5444533fa253a8c79dfc9dc791662e790d4851bc0e482aeab407ff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::spawn_refused_at_capacity
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.4
+  plan_node_hash: a9e0de3444af5c5f37e93a415e3b7e2a59b1ae5c84262b13c7ad59c4ef433c61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::cancel_before_launch
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.5
+  plan_node_hash: e61fafec5c912186649c654ca8e8b15981b6564e9f20946cd93fe805c51e7826
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::cancel_launched_run
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.6
+  plan_node_hash: 49bbc693862b42c468f5f8d6d1da773f6241051e7a87936ef67808f88979452f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::preparation_failures_report_exits
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.7
+  plan_node_hash: ceff4ad811ee80ebe12f769c2bd59bc61aa2e715172db50010717c497e662570
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::terminal_write_dispositions
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.8
+  plan_node_hash: cf4779bb8ee1e7a4a8daf8a6aa1e4f897d45e105cc812e7b53b23e80e01573c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::same_run_commands_serialize
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.9
+  plan_node_hash: 6c784b7a674dd979019729e89cc510f8ac7a65e3e6b2a0229835f0e8daae6735
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24376'
+    validation_criteria_snippet: '2.7.1: A `v` other than `CONTRACT_VERSION`, unknown
+      commands and invalid payloads, including an unknown provider, answer their codes
+      with `stage` `"none"` and ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::spawn_refuses_unmanaged_sandbox
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.1
+  plan_node_hash: e61fbc1b29bc2d2db21cb0c9c136b9d30d820d451fa9ceb9f76b213c2082faf9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::reports_are_fresh_and_serial
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.2
+  plan_node_hash: 1d30bb4e62792cb89e7b18818836ab56f42ee364841c48b92d39f8d8d4d02b32
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::stale_report_adopts_epoch
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.3
+  plan_node_hash: 2506d219f84bcd860c7aa1ea132d0b63ad8c4076542b74bb6f14fb53132dabde
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::exits_page_oldest_first_until_acknowledged
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.4
+  plan_node_hash: 7669d51689b5e6ee7ff5f15ff8054cacccc522b1460378b8bfe950c9eb726f6f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::report_lists_accepted_and_live_agents
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.5
+  plan_node_hash: 3ad5adb0f863623ab1c0132041ef982ec314ee3fcf49291ba9cc2b40b51d4d06
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::report_tick_retries_removals
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.6
+  plan_node_hash: 438f85d8832e8bc6ad7f808b4b40a653512062849b3c599f973a44d24fa57c9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24377'
+    validation_criteria_snippet: '2.8.1: Reports go out one at a time, each with a
+      fresh higher revision, after every change and on the 30-second tick; a failed
+      report is followed by a new revi...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::node_registers_report_job
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.1
+  plan_node_hash: 7f23424fe5475831f2d7ab802d56a09b230342a2c91f9c168aa66c381fabc080
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24378'
+    validation_criteria_snippet: '2.9.1: The first hook from a project root registers
+      that root once with the project id, even when the hub refuses the hook itself,
+      and later hooks from it post...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::checkout_registered_on_first_hook
+  deferral_target: null
+  detail: ''
+- section_id: '2.9'
+  item_id: 2.9.2
+  plan_node_hash: b21a84640052fa34ed389a23bd6bcc1a7f76cda8dfc30849739b00f3c5cd3b7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24378'
+    validation_criteria_snippet: '2.9.1: The first hook from a project root registers
+      that root once with the project id, even when the hub refuses the hook itself,
+      and later hooks from it post...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::checkout_registration_retries_and_skips_workspaces
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.1
+  plan_node_hash: 15eb4576d48e810027ead37ea582b1d4d1127b63e2d97eef94e6b884a3e50630
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24379'
+    validation_criteria_snippet: '2.10.1: `ControlClient::snapshot` sends the host
+      request and returns its reply, and a reply whose `mode` differs from the request
+      is refused with `snapshot_mod...'
+    matched_artifact_ref: crates/gterminals/tests/control_snapshot.rs::snapshot_round_trips_and_checks_mode
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.2
+  plan_node_hash: c29b5a6fe3af1c8fcf1a9211ec23411bc927bdb4f720e99177f7c4cad5380765
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24379'
+    validation_criteria_snippet: '2.10.1: `ControlClient::snapshot` sends the host
+      request and returns its reply, and a reply whose `mode` differs from the request
+      is refused with `snapshot_mod...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::codex_prompt_typed_after_composer
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.3
+  plan_node_hash: e951d982bb2cfdf2e5321a3a8a90f57bfa776e6a8f26bcb977bedea1b78b1adc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24379'
+    validation_criteria_snippet: '2.10.1: `ControlClient::snapshot` sends the host
+      request and returns its reply, and a reply whose `mode` differs from the request
+      is refused with `snapshot_mod...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::codex_prompt_failures_post_to_hub
+  deferral_target: null
+  detail: ''
+- section_id: '2.10'
+  item_id: 2.10.4
+  plan_node_hash: c02366ab3affef416f7de8abc8d7c1c577bebfe4e74f2be0c5fec8b88ba9d6c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24379'
+    validation_criteria_snippet: '2.10.1: `ControlClient::snapshot` sends the host
+      request and returns its reply, and a reply whose `mode` differs from the request
+      is refused with `snapshot_mod...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::codex_prompt_skips
+  deferral_target: null
+  detail: ''
+- section_id: '2.11'
+  item_id: 2.11.1
+  plan_node_hash: 13a91c5254ca9b5db43a033ab1429a235ec8352b02cde343fc2f6bd5bc8e0f99
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24380'
+    validation_criteria_snippet: '2.11.1: With the mode set, the three gcode runs
+      use the workspace, the identity environment and the node''s front door within
+      their timeouts and the 120-second ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::code_index_preflight_runs_gcode
+  deferral_target: null
+  detail: ''
+- section_id: '2.11'
+  item_id: 2.11.2
+  plan_node_hash: aa8811893b3fd0fbd0fee856932649bb7613257188b7de93cf45e52cccd5b200
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24380'
+    validation_criteria_snippet: '2.11.1: With the mode set, the three gcode runs
+      use the workspace, the identity environment and the node''s front door within
+      their timeouts and the 120-second ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::code_index_failure_warns_and_posts
+  deferral_target: null
+  detail: ''
+- section_id: '2.11'
+  item_id: 2.11.3
+  plan_node_hash: cb6421bb7e904ed67b4ef3ca8e1a4580861529502a04d6c21a8d6eb10dc21a54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24380'
+    validation_criteria_snippet: '2.11.1: With the mode set, the three gcode runs
+      use the workspace, the identity environment and the node''s front door within
+      their timeouts and the 120-second ...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::code_index_preflight_skipped_without_mode
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.1
+  plan_node_hash: 0b72dec90e75367e7cc908701d262b81d6c5cf59a422f594b49c9d71b2e6ee9e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24381'
+    validation_criteria_snippet: '2.12.1: The Python matcher''s output for every matcher
+      case equals the committed corpus. test: `tests/agents/test_pane_detection_corpus.py::test_matcher_cases_m...'
+    matched_artifact_ref: tests/agents/test_pane_detection_corpus.py::test_matcher_cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.2
+  plan_node_hash: 50d25e5e727c579e7a248bf20a223631806a6cc8fd1d858353ff7c1850919347
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24381'
+    validation_criteria_snippet: '2.12.1: The Python matcher''s output for every matcher
+      case equals the committed corpus. test: `tests/agents/test_pane_detection_corpus.py::test_matcher_cases_m...'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::matcher_matches_python_corpus
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.3
+  plan_node_hash: 024e54d3bb17730d9e7cd0d90afe185800c8607c91e8f98f40120ea49df78d38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24381'
+    validation_criteria_snippet: '2.12.1: The Python matcher''s output for every matcher
+      case equals the committed corpus. test: `tests/agents/test_pane_detection_corpus.py::test_matcher_cases_m...'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::bundled_manifests_compile
+  deferral_target: null
+  detail: ''
+- section_id: '2.12'
+  item_id: 2.12.4
+  plan_node_hash: e91134fe784cadbf2b392cca3a91efda3bc91e3d6e1e418231f99c47cc7172f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24381'
+    validation_criteria_snippet: '2.12.1: The Python matcher''s output for every matcher
+      case equals the committed corpus. test: `tests/agents/test_pane_detection_corpus.py::test_matcher_cases_m...'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::manifest_refusals_and_issues
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.1
+  plan_node_hash: 4ca8130b482996357637b48e677d3c32bda847dc5f2344ec6c1252c601f1ccf8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24382'
+    validation_criteria_snippet: '2.13.1: The Python detectors produce every committed
+      detector case. test: `tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python`.
+      2.13....'
+    matched_artifact_ref: tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.2
+  plan_node_hash: f492afc9e6d41e57a3dd274044a4844f4ee85aaabdbc47890c373b36894ba625
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24382'
+    validation_criteria_snippet: '2.13.1: The Python detectors produce every committed
+      detector case. test: `tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python`.
+      2.13....'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::prompt_detector_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.3
+  plan_node_hash: 9c3aeb907901a96a456eb9348e279910f72ca3258f6c6892655fd7199fe3a269
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24382'
+    validation_criteria_snippet: '2.13.1: The Python detectors produce every committed
+      detector case. test: `tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python`.
+      2.13....'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::idle_detector_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.4
+  plan_node_hash: aa4acad3665c668dca2c8a3c9dde7178dc954d4807e06a4a450125a36020274f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24382'
+    validation_criteria_snippet: '2.13.1: The Python detectors produce every committed
+      detector case. test: `tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python`.
+      2.13....'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::stall_and_attention_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.13'
+  item_id: 2.13.5
+  plan_node_hash: 9fd18047d1453021248aa250abb99c53f2dcfdce602e44d4ff2648c45978fc89
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24382'
+    validation_criteria_snippet: '2.13.1: The Python detectors produce every committed
+      detector case. test: `tests/agents/test_pane_detection_corpus.py::test_detector_cases_match_python`.
+      2.13....'
+    matched_artifact_ref: crates/gdaemon/tests/pane_detection_corpus.rs::loop_and_quota_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.1
+  plan_node_hash: ad3f7223d861c591962bc538641591e67c3e3d1f329a031d4f478104a0b31275
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pane_monitor_fetches_manifests
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.2
+  plan_node_hash: b907d8c88a34f104647bec23a0d278430766990d84edfee115a4b74812d02006
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pane_monitor_auto_enter
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.3
+  plan_node_hash: 467a6ad5b56001445a719654367ec01f6c959314c11b56d1e9de9d26617ae3d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pane_monitor_automatic_write_latch
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.4
+  plan_node_hash: 67926d1b7b3ef24b9a448e8cb1df1abdecf46e28caf66f6a4dcef45eeddbc90a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pane_monitor_doom_loop_and_stall_post
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.5
+  plan_node_hash: 1c865deac75f71b9463fc01fc5c45c5da9ec8edba14a07dc11bbbf3e59c92924
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::pane_monitor_timeouts_ask_the_hub
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.6
+  plan_node_hash: 0032a567931cd0c68fe1c6dca7296c1c3229c6d9d2e572ac4fedd33e70a5db14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::report_carries_pane_state
+  deferral_target: null
+  detail: ''
+- section_id: '2.14'
+  item_id: 2.14.7
+  plan_node_hash: cb890de24982f425274a096329dc18478118597b039a6632a514931ba10affbb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24383'
+    validation_criteria_snippet: '2.14.1: The node fetches manifests with the last
+      `ETag` on each tick, keeps its set on a 304 or a failure, and runs no pane check
+      before its first successful f...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::watch_record_survives_restart
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.1
+  plan_node_hash: 276bab29627dc13c2f545a55b1b986e103944667205b8e900c1058007cf34fcd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: tests/agents/test_node_sandbox_record_corpus.py::test_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.2
+  plan_node_hash: 6af295331b9a6d7b3720d5666f0706cef75629a3dfef8e93a46441280e787c1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::sandbox_record_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.3
+  plan_node_hash: 9db2a8cb497bee91523116c92f2edb9c93352aea7c3d3c1b0c81bf1fe3b8d31a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::exit_reaps_and_records_sandbox
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.4
+  plan_node_hash: 2c7d406ca6f6d08ba94e9f9cebf21fa6c7b2144992727a0566adbfdab02b2926
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::runner_tree_reaped
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.5
+  plan_node_hash: 2b6559facc2ec268ae17ee2aa543a22f6e8b2ac464a9011a7e83a00f51b2ed3b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::start_sweeps_orphaned_sandboxes
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.6
+  plan_node_hash: 561ef9f79efb9cace0709288cbda69f63a6f3046b534b29970a6fbb152e673c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::reports_carry_sandbox_records
+  deferral_target: null
+  detail: ''
+- section_id: '2.15'
+  item_id: 2.15.7
+  plan_node_hash: f5b59c98a709d2998a1c32f9ee26ae3560a87fcf01bfc148261bec5ad5932123
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24384'
+    validation_criteria_snippet: '2.15.1: The Python counter, recent-event projection
+      and denial classifier produce the committed corpus, and the generated case reaches
+      the 10,000-line cap. tes...'
+    matched_artifact_ref: crates/gdaemon/tests/node_agents.rs::reap_replay_keeps_committed_record
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 9e8b07abc0872617782f3d98618b2e412aff85fd65723996031f2a23c38ca65a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 4d01567c572ca500d43c1b696789f5df75db5d91bf6dc78991870e31172c4a04
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_corpus_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: b623b1ad0463ccf77b663c40bd07f209e1f9b80d84f00a7d6877ef486eaa87d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 34e5da7f9b64219caa876bdaed4a31abfcf05c81a5ddc15c6430da895c994e52
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_contract_doc_covers_version_2
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: c401060da1be626c35d6f76dd81c65e4b662d67f06c701d6f0065aadc328e96c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_fields_not_carried_matches_spawn_request
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: 19d755905cdc005cecc0b9b630df96f9341bfd050be32351bfc92ef4511e3260
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24385'
+    validation_criteria_snippet: '3.1.1: Every corpus message, including one of each
+      new body and answer, a spawn with an `existing` workspace, a report agent with
+      a `pane` and a `sandbox`, and...'
+    matched_artifact_ref: tests/hub/test_node_command_corpus.py::test_report_digests_and_sandbox_records_validate
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 3a27e55639ef6091c5d7844968c1901039ddb6172b6cf9c92e20deffe43f7a02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_config
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 18b8dc678cffbffdefaa1b09c69342745269c4213f52ab2ff2edabeac46127a1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_endpoint_fields
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 98e67febab6e067612f2c855b1d218f4c552ebb79de97fb835f4cf094a74960a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_resume_fields
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: 3a863c072edd03a48307fa82fd550018aaeac2a238942555d3852e10b351d0e4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_codex_persona_prefix
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 321d4ccc9b2b199cd223b203881e5c55bff09c849195732fc2b21c3188051712
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_monitor_from_tmux_config
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 3200e3e898b9e7cf473ba79b105b72adaff87b853b3dd90ec29325d384b4c5f9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_task_id_from_run
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: 086bdd962734375202c8dcb06d4580ea48cd5ca3dc15bcc8d372beccf8476e86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_launch_fields_and_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.8
+  plan_node_hash: 1f3bccbacfad80c79d2653dc2922841e1bdd9c28ff55ecd43ddc1162ef034914
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24386'
+    validation_criteria_snippet: '3.2.1: `sandbox` carries the resolved `SandboxConfig`
+      unchanged and has no `network` key. test: `tests/hub/test_spawn_payload.py::test_sandbox_is_resolved_conf...'
+    matched_artifact_ref: tests/hub/test_spawn_payload.py::test_resume_uses_existing_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: e054f65ae42f2226aaa7cea2ce851b392e9de4c41c04074c0776bff87ee086b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/hub/test_remote_pane.py::test_store_follows_report_revisions
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 13f7bd935c3e10e0b699c03f698ca857be7e7494c6284daef917e2ccaf72c088
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/hub/test_remote_pane.py::test_node_attention_applies
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 68a01633380ae506b666b384bdcdf50c2bee3d7d3e279c76b7e6760f6aadc488
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/hub/test_remote_pane.py::test_injection_clears_attention
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 41073b8b2ac02c7f1669762bf096226519c245021cfe4555557f67c1ae6d38f6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/hub/test_remote_pane.py::test_local_sync_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.5
+  plan_node_hash: 8cc4be8997652109508caec427e62f1a3d5166978b042873c3957b60f000ce2e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_pane_text_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.6
+  plan_node_hash: 41a3d6af86a5cc038067d2795c5cc805db58f27d4277a76c30a0897b773996aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24387'
+    validation_criteria_snippet: '3.3.1: The store applies a newer revision, ignores
+      one at or below the machine''s last, and replaces that machine''s entries with
+      the report''s agents. test: `tes...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_secret_fingerprint_refused
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: 119bbe09fcf7920c2f2542cae7f38bff9e0b38389eac79f18c7d93b62b1b2d94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24388'
+    validation_criteria_snippet: '3.4.1: `runtime_for` returns the remote runtime
+      for a terminal on another machine and the registry''s runtime for a local one.
+      test: `tests/hub/test_remote_runt...'
+    matched_artifact_ref: tests/hub/test_remote_runtime.py::test_runtime_for_routes_by_machine
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.2
+  plan_node_hash: c94986b2aba1388be684f12a6d12d2020d82631c71d7e3f77f0a00ccac87c5a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24388'
+    validation_criteria_snippet: '3.4.1: `runtime_for` returns the remote runtime
+      for a terminal on another machine and the registry''s runtime for a local one.
+      test: `tests/hub/test_remote_runt...'
+    matched_artifact_ref: tests/hub/test_remote_runtime.py::test_liveness_and_snapshot_from_store
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.3
+  plan_node_hash: 4e4bf265d5d4dde506a1e20a427e559332e8400a92fc616e580176fca12a418f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24388'
+    validation_criteria_snippet: '3.4.1: `runtime_for` returns the remote runtime
+      for a terminal on another machine and the registry''s runtime for a local one.
+      test: `tests/hub/test_remote_runt...'
+    matched_artifact_ref: tests/hub/test_remote_runtime.py::test_terminate_goes_through_node
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.4
+  plan_node_hash: 1baaa75b1dc6c5cb40951d38c78c6e0a8c9c23bc9f4f6f01824e411df4ffd9fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24388'
+    validation_criteria_snippet: '3.4.1: `runtime_for` returns the remote runtime
+      for a terminal on another machine and the registry''s runtime for a local one.
+      test: `tests/hub/test_remote_runt...'
+    matched_artifact_ref: tests/hub/test_remote_runtime.py::test_remote_composer_gate
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.5
+  plan_node_hash: 7c227fa843d583f65cdf79669e53794f5847a704ca176cc2ca8ecdf327b723d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24388'
+    validation_criteria_snippet: '3.4.1: `runtime_for` returns the remote runtime
+      for a terminal on another machine and the registry''s runtime for a local one.
+      test: `tests/hub/test_remote_runt...'
+    matched_artifact_ref: tests/hub/test_remote_runtime.py::test_remote_runtime_refuses_local_operations
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: e806411cb494854f64869bec9aa1c45742906835569c85c73888e963fb5a4e5a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_node_run_routes_identity
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: cf5e978d376be7ec1df77ad9ad77f7f605b1c7b388d3c17ba998a1fc7eb644f9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_prompt_delivery_failure_route
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: fe8a9ca778a35c5be22a65dc0a628aa2213d443404a403f25b681ac0b0e484b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_code_index_warning_route
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: 8f75e5c9ec6dcc1d2a6c25d09e0ff71230818eacbfab97f4598ea9b3318358fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_prompt_delivery_pane_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.5
+  plan_node_hash: 9ba832d9738bdb9fb08e3b12bfd0b036f2ebd9c2fa8aa739759c1f8e88911af2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_code_index_warning_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.6
+  plan_node_hash: 036ec3b1fb97010f51d0da4e53b8c3a40e32d42134e75d11f0191033e2cca8a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24389'
+    validation_criteria_snippet: '3.5.1: Both routes refuse a missing node identity,
+      the hub''s own key, another `v` and an invalid body with 1.3''s codes, and answer
+      404 `run_not_found` for an u...'
+    matched_artifact_ref: tests/agents/test_code_index_warning.py::test_local_warning_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.1
+  plan_node_hash: a7e671468e04beaad8bef955025e8bce10e3eee9a55d4927cc011537c33182ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_terminate_timeout
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.2
+  plan_node_hash: 98eff089a3efe22ff47ca92104a3fc661956ad42a884a8fec0a2e4457e7225c2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_terminate_init_timeout
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.3
+  plan_node_hash: 8eb5b917ae7ea99174b4146855e72f4acc63317fc06a3176420fb78f178fedf7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_terminate_stall_and_loop_record_checkpoint
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.4
+  plan_node_hash: 64a82b9cdc87c2f0465421b7c18d7bbc6ce19198c3c8efb8fa0eab5a303d4239
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_terminate_refusals
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.5
+  plan_node_hash: 5ee6d3a321a37165b695217d52d7f08be2f72db092a5cee19954a414f7991148
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_extracted_health_conditions_match_local
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.6
+  plan_node_hash: 26a6495d8a06b1535c038cf7f47383009e35046c539b5ee86f17e38bb659325b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24390'
+    validation_criteria_snippet: '3.6.1: A `timeout` for a run past its database age
+      kills it with the local error text and `timeout` action, a bootstrap stall swaps
+      in its reason with `fail`, ...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_terminate_pane_tail_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.1
+  plan_node_hash: 64d2f199583bd48e2900b35a2867e572060b372316c738cb69fae85587a585d0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24391'
+    validation_criteria_snippet: '3.7.1: A node gets every manifest row in provider
+      order with an `ETag`, gets 304 when its `If-None-Match` matches, and gets the
+      new rows and a new `ETag` after...'
+    matched_artifact_ref: tests/servers/test_node_run_routes.py::test_detection_manifests_route
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.1
+  plan_node_hash: 00ce2378c949ca8b8c4447d19c9ec53f435cd0be733649a9cea713d0153bdaf7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24392'
+    validation_criteria_snippet: '3.8.1: An idle node run with an empty composer is
+      reprompted through a node `terminal.write`. test: `tests/hub/test_remote_idle_policy.py::test_idle_node_run_r...'
+    matched_artifact_ref: tests/hub/test_remote_idle_policy.py::test_idle_node_run_reprompted
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.2
+  plan_node_hash: f5ccff890077dc10ecc76e51ae5c7730f8266468802550e7e2d38d2bdea3866b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24392'
+    validation_criteria_snippet: '3.8.1: An idle node run with an empty composer is
+      reprompted through a node `terminal.write`. test: `tests/hub/test_remote_idle_policy.py::test_idle_node_run_r...'
+    matched_artifact_ref: tests/hub/test_remote_idle_policy.py::test_node_run_failed_after_max_reprompts
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.3
+  plan_node_hash: 177f476c6c63305ab2dcb3da0c5c503f4ce2f2aa368d73a4b60e2df04e105d46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24392'
+    validation_criteria_snippet: '3.8.1: An idle node run with an empty composer is
+      reprompted through a node `terminal.write`. test: `tests/hub/test_remote_idle_policy.py::test_idle_node_run_r...'
+    matched_artifact_ref: tests/hub/test_remote_idle_policy.py::test_quota_and_context_full_fail_node_run
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.4
+  plan_node_hash: 3c6571e7dd943258306807fb6b84a878740860b219118f040f41eff1d759d241
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24392'
+    validation_criteria_snippet: '3.8.1: An idle node run with an empty composer is
+      reprompted through a node `terminal.write`. test: `tests/hub/test_remote_idle_policy.py::test_idle_node_run_r...'
+    matched_artifact_ref: tests/hub/test_remote_idle_policy.py::test_draft_and_missing_entry_hold
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.5
+  plan_node_hash: 844d9c115975025c7e0adf9e09ff89b6a2017f3015d44a416ce59ba6ed7db88c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24392'
+    validation_criteria_snippet: '3.8.1: An idle node run with an empty composer is
+      reprompted through a node `terminal.write`. test: `tests/hub/test_remote_idle_policy.py::test_idle_node_run_r...'
+    matched_artifact_ref: tests/hub/test_remote_idle_policy.py::test_local_idle_unchanged
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.1
+  plan_node_hash: eeb7cf6424c227f498e6e6be6ea46aacefbdefd4d82925095702a407e24ea4e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/hub/test_remote_sandbox.py::test_records_merge_into_node_runs
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.2
+  plan_node_hash: 0a723fa47e2b270770c93fae71e24fbc39b3166b7a0635abfdd41101e502a5a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/hub/test_remote_sandbox.py::test_node_run_record_reads_stored_values
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.3
+  plan_node_hash: a5deb49a6b378dfccdadf4b77f25ca78a79da898e9720df4472c62f7e83b093f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/hub/test_remote_sandbox.py::test_close_review_uses_node_denials
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.4
+  plan_node_hash: 39fbc519fef5d5fcdd09bdfe419ea332a1b1cba52e8578678d77d73ba6d6cfc1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_sandbox_events_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.5
+  plan_node_hash: a4ae55762d51f43249fd6c6d7efab79fa23df8cca86fe42e1fe9299b05c4bc59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_secret_sandbox_identity_refused
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.6
+  plan_node_hash: 90b630bb8d229f3461042150f633fabcafd727e66188dfbe01a5193e41acac3d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/servers/test_node_routes.py::test_report_sandbox_merge_failure_not_acknowledged
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.7
+  plan_node_hash: c5e6dece4f0bae327ddb85b45aba6520bb4edf338721808aca78c48b10dbf1b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/hub/test_remote_sandbox.py::test_older_report_never_overwrites_newer
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.8
+  plan_node_hash: 24391f4f15bacd0ba4891aba5104f5c6c9b54141b019a1642a59af76afd88400
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24393'
+    validation_criteria_snippet: '3.9.1: A report''s agent and exit records merge
+      into the node run''s sandbox record, an unchanged agent record writes nothing,
+      and a record for another machine''s...'
+    matched_artifact_ref: tests/hub/test_remote_sandbox.py::test_exit_record_is_final
+  deferral_target: null
+  detail: ''
