@@ -275,6 +275,43 @@ Orchestrator return (gobby#15977, 2026-10-14):
     because the node is the last process before the provider runs. Rejected:
     porting the disabled and `provider-native` paths for parity, because no
     node spawn may take them.
+33. **The node reaps its sandbox runs and reports their records.** Found
+    while answering hub-mode writer gobby#16490's prompt-file ask
+    (2026-10-14). hub-mode 2.1.3 skips post-terminal cleanup's `srt_reap`
+    and `sandbox_reap` phases for another machine's run, and the hub sets a
+    run's sandbox record only from a local launch
+    (`src/gobby/agents/spawn_executor_support.py`, `metadata["sandbox"]`).
+    Without this, each node run would leave its roots under
+    `<gobby_home>/run/sandbox` and `<gobby_home>/runtime/managed-executions`,
+    and a node run, a remote `task-close-reviewer` included, would show no
+    violation count and give its close review no denial summary. 2.15 ports
+    `src/gobby/agents/sandbox_reaper.py` and
+    `src/gobby/agents/srt_process_cleanup.py` for node runs, and each report
+    carries a sandbox record for each live agent and each exit. 3.9 stores
+    those records on the hub run. An exit carries the run's last 100
+    violation events; a live agent's record carries counts only, because a
+    report every 30 seconds cannot carry up to 100 events of 2,048
+    characters for each agent. The full log stays on the node as the
+    retained copy. Rejected: a hub command that fetches a node's log on
+    demand, because the exit already carries what the hub's record shows.
+34. **The hub sanitizes node diagnostics before anything keeps them.**
+    Security gobby#16011's review of 1c7d256584 (2026-10-14):
+    - The node posts the code-index warning with the prompt as the hub sent
+      it. The hub passes the warning's `message` and `cwd` through
+      `src/gobby/utils/terminal_output.py::redact_terminal_output`, appends
+      the sanitized warning to that prompt as `_append_code_index_warning`
+      does, stores the result and answers it, and the node launches with the
+      answered prompt (2.11, 3.5). The prompt never passes through the
+      redactor, so the provider's instruction stays as the hub sent it. The
+      local failure branch builds its warning through the same helper.
+      Rejected: storing gcode's preview as local Python does, because
+      `_process_detail` scrubs only PostgreSQL URLs; and redacting the whole
+      prompt, which would change the instruction.
+    - A report's `attention.fingerprint`, and a `fingerprint` inside
+      `attention.payload`, must be 64 lowercase hexadecimal characters, the
+      SHA-256 digest the detectors produce. Anything else fails the parse
+      with 422 `invalid_body` before anything is stored, so 3.3's redaction
+      exemption covers only digests (3.1).
 
 ## Constraints
 `kind: framing`
@@ -316,7 +353,7 @@ Orchestrator return (gobby#15977, 2026-10-14):
   `EpochAuthority`, `ControlClient`) from new gdaemon files.
   `crates/gterminals/src/control.rs` (733 lines) gains one method in 2.10 and
   stays under 850. `src/gobby/agents/spawn_executor_providers.py` (626 lines)
-  gains one extracted function in 3.2. On the hub side,
+  gains one extracted function in 3.2 and one warning helper in 3.5. On the hub side,
   `src/gobby/agents/agent_health.py` (587 lines) gains two extracted module
   functions in 3.6, and `src/gobby/agents/idle_check_handler.py` (580 lines)
   gains the pane-facts split in 3.8; both stay under 850.
@@ -349,27 +386,27 @@ Edges between this plan's own leaves, including those across #24150 and
 | --- | --- | --- | --- |
 | 1.1 | #24151 (S2.11 hub half: hook ingress and rule engine in Rust) | blocks | #24151 ports `POST /api/hooks/execute` against the contract 1.1 freezes. |
 | 1.3 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocks | Both add a router in `src/gobby/servers/_app_routes.py::register_routes`. 3.5, which edits the same function, follows hub-mode 1.4 through 3.3. |
-| 2.1 | hub-mode 1.2 (#24281 gdaemon internal node-command route over the node channel) | blocks | Both declare a module in `crates/gdaemon/src/nodes/mod.rs`. The edge also orders 1.5's change to `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, which hub-mode 1.2 edits, because 2.1 follows 1.5 through 1.6. |
+| 2.1 | hub-mode 1.2 (gdaemon internal node-command route over the node channel; no task yet, #24281 holds it) | blocks | Both declare a module in `crates/gdaemon/src/nodes/mod.rs`. The edge also orders 1.5's change to `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, which hub-mode 1.2 edits, because 2.1 follows 1.5 through 1.6. |
 | 2.3 | gmcp-stdio 1.6 (#24355 Every launch site starts `~/.gobby/bin/gmcp`) | blocked by | 2.3 writes MCP config that starts `<gobby_home>/bin/gmcp` (Decision 24). |
 | 2.4 | gmcp-stdio 1.8 (#24357 The sandbox drops the wrapper's read grant) | blocked by | 2.4's oracle imports `render_srt_settings` from `src/gobby/agents/srt_settings.py`, where gmcp-stdio 1.8 moves it (Constraints). |
 | 2.6 | gmcp-stdio 1.6 (#24355 Every launch site starts `~/.gobby/bin/gmcp`) | blocked by | 2.6's MCP config and codex overrides start `<gobby_home>/bin/gmcp` (Decision 24). |
-| 2.7 | hub-mode 1.2 (#24281 gdaemon internal node-command route over the node channel) | blocked by | Both change `crates/gdaemon/src/nodes/channel.rs`: hub-mode 1.2 `hub_channel`, 2.7 `run_client`. |
+| 2.7 | hub-mode 1.2 (gdaemon internal node-command route over the node channel; no task yet, #24281 holds it) | blocked by | Both change `crates/gdaemon/src/nodes/channel.rs`: hub-mode 1.2 `hub_channel`, 2.7 `run_client`. |
 | 2.11 | #21586 (Migrate code-index orchestration and shared dependencies) | blocked by | 2.11's gcode runs reach the hub code-index routes that #21586 adds (Decision 21). #21586 has no plan and no child task on 2026-10-14, so the edge names the epic. |
 | 2.11 | #23276 (gcode index writes from a node need hub HTTP routes) | blocked by | 2.11 runs `gcode index` on a node, which writes through those hub routes. #23276 also blocks #21555, which blocks #24148 and #24150. |
 | 2.13 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 reuses `crates/gdaemon/src/pane_detection/` when the hub's Python monitor retires (Decision 4). 2.13 completes the module after 2.12. |
-| 2.14 | hub-mode 4.2 (Node workspace.merge and workspace.remove handlers; no task yet) | blocks | hub-mode 4.2 adds handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs` and edits 2.3's `workspace.rs`. 2.14 is the last node agent leaf. |
-| 2.14 | hub-mode 4.6 (Node checkout.status handler; no task yet) | blocks | hub-mode 4.6 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. |
-| 3.1 | hub-mode 1.2 (#24281 gdaemon internal node-command route over the node channel) | blocks | hub-mode 1.2 checks `v` against the `CONTRACT_VERSION` that 3.1 sets to 2. |
+| 2.15 | hub-mode 4.2 (Node workspace.merge and workspace.remove handlers; no task yet) | blocks | hub-mode 4.2 adds handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs` and edits 2.3's `workspace.rs`. 2.15 is the last node agent leaf. |
+| 2.15 | hub-mode 4.6 (Node checkout.status handler; no task yet) | blocks | hub-mode 4.6 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. |
+| 3.1 | hub-mode 1.2 (gdaemon internal node-command route over the node channel; no task yet, #24281 holds it) | blocks | hub-mode 1.2 checks `v` against the `CONTRACT_VERSION` that 3.1 sets to 2. |
 | 3.1 | hub-mode 1.3 (#24269 Python node-command client and machine eligibility) | blocks | hub-mode 1.3 builds `v` from `CONTRACT_VERSION`. |
 | 3.1 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocks | hub-mode 1.4's routes check `v` against `CONTRACT_VERSION`. |
 | 3.1 | hub-mode 4.1 (Node-commands contract version 3: workspace and checkout commands; no task yet) | blocks | hub-mode 4.1 bumps the same contract to version 3 in the same files. |
 | 3.2 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocked by | `resumed_workspace` orders a session's rows by the `updated_at` that hub-mode 1.4's `record_remote_workspaces` moves each time a report names a workspace (hub-mode 1.4.7). |
 | 3.2 | hub-mode 2.5 (#24275 Remote spawn goes through the node) | blocks | hub-mode 2.5 calls `build_spawn_payload`. |
-| 3.3 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocked by | 3.3 changes the report route that hub-mode 1.4 creates in `src/gobby/servers/routes/nodes.py`, and adds a test to its `tests/servers/test_node_routes.py`. |
+| 3.3 | hub-mode 1.4 (#24270 Node routes: checkout registration and run reports) | blocked by | 3.3 changes the report route that hub-mode 1.4 creates in `src/gobby/servers/routes/nodes.py`, and adds a test to its `tests/servers/test_node_routes.py`. 3.9, which changes the same route, follows hub-mode 1.4 through 3.3. |
 | 3.4 | hub-mode 2.3 (#24273 Remote terminal writes go through the node) | blocked by | The remote runtime relies on hub-mode 2.3's write guard. |
 | 3.4 | hub-mode 2.4 (#24274 Remote cancel goes through the node) | blocked by | The remote runtime calls hub-mode 2.4's `remote_cancel`. |
 | 3.6 | hub-mode 2.6 (#24276 The hub settles remote runs from the node's reports) | blocked by | A run the terminate route kills settles through hub-mode 2.6's reconciler when the node's exit arrives. |
-| Every leaf: 1.1 to 1.6, 2.1 to 2.14 and 3.1 to 3.8 | hub-mode 5.1 (Live hub-to-node proof with isolated daemons and fake providers; #24283 Live hub-to-node proof holds it) | blocks | hub-mode 5.1 proves this plan's sections on a live hub and node (Decision 20). |
+| Every leaf: 1.1 to 1.6, 2.1 to 2.15 and 3.1 to 3.9 | hub-mode 5.1 (Live hub-to-node proof with isolated daemons and fake providers; no task yet, #24283 holds it) | blocks | hub-mode 5.1 proves this plan's sections on a live hub and node (Decision 20). |
 
 Relations that set no edge:
 - #24151 and node session registration (Decision 17; Constraints, "Node
@@ -381,11 +418,25 @@ Relations that set no edge:
   no leaf shares a Target with hub-mode 2.2.
 - hub-mode 2.1 (#24271 Hub machine-local loops skip other machines' rows).
   3.3 and 3.4 rely on its scoping, and both follow it through hub-mode 1.4,
-  which depends on it.
+  which depends on it. Its post-terminal cleanup skips the `srt_reap` and
+  `sandbox_reap` phases for another machine's run (hub-mode 2.1.3), and
+  2.15 performs both on the node (Decision 33), so neither waits on the
+  other.
 - hub-mode 1.1 (#24268, closed). It shares `crates/gdaemon/src/lib.rs` with
   2.12 and the contract files with 3.1, and it has landed.
 - The S2.8 leaves #23211, #23213 and #23214 share no Target with this plan
   (Constraints, "S2.8 overlap").
+- remove-gobby-build 1.2 (`.gobby/plans/remove-gobby-build.md`) deletes the
+  required-mode branch of `_prepare_managed_code_index`, which 3.5 edits. It
+  landed as #23846 (acad860266), so 3.5 edits the branch-free function.
+- local-inference-runtime-foundation 4.3
+  (`.gobby/plans/local-inference-runtime-foundation.md`) names
+  `src/gobby/agents/spawn_executor_providers.py::*` (3.2, 3.5),
+  `src/gobby/agents/agent_health.py::*` (3.6) and
+  `src/gobby/agents/idle_check_handler.py::*` (3.8) with the scope-reason
+  "include all existing consumers in integration regression coverage after
+  source movement". It has no task on 2026-10-14, so there is nothing to
+  wire; if it is expanded while these leaves are open, it follows them.
 
 ## P1: Node hook ingress (#24150)
 `kind: framing`
@@ -934,15 +985,17 @@ Verification planned:
 embed `run_id`, launches claude, codex, grok, droid and agy through one SRT
 chokepoint in its own terminal host, types codex's first prompt, runs the
 managed code-index preflight, watches its agents' panes with the Rust
-detectors, reports accepted runs, live agents, their pane state and exits,
-and registers its checkouts, all as version 2 of
-`docs/contracts/node-commands.md` (3.1) specifies.
+detectors, reaps each run's sandbox when it ends, reports accepted runs,
+live agents, their pane state and sandbox records, and exits, and registers
+its checkouts, all as version 2 of `docs/contracts/node-commands.md` (3.1)
+specifies.
 
 Every node-duty section adds to `crates/gdaemon/src/nodes/agents/mod.rs` and
-`crates/gdaemon/tests/node_agents.rs`, so 2.1 to 2.11 and 2.14 form one
-dependency chain. 2.1 depends on 3.1 for the version 2 types, 2.10 and 2.11
-depend on 3.5 for the hub routes they post to, and 2.14 depends on 3.6 and
-3.7. 2.12 and 2.13 build the detector module outside `nodes/` (Decision 5)
+`crates/gdaemon/tests/node_agents.rs`, so 2.1 to 2.11, 2.14 and 2.15 form
+one dependency chain. 2.1 depends on 3.1 for the version 2 types, 2.10 and
+2.11 depend on 3.5 for the hub routes they post to, 2.14 depends on 3.6 and
+3.7, and 2.15 depends on 3.9 for the Python denial classifier its corpus
+runs. 2.12 and 2.13 build the detector module outside `nodes/` (Decision 5)
 and depend on nothing in P2.
 
 ### 2.1 Durable node agent state [category: code] (depends: 1.6, 3.1)
@@ -1430,9 +1483,10 @@ Targets:
 - `crates/gdaemon/src/nodes/agents/sandbox/grok_home.rs`
 - `crates/gdaemon/src/nodes/agents/sandbox/claude_home.rs`
 - `crates/gdaemon/src/nodes/agents/sandbox/ps_shim.rs`
+- `crates/gdaemon/src/nodes/agents/sandbox/monitor.rs`
 - `crates/gdaemon/tests/node_agents.rs`
 
-**Granularity:** one leaf with six acceptance items. They are the steps of
+**Granularity:** one leaf with seven acceptance items. They are the steps of
 one chokepoint (ROADMAP decision 6) in the Python order. The provider homes
 and the `ps` shim each add paths to the policy the chokepoint hashes and
 verifies, so none of them can ship apart from the hash it changes.
@@ -1489,6 +1543,22 @@ verifies, so none of them can ship apart from the hash it changes.
     `<run_root>/logs/violations.jsonl`, both 0600 (`_write_private_file`).
   - It runs a preflight (`_preflight_srt`, 90-second timeout).
   - It sets `GOBBY_SRT_TMPDIR` (`srt_mux_tmpdir`).
+  - On macOS it starts or reuses the shared SRT violation monitor
+    (`src/gobby/agents/srt_monitor.py::ensure_srt_monitor`, #24307) and
+    sets `GOBBY_SRT_MONITOR_SOCKET` and `GOBBY_SRT_RUN_KEY` (the run root's
+    name). `src/gobby/agents/srt_runner.mjs` refuses to start on macOS
+    without that socket ("missing shared SRT violation monitor"), so no
+    macOS node launch works without this step. Under `violations.lock` in
+    the socket directory (`src/gobby/agents/srt_socket_paths.py`), the
+    function first recovers a prior backlog for the run key with
+    `node runner.mjs --recover <dir> <gobby_home>/logs/sandbox-violations <run_key>`
+    (30 seconds; exit 2 means a live monitor owns it), then connects to
+    the version-addressed socket `v-<first 12 of SRT_RELEASE.runner_sha256>`,
+    or removes a stale socket and starts
+    `node runner.mjs --monitor <socket> <ready fd> <gobby_home>/logs/sandbox-violations`
+    in its own session with only `PATH`, waits 30 seconds for `ready\n`,
+    and connects. A failure is the lockout "Shared SRT violation monitor
+    unavailable: ...". The monitor outlives the daemon that started it.
 - `SandboxLaunch.wrap` replaces `argv[0]` with the resolved provider executable
   and returns `[node, runner, "--settings", <settings>, "--violations", <violations>, "--", ...argv]`.
   With the sandbox disabled, or on `provider-native`, it returns the argv
@@ -1521,6 +1591,11 @@ verifies, so none of them can ship apart from the hash it changes.
 - `sandbox/claude_home.rs` (new) ports `prepare_claude_reviewer_home`.
 - `sandbox/ps_shim.rs` (new) ports `droid_ps_shim_dir` and
   `ps_shim_path_env`, with the #22407 removal note.
+- `sandbox/monitor.rs` (new) ports `srt_socket_directory`, `srt_mux_tmpdir`
+  and `ensure_srt_monitor` with the recovery run, the version-addressed
+  socket, the readiness descriptor and the new session, and
+  `prepare_launch` calls it on macOS. Node daemon shutdown leaves the
+  monitor running, as Python's restart does.
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_agents)'`.
@@ -1533,6 +1608,7 @@ Verification planned:
 - 2.5.4 - The Rust SRT version pin equals the Python `SRT_RELEASE` version. test: `crates/gdaemon/tests/node_agents.rs::srt_version_matches_python_pin`.
 - 2.5.5 - A claude `task-close-reviewer` on `srt` gets a private config home with the seeded `.claude.json`, the copied settings, the transcript symlink and the three variables, and a symlinked source is refused. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_claude_reviewer_home`.
 - 2.5.6 - Droid on `srt` on macOS gets the signed `ps` copy first on `PATH` and in the read paths, and a failed copy or signature leaves the launch running without it. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_droid_ps_shim`.
+- 2.5.7 - On macOS a launch connects to a live monitor on the version-addressed socket, or starts one that answers `ready` and sets `GOBBY_SRT_MONITOR_SOCKET` and `GOBBY_SRT_RUN_KEY`; a prior backlog for the run is recovered first, a backlog owned by a live monitor or a monitor that never answers is a lockout, and the monitor survives a node daemon restart. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_shared_srt_monitor`.
 
 ### 2.6 Provider launch, exits and host reconciliation [category: code] (depends: 2.5, 2.12)
 `kind: deliverable`
@@ -1549,7 +1625,7 @@ Targets:
 - `tests/agents/test_node_launch_corpus.py`
 - `crates/gdaemon/tests/node_agents.rs`
 
-**Granularity:** one leaf with nine acceptance items across six production
+**Granularity:** one leaf with ten acceptance items across six production
 files. 2.6 owned the provider command and the launch at the first consensus;
 this revision widens the command to five providers and the version 2 inputs.
 The command, its environment, the trust seed and the agy gate have one
@@ -1619,6 +1695,16 @@ its own dependencies to the same file.
   - The contract's environment: the seven identity variables,
     `GOBBY_DAEMON_URL` set to the node's own front door, `GOBBY_PROMPT_FILE`
     set to a node-local file holding `prompt`, and 2.4's cache variables.
+- Nothing in `src/` or `crates/` reads `GOBBY_PROMPT_FILE` except the
+  chokepoint, which copies the file into `<run_root>/assets/prompt.md`
+  (0600) and points the variable at the copy (2.5;
+  `src/gobby/agents/srt_runtime.py`). Each provider takes its prompt from
+  the argv, or from 2.10's typing of the payload's `prompt`. Python writes
+  the original under a 0700 directory, removes it on a pre-launch failure
+  (`src/gobby/agents/spawn.py::cleanup_unlaunched_spawn`), and otherwise
+  leaves it to an hourly age sweep
+  (`src/gobby/sessions/lifecycle.py::_cleanup_prompt_files`). The copy
+  lives in the run root, which 2.15 removes when the run ends.
   - The native host applies `src/gobby/terminals/native_env_policy.py::apply_native_env_policy`
     to every spawn: allowlisted ambient values
     (`src/gobby/agents/spawners/auth_env.py`, `UNIVERSAL_ALLOWLIST` and
@@ -1684,9 +1770,13 @@ its own dependencies to the same file.
   1. For agy, check the gate; an unsupported record is a `prepare_failed`
      exit whose reason is the record's reason.
   2. Seed trust for the provider.
-  3. Write the prompt file `<gobby_home>/node/prompts/<run_id>.md` (0600).
+  3. Write the prompt file `<gobby_home>/node/prompts/<run_id>.md` (0600),
+     creating `prompts/` at 0700.
   4. Build the command and environment, call 2.5's `prepare_launch` and
-     wrap the argv.
+     wrap the argv. Remove the prompt file as soon as `prepare_launch`
+     returns, whether it succeeded or failed, or when building the command
+     or environment fails first. On success the chokepoint has copied it
+     into the run root.
   5. `spawn` with `spawn_key = run_id`, then `spawn_commit` with 30,000 ms.
   6. Commit the run's `launched` phase with `host_terminal_id`.
   A failure before `spawn_commit` calls `spawn_abort` when a child was
@@ -1724,6 +1814,7 @@ Verification planned:
 - 2.6.7 - A launch spawns through the chokepoint with `spawn_key` equal to `run_id`, commits, and records the run as launched with its host terminal id. test: `crates/gdaemon/tests/node_agents.rs::launch_spawns_and_commits`.
 - 2.6.8 - A host exit event produces an `exited` exit with the exit code and workspace, or `cancelled` when a cancel record exists. test: `crates/gdaemon/tests/node_agents.rs::exit_events_record_exits`.
 - 2.6.9 - `reconcile` turns a launched run whose terminal is absent from the live host's inventory into an `exited` exit with a null exit code and keeps a present one live, both for runs reloaded from durable state after a restart and after a host epoch change. test: `crates/gdaemon/tests/node_agents.rs::reconcile_after_restart`.
+- 2.6.10 - The launch writes the prompt file 0600 in a 0700 `prompts/` directory, and the file is gone once `prepare_launch` returns, after a successful launch and after a refused one, while `GOBBY_PROMPT_FILE` names the run root's copy. test: `crates/gdaemon/tests/node_agents.rs::launch_removes_prompt_file`.
 
 ### 2.7 Command dispatch over the node channel [category: code] (depends: 2.6)
 `kind: deliverable`
@@ -2072,6 +2163,8 @@ Targets:
   `gcode_search_content_failed` and `gcode_search_content_timeout` (smoke).
   `_process_detail` and `_preview_process_detail` redact PostgreSQL URLs,
   collapse whitespace and cut a 500-character preview with `[truncated]\n`.
+  They scrub no other secret shape, so the hub sanitizes the warning before
+  anything keeps it (Decision 34, 3.5).
 - On failure, `src/gobby/agents/spawn_executor_providers.py::_prepare_managed_code_index`
   appends `_append_code_index_warning`'s text to the prompt and merges the
   session variables: `additional_skills` without
@@ -2092,13 +2185,15 @@ Targets:
 - `commands.rs`: when the payload's `code_index_preflight` is
   `"best_effort"`, the preparation task runs `preflight` after 2.3's
   `prepare` and before 2.6's `launch`, inside the 300-second deadline. On a
-  failure it appends the warning text to the prompt, as
-  `_append_code_index_warning` does, and posts
+  failure it posts
   `POST /api/nodes/runs/code-index-warning {v, run_id, warning, prompt}`
-  (3.5). A transport failure or a non-2xx answer is `prepare_failed`, as a
-  failed merge fails a Python spawn. The persona prefix is already at the
-  front of the prompt (3.2), and the warning goes at the end, so the result
-  matches the Python order.
+  (3.5), with `prompt` exactly as the payload carried it, and launches with
+  the `prompt` the hub answers: that prompt with the sanitized warning
+  appended as `_append_code_index_warning` does (Decision 34). A transport
+  failure or a non-2xx answer is `prepare_failed`, as a failed merge fails
+  a Python spawn. The persona prefix is already at the front of the prompt
+  (3.2), and the warning goes at the end, so the result matches the Python
+  order. The node writes no log line that holds the warning's text.
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_agents)'`.
@@ -2106,7 +2201,7 @@ Verification planned:
 **Acceptance:**
 
 - 2.11.1 - With the mode set, the three gcode runs use the workspace, the identity environment and the node's front door within their timeouts and the 120-second budget, with no managed credential. test: `crates/gdaemon/tests/node_agents.rs::code_index_preflight_runs_gcode`.
-- 2.11.2 - Each failure produces the Python error string, appends the warning to the prompt the provider receives and posts it with that prompt, and a refused post fails the spawn as `prepare_failed`. test: `crates/gdaemon/tests/node_agents.rs::code_index_failure_warns_and_posts`.
+- 2.11.2 - Each failure produces the Python error string and posts it with the payload's prompt unchanged, the provider receives the prompt the hub answers, no node log record holds the warning's text, and a refused post fails the spawn as `prepare_failed`. test: `crates/gdaemon/tests/node_agents.rs::code_index_failure_warns_and_posts`.
 - 2.11.3 - Without the mode, no gcode command runs. test: `crates/gdaemon/tests/node_agents.rs::code_index_preflight_skipped_without_mode`.
 
 ### 2.12 Detection manifest engine [category: code]
@@ -2395,32 +2490,139 @@ Verification planned:
 - 2.14.6 - Each report's agent entry carries the run's attention, injections, composer, idle facts and the last 15-line read cut to 2,000 characters. test: `crates/gdaemon/tests/node_agents.rs::report_carries_pane_state`.
 - 2.14.7 - The watch record survives a node daemon restart, so a run that outlives it is still watched, and `agents.json` holds no prompt, endpoint or token. test: `crates/gdaemon/tests/node_agents.rs::watch_record_survives_restart`.
 
+### 2.15 Node sandbox reaping and records [category: code] (depends: 2.14, 3.9)
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: the unix `run` runs the start-time sweep; two cfg-gated functions share the name `run`
+- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/state.rs`
+- `crates/gdaemon/src/nodes/agents/launch.rs`
+- `crates/gdaemon/src/nodes/agents/reports.rs`
+- `crates/gdaemon/src/nodes/agents/sandbox/mod.rs`
+- `crates/gdaemon/src/nodes/agents/sandbox/reaper.rs`
+- `crates/gdaemon/src/nodes/agents/sandbox/runner_reap.rs`
+- `crates/gdaemon/src/nodes/agents/sandbox/record.rs`
+- `crates/gdaemon/tests/fixtures/node_sandbox_record/corpus.json`
+- `tests/agents/test_node_sandbox_record_corpus.py`
+- `crates/gdaemon/tests/node_agents.rs`
+
+**Granularity:** one leaf with six acceptance items across eight
+production files. Reaping and the record share one moment: the record is
+read from the run root's violation log just before the reaper removes that
+root, so neither ships alone (Decision 33). It follows 3.9 so that no node
+sends violation `line` or `command` strings before the hub redacts them
+(Decision 34).
+
+**Research context:**
+- hub-mode 2.1.3 skips post-terminal cleanup's `srt_reap` and
+  `sandbox_reap` for another machine's run, so the node is the only place
+  these run for a node run.
+- `src/gobby/agents/srt_process_cleanup.py`: `reap_srt_runner_process_tree(run_id)`
+  finds processes whose argv names `runner.mjs` and an `assets/settings.json`
+  or `logs/violations.jsonl` path under exactly one run root of this run
+  (`_run_id_from_cmdline`), collects each one's descendants, sends SIGTERM,
+  waits 3 seconds, sends SIGKILL to survivors and waits 1 second.
+  `reap_orphaned_srt_runner_process_trees` does the same at start for run
+  ids that are not active.
+- `src/gobby/agents/sandbox_reaper.py`: the run roots are
+  `<gobby_home>/run/sandbox/<run_id>` and
+  `<gobby_home>/runtime/managed-executions/<run_id>` (`_run_root_parents`).
+  `_reap_roots` first moves the monitor backlog
+  (`_retain_monitor_backlog`, `<run_id>.srt-backlog.jsonl` in the socket
+  directory, under `violations.lock`) to
+  `logs/sandbox-violations/<run_id>.monitor-backlog.jsonl`, copies the
+  newest violation log and its settings to `<run_id>.jsonl` and
+  `<run_id>.settings.json` there (0600, staged and renamed), keeps a root
+  whose copy failed, and removes the other roots with the run's registered
+  temporary directory. `_startup_sweep` reaps roots older than an hour that
+  belong to no active run and retires stale pre-commit store spares
+  (`retire_stale_pre_commit_store_spare`).
+- `src/gobby/storage/agents/_sandbox_records.py`: `_count_violation_lines`
+  counts at most 10,000 lines and reports truncation, `_recent_violations`
+  decodes the newest 100 events from at most 16 MiB of tail, and
+  `_bounded_command` cuts each `command` to 2,048 characters with
+  `command_length` and `command_truncated`. 3.9's `denial_operations`
+  classifies each event's `line` by `_DENIAL_OPERATION`.
+- A node runs no Python daemon (Overview), so only the node daemon writes
+  the node's run roots.
+
+**Implementation:**
+- `sandbox/record.rs` (new): `sandbox_record(identity, violation_log, with_events) -> ReportSandbox`
+  ports the count, the truncation, the operation classification and, with
+  `with_events`, the newest 100 bounded events.
+- `sandbox/runner_reap.rs` (new) ports `reap_srt_runner_process_tree` and
+  `reap_orphaned_srt_runner_process_trees`. It lists processes with `libc`
+  (`/proc/<pid>/cmdline` and `stat` on Linux; `proc_listallpids`,
+  `sysctl` `KERN_PROCARGS2` and `proc_pidinfo` on macOS) and adds no crate.
+- `sandbox/reaper.rs` (new) ports `_reap_roots` with the backlog and
+  artifact retention, and `_startup_sweep` with the one-hour cutoff and the
+  spare retirement.
+- `state.rs`: `RunRecord` gains `sandbox: Option<SandboxIdentity>` with
+  `runtime_version`, `policy_schema_version`, `policy_hash` and the run
+  root, which `launch.rs` records from 2.5's `SandboxLaunch` when it
+  commits `launched`. `ExitRecord` gains `reaped: bool`, which the report
+  never sends.
+- `launch.rs`: `reap_exits(node)` takes each exit with `reaped` false, sets
+  its `sandbox` to `sandbox_record(.., with_events = true)` when the run
+  reached the chokepoint, reaps the runner tree and the roots, and commits
+  `reaped = true`. A root the reaper skipped stays for the start-time
+  sweep. It runs on `changed` and on each report tick.
+- `reports.rs`: a report carries only reaped exits, and each agent entry
+  carries `sandbox_record(.., with_events = false)` for its run.
+- `serve::run`'s node branch runs the orphan runner reap and the root sweep
+  once at start, after 2.1's `recover_after_restart`, with the run ids
+  still in `runs` as the active set, and removes every file left in
+  `<gobby_home>/node/prompts/`, since no launch is in progress at start.
+- `crates/gdaemon/tests/fixtures/node_sandbox_record/corpus.json` (new)
+  holds violation logs: blank and malformed lines, a 3,000-character
+  command, denial lines of several operations and unclassified ones, and
+  more than 100 events. `tests/agents/test_node_sandbox_record_corpus.py`
+  (new) runs the Python counter, `_recent_violations` and
+  `denial_operations` on each and compares; with
+  `GOBBY_RECORD_NODE_SANDBOX_CORPUS=1` it rewrites the corpus. The count
+  cap case is generated by both tests rather than stored.
+
+Verification planned:
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_node_sandbox_record_corpus.py -v`.
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_agents)'`.
+
+**Acceptance:**
+
+- 2.15.1 - The Python counter, recent-event projection and denial classifier produce the committed corpus, and the generated case reaches the 10,000-line cap. test: `tests/agents/test_node_sandbox_record_corpus.py::test_corpus_matches_python`.
+- 2.15.2 - The Rust record for each corpus case equals the corpus. test: `crates/gdaemon/tests/node_agents.rs::sandbox_record_matches_python`.
+- 2.15.3 - When a run ends, its exit carries the record with its newest events, its violation log, settings and monitor backlog are retained 0600 under `logs/sandbox-violations/`, both run roots are gone, and the exit is reported only after that. test: `crates/gdaemon/tests/node_agents.rs::exit_reaps_and_records_sandbox`.
+- 2.15.4 - A runner process naming the run's settings path, and its child, are terminated and then killed after 3 seconds, while a runner of another run is untouched. test: `crates/gdaemon/tests/node_agents.rs::runner_tree_reaped`.
+- 2.15.5 - At start, roots older than an hour with no run record and orphaned runners are reaped, a live run's root stays, and leftover prompt files are removed. test: `crates/gdaemon/tests/node_agents.rs::start_sweeps_orphaned_sandboxes`.
+- 2.15.6 - Each report's agent entry carries its run's count, truncation and denial operations with no events, and an exit of a run that never reached the chokepoint carries `sandbox: null`. test: `crates/gdaemon/tests/node_agents.rs::reports_carry_sandbox_records`.
+
 ## P3: Contract version 2 and its hub consumers (#24148)
 `kind: framing`
 
 **Goal**: version 2 of `docs/contracts/node-commands.md` carries every
 launch input a node needs and each agent's pane state. The hub builds
 `agent.spawn` from its own resolvers, answers the node's launch-outcome and
-terminate posts, serves the detection manifests, and applies a node run's
-pane state through the attention, health and idle code its own runs use.
+terminate posts, serves the detection manifests, applies a node run's
+pane state through the attention, health and idle code its own runs use,
+and keeps a node run's sandbox record as it keeps a local run's.
 
 P3's leaves expand under #24148 (Decision 1). 3.1 depends on nothing. 3.2
-and 3.3 depend on 3.1, 3.4 on 3.3, 3.5 on 1.3 and 3.4, 3.6 on 3.5, 3.7 on
-3.6, and 3.8 on 3.4. Constraints lists the hub-mode tasks that block 3.3,
-3.4 and 3.6.
+and 3.3 depend on 3.1, 3.4 on 3.3, 3.5 on 1.3, 3.2 and 3.4, 3.6 on 3.5,
+3.7 on 3.6, 3.8 on 3.4, and 3.9 on 3.3. "Cross-plan edges set at
+expansion" lists the hub-mode tasks that block 3.3, 3.4 and 3.6.
 
 ### 3.1 Node-commands contract version 2 [category: code]
 `kind: deliverable`
 
 Targets:
 - `docs/contracts/node-commands.md`
-- `crates/gdaemon/src/node_commands.rs::*` — scope-reason: adds `CONTRACT_VERSION`, replaces `Sandbox` and removes `SandboxNetwork`, widens `SpawnPayload` and `ReportAgent`, and adds the new body types
-- `src/gobby/hub/node_commands.py::*` — scope-reason: the same model changes on the Python side, plus `_PARSERS` entries for the new bodies
-- `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: every message changes to `v: 2`, and the new bodies and pane block gain messages
+- `crates/gdaemon/src/node_commands.rs::*` — scope-reason: adds `CONTRACT_VERSION`, replaces `Sandbox` and removes `SandboxNetwork`, widens `SpawnPayload`, `ReportAgent` and `ReportExit`, and adds the new body types
+- `src/gobby/hub/node_commands.py::*` — scope-reason: the same model changes on the Python side, the digest and sandbox-record validation, and `_PARSERS` entries for the new bodies
+- `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: every message changes to `v: 2`, and the new bodies, pane block and sandbox records gain messages
 - `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`
-- `tests/hub/test_node_command_corpus.py::*` — scope-reason: updates `test_corpus_round_trips` and `test_node_bodies_name_no_machine`, and adds `test_contract_doc_covers_version_2` and `test_fields_not_carried_matches_spawn_request`
+- `tests/hub/test_node_command_corpus.py::*` — scope-reason: updates `test_corpus_round_trips` and `test_node_bodies_name_no_machine`, and adds `test_contract_doc_covers_version_2`, `test_fields_not_carried_matches_spawn_request` and `test_report_digests_and_sandbox_records_validate`
 
-**Granularity:** one leaf with five acceptance items across two production
+**Granularity:** one leaf with six acceptance items across two production
 model files and the contract document. The Rust and Python models must
 change in one commit, because the shared corpus fails on either side alone.
 
@@ -2479,12 +2681,35 @@ change in one commit, because the shared corpus fails on either side alone.
     or null, where `status` is `"unknown"`, `"context_full"`, `"idle"` or
     `"active"` and `quota` is `{provider, reset_time}` or null;
   - `tail`: a string, the last 15-line read, at most 2,000 characters.
+- The Python `attention` model requires `fingerprint`, and a `fingerprint`
+  inside `payload` when one is present, to match `^[0-9a-f]{64}$`, the
+  SHA-256 hex digest that `src/gobby/agents/prompt_detector.py` produces.
+  Any other value fails the parse, so the route answers 422 `invalid_body`
+  before it stores or logs anything (Decision 34).
+- `ReportAgent` and `ReportExit` each gain `sandbox`, null when the run
+  never reached the chokepoint, otherwise
+  `{runtime_version, policy_schema_version, policy_hash, violation_count, violation_count_truncated, denial_operations, recent_violations}`
+  (Decision 33):
+  - `runtime_version`: the SRT version string. `policy_schema_version`: an
+    integer. `policy_hash`: the policy's SHA-256 hex digest, which the
+    Python model requires to match `^[0-9a-f]{64}$`.
+  - `violation_count`: at most 10,000, with `violation_count_truncated`
+    true past that, as `_count_violation_lines` counts
+    (`src/gobby/storage/agents/_sandbox_records.py`).
+  - `denial_operations`: an object from operation name to count, as 3.9's
+    `denial_operations` classifies the log. Each name is `unclassified` or
+    matches `^[a-z][a-z0-9*-]*$`, and each count is at least 0.
+  - `recent_violations`: in an exit, at most the last 100 events, as
+    `_recent_violations` projects them with each `command` cut to 2,048
+    characters; null in an agent entry.
 - New node bodies, sent to the hub's front door with the node key and
   carrying no `machine_id`:
   - `POST /api/nodes/runs/prompt-delivery-failure`: `{v, run_id, code, detail, pane}`,
     answering `{failed}`.
   - `POST /api/nodes/runs/code-index-warning`: `{v, run_id, warning, prompt}`,
-    where `warning` is `{preflight, cwd, message}`, answering `{}`.
+    where `warning` is `{preflight, cwd, message}` and `prompt` is the
+    payload's prompt, unchanged. It answers `{prompt}`: that prompt with the
+    sanitized warning appended (Decision 34).
   - `POST /api/nodes/runs/terminate`: `{v, run_id, cause, detail, pane_tail, checkpoint}`,
     answering `{terminated, retry}`. `cause` is `"doom_loop"`,
     `"provider_stall"`, `"timeout"` or `"init_timeout"`. `checkpoint` is
@@ -2498,29 +2723,43 @@ change in one commit, because the shared corpus fails on either side alone.
   - the hub-flow table drops `remote_resume_unsupported` and adds
     `remote_loopback_endpoint` (Decision 25), and the hub route table adds
     `run_not_found` (404);
+  - the report section documents `pane`, `sandbox` and their fields;
   - the node duties say the node observes `timeout_seconds` and its pane
     states and asks the hub to terminate (Decision 30), that each report
-    carries pane state, that the node never removes an `existing`
-    workspace, and that the node refuses a spawn whose `sandbox` is not
-    `enabled` with backend `srt` with `invalid_payload`, stage `"none"` and
-    the message `spawn_agent requires managed SRT (enabled=<enabled>, backend=<backend>)`
+    carries pane state and sandbox records, that the node never removes an
+    `existing` workspace, and that the node refuses a spawn whose `sandbox`
+    is not `enabled` with backend `srt` with `invalid_payload`, stage
+    `"none"` and the message
+    `spawn_agent requires managed SRT (enabled=<enabled>, backend=<backend>)`
     (Decision 32);
+  - the node duties give the preparation deadline: 300 seconds from
+    acceptance to the host's spawn commit (Decision 19);
+  - the node duties say the node reaps each run's sandbox processes and
+    roots when the run ends, removes the prompt file once the chokepoint
+    has copied it, and launches with the prompt the code-index-warning
+    route answers (Decisions 33 and 34);
   - a new "Fields not carried" section states the field closure below as a
     list. Each entry starts with the backticked field names, then a colon
     and the reason.
-- `tests/hub/test_node_command_corpus.py` gains two document tests:
+- `tests/hub/test_node_command_corpus.py` gains two document tests and a
+  validation test:
   - `test_contract_doc_covers_version_2` collects every field name of every
     model that `_PARSERS` reaches, recursively through nested models, and
     asserts that each appears backticked in the document. It also asserts
     that `CONTRACT_VERSION`, the four new body paths, `run_not_found`,
-    `remote_loopback_endpoint` and `spawn_agent requires managed SRT`
-    appear and that `remote_resume_unsupported` does not.
+    `remote_loopback_endpoint`, `spawn_agent requires managed SRT` and
+    `300 seconds` appear and that `remote_resume_unsupported` does not.
   - `test_fields_not_carried_matches_spawn_request` collects the backticked
     names before each colon in the "Fields not carried" section and asserts
     that they equal
     `{f.name for f in dataclasses.fields(SpawnRequest)} - set(SpawnPayload.model_fields)`,
     with `SpawnRequest` from `src/gobby/agents/spawn_models.py`, and that
     every entry's reason is non-empty.
+  - `test_report_digests_and_sandbox_records_validate` parses reports whose
+    fingerprints and `policy_hash` are secret-shaped, short or uppercase,
+    and sandbox records with a bad operation name, a negative count or 101
+    events, and asserts each fails; it parses the same reports with valid
+    values and asserts the digests come back unchanged.
 - Field closure, each `SpawnRequest` field the payload does not carry:
   - `cwd`, `project_path`, `worktree_id` and `clone_id`: the node computes
     its workspace from `source_root` and `workspace` (2.3), and a resume
@@ -2561,11 +2800,12 @@ Verification planned:
 
 **Acceptance:**
 
-- 3.1.1 - Every corpus message, including one of each new body and answer, a spawn with an `existing` workspace and a report agent with a `pane`, round-trips through the Rust models with `v` equal to `CONTRACT_VERSION`, and an unknown field fails. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
+- 3.1.1 - Every corpus message, including one of each new body and answer, a spawn with an `existing` workspace, a report agent with a `pane` and a `sandbox`, and an exit with a `sandbox`, round-trips through the Rust models with `v` equal to `CONTRACT_VERSION`, and an unknown field fails. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
 - 3.1.2 - The same corpus round-trips through the Python models with `v` equal to `CONTRACT_VERSION`, and an unknown field fails. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
 - 3.1.3 - Each new body refuses a `machine_id`, a spawn payload with version 1's `sandbox.network` or with `env` or `cwd` fails, an `existing` workspace without a `path` or a `path` with another mode fails, and a 1,001-entry report fails. test: `tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine`.
-- 3.1.4 - The contract document names every field of every version 2 model, including the `existing` workspace, the pane block and the four new bodies, and states `run_not_found`, `remote_loopback_endpoint` and the node's managed-SRT refusal, and no longer lists `remote_resume_unsupported`. test: `tests/hub/test_node_command_corpus.py::test_contract_doc_covers_version_2`.
+- 3.1.4 - The contract document names every field of every version 2 model, including the `existing` workspace, the pane block, the sandbox record and the four new bodies, and states `run_not_found`, `remote_loopback_endpoint`, the node's managed-SRT refusal and the 300-second preparation deadline, and no longer lists `remote_resume_unsupported`. test: `tests/hub/test_node_command_corpus.py::test_contract_doc_covers_version_2`.
 - 3.1.5 - The contract document's "Fields not carried" section names exactly the `SpawnRequest` fields that `SpawnPayload` lacks, each with its reason. test: `tests/hub/test_node_command_corpus.py::test_fields_not_carried_matches_spawn_request`.
+- 3.1.6 - A report whose `attention.fingerprint` or `attention.payload.fingerprint` holds `sk-ABCDEFGHIJKLMNOPQRSTUV`, 63 hex characters or uppercase hex, or whose `sandbox` holds such a `policy_hash`, an operation name outside the pattern, a negative count or 101 events, fails the Python parse, and the same report with valid digests parses with them unchanged. test: `tests/hub/test_node_command_corpus.py::test_report_digests_and_sandbox_records_validate`.
 
 ### 3.2 Hub spawn payload builder [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -2720,7 +2960,8 @@ Targets:
   `pane`: `tail`, `composer.line`, `idle.capacity_message`, and the
   attention block's `reason` and `payload`, whose `excerpt` and `options`
   come from a `DetectedPrompt` (`src/gobby/agents/prompt_detector.py`). Its
-  `fingerprint` is a SHA-256 digest. The hub redacts every node-supplied
+  `fingerprint` is a SHA-256 hex digest, and 3.1's model refuses any other
+  value (Decision 34). The hub redacts every node-supplied
   pane string before it persists, logs or broadcasts anything
   (Orchestrator return, 2026-10-14).
 
@@ -2730,7 +2971,9 @@ Targets:
     report in which every string inside each agent's `pane` has passed
     through `redact_terminal_output`, except `attention.fingerprint` and a
     `fingerprint` inside `attention.payload`, which the dismissal
-    bookkeeping matches.
+    bookkeeping matches. The parse has already refused either one unless
+    it is 64 lowercase hexadecimal characters (3.1), so the exemption
+    passes only digests.
   - `RemotePaneStore` keeps entries keyed by `terminal_id`, each with
     `machine_id`, `run_id`, `pane` and a `stopped` flag, plus the last
     revision per machine. `remote_pane_store()` returns the one
@@ -2749,7 +2992,10 @@ Targets:
   unchanged. `AttentionClassification` holds `reason`, `kind`,
   `fingerprint`, `payload` and `dismissed`, the shape of the report's
   `attention` block.
-- `nodes.py`: right after the body parses, before admission, the report
+- `nodes.py`: a body that fails the parse answers 422 `invalid_body`, and
+  its log line names only the failing fields' locations, never an input
+  value, because a pydantic validation error's text quotes the input.
+  Right after the body parses, before admission, the report
   route replaces the report with `redact_report_panes(report)`. So
   `record_remote_workspaces`, `put`, the store, the attention rows and
   their broadcasts, and every log line see only redacted text. After `put`
@@ -2772,6 +3018,7 @@ Verification planned:
 - 3.3.3 - A rise in `injections` clears attention as a local injection does. test: `tests/hub/test_remote_pane.py::test_injection_clears_attention`.
 - 3.3.4 - `sync` on a local run produces the same transitions through `classify` and `apply` as before the split. test: `tests/hub/test_remote_pane.py::test_local_sync_unchanged`.
 - 3.3.5 - A report whose pane tail, composer line, capacity message, attention reason, excerpt and options each hold `sk-ABCDEFGHIJKLMNOPQRSTUV` is stored with `sk-<redacted>` in their place: the secret reaches neither the inbox snapshot that hub-mode 2.6 takes, the remote pane store, the attention state row, its broadcast nor any log record, and the fingerprints pass unchanged. test: `tests/servers/test_node_routes.py::test_report_pane_text_redacted`.
+- 3.3.6 - A report whose `attention.fingerprint` or `attention.payload.fingerprint` is `sk-ABCDEFGHIJKLMNOPQRSTUV` instead of a digest is refused with 422 `invalid_body`, and the secret reaches neither the inbox, the remote pane store, an attention row, a broadcast nor any log record. test: `tests/servers/test_node_routes.py::test_report_secret_fingerprint_refused`.
 
 ### 3.4 Remote terminal runtime [category: code] (depends: 3.3)
 `kind: deliverable`
@@ -2855,13 +3102,18 @@ Verification planned:
 - 3.4.4 - For a node terminal the composer gate lets only `"empty"` through and refuses `"draft"`, `"unknown"` and a missing entry, and local terminals keep the ledger read. test: `tests/hub/test_remote_runtime.py::test_remote_composer_gate`.
 - 3.4.5 - The write, spawn, resize and attach methods of the remote runtime raise. test: `tests/hub/test_remote_runtime.py::test_remote_runtime_refuses_local_operations`.
 
-### 3.5 Hub routes for launch outcomes [category: code] (depends: 1.3, 3.4)
+### 3.5 Hub routes for launch outcomes [category: code] (depends: 1.3, 3.2, 3.4)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/servers/routes/node_runs.py`
 - `src/gobby/servers/_app_routes.py::register_routes`
+- `src/gobby/agents/spawn_executor_providers.py::_prepare_managed_code_index`
 - `tests/servers/test_node_run_routes.py`
+- `tests/agents/test_code_index_warning.py`
+
+The dependency on 3.2 orders the two leaves' edits to
+`src/gobby/agents/spawn_executor_providers.py`.
 
 **Research context:**
 - 1.3's `src/gobby/servers/routes/node_hooks.py` sets the identity rules:
@@ -2880,8 +3132,14 @@ Targets:
   1,024-character tail. It does not redact `detail`, which is fixed text
   locally and node-supplied here.
 - The code-index warning carries gcode's process preview, which 2.11 builds
-  as `_preview_process_detail` does, and the prompt with that warning
-  appended. The local failure branch stores both as they are.
+  as `_preview_process_detail` does, and the body carries the payload's
+  prompt unchanged. The local failure branch builds its warning from
+  `str(exc)` and `request.cwd`, appends it with
+  `_append_code_index_warning(prompt, warning)` (a `---` rule, a
+  "## Code Index" heading and the message), stores both in the session
+  variables and logs the raw message. `_process_detail` scrubs only
+  PostgreSQL URLs, so neither path removes `sk-` keys, bearer tokens or
+  other URL credentials today (Security gobby#16011, Decision 34).
 - `AgentLifecycleMonitor.get_cleanup_agent()` returns the cleanup handler,
   and the server holds the monitor as
   `server.services.agent_lifecycle_monitor` and the terminal services as
@@ -2910,22 +3168,41 @@ Targets:
   `terminal_services.runtime_for(terminal).terminate(terminal, grace_seconds=5.0)`,
   which is 3.4's `agent.cancel`, runs the cleanup handler with the
   transitioned run, and answers `{failed: true}`.
-- `POST /api/nodes/runs/code-index-warning` merges the session variables as
-  the failure branch does and answers `{}`.
+- `spawn_executor_providers.py` gains the module function
+  `code_index_warning(cwd, message) -> dict[str, str]`, extracted from
+  `_prepare_managed_code_index`'s failure branch, which returns
+  `{preflight: "code_index", cwd, message}` with `cwd` and `message` passed
+  through `redact_terminal_output`. `_prepare_managed_code_index` builds its
+  warning with it, so the local prompt, session variables and log line
+  carry only the sanitized warning.
+- `POST /api/nodes/runs/code-index-warning` rebuilds the warning with
+  `code_index_warning(body.warning.cwd, body.warning.message)` right after
+  the body parses, before the run lookup or any log line. It computes
+  `_append_code_index_warning(body.prompt, warning)` without passing
+  `body.prompt` through the redactor, merges the session variables as the
+  failure branch does (`additional_skills` without the code-index overview,
+  `code_index_preflight_warning` set to the sanitized warning, and `prompt`
+  set to the new prompt), logs only the sanitized message, and answers
+  `{prompt}` with the new prompt (Decision 34).
 
 Consumers unchanged:
 - `src/gobby/servers/app_factory.py` — no-edit-reason: it calls `register_routes(app, server)`, whose signature is unchanged.
 - `tests/test_wiki_retirement_contract.py` — no-edit-reason: it calls `register_routes` and asserts retired wiki paths, which the added router does not serve; re-run as verification.
+- `tests/agents/test_spawn_executor.py` — no-edit-reason: its failure-branch test uses the cwd `/isolated` and the message `scoped bootstrap missing`, which the redactor leaves unchanged; re-run as verification.
+- `src/gobby/agents/spawn_executor.py` — no-edit-reason: it re-exports `_prepare_managed_code_index` by name, and the signature is unchanged.
+- `tests/agents/test_spawn_executor_providers.py` — no-edit-reason: it patches `_prepare_managed_code_index` by its dotted path with an `AsyncMock` returning None, which the edit leaves valid; re-run as verification.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_run_routes.py tests/test_wiki_retirement_contract.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_node_run_routes.py tests/agents/test_code_index_warning.py tests/agents/test_spawn_executor.py tests/test_wiki_retirement_contract.py -v`.
 
 **Acceptance:**
 
 - 3.5.1 - Both routes refuse a missing node identity, the hub's own key, another `v` and an invalid body with 1.3's codes, and answer 404 `run_not_found` for an unknown run or another machine's run. test: `tests/servers/test_node_run_routes.py::test_node_run_routes_identity`.
 - 3.5.2 - A prompt-delivery failure on an uninitialized run stores the redacted error, kills the run through `agent.cancel`, runs cleanup and answers `{failed: true}`, and on an initialized run answers `{failed: false}` and changes nothing. test: `tests/servers/test_node_run_routes.py::test_prompt_delivery_failure_route`.
-- 3.5.3 - A code-index warning merges the session variables as the local failure branch does. test: `tests/servers/test_node_run_routes.py::test_code_index_warning_route`.
+- 3.5.3 - A code-index warning merges the session variables as the local failure branch does and answers the prompt it stored. test: `tests/servers/test_node_run_routes.py::test_code_index_warning_route`.
 - 3.5.4 - A prompt-delivery failure whose `pane` and `detail` each hold `sk-ABCDEFGHIJKLMNOPQRSTUV` stores `sk-<redacted>` in their place in the run's error, and the secret reaches neither the cleanup handler's terminal payload nor any log record. test: `tests/servers/test_node_run_routes.py::test_prompt_delivery_pane_redacted`.
+- 3.5.5 - A code-index warning whose `message` holds `sk-ABCDEFGHIJKLMNOPQRSTUV`, `Bearer abcdefghijklmnopqrstuv` and `https://deploy:hunter2secret@git.example.com/repo.git`, and whose `cwd` holds the `sk-` key, stores and answers none of the three secrets: not in `code_index_preflight_warning`, the stored or answered prompt, nor any log record. The stored prompt starts with the body's `prompt` byte for byte, including a body prompt that names the operator's home path, and ends with the sanitized "## Code Index" section. test: `tests/servers/test_node_run_routes.py::test_code_index_warning_redacted`.
+- 3.5.6 - A local preflight failure whose exception text holds the same three secrets leaves none of them in `request.code_index_preflight_warning`, the prompt, the merged session variables or the log record, and leaves the prompt before the "## Code Index" section unchanged. test: `tests/agents/test_code_index_warning.py::test_local_warning_redacted`.
 
 ### 3.6 Terminate route [category: code] (depends: 3.5)
 `kind: deliverable`
@@ -3104,6 +3381,77 @@ Verification planned:
 - 3.8.4 - A node run whose composer holds a draft is not reprompted, and one with no store entry is skipped. test: `tests/hub/test_remote_idle_policy.py::test_draft_and_missing_entry_hold`.
 - 3.8.5 - Local runs take the same idle decisions as before, with their facts read from the pane. test: `tests/hub/test_remote_idle_policy.py::test_local_idle_unchanged`.
 
+### 3.9 Node sandbox records on the hub [category: code] (depends: 3.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hub/remote_sandbox.py`
+- `src/gobby/servers/routes/nodes.py`
+- `src/gobby/storage/agents/_sandbox_records.py::sandbox_record`
+- `src/gobby/storage/agents/_sandbox_records.py::sandbox_list_record`
+- `src/gobby/tasks/close_review_delivery.py::_review_sandbox_denials`
+- `tests/hub/test_remote_sandbox.py`
+- `tests/servers/test_node_routes.py`
+
+**Research context:**
+- A local run's sandbox record lives under `resume_metadata_json["sandbox"]`,
+  written from `SandboxLaunch.metadata()` at launch
+  (`src/gobby/agents/spawn_executor_support.py`) and patched by
+  `LocalAgentRunManager.merge_sandbox_metadata`
+  (`src/gobby/storage/agents/_runtime.py`).
+- `sandbox_record` reads the count and, with `include_events`, the recent
+  events from a trusted live or retained log, and falls back to a stored
+  `violation_count` only when it has no log. `sandbox_list_record` reads
+  the log for an active run and the stored count for a terminal one.
+- `_review_sandbox_denials` (`src/gobby/tasks/close_review_delivery.py`)
+  counts operations by `_DENIAL_OPERATION` over the live or retained log
+  and fills the rest as `unclassified`. A node run has neither log on the
+  hub.
+- 3.1's report carries `sandbox` on each agent entry and exit (Decision 33).
+
+**Implementation:**
+- `close_review_delivery.py`: `denial_operations(path, count) -> dict[str, int]`
+  is extracted from `_review_sandbox_denials` with the same loop.
+  `_review_sandbox_denials` uses it when it has a readable log, and
+  otherwise the record's stored `denial_operations`, then fills
+  `unclassified` as before.
+- `src/gobby/hub/remote_sandbox.py` (new):
+  - `redact_report_sandbox(report) -> ReportBody` passes every string
+    inside each exit's `recent_violations` through `redact_terminal_output`.
+  - `apply_sandbox_records(run_manager, machine_id, report)`: for each
+    agent and exit with a `sandbox` whose run belongs to `machine_id`, it
+    calls `merge_sandbox_metadata(run_id, ..)` with `backend: "srt"`,
+    `enforced: true`, the record's identity, count and
+    `denial_operations`, `violation_count_truncated` when true, and an
+    exit's `recent_violations`. It skips an agent record equal to the
+    stored one, so a quiet run costs no write.
+- `nodes.py`: the report route calls `redact_report_sandbox` right after
+  3.3's `redact_report_panes`, and `apply_sandbox_records` after `put`
+  succeeds. A failure there is logged and the route still answers `{}`.
+- `_sandbox_records.py`: with no trusted log, `sandbox_record` returns the
+  stored `recent_violations`, bounded again to 100 events and 2,048
+  characters a command, and `sandbox_list_record` returns the stored count
+  for an active run as it does for a terminal one. A local run always has
+  a trusted log, so its record is unchanged.
+
+Consumers unchanged:
+- `tests/storage/test_agent_sandbox_records.py` — no-edit-reason: it builds local records with trusted live and retained logs, which take the unchanged branches; re-run as verification.
+- `tests/tasks/test_close_review_delivery.py` — no-edit-reason: it reads denials from a local log, which `denial_operations` reads with the same loop; re-run as verification.
+- `src/gobby/storage/agents/_models.py` — no-edit-reason: `AgentRun.to_dict`, `AgentRun.to_brief` and `AgentRunListRow.from_row` call `sandbox_record` and `sandbox_list_record` with unchanged signatures, and a node run's stored values reach them through the changed branches.
+- `src/gobby/storage/agents/_lifecycle.py` — no-edit-reason: terminalization writes back the count `sandbox_record` returns; for a node run that is the stored count 3.9 merged, so the write leaves it unchanged.
+- `src/gobby/agents/sandbox_reaper.py` — no-edit-reason: it builds a record with `include_events=False` from a local retention patch, which holds no stored `recent_violations`, and reads its count only when the patch names a retained log.
+- `src/gobby/mcp_proxy/tools/agents_payloads.py` — no-edit-reason: it calls `sandbox_record(metadata, include_events=False)` with an unchanged signature and returns a node run's stored count.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_sandbox.py tests/servers/test_node_routes.py tests/storage/test_agent_sandbox_records.py tests/tasks/test_close_review_delivery.py -v`.
+
+**Acceptance:**
+
+- 3.9.1 - A report's agent and exit records merge into the node run's sandbox record, an unchanged agent record writes nothing, and a record for another machine's run is ignored. test: `tests/hub/test_remote_sandbox.py::test_records_merge_into_node_runs`.
+- 3.9.2 - A node run's record shows the reported count while active and after it ends, and its events after the exit, bounded to 100 events and 2,048 characters a command. test: `tests/hub/test_remote_sandbox.py::test_node_run_record_reads_stored_values`.
+- 3.9.3 - A node `task-close-reviewer`'s close review reports the node's denial operations, and a local reviewer's denials still come from its log. test: `tests/hub/test_remote_sandbox.py::test_close_review_uses_node_denials`.
+- 3.9.4 - An exit whose `recent_violations` hold `sk-ABCDEFGHIJKLMNOPQRSTUV` in a `line` and a `command` stores `sk-<redacted>` in their place, and the secret reaches neither the run row, its broadcast nor any log record. test: `tests/servers/test_node_routes.py::test_report_sandbox_events_redacted`.
+
 ## V1: Plan Changelog
 `kind: framing`
 
@@ -3215,6 +3563,38 @@ Verification planned:
   number hub-mode's node duties cite. `resume_session_id` is the
   provider-native thread id (3.1, 3.2, 3.2.3). An `existing` workspace
   carries the row's `branch_name` and a null `base_branch` (3.1).
+- 2026-10-14, second amendment. Security gobby#16011 landed item 2 (the
+  node's managed-SRT refusal) and bounced item 3 with two asks, both
+  accepted by the Orchestrator; hub-mode writer gobby#16490 asked for
+  prompt-file removal and matching task refs:
+  1. B1: the hub sanitizes the code-index warning with
+     `redact_terminal_output`, keeps the prompt as sent, appends the
+     sanitized warning and answers the new prompt, which the node launches
+     with; the local branch uses the same helper (Decision 34; 2.11, 2.11.2,
+     3.1, 3.5, 3.5.3, 3.5.5, 3.5.6). 3.5 now depends on 3.2, which edits the
+     same file.
+  2. B2: the Python models refuse a fingerprint or `policy_hash` that is
+     not 64 lowercase hex characters, and a refused report's log line holds
+     no input value (Decision 34; 3.1.6, 3.3, 3.3.6).
+  3. The prompt file sits in a 0700 directory and is removed once
+     `prepare_launch` returns (2.6, 2.6.10); the start-time sweep removes
+     leftovers (2.15).
+  4. Found while answering 3: hub-mode 2.1.3 skips SRT and sandbox reaping
+     for node runs, and the hub had no sandbox record for them. New 2.15
+     reaps runner trees and run roots, retains diagnostics and reports a
+     sandbox record per agent and exit; new 3.9 stores those records and
+     serves them to the run record and close review (Decision 33). 3.1
+     adds the `sandbox` fields.
+  5. Found while writing 4: macOS SRT launches need the shared violation
+     monitor (#24307), which 2.5 did not port. 2.5 now starts or reuses it
+     (2.5.7).
+  6. The edge table names hub-mode 1.2 and 5.1 as "no task yet", with the
+     placeholder tasks that hold them, moves the hub-mode 4.2 and 4.6 rows
+     to 2.15, and the "no edge" list records the reaping split and the
+     shared files with remove-gobby-build 1.2 (landed) and
+     local-inference-runtime-foundation 4.3 (no task). 2.15 states why it
+     follows 3.9. 3.1's contract doc states the 300-second deadline. The
+     plan now has 30 leaves.
 
 ## V2: Verification
 `kind: verification`
@@ -3228,10 +3608,10 @@ CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_hooks) + bi
 CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-terminals -E 'binary(control_snapshot)'
 CARGO_BUILD_JOBS=3 cargo clippy -p gobby-daemon -p gobby-terminals --all-targets -- -D warnings
 cargo fmt -p gobby-daemon -p gobby-terminals -- --check
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py tests/contracts/test_hook_ingress_doc.py tests/servers/test_node_hook_routes.py tests/hooks/test_replay_decision.py tests/agents/test_node_srt_corpus.py tests/agents/test_node_isolation_golden.py tests/agents/test_node_launch_corpus.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py tests/contracts/test_hook_ingress_doc.py tests/servers/test_node_hook_routes.py tests/hooks/test_replay_decision.py tests/agents/test_node_srt_corpus.py tests/agents/test_node_isolation_golden.py tests/agents/test_node_launch_corpus.py tests/agents/test_node_sandbox_record_corpus.py -v
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/ -k "inbox or replay or receipt or grok_pending" -v
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_pane_detection_corpus.py tests/agents/test_prompt_detector.py tests/agents/test_idle_detector.py tests/agents/test_stall_classifier.py -v
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_node_command_corpus.py tests/hub/test_spawn_payload.py tests/hub/test_remote_pane.py tests/hub/test_remote_runtime.py tests/hub/test_remote_idle_policy.py tests/servers/test_node_run_routes.py tests/servers/test_node_routes.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_node_command_corpus.py tests/hub/test_spawn_payload.py tests/hub/test_remote_pane.py tests/hub/test_remote_runtime.py tests/hub/test_remote_idle_policy.py tests/hub/test_remote_sandbox.py tests/servers/test_node_run_routes.py tests/servers/test_node_routes.py tests/agents/test_code_index_warning.py tests/agents/test_spawn_executor.py tests/storage/test_agent_sandbox_records.py tests/tasks/test_close_review_delivery.py -v
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_spawn_executor_providers.py tests/agents/test_attention_state.py tests/agents/test_attention_metadata.py tests/agents/test_native_spawn.py tests/agents/test_capture.py tests/agents/watchdog/test_composer_gate.py tests/agents/test_lifecycle_monitor.py tests/agents/test_lifecycle_monitor_extra.py tests/agents/test_idle_check_transcript_paths.py tests/test_wiki_retirement_contract.py -v
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
