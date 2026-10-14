@@ -1,6 +1,7 @@
 """Inline interpreter wrappers cannot certify their embedded command outcomes."""
 
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -67,7 +68,13 @@ def test_uv_node_wrapper_masking_inner_exit_cannot_pass_gate(printed_exit: int) 
 
 
 def _assert_wrapper_rejected(arguments: list[str], printed_exit: int) -> None:
-    result = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        arguments,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "UV_NO_SYNC": "1"},
+    )
     assert result.returncode == 0
     assert json.loads(result.stdout) == {"exit": printed_exit}
     command = shlex.join(arguments)
@@ -141,6 +148,21 @@ def test_inline_python_commands_are_diagnostic_only(command: str) -> None:
         "python3.14t scripts/check.py -c config.json",
         "uv pip check",
         "uv lock --check",
+        "uv -q pip check",
+        "uv --directory . -q lock --check",
+        "uv run -m pytest -c pytest.ini",
+        "uv run --module pytest -k python",
+        "uv run --reinstall pytest -q",
+        "uv build --wheel",
+        "uv export --locked",
+        "uv format --check",
+        "uvx pytest -q",
+        "timeout 60 pytest -q",
+        "time -p python -m pytest",
+        "exec python -m pytest",
+        "command -p python -m pytest",
+        "xargs -n 1 pytest",
+        "pypy3 -m pytest",
     ],
 )
 def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> None:
@@ -164,6 +186,25 @@ def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> 
         "env -S 'python -c print(0)'",
         "uv run --no-sync rtk env -S 'python -c print(0)'",
         "bash --future-option script.sh",
+        "uvx python -c 'print(0)'",
+        "uvx --from example pypy3 -c 'print(0)'",
+        "timeout 60 python -c 'print(0)'",
+        "timeout --signal TERM 60 python -c 'print(0)'",
+        "time -p python -c 'print(0)'",
+        "exec -a alias python -c 'print(0)'",
+        "command -p python -c 'print(0)'",
+        "xargs -n 1 python -c 'print(0)'",
+        "pypy3 -c 'print(0)'",
+        "uv run --no-sync timeout 60 pypy3 -c 'print(0)'",
+        "uvx --future-option python -c 'print(0)'",
+        "timeout --future-option 60 python -c 'print(0)'",
+        "time --future-option python -c 'print(0)'",
+        "exec --future-option python -c 'print(0)'",
+        "command --future-option python -c 'print(0)'",
+        "xargs --future-option python -c 'print(0)'",
+        "xargs -I '{}' '{}' -c 'print(0)'",
+        "xargs --replace=TOKEN TOKEN -c 'print(0)'",
+        "uv run uv run python -c 'print(0)'",
     ],
 )
 def test_ambiguous_interpreter_and_launcher_forms_get_no_credit(command: str) -> None:

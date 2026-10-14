@@ -30,7 +30,10 @@ _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
-_PYTHON_EXECUTABLE = re.compile(r"python(?:\d+(?:\.\d+)*)?t?")
+_PYTHON_EXECUTABLE = re.compile(r"(?:python|pypy)(?:\d+(?:\.\d+)*)?t?")
+_UV_DIRECT_COMMANDS = frozenset(
+    {"pip", "lock", "sync", "tree", "version", "build", "export", "format"}
+)
 _UV_VALUE_OPTIONS = frozenset(
     {
         "--allow-insecure-host",
@@ -53,6 +56,7 @@ _UV_VALUE_OPTIONS = frozenset(
         "--with",
         "--with-editable",
         "--with-requirements",
+        "--from",
         "--index",
         "--default-index",
         "--index-url",
@@ -70,6 +74,7 @@ _UV_VALUE_OPTIONS = frozenset(
 _UV_FLAG_OPTIONS = frozenset(
     {
         "--no-sync",
+        "--reinstall",
         "--frozen",
         "--locked",
         "--offline",
@@ -280,10 +285,15 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
             continue
         executable = os.path.basename(tokens[0])
         arguments = tokens[1:]
-        if executable == "uv":
-            if arguments and arguments[0] in {"pip", "lock", "sync", "tree", "version"}:
-                return executable, arguments  # Known direct checks, never child launchers.
-            inner = _uv_run_arguments(arguments)
+        if executable in {"uv", "uvx"}:
+            inner = _uv_run_arguments(arguments if executable == "uv" else ("run", *arguments))
+            if inner is None:
+                return None
+            if inner[0] == "uv" and len(inner) > 1 and inner[1] in _UV_DIRECT_COMMANDS:
+                return "uv", inner[1:]  # Proven direct uv subcommand.
+            tokens = inner
+        elif executable in {"timeout", "time", "exec", "command", "xargs"}:
+            inner = _launcher_arguments(executable, arguments)
             if inner is None:
                 return None
             tokens = inner
@@ -304,6 +314,7 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
     """Resolve only known uv options, stopping at the child command boundary."""
     index = 0
     seen_run = False
+    module = False
     while index < len(arguments):
         token = arguments[index]
         if not seen_run and token == "run":
@@ -311,9 +322,19 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
             index += 1
             continue
         if seen_run and token == "--":
-            return arguments[index + 1 :] or None
+            child = arguments[index + 1 :]
+            return ("python", "-m", *child) if module and child else child or None
         if not token.startswith("-"):
-            return arguments[index:] if seen_run else None
+            child = arguments[index:]
+            if seen_run:
+                return ("python", "-m", *child) if module else child
+            if token in _UV_DIRECT_COMMANDS:
+                return ("uv", *child)
+            return None
+        if seen_run and token in {"-m", "--module"}:
+            module = True
+            index += 1
+            continue
         option, equals, value = token.partition("=")
         if option in _UV_VALUE_OPTIONS:
             if equals:
@@ -331,6 +352,61 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
         else:
             return None
     return None
+
+
+def _launcher_arguments(executable: str, arguments: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Resolve bounded prefix options; unknown options never hide the child."""
+    flags, values = {
+        "timeout": (
+            {"--foreground", "--preserve-status", "--verbose", "-v"},
+            {"-s", "--signal", "-k", "--kill-after"},
+        ),
+        "time": ({"-p"}, set()),
+        "exec": ({"-c", "-l"}, {"-a"}),
+        "command": ({"-p"}, set()),
+        "xargs": (
+            {"-0", "-r", "-t", "-x", "--null", "--no-run-if-empty", "--verbose"},
+            {
+                "-n",
+                "-P",
+                "-E",
+                "-L",
+                "-s",
+                "--max-args",
+                "--max-procs",
+                "--eof",
+                "--max-lines",
+                "--max-chars",
+                "-d",
+                "--delimiter",
+            },
+        ),
+    }[executable]
+    index = 0
+    while index < len(arguments) and arguments[index].startswith("-"):
+        token = arguments[index]
+        if token == "--":
+            index += 1
+            break
+        option, equals, value = token.partition("=")
+        if token in flags:
+            index += 1
+        elif option in values:
+            if equals:
+                if not value:
+                    return None
+                index += 1
+            elif index + 1 < len(arguments):
+                index += 2
+            else:
+                return None
+        elif len(token) > 2 and token[:2] in values:
+            index += 1
+        else:
+            return None
+    if executable == "timeout":
+        index += 1  # Duration is a launcher operand, never the child executable.
+    return arguments[index:] or None
 
 
 def is_unexecuted_tool_result(result: Any, *, source: str | None = None) -> bool:
