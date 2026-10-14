@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.cli import install_setup, install_setup_ghook
 from gobby.cli.install_setup import (
     _GHOOK_BIN_NAME,
     _GHOOK_INSTALL_SIDECAR,
@@ -28,7 +29,9 @@ from gobby.cli.install_setup import (
     _probe_ghook_version,
     _write_ghook_version_stamp,
 )
+from gobby.install.bin_release_identity import release_identity_path
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.storage import schema_contract
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +62,75 @@ def _write_fake_native_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
 def _read_ghook_sidecar(bin_dir: Path) -> dict[str, object]:
     """Load the ghook install provenance sidecar."""
     return cast(dict[str, object], json.loads((bin_dir / _GHOOK_INSTALL_SIDECAR).read_text()))
+
+
+@pytest.mark.parametrize("coherence_refusal", [False, True])
+def test_install_ghook_workspace_refusal_preserves_installed_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, coherence_refusal: bool
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "crates" / "ghook").mkdir(parents=True)
+    (workspace / "Cargo.toml").write_text("[workspace]\n")
+    (workspace / "crates" / "ghook" / "Cargo.toml").write_text("[package]\n")
+    source = workspace / "target" / "release" / "ghook"
+    source.parent.mkdir(parents=True)
+    source.write_text("#!/bin/sh\necho 'ghook " + MANAGED_BIN_VERSION_PINS["ghook"] + "'\n")
+    source.chmod(0o755)
+    bin_dir = tmp_path / "home" / "bin"
+    bin_dir.mkdir(parents=True)
+    installed = bin_dir / "ghook"
+    installed.write_text(
+        "#!/bin/sh\necho 'ghook " + MANAGED_BIN_VERSION_PINS["ghook"] + "'\n# old build\n"
+    )
+    installed.chmod(0o755)
+    receipt = release_identity_path(bin_dir, "ghook")
+    receipt.write_text(
+        json.dumps({"version": MANAGED_BIN_VERSION_PINS["ghook"], "source_identity": "old-tree"})
+    )
+    original = installed.read_bytes(), receipt.read_bytes()
+    identity = schema_contract.expected_schema_identity()
+    (bin_dir / ".gdaemon-schema-identity.json").write_text(json.dumps(identity))
+    candidate_identity = (
+        {**identity, "latest_checksum": "f" * 64} if coherence_refusal else identity
+    )
+    monkeypatch.setattr(install_setup_ghook, "get_gobby_home", lambda: bin_dir.parent)
+    monkeypatch.setattr(
+        install_setup_ghook, "__file__", str(workspace / "src/gobby/cli/installer.py")
+    )
+    monkeypatch.setattr(install_setup_ghook, "cargo_release_dir", lambda _root: source.parent)
+    monkeypatch.setattr(install_setup, "shutil", SimpleNamespace(which=lambda _name: "cargo"))
+    monkeypatch.setattr("gobby.cli.install_setup.sys.platform", "darwin")
+    monkeypatch.setattr(install_setup, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr(
+        install_setup,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_set_coherence.probe_set_member_identity",
+        lambda *_args: candidate_identity,
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_release_identity.workspace_source_identity", lambda *_args: "new-tree"
+    )
+
+    result = _install_ghook(force=True)
+
+    assert result["installed"] is False
+    assert result["skipped"] is False
+    if coherence_refusal:
+        assert "workspace binary set promotion refused" in result["reason"]
+        assert "rebuild and install all three together" in result["reason"]
+    else:
+        assert result["reason"] == (
+            "ghook: changed or unverified source under installed version "
+            + MANAGED_BIN_VERSION_PINS["ghook"]
+            + "; bump its patch version before promotion"
+        )
+    assert (installed.read_bytes(), receipt.read_bytes()) == original
 
 
 class TestGetLatestGhookVersion:
@@ -127,6 +199,7 @@ class TestInstallGhookFromWorkspace:
         run = MagicMock(return_value=subprocess.CompletedProcess([], 0))
 
         with (
+            patch("gobby.cli.install_setup_ghook.cargo_release_dir", return_value=source.parent),
             patch(
                 "gobby.cli.install_setup.shutil",
                 SimpleNamespace(which=MagicMock(return_value="/usr/bin/cargo")),

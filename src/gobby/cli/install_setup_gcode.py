@@ -11,7 +11,9 @@ from urllib.request import Request
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import (
+    BinarySetCoherenceError,
     promote_workspace_binary_set,
     workspace_build_only,
 )
@@ -160,8 +162,11 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
     if compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
-    if not module._install_gcode_from_submodule(bin_dir):
-        return {"installed": False, "skipped": False, "reason": workspace_build_only("gcode")}
+    try:
+        if not module._install_gcode_from_submodule(bin_dir):
+            return {"installed": False, "skipped": False, "reason": workspace_build_only("gcode")}
+    except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
+        return {"installed": False, "skipped": False, "reason": str(exc)}
 
     gcode_path.chmod(0o755)
 
