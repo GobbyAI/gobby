@@ -90,8 +90,8 @@ def _receipts() -> Any:
 
 
 def _apply_acknowledged_receipt() -> Any:
-    inbox = importlib.import_module("gobby.hooks.inbox")
-    apply = getattr(inbox, "apply_acknowledged_receipt", None)
+    effects = importlib.import_module("gobby.hooks.receipt_effects")
+    apply = getattr(effects, "apply_acknowledged_receipt", None)
     assert apply is not None
     return apply
 

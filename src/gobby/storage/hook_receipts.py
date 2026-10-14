@@ -279,16 +279,26 @@ def find_undelivered_startup_context(
     return dict(startup) if isinstance(startup, dict) else None
 
 
-def terminalize_receipts_for_envelope(db: HubDatabase, *, envelope_id: str) -> int:
+def terminalize_receipts_for_envelope(
+    db: HubDatabase, *, envelope_id: str, machine_id: str | None = None
+) -> int:
     """CAS prepared or released rows for this carrying envelope to undelivered."""
 
     now = utc_now()
+    ownership = ""
+    params: tuple[Any, ...] = (now, envelope_id)
+    if machine_id is not None:
+        ownership = (
+            " AND EXISTS (SELECT 1 FROM sessions s "
+            "WHERE s.id = hook_receipt_effects.session_id AND s.machine_id = %s)"
+        )
+        params += (machine_id,)
     with db.transaction() as conn:
         result = conn.execute(
             "UPDATE hook_receipt_effects SET state = 'terminal-undelivered', "
             "transition_at = %s WHERE current_envelope_id = %s "
-            "AND state IN ('prepared', 'released')",
-            (now, envelope_id),
+            "AND state IN ('prepared', 'released')" + ownership,
+            params,
         )
         return int(getattr(result, "rowcount", 0) or 0)
 

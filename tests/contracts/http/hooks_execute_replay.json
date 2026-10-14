@@ -13,11 +13,11 @@
     },
     "body": {
       "schema_version": 1,
-      "hook_type": "Notification",
+      "hook_type": "Interrupt",
       "input_data": {
         "message": "HTTP contract probe"
       },
-      "source": "claude",
+      "source": "codex",
       "critical": false,
       "enqueued_at": "2026-01-01T00:00:00Z",
       "response_capability": "hook-response.v1"

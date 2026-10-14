@@ -1553,7 +1553,7 @@ def test_concurrent_sweeps_and_drain_acknowledge_one_ack_once(
             "gobby.storage.hook_receipts.acknowledge_receipt",
             side_effect=[MagicMock(), None, None],
         ) as acknowledge,
-        patch("gobby.hooks.inbox.apply_acknowledged_receipt"),
+        patch("gobby.hooks.receipt_effects.apply_acknowledged_receipt"),
         patch("gobby.hooks.inbox._mark_carrying_envelopes_processed"),
         caplog.at_level(logging.INFO, logger="gobby.hooks.inbox"),
         ThreadPoolExecutor(max_workers=3) as pool,
@@ -1642,7 +1642,7 @@ def test_claim_stranded_by_a_crash_is_acknowledged_by_the_next_daemon(
         patch("gobby.hooks.inbox._RECEIPT_CLAIM_OWNER", "next-daemon"),
         patch("gobby.hooks.inbox.read_local_api_token", return_value="test-token"),
         patch("gobby.storage.hook_receipts.acknowledge_receipt") as acknowledge,
-        patch("gobby.hooks.inbox.apply_acknowledged_receipt"),
+        patch("gobby.hooks.receipt_effects.apply_acknowledged_receipt"),
         patch("gobby.hooks.inbox._mark_carrying_envelopes_processed"),
     ):
         if next_consumer == "sweep":
