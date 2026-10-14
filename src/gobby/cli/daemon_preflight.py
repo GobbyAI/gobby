@@ -78,8 +78,13 @@ def restart_start_refusal(
     config = get_cli_runtime(ctx).read_only_operational_config()
     if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
         from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+        from gobby.cli.install_setup_srt import restage_srt_runner
 
         try:
+            # A landed runner pin changes the checkout before the running
+            # daemon restarts. Stage its verified assets before proving start,
+            # while the old daemon is still available if installation fails.
+            restage_srt_runner()
             verify_srt_installation()
         except SrtRuntimeError as exc:
             return f"Managed SRT sandbox preflight failed: {exc}"
