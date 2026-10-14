@@ -12,6 +12,7 @@ class FakePing:
     host_epoch: str
     host_pid: int
     version: str = "0.1.0"
+    generation: int | None = None
 
 
 @dataclass

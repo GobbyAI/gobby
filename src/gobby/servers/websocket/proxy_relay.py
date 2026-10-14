@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -198,6 +200,34 @@ class ProxyAttachment:
     # The newest valid theme this attachment declared; it reaches the host
     # while the attachment holds the writer lease (or nobody does).
     theme: Any = None
+    # Reopens the host frame after an in-place host upgrade closed it; None
+    # when it cannot. The relay reconnects only to the same host epoch at a
+    # later upgrade generation than the one it attached at.
+    reopen: Callable[[], Awaitable[Any]] | None = None
+    host_epoch: str | None = None
+    host_generation: int | None = None
+
+
+async def bind_proxy_frame(frame: Any, locator: AttachLocator, encoding: str) -> None:
+    """Handshake an opened host frame and attach it to the located terminal."""
+    handshake = getattr(frame, "handshake", None)
+    if callable(handshake):
+        await handshake(locator, encoding=encoding)
+    attach = getattr(frame, "attach_terminal", None)
+    if callable(attach):
+        await attach(locator, reservation_id=None)
+
+
+async def close_frame_quietly(frame: Any) -> None:
+    closer = getattr(frame, "close", None)
+    if not callable(closer):
+        return
+    try:
+        result = closer()
+        if asyncio.iscoroutine(result):
+            await result
+    except Exception:
+        logger.debug("frame close failed", exc_info=True)
 
 
 class ProxyHub:
@@ -229,13 +259,10 @@ class ProxyHub:
         frame: Any,
         encoding: str,
         terminal: Any = None,
+        reopen: Callable[[], Awaitable[Any]] | None = None,
+        host_generation: int | None = None,
     ) -> None:
-        handshake = getattr(frame, "handshake", None)
-        if callable(handshake):
-            await handshake(locator, encoding=encoding)
-        attach = getattr(frame, "attach_terminal", None)
-        if callable(attach):
-            await attach(locator, reservation_id=None)
+        await bind_proxy_frame(frame, locator, encoding)
         record = ProxyAttachment(
             terminal_id=terminal_id,
             attachment_id=attachment_id,
@@ -244,6 +271,9 @@ class ProxyHub:
             encoding=encoding,
             backend=locator.backend,
             terminal=terminal,
+            reopen=reopen,
+            host_epoch=locator.frame_host_epoch,
+            host_generation=host_generation,
         )
         self.attachments[attachment_id] = record
         self.by_socket.setdefault(websocket, set()).add(attachment_id)
@@ -350,14 +380,7 @@ class ProxyHub:
         record.task = None
         if task is not None and task is not asyncio.current_task():
             task.cancel()
-        closer = getattr(record.frame, "close", None)
-        if callable(closer):
-            result = closer()
-            if asyncio.iscoroutine(result):
-                try:
-                    await result
-                except Exception:
-                    logger.debug("frame close failed", exc_info=True)
+        await close_frame_quietly(record.frame)
         if event is None:
             return
         await self._owner._apply_terminal_sizing(event.terminal_id, event.sizing)
@@ -389,14 +412,7 @@ class ProxyHub:
             record = self.attachments.pop(attachment_id, None)
             if record is None:
                 continue
-            closer = getattr(record.frame, "close", None)
-            if callable(closer):
-                result = closer()
-                if asyncio.iscoroutine(result):
-                    try:
-                        await result
-                    except Exception:
-                        logger.debug("frame close failed", exc_info=True)
+            await close_frame_quietly(record.frame)
             if record.task is not None and record.task is not asyncio.current_task():
                 record.task.cancel()
         self.by_socket.pop(websocket, None)
@@ -405,39 +421,22 @@ class ProxyHub:
             relay.closed = True
 
     async def _pump(self, record: ProxyAttachment) -> None:
+        reconnected = False
         try:
-            if record.backend == "native" and record.encoding == "terminal_ansi":
-                if await self._emit_native_history(record) is not None:
-                    return
             while True:
-                message = await record.frame.read_relay_message()
-                mapped = _map_host_frame(
-                    message,
-                    record.terminal_id,
-                    record.attachment_id,
-                    record.encoding,
-                )
-                if mapped is None:
-                    kind = message.get("type") if isinstance(message, dict) else None
-                    if kind in {"error", "terminal_exited"}:
-                        await self.finalize_attachment(record.attachment_id, "host_loss")
-                        return
-                    continue
-                if mapped.get("type") == "terminal_output":
-                    observer = getattr(self._owner, "terminal_turn_observer", None)
-                    output = mapped.get("data")
-                    if observer is not None and isinstance(output, str):
-                        await observer.observe_output_async(record.terminal_id, output)
                 try:
-                    seq = self._owner._leases().next_message_seq(record.attachment_id)
-                except Exception:
-                    await self.finalize_attachment(record.attachment_id, "message_seq_overflow")
+                    if reconnected:
+                        await self._restore_frame_state(record)
+                    if record.backend == "native" and record.encoding == "terminal_ansi":
+                        if await self._emit_native_history(record) is not None:
+                            return
+                    await self._relay_frames(record)
                     return
-                overflow = await self.emit_event(record.websocket, mapped, message_seq=seq)
-                if overflow is not None or record.attachment_id not in self.attachments:
-                    return
-        except FrameProtocolError:
-            await self.finalize_attachment(record.attachment_id, "proxy_frame_eof")
+                except FrameProtocolError:
+                    if not await self._reconnect(record):
+                        await self.finalize_attachment(record.attachment_id, "proxy_frame_eof")
+                        return
+                    reconnected = True
         except FrameLagError:
             await self.finalize_attachment(record.attachment_id, "proxy_lag")
         except asyncio.CancelledError:
@@ -445,6 +444,101 @@ class ProxyHub:
         except Exception:
             logger.debug("proxy pump failed", exc_info=True)
             await self.finalize_attachment(record.attachment_id, "host_loss")
+
+    async def _relay_frames(self, record: ProxyAttachment) -> None:
+        while True:
+            message = await record.frame.read_relay_message()
+            mapped = _map_host_frame(
+                message,
+                record.terminal_id,
+                record.attachment_id,
+                record.encoding,
+            )
+            if mapped is None:
+                kind = message.get("type") if isinstance(message, dict) else None
+                if kind in {"error", "terminal_exited"}:
+                    await self.finalize_attachment(record.attachment_id, "host_loss")
+                    return
+                continue
+            if mapped.get("type") == "terminal_output":
+                observer = getattr(self._owner, "terminal_turn_observer", None)
+                output = mapped.get("data")
+                if observer is not None and isinstance(output, str):
+                    await observer.observe_output_async(record.terminal_id, output)
+            try:
+                seq = self._owner._leases().next_message_seq(record.attachment_id)
+            except Exception:
+                await self.finalize_attachment(record.attachment_id, "message_seq_overflow")
+                return
+            overflow = await self.emit_event(record.websocket, mapped, message_seq=seq)
+            if overflow is not None or record.attachment_id not in self.attachments:
+                return
+
+    async def _reconnect(self, record: ProxyAttachment) -> bool:
+        """Swap in a reopened host frame after an in-place host upgrade.
+
+        An upgrade closes every host frame. While its window is open, or once
+        the host reports a later generation, the relay waits for the window to
+        close (bounded by its deadline) and reopens under the same attachment
+        only when the host kept its epoch and moved to a later generation,
+        which both a successful exec and a verified fallback do. False means
+        the EOF stands and the caller finalizes as before.
+        """
+        host: Any = getattr(self._owner, "terminal_host_manager", None)
+        upgrade = getattr(host, "upgrade", None)
+        if record.reopen is None or upgrade is None:
+            return False
+        if not upgrade.is_open and not _generation_advanced(host, record):
+            return False
+        window = upgrade.window
+        if window is not None:
+            try:
+                await asyncio.wait_for(
+                    upgrade.wait_closed(), max(0.0, window.deadline - time.monotonic())
+                )
+            except TimeoutError:
+                return False
+        if host.host_epoch != record.host_epoch or not _generation_advanced(host, record):
+            return False
+        frame = await record.reopen()
+        if frame is None:
+            return False
+        if self.attachments.get(record.attachment_id) is not record:
+            # Finalized while the reopen was in flight; nothing owns the frame.
+            await asyncio.shield(close_frame_quietly(frame))
+            return False
+        old, record.frame = record.frame, frame
+        record.host_generation = host.host_generation
+        await asyncio.shield(close_frame_quietly(old))
+        return True
+
+    async def _restore_frame_state(self, record: ProxyAttachment) -> None:
+        """Give a reopened host frame what the attachment set on the old one.
+
+        The viewport and scroll offset follow the same rules as their handlers;
+        the theme is declared only where ``terminal_set_theme`` would declare it.
+        """
+        leases = self._owner._leases()
+        lease = leases.get(record.attachment_id)
+        if lease is None:
+            return
+        set_viewport = getattr(record.frame, "set_viewport", None)
+        if lease.viewport is not None and callable(set_viewport):
+            await set_viewport(*lease.viewport)
+        set_scroll = getattr(record.frame, "set_scroll_offset", None)
+        if lease.scroll_offset and record.backend == "native" and callable(set_scroll):
+            await set_scroll(lease.scroll_offset)
+        if leases.holder(record.terminal_id) in (None, record.attachment_id):
+            await self._owner._declare_holder_theme(record.attachment_id)
+
+
+def _generation_advanced(host: Any, record: ProxyAttachment) -> bool:
+    current = getattr(host, "host_generation", None)
+    return (
+        isinstance(current, int)
+        and isinstance(record.host_generation, int)
+        and current > record.host_generation
+    )
 
 
 def _map_host_frame(
