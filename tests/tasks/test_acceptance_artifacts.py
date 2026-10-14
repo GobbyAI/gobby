@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from gobby.tasks import acceptance_artifacts as artifacts_module
 from gobby.tasks.acceptance_artifacts import (
@@ -32,6 +33,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
 )
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.utils.daemon_git import daemon_git
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -845,44 +847,54 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("declaring_file", ["render.rs", "render/mod.rs"])
+@pytest.mark.parametrize("inline", [False, True])
 def test_rust_validation_runs_match_committed_path_module(
-    tmp_path: Path, declaring_file: str
+    tmp_path: Path, declaring_file: str, inline: bool
 ) -> None:
     repo = _init_repo(tmp_path)
     source_dir = repo / "crates/example/src/commands"
     source_dir.mkdir(parents=True)
-    test_file = source_dir / "render_tests.rs"
+    test_file = source_dir / ("render/nested/render_tests.rs" if inline else "render_tests.rs")
+    test_file.parent.mkdir(parents=True, exist_ok=True)
     test_file.write_text(
         "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n",
         encoding="utf-8",
     )
     declaration = source_dir / declaring_file
     declaration.parent.mkdir(parents=True, exist_ok=True)
-    relative_path = "../render_tests.rs" if declaring_file.endswith("mod.rs") else "render_tests.rs"
-    declaration.write_text(
+    relative_path = (
+        "../render_tests.rs"
+        if declaring_file.endswith("mod.rs") and not inline
+        else "render_tests.rs"
+    )
+    declaration_body = (
         f'// #[path = "{relative_path}"] mod fake;\n'
-        f'#[cfg(test)]\n#[path = "{relative_path}"]\nmod tests;\n',
+        f'#[cfg(test)]\n#[path = "{relative_path}"]\nmod tests;\n'
+    )
+    declaration.write_text(
+        f"mod nested {{\n{declaration_body}}}\n" if inline else declaration_body,
         encoding="utf-8",
     )
     linked_sha = _commit(repo, "Rust path module acceptance fixture")
     declaration.write_text("mod unrelated;\n", encoding="utf-8")
 
     result = evaluate_acceptance_artifacts(
-        criteria="test: crates/example/src/commands/render_tests.rs::ties_are_numeric",
+        criteria=f"test: {test_file.relative_to(repo).as_posix()}::ties_are_numeric",
         repo_path=str(repo),
         commit_shas=[linked_sha],
     )
 
     assert result.passed, result.findings
     test = result.tests[0]
+    module = "commands::render::nested::tests" if inline else "commands::render::tests"
     assert validation_run_covers_test(
         "cargo nextest run -p example",
-        "PASS [0.001s] example commands::render::tests::ties_are_numeric",
+        f"PASS [0.001s] example {module}::ties_are_numeric",
         test,
     )
     assert validation_run_names_test(
         "cargo test -p example",
-        "test commands::render::tests::ties_are_numeric ... FAILED\npanicked at 'tie order'",
+        f"test {module}::ties_are_numeric ... FAILED\npanicked at 'tie order'",
         test,
     )
     assert not validation_run_covers_test(
@@ -895,6 +907,42 @@ def test_rust_validation_runs_match_committed_path_module(
         "PASS [0.001s] example commands::render_tests::ties_are_numeric",
         test,
     )
+
+
+def test_rust_path_module_discovery_is_shared_and_skips_non_attributes(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/src"
+    source_dir.mkdir(parents=True)
+    (source_dir / "render.rs").write_text(
+        '#[path = "render_tests.rs"]\nmod tests;\n', encoding="utf-8"
+    )
+    (source_dir / "render_tests.rs").write_text(
+        "#[test]\nfn first() { assert!(check_first()); }\n"
+        "#[test]\nfn second() { assert!(check_second()); }\n",
+        encoding="utf-8",
+    )
+    noise = "crates/example/src/path_values.rs"
+    (repo / noise).write_text('fn value() { let path = "unused"; }\n', encoding="utf-8")
+    sha = _commit(repo, "module lookup cost fixture")
+    spy = mocker.spy(daemon_git, "run")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=(
+            "test: crates/example/src/render_tests.rs::first\n"
+            "test: crates/example/src/render_tests.rs::second"
+        ),
+        repo_path=str(repo),
+        commit_shas=[sha],
+    )
+
+    assert result.passed, result.findings
+    assert [test.symbol for test in result.tests] == ["first", "second"]
+    commands = [call.args[0] for call in spy.call_args_list]
+    assert sum(command[0] == "grep" for command in commands) == 1
+    assert commands.count(("show", f"{sha}:crates/example/src/render.rs")) == 1
+    assert ("show", f"{sha}:{noise}") not in commands
 
 
 def test_rust_test_body_is_extracted_from_linked_commit(tmp_path: Path) -> None:

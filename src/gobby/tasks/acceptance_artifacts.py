@@ -11,7 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
-from gobby.tasks.acceptance_rust_modules import resolve_rust_module, rust_source_module
+from gobby.tasks.acceptance_rust_modules import (
+    RustModuleCache,
+    resolve_rust_module,
+    rust_source_module,
+)
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _ARTIFACT_REF_RE = re.compile(
@@ -249,6 +253,7 @@ async def resolve_acceptance_tests_async(
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
     """Resolve every named acceptance test from one authoritative close candidate."""
     tests: list[AcceptanceTest] = []
+    rust_module_cache: RustModuleCache = {}
     findings = list(malformed_test_reference_findings(criteria))
     candidate = _close_candidate(commit_shas, candidate_commit_sha)
     for reference in extract_artifact_references(criteria, "test"):
@@ -269,7 +274,9 @@ async def resolve_acceptance_tests_async(
         try:
             body, helpers = await _resolve_test_body(path, symbol, repo_path, candidate)
             rust_module = (
-                await resolve_rust_module(path, candidate, repo_path) if _is_rust(path) else None
+                await resolve_rust_module(path, candidate, repo_path, cache=rust_module_cache)
+                if _is_rust(path)
+                else None
             )
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
