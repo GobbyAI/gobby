@@ -1427,7 +1427,10 @@ it is already its own section, 2.6.
   (`SessionManager.resolve_session_reference`) and passes the session's
   `machine_id` as `requested`, overriding `machine` and the origin
   (Decision 13). A reference that does not resolve takes the local path,
-  where `spawn_agent_impl` returns its error.
+  where `spawn_agent_impl` returns its error. A registry built with no
+  session manager counts the reference as unresolved and takes the local
+  path, as `_parent_session_project_context` already returns `None` without
+  one.
 - Each caller then calls `resolve_target_machine` with the context's project id,
   `machine`, and the origin. A local result follows today's path. A remote
   result calls `spawn_remote_agent`. A refusal returns its typed code as the
@@ -1569,7 +1572,7 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/spawn_agent/test_spawn_worktree_reference_resolution.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path, and its resume patches `prepare_terminal_resume` on that path.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
-- `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: its resumes name this machine's sessions and take the unchanged local path, where it calls `spawn_agent_impl` and patches `prepare_terminal_resume`; re-run as verification.
+- `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: its resume tests call `spawn_agent_impl` directly, below the callers' routing, and patch `prepare_terminal_resume`; `test_pipeline_input_passes_resume_or_fresh` builds the registry with no session manager, so its resume reference counts as unresolved and takes the unchanged local path to its patched `spawn_agent_impl`; re-run as verification.
 - `tests/skills/test_reference_library.py` — no-edit-reason: it validates documented launch arguments against the schema, and an added optional property accepts them.
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py` — no-edit-reason: the remote flow calls `configured_max_active_agents()` as is, and `agent_slot_cap_refusal`, `reserve_agent_slot`, and `_SLOT_LOCKS` keep the per-project cap.
 - `tests/contracts/http/config_schema.json` — no-edit-reason: it carries the key's default and description but no bounds, and both stay.
@@ -2397,6 +2400,10 @@ deferral:
   0dc6b3bae4 applied, stale against 6415e4b926, by the memory f5577ae0
   route, at gobby#15977's direction. Plan Adversary gobby#16491 re-derives
   M1 from this narrative.
+- 2026-10-13: 2.5 states that a spawn registry built with no session manager
+  counts a resume reference as unresolved and takes the local path, and
+  corrects the `test_spawn_agent_resume.py` no-edit reason to match
+  (gobby#15977's finding for the 2.5 leaf).
 
 ## V2: Verification
 `kind: verification`
