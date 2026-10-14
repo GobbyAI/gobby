@@ -1,0 +1,32 @@
+tags: [context-handoff, handoff, enforcement, gobby, default]
+
+rules:
+  require-handoff-pull-before-tool:
+    description: "Consume the pending handoff before loading new context or doing work"
+    event: before_tool
+    enabled: true
+    priority: 1
+    when: >-
+      variables.get('handoff_pull_pending')
+      and not (
+        event.data.get('mcp_server') == 'gobby-sessions'
+        and event.data.get('mcp_tool') in ('get_handoff', 'set_handoff', 'feedback')
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-memory'
+        and event.data.get('mcp_tool') in ('get_memory', 'search_memories', 'review_task_memories')
+      )
+      and not (
+        event.data.get('mcp_server') == 'gobby-agents'
+        and event.data.get('mcp_tool') in (
+          'send_message', 'get_inter_session_messages', 'get_inter_session_message',
+          'wait_for_coordination', 'wait_for_agent', 'end_agent_run'
+        )
+      )
+    effects:
+      - type: block
+        reason: >-
+          Consume the pending handoff with gobby-sessions:get_handoff() before loading
+          skills or starting work. This pull is required even during a restart or cutover
+          hold; keep other held work paused. Schema discovery, pending memory recall and
+          coordination remain available.

@@ -3,7 +3,7 @@
 These functions are registered as allowed_funcs in SafeExpressionEvaluator
 so they can be called from rule ``when`` conditions, e.g.:
 
-    when: "task_tree_complete(variables.session_task)"
+    when: "task_state_in(variables.session_task, 'closed')"
 """
 
 import ast
@@ -690,7 +690,7 @@ def all_tasks_have_durable_stop_wait(
 def _normalize_task_id(task_id: Any) -> str:
     """Normalize a task_id to string format.
 
-    Handles int seq_nums (e.g. 9438 from auto_task_ref) by converting to '#9438'.
+    Handles int seq_nums (e.g. 9438 from a task reference) by converting to '#9438'.
     """
     if isinstance(task_id, int):
         return f"#{task_id}"
@@ -725,34 +725,6 @@ def _get_task(task_manager: TaskProvider, task_id: str) -> Any | None:
         return task_manager.get_task(rows[0]["id"])
     except ValueError:
         return None
-
-
-def task_tree_complete(task_manager: TaskProvider | None, task_id: TaskIdInput) -> bool:
-    """Check if a task tree is complete (all work is done).
-
-    A task tree is complete when either:
-    - The task is explicitly closed, OR
-    - The task has subtasks and ALL subtasks are recursively complete
-
-    Used in rule conditions like:
-        when: "task_tree_complete(variables.session_task)"
-        when: "task_tree_complete(variables.auto_task_ref)"
-    """
-    task_ids = _normalize_task_ids(task_id, "task_tree_complete")
-    if task_ids is None:
-        return False
-    if not task_ids:
-        return True
-
-    if not task_manager:
-        logger.warning("task_tree_complete: No task_manager available")
-        return False
-
-    for tid in task_ids:
-        if not _is_tree_complete(task_manager, tid):
-            return False
-
-    return True
 
 
 def task_state_in(
@@ -851,39 +823,4 @@ def all_tasks_have_label(
         labels = getattr(task, "labels", None)
         if not isinstance(labels, list | tuple | set) or label not in labels:
             return False
-    return True
-
-
-def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
-    """Check if a single task and its subtree are complete."""
-    task = _get_task(task_manager, task_id)
-    if not task:
-        logger.warning("task_tree_complete: Task '%s' not found", task_id)
-        return False
-
-    task_closed = is_task_complete(task)
-    resolved_task_id = getattr(task, "id", task_id)
-    subtasks = task_manager.list_tasks(parent_task_id=resolved_task_id)
-
-    if not subtasks:
-        if not task_closed:
-            logger.debug(
-                "task_tree_complete: Leaf task '%s' is not complete (state=%s)",
-                task_id,
-                projected_task_state(task),
-            )
-        return task_closed
-
-    for subtask in subtasks:
-        if not _is_tree_complete(task_manager, subtask.id):
-            return False
-
-    if not task_closed:
-        logger.debug(
-            "task_tree_complete: Task '%s' not explicitly closed but all %s subtask(s) "
-            "complete — tree is complete",
-            task_id,
-            len(subtasks),
-        )
-
     return True

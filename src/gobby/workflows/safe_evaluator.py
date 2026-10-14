@@ -550,7 +550,7 @@ def build_condition_helpers(
     so helper functions can be called from AST-based expressions.
 
     Args:
-        task_manager: LocalTaskManager instance (enables task_tree_complete)
+        task_manager: LocalTaskManager instance (enables task predicates)
         stop_registry: StopRegistry instance (enables has_stop_signal)
         plugin_conditions: Dict of plugin condition name -> callable
         context: Evaluation context dict (needed for mcp_* helpers to access variables)
@@ -575,7 +575,6 @@ def build_condition_helpers(
         task_commit_project_path_allowlist_violation,
         task_needs_human_review,
         task_state_in,
-        task_tree_complete,
         task_type_in,
         tdd_gate_open,
         touches_claude_memory_path,
@@ -676,7 +675,6 @@ def build_condition_helpers(
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: all_tasks_have_label(
             task_manager, task_id_or_ids, label
         )
-        funcs["task_tree_complete"] = lambda task_id: task_tree_complete(task_manager, task_id)
         funcs["task_needs_human_review"] = lambda task_id: task_needs_human_review(
             task_manager, task_id
         )
@@ -694,7 +692,6 @@ def build_condition_helpers(
         )
     else:
         funcs["all_tasks_have_label"] = lambda task_id_or_ids, label: False
-        funcs["task_tree_complete"] = lambda task_id: False
         funcs["task_needs_human_review"] = lambda task_id: False
         funcs["task_state_in"] = lambda task_id, *states: False
         funcs["task_type_in"] = lambda task_id_or_ids, *types: False

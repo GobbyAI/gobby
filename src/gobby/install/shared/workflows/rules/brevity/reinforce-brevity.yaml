@@ -19,8 +19,9 @@ rules:
     event: turn_start
     enabled: true
     priority: 21
-    when: >
-      skill_loaded('brevity')
+    when: >-
+      not variables.get('handoff_pull_pending')
+      and skill_loaded('brevity')
       and not variables.get('brevity_disabled')
       and variables.get('brevity_last_violation')
     effects:
@@ -44,13 +45,16 @@ rules:
     # turns_since_compact resets to 0 on compact, so a stored marker above the
     # current counter means a new context epoch began — re-remind once, then
     # every 5 turns within the epoch.
-    when: >
-      skill_loaded('brevity') and not variables.get('brevity_disabled')
-      and (variables.get('brevity_reminder_turn') is None
-      or (variables.get('turns_since_compact') or 0)
-      < (variables.get('brevity_reminder_turn') or 0)
-      or (variables.get('turns_since_compact') or 0)
-      - (variables.get('brevity_reminder_turn') or 0) >= 5)
+    when: >-
+      not variables.get('handoff_pull_pending')
+      and (
+        skill_loaded('brevity') and not variables.get('brevity_disabled')
+        and (variables.get('brevity_reminder_turn') is None
+        or (variables.get('turns_since_compact') or 0)
+        < (variables.get('brevity_reminder_turn') or 0)
+        or (variables.get('turns_since_compact') or 0)
+        - (variables.get('brevity_reminder_turn') or 0) >= 5)
+      )
     effects:
       - type: inject_context
         template: "Brevity reminder ({{ brevity_level }}): answer first; keep context tight."

@@ -50,6 +50,3 @@ rules:
       - type: set_variable
         variable: restraint_reminder_turn
         value: null
-      - type: set_variable
-        variable: autonomous_mode_reminder_turn
-        value: null

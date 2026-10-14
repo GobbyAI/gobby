@@ -8,11 +8,14 @@ rules:
     event: turn_start
     enabled: true
     priority: 12
-    when: >
-      not variables.get('is_spawned_agent')
-      and variables.get('parent_turn_seq') is not none
-      and variables.get('_memory_surface_turn_seq')
-          != variables.get('parent_turn_seq')
+    when: >-
+      not variables.get('handoff_pull_pending')
+      and (
+        not variables.get('is_spawned_agent')
+        and variables.get('parent_turn_seq') is not none
+        and variables.get('_memory_surface_turn_seq')
+            != variables.get('parent_turn_seq')
+      )
     effects:
       - type: mcp_call
         delivery: on_receipt
