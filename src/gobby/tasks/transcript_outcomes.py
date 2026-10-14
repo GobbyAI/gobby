@@ -30,7 +30,9 @@ _OUTPUT_CHAR_LIMIT = 16_000
 _ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_WRAPPERS = {"bash", "fish", "sh", "zsh"}
 _NODE_WRAPPERS = {"node", "nodejs"}
-_PYTHON_EXECUTABLE = re.compile(r"(?:python|pypy)(?:\d+(?:\.\d+)*)?t?")
+_PYTHON_EXECUTABLE = re.compile(
+    r"(?:python|cpython|pypy|graalpy|pyodide)(?:\d+(?:\.\d+)*)?t?(?:@[\s\S]+)?"
+)
 _UV_DIRECT_COMMANDS = frozenset(
     {"pip", "lock", "sync", "tree", "version", "build", "export", "format"}
 )
@@ -220,6 +222,8 @@ def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
         return "js_repl wrapper"
     if executable in _NODE_WRAPPERS:
         return "node wrapper"
+    if executable in {"perl", "ruby"} and (not arguments or arguments[0].startswith("-")):
+        return f"{executable} interpreter wrapper"
     if _PYTHON_EXECUTABLE.fullmatch(executable):
         return _python_wrapper_reason(arguments)
     return None
@@ -292,7 +296,17 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
             if inner[0] == "uv" and len(inner) > 1 and inner[1] in _UV_DIRECT_COMMANDS:
                 return "uv", inner[1:]  # Proven direct uv subcommand.
             tokens = inner
-        elif executable in {"timeout", "time", "exec", "command", "xargs"}:
+        elif executable in {
+            "timeout",
+            "gtimeout",
+            "time",
+            "exec",
+            "command",
+            "xargs",
+            "stdbuf",
+            "sudo",
+            "caffeinate",
+        }:
             inner = _launcher_arguments(executable, arguments)
             if inner is None:
                 return None
@@ -356,6 +370,8 @@ def _uv_run_arguments(arguments: tuple[str, ...]) -> tuple[str, ...] | None:
 
 def _launcher_arguments(executable: str, arguments: tuple[str, ...]) -> tuple[str, ...] | None:
     """Resolve bounded prefix options; unknown options never hide the child."""
+    if executable == "gtimeout":
+        executable = "timeout"
     flags, values = {
         "timeout": (
             {"--foreground", "--preserve-status", "--verbose", "-v"},
@@ -364,6 +380,30 @@ def _launcher_arguments(executable: str, arguments: tuple[str, ...]) -> tuple[st
         "time": ({"-p"}, set()),
         "exec": ({"-c", "-l"}, {"-a"}),
         "command": ({"-p"}, set()),
+        "stdbuf": (set(), {"-i", "-o", "-e", "--input", "--output", "--error"}),
+        "sudo": (
+            {"-n", "-E", "-H", "-S", "-k", "--non-interactive", "--preserve-env", "--set-home"},
+            {
+                "-u",
+                "-g",
+                "-h",
+                "-p",
+                "-C",
+                "-T",
+                "-R",
+                "-D",
+                "--user",
+                "--group",
+                "--host",
+                "--prompt",
+                "--close-from",
+                "--command-timeout",
+                "--chroot",
+                "--chdir",
+                "--preserve-env",
+            },
+        ),
+        "caffeinate": ({"-d", "-i", "-m", "-s", "-u"}, {"-t", "-w"}),
         "xargs": (
             {"-0", "-r", "-t", "-x", "--null", "--no-run-if-empty", "--verbose"},
             {
