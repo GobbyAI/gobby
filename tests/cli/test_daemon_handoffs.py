@@ -18,7 +18,12 @@ def test_cli_holds_admission_fence_through_stop_and_releases_on_error(wait: bool
     events: list[str] = []
 
     @contextmanager
-    def guard(db: HubDatabase, machine_id: str) -> Iterator[None]:
+    def guard(
+        db: HubDatabase,
+        machine_id: str,
+        *,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+    ) -> Iterator[None]:
         events.append("admission closed")
         try:
             yield
@@ -42,7 +47,12 @@ def test_wait_rechecks_after_handoff_acknowledgment() -> None:
     messages: list[str] = []
 
     @contextmanager
-    def guard(db: HubDatabase, machine_id: str) -> Iterator[None]:
+    def guard(
+        db: HubDatabase,
+        machine_id: str,
+        *,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+    ) -> Iterator[None]:
         if pending:
             raise HandoffShutdownBlocked("pending #12332")
         yield

@@ -119,9 +119,13 @@ def _poll_startup_progress(
             if resp.status_code != 200:
                 if resp.status_code == 503:
                     unavailable = resp.json()
+                    backend = unavailable.get("backend") if isinstance(unavailable, dict) else None
                     if (
                         isinstance(unavailable, dict)
-                        and unavailable.get("error") == "backend_unavailable"
+                        and unavailable.get("status") == "unavailable"
+                        and isinstance(backend, dict)
+                        and isinstance(backend.get("state"), str)
+                        and isinstance(backend.get("target"), str)
                     ):
                         time.sleep(0.5)
                         continue
