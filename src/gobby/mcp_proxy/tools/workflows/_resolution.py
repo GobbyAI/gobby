@@ -34,7 +34,7 @@ def resolve_session_task_value(
     Resolve a session_task value from seq_num reference (#N or N) to UUID.
 
     This prevents repeated resolution failures in condition evaluation when
-    task_tree_complete() is called with a seq_num that requires project_id.
+    task_state_in() is called with a seq_num that requires project_id.
 
     Args:
         value: The value to potentially resolve (e.g., "#4424", "47", or a UUID)

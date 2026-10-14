@@ -8,7 +8,8 @@ rules:
     priority: 24
     group: review-learning
     agent_scope: [plan-adversary, plan-adversary-taskless-old]
-    when: "True"
+    when: >-
+      not variables.get('handoff_pull_pending')
     effect:
       type: mcp_call
       server: gobby-review-learning

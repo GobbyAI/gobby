@@ -105,7 +105,6 @@ STOP_GATES_RULES = {
     "block-found-work-permission-deferral",
     "block-terminal-validation-failure",
     "block-unclaimed-found-work",
-    "require-epic-tree-close",
     "rearm-close-gates-on-session-start",
     "require-task-close",
     "require-step-completion",
@@ -625,7 +624,7 @@ class TestRequireTaskClose:
 
 
 class TestLegitimateWaitConditions:
-    @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
+    @pytest.mark.parametrize("rule_name", ["require-task-close"])
     def test_active_agent_wait_yields_stop_gate(
         self,
         db: HubDatabase,
@@ -644,7 +643,6 @@ class TestLegitimateWaitConditions:
             allowed_funcs={
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
-                "task_tree_complete": lambda _task_ids: False,
                 "has_active_agent_wait": lambda: True,
                 "has_durable_stop_wait": lambda: True,
             },
@@ -653,7 +651,7 @@ class TestLegitimateWaitConditions:
         assert body.when is not None
         assert evaluator.evaluate(body.when) is False
 
-    @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
+    @pytest.mark.parametrize("rule_name", ["require-task-close"])
     def test_stale_human_wait_state_does_not_yield_stop_gate(
         self,
         db: HubDatabase,
@@ -673,7 +671,6 @@ class TestLegitimateWaitConditions:
             allowed_funcs={
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
-                "task_tree_complete": lambda _task_ids: False,
                 "has_active_agent_wait": lambda: False,
                 "has_durable_stop_wait": lambda: False,
             },
@@ -686,7 +683,6 @@ class TestLegitimateWaitConditions:
         ("rule_name", "scope"),
         [
             ("require-task-close", "claimed tasks"),
-            ("require-epic-tree-close", "own subtree"),
         ],
     )
     def test_block_reason_names_legal_exits(
@@ -2380,8 +2376,6 @@ async def test_infrastructure_retry_wait_reaches_task_and_epic_stop_gates(
     response = await RuleEngine(db, task_manager=tasks).evaluate(event, caller, variables)
     assert response.decision == expected
     if expected == "block":
-        assert "require-task-close" in (response.reason or "") or "require-epic-tree-close" in (
-            response.reason or ""
-        )
+        assert "require-task-close" in (response.reason or "")
     persisted = tasks.get_task(task.id)
     assert persisted is not None and persisted.closed_at is None

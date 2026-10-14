@@ -1,6 +1,6 @@
 """Per-turn reminder cadence: once per context epoch plus every 5 turns.
 
-The brevity/restraint one-liners and the autonomous-mode block used to inject
+The brevity/restraint one-liners used to inject
 on every turn. They now key off ``turns_since_compact`` (observer-maintained,
 reset to 0 on pre_compact) and a per-rule marker variable so a 10-turn session
 sees at most two injections per reminder (#20448).
@@ -64,6 +64,42 @@ async def _run_turns(
 
 class TestReminderCadence:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("skill", ["brevity", "restraint"])
+    async def test_pending_pull_keeps_opt_out_live(self, temp_db: HubDatabase, skill: str) -> None:
+        _sync_bundled(temp_db)
+        variables = {**_base_variables(), "handoff_pull_pending": {"attempt_id": "a" * 32}}
+        response = await RuleEngine(temp_db).evaluate(
+            _turn_start_event(f"stop {skill}"), SESSION_ID, variables
+        )
+        assert variables[f"{skill}_disabled"] is True
+        assert f"{skill.title()} reminder" not in (response.context or "")
+
+    @pytest.mark.asyncio
+    async def test_pending_handoff_pull_suppresses_turn_start_reminders(
+        self, temp_db: HubDatabase
+    ) -> None:
+        _sync_bundled(temp_db)
+        engine = RuleEngine(temp_db)
+        variables = {
+            **_base_variables(),
+            "parent_turn_seq": 0,
+            "handoff_pull_pending": {"attempt_id": "a" * 32},
+        }
+
+        contexts = await _run_turns(engine, variables, range(1, 2))
+        assert "Brevity reminder" not in contexts[0]
+        assert "Restraint reminder" not in contexts[0]
+        assert variables["turns_since_compact"] == 1
+        assert variables["parent_turn_seq"] == 1
+        assert "brevity_reminder_turn" not in variables
+        assert "restraint_reminder_turn" not in variables
+
+        variables.pop("handoff_pull_pending")
+        resumed = await _run_turns(engine, variables, range(2, 3))
+        assert "Brevity reminder" in resumed[0]
+        assert "Restraint reminder" in resumed[0]
+
+    @pytest.mark.asyncio
     async def test_ten_turn_session_caps_brevity_and_restraint_reminders(
         self, temp_db: HubDatabase
     ) -> None:
@@ -79,20 +115,6 @@ class TestReminderCadence:
         ]
         assert brevity_hits == [1, 6]
         assert restraint_hits == [1, 6]
-
-    @pytest.mark.asyncio
-    async def test_autonomous_mode_block_follows_cadence(self, temp_db: HubDatabase) -> None:
-        _sync_bundled(temp_db)
-        engine = RuleEngine(temp_db)
-        variables = _base_variables()
-        variables["auto_task_ref"] = "#123"
-
-        contexts = await _run_turns(engine, variables, range(1, 11))
-
-        autonomous_hits = [
-            i for i, ctx in enumerate(contexts, start=1) if "autonomous task execution mode" in ctx
-        ]
-        assert autonomous_hits == [1, 6]
 
     @pytest.mark.asyncio
     async def test_compact_resets_markers_and_new_epoch_reinjects_once(
@@ -116,7 +138,6 @@ class TestReminderCadence:
         await engine.evaluate(compact_event, session_id=SESSION_ID, variables=variables)
         assert variables["brevity_reminder_turn"] is None
         assert variables["restraint_reminder_turn"] is None
-        assert variables["autonomous_mode_reminder_turn"] is None
 
         second_epoch = await _run_turns(engine, variables, range(1, 4))
         brevity_hits = [

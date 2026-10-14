@@ -207,7 +207,8 @@ async def test_turn_end_gates_yield_only_for_live_coordination_hold(
     end_hold(harness, row["id"], ending)
     unheld = await engine.evaluate(event, session_id=harness.waiter, variables=variables)
     assert unheld.decision == "block"
-    assert "Epic tree not complete" in (unheld.reason or "")
+    expected_gate = "require-step-completion" if spawned else "require-task-close"
+    assert expected_gate in (unheld.reason or "")
 
 
 @pytest.mark.parametrize("ending", ["reply", "reply_expiry"])

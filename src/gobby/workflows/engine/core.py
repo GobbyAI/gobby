@@ -494,7 +494,6 @@ class RuleEngine(
                         extra={
                             "session_id": session_id,
                             "raw_event": raw_event_value,
-                            "auto_task_ref": variables.get("auto_task_ref"),
                             "stop_attempts": variables["stop_attempts"],
                             "task_claimed": variables.get("task_claimed"),
                             "claimed_tasks": variables.get("claimed_tasks"),

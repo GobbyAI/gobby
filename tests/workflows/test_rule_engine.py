@@ -194,7 +194,7 @@ async def test_project_context_resolves_once_off_loop_for_multiple_rules(
 
 
 @pytest.mark.asyncio
-async def test_task_tree_condition_runs_outside_event_loop_thread(
+async def test_task_state_condition_runs_outside_event_loop_thread(
     db: HubDatabase,
     manager: RuleDefinitionManager,
 ) -> None:
@@ -213,11 +213,11 @@ async def test_task_tree_condition_runs_outside_event_loop_thread(
 
     _insert_rule(
         manager,
-        "off-loop-task-tree",
+        "off-loop-task-state",
         RuleDefinitionBody(
             event=RuleTriggerEvent.BEFORE_TOOL,
-            when="task_tree_complete('root')",
-            effects=[RuleEffect(type="block", reason="tree complete")],
+            when="task_state_in('root', 'closed')",
+            effects=[RuleEffect(type="block", reason="task closed")],
         ),
     )
     engine = RuleEngine(db, task_manager=TaskManager())
@@ -229,7 +229,7 @@ async def test_task_tree_condition_runs_outside_event_loop_thread(
     )
 
     assert response.decision == "block"
-    assert len(task_access_threads) == 2
+    assert len(task_access_threads) == 1
     assert all(thread_id != loop_thread_id for thread_id in task_access_threads)
 
 

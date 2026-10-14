@@ -566,7 +566,7 @@ async def test_passive_wait_exemption_requires_live_subscription_including_obser
     assert not await harness.monitor._parked_on_completion(harness.caller_session, PASSIVE_WAIT)
 
 
-async def test_observer_wait_yields_task_and_epic_gates_until_run_completes(
+async def test_observer_wait_yields_task_gate_until_run_completes(
     harness: _Harness,
 ) -> None:
     sync_bundled_rules(harness.db, get_bundled_rules_path())
@@ -598,7 +598,7 @@ async def test_observer_wait_yields_task_and_epic_gates_until_run_completes(
     blocked = await engine.evaluate(event, session_id=harness.caller_session, variables=variables)
     assert blocked.decision == "block"
     assert "claimed tasks" in (blocked.reason or "")
-    assert "Epic tree not complete" in (blocked.reason or "")
+    assert "require-task-close" in (blocked.reason or "")
 
     waiting = await harness.wait_for_agent(report_run.id)
     assert waiting["notification_registered"] is True and waiting["completed"] is False
@@ -613,7 +613,7 @@ async def test_observer_wait_yields_task_and_epic_gates_until_run_completes(
         event, session_id=harness.caller_session, variables=variables
     )
     assert blocked_again.decision == "block"
-    assert "[aggregated:2-gates]" in (blocked_again.reason or "")
+    assert "require-task-close" in (blocked_again.reason or "")
     assert variables["stop_attempts"] == attempts_before_wait + 1
 
 
