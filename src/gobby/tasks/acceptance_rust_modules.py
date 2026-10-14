@@ -9,13 +9,18 @@ from pathlib import PurePosixPath
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 
 # Consume comments and literals before looking for real module declarations.
-_PATH_MODULE_RE = re.compile(
+_MODULE_TOKEN_RE = re.compile(
     r'//[^\n]*|/\*.*?\*/|r(?P<hashes>\#*)".*?"(?P=hashes)|"(?:\\.|[^"\\])*"'
-    r'|#\s*\[\s*path\s*=\s*"(?P<path>[^"\n]+)"\s*\]'
-    r"\s*(?:#\s*\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
-    r"mod\s+(?P<module>[A-Za-z_]\w*)\s*;",
+    r"|'(?:\\(?:u\{[0-9A-Fa-f]+\}|.)|[^'\\])'"
+    r'|(?:#\s*\[\s*path\s*=\s*"(?P<path>[^"\n]+)"\s*\]'
+    r"\s*(?:#\s*\[[^\]]*\]\s*)*)?(?:pub(?:\([^)]*\))?\s+)?"
+    r"\bmod\s+(?P<module>[A-Za-z_]\w*)\s*(?P<delimiter>[{;])"
+    r"|(?P<brace>[{}])",
     re.DOTALL,
 )
+
+type RustModuleDeclarations = dict[str, set[tuple[str, tuple[str, ...]]]]
+type RustModuleCache = dict[tuple[str, str], RustModuleDeclarations]
 
 
 def rust_source_module(path: str) -> tuple[str, ...]:
@@ -30,20 +35,26 @@ def rust_source_module(path: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
-async def resolve_rust_module(path: str, commit_sha: str, repo_path: str) -> tuple[str, ...]:
-    """Read path overrides from the close candidate, never the working tree."""
-    parts = PurePosixPath(path).parts
-    root = str(PurePosixPath(*parts[:2])) if parts[:1] == ("crates",) else "."
+async def _read_declarations(commit_sha: str, root: str, repo_path: str) -> RustModuleDeclarations:
+    """Read only files containing path attributes from the close candidate."""
     result = await daemon_git.run(
-        ("grep", "-l", "-E", r"path[[:space:]]*=", commit_sha, "--", f"{root}/*.rs"),
+        (
+            "grep",
+            "-l",
+            "-E",
+            r"#[[:space:]]*\[[[:space:]]*path([[:space:]]|=|$)",
+            commit_sha,
+            "--",
+            f"{root}/*.rs",
+        ),
         cwd=repo_path,
         timeout=30,
     )
     if isinstance(result, GitFailed) and result.returncode == 1:
-        return rust_source_module(path)
+        return {}
     if not isinstance(result, GitOk):
         raise RuntimeError("could not read committed Rust module declarations")
-    declarations: dict[str, set[tuple[str, str]]] = {}
+    declarations: RustModuleDeclarations = {}
     for line in result.stdout.splitlines():
         declaring_path = line.removeprefix(f"{commit_sha}:")
         source = await daemon_git.run(
@@ -51,13 +62,50 @@ async def resolve_rust_module(path: str, commit_sha: str, repo_path: str) -> tup
         )
         if not isinstance(source, GitOk):
             raise RuntimeError(f"could not read committed Rust module {declaring_path}")
-        for match in _PATH_MODULE_RE.finditer(source.stdout):
-            if match.group("path") is None:
-                continue
-            target = posixpath.normpath(
-                str(PurePosixPath(declaring_path).parent / match.group("path"))
-            )
-            declarations.setdefault(target, set()).add((declaring_path, match.group("module")))
+        _collect_declarations(declarations, declaring_path, source.stdout)
+    return declarations
+
+
+def _collect_declarations(
+    declarations: RustModuleDeclarations, declaring_path: str, source: str
+) -> None:
+    """Track inline names and the Rust path-attribute directory rules."""
+    owner = PurePosixPath(declaring_path)
+    inline_root = owner.parent if owner.stem in {"lib", "main", "mod"} else owner.with_suffix("")
+    stack: list[tuple[str | None, PurePosixPath]] = []
+    for match in _MODULE_TOKEN_RE.finditer(source):
+        name = match.group("module")
+        path = match.group("path")
+        directory = stack[-1][1] if stack else owner.parent
+        if name is not None:
+            if match.group("delimiter") == "{":
+                if path is None:
+                    directory = (stack[-1][1] if stack else inline_root) / name
+                else:
+                    directory = directory / path
+                stack.append((name, directory))
+            elif path is not None:
+                target = posixpath.normpath(str(directory / path))
+                inline_names = tuple(part for part, _ in stack if part is not None)
+                declarations.setdefault(target, set()).add((declaring_path, (*inline_names, name)))
+        elif match.group("brace") == "{":
+            stack.append((None, stack[-1][1] if stack else inline_root))
+        elif match.group("brace") == "}" and stack:
+            stack.pop()
+
+
+async def resolve_rust_module(
+    path: str, commit_sha: str, repo_path: str, *, cache: RustModuleCache | None = None
+) -> tuple[str, ...]:
+    """Share committed declarations per (candidate, crate) within one resolution."""
+    parts = PurePosixPath(path).parts
+    root = str(PurePosixPath(*parts[:2])) if parts[:1] == ("crates",) else "."
+    key = (commit_sha, root)
+    if cache is None:
+        cache = {}
+    if key not in cache:
+        cache[key] = await _read_declarations(commit_sha, root, repo_path)
+    declarations = cache[key]
 
     def module_for(source_path: str, seen: frozenset[str]) -> tuple[str, ...]:
         if source_path in seen:
@@ -66,7 +114,7 @@ async def resolve_rust_module(path: str, commit_sha: str, repo_path: str) -> tup
             return rust_source_module(source_path)
         if len(declarations[source_path]) != 1:
             raise ValueError(f"ambiguous Rust path module: {source_path}")
-        owner, name = next(iter(declarations[source_path]))
-        return (*module_for(owner, seen | {source_path}), name)
+        owner, suffix = next(iter(declarations[source_path]))
+        return (*module_for(owner, seen | {source_path}), *suffix)
 
     return module_for(path, frozenset())
