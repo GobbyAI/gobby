@@ -2587,3 +2587,18 @@ def test_config_selectors_are_unverified(command: str) -> None:
     invocations = parse_git_commit_invocations(command)
     assert len(invocations) == 1
     assert invocations[0].cwd_unverified
+
+
+async def test_git_path_probe_disables_fsmonitor(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, patch
+
+    from gobby.utils.daemon_git import GitOk
+    from gobby.workflows.commit_guard import _git_paths_async
+
+    result = GitOk(status="ok", argv=("git",), stdout="a.py\0", stderr="")
+    with patch(
+        "gobby.workflows.commit_guard.daemon_git.run", new=AsyncMock(return_value=result)
+    ) as run:
+        paths = await _git_paths_async(str(tmp_path), "ls-files", "--cached")
+    assert paths == {"a.py"}
+    assert "core.fsmonitor=false" in run.call_args.args[0]

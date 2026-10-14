@@ -351,6 +351,8 @@ class DaemonGitService:
         """Inspect literal paths and coalesce only an identical in-flight status."""
         sorted_paths = tuple(sorted(paths))
         args = (
+            "-c",
+            "core.fsmonitor=false",
             "--literal-pathspecs",
             "--no-optional-locks",
             "status",

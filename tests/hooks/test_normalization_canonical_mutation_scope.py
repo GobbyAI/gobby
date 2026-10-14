@@ -1488,6 +1488,24 @@ def test_git_checkout_index_proof_ignores_inherited_selector(
     assert data["canonical_edit_file_paths"] == []
 
 
+def test_git_checkout_probes_disable_fsmonitor(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    with patch(
+        "gobby.hooks._normalization_git.subprocess.run",
+        side_effect=[
+            subprocess.CompletedProcess(["git"], 1, stdout=b""),
+            subprocess.CompletedProcess(["git"], 0, stdout=b"missing.py\0"),
+        ],
+    ) as run:
+        data = _invocation_metadata(
+            "git checkout missing.py", tool_cwd=tmp_path, project_path=tmp_path
+        )
+    assert data["canonical_tool_kind"] == "write"
+    assert run.call_count == 2
+    for call in run.call_args_list:
+        assert "core.fsmonitor=false" in call.args[0]
+
+
 @pytest.mark.parametrize(
     "command",
     [

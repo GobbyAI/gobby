@@ -93,7 +93,7 @@ async def _resolve_commit_checkout_root(
 ) -> str | None:
     """Return the invocation's Git top-level, or ``None`` for a non-repository cwd."""
     result = await daemon_git.run(
-        [*invocation.root_options, "rev-parse", "--show-toplevel"],
+        [*invocation.root_options, "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
         cwd=command_cwd,
         timeout=10.0,
     )
@@ -699,7 +699,7 @@ async def _git_status_path_states_async(project_path: str) -> dict[str, bool]:
 
 async def _git_paths_async(project_path: str, *args: str) -> set[str]:
     result = await daemon_git.run(
-        ["--literal-pathspecs", *args],
+        ["--literal-pathspecs", "-c", "core.fsmonitor=false", *args],
         cwd=project_path,
         timeout=10.0,
     )

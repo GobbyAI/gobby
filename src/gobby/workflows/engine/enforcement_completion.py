@@ -477,7 +477,7 @@ class EnforcementCompletionMixin:
 
         outcome = tool_outcome_from_data(event.data)
         if outcome.succeeded is None:
-            normalize_tool_fields(event.data)
+            await offload(normalize_tool_fields, event.data)
             outcome = tool_outcome_from_data(event.data)
         tool_output = event.data.get("tool_output")
         tool_failed = bool(event.metadata.get("is_failure", False)) or outcome.succeeded is False

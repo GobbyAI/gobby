@@ -265,9 +265,6 @@ class WorkflowToolContextMixin:
                 if event.data.get(key) in (None, "", {}):
                     event.data[key] = deepcopy(value)
 
-            from gobby.hooks.normalization import normalize_tool_fields
-
-            normalize_tool_fields(event.data)
             event.metadata["_tool_context_rehydrated"] = True
             event.metadata["_tool_context_rehydrated_source"] = event.source.value
             if event.source == SessionSource.CODEX:

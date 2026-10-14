@@ -261,7 +261,7 @@ class RuleEngine(
                         and "project_path" not in event.data
                     ):
                         event.data["project_path"] = project_path
-                    normalize_tool_fields(event.data)
+                    await offload(normalize_tool_fields, event.data)
 
                 raw_event_value = _event_value(event.event_type)
                 resolved_rule_events = _resolve_rule_events(event.event_type, source=event.source)

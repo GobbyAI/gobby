@@ -40,6 +40,42 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.asyncio
+async def test_normalization_does_not_block_runtime_loop(db: HubDatabase) -> None:
+    from contextvars import ContextVar
+
+    from gobby.hooks.normalization import normalize_tool_fields
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    released = threading.Event()
+    worker_threads: list[int] = []
+    marker: ContextVar[str] = ContextVar("normalization-marker", default="missing")
+    observed_context: list[str] = []
+
+    def normalize(data: dict[str, Any]) -> None:
+        worker_threads.append(threading.get_ident())
+        observed_context.append(marker.get())
+        loop.call_soon_threadsafe(released.set)
+        if threading.get_ident() != loop_thread:
+            assert released.wait(5), "runtime loop did not progress during normalization"
+        normalize_tool_fields(data)
+
+    event = _make_event(data={"tool_name": "Bash", "tool_input": {"command": "echo hello"}})
+    token = marker.set("delivery")
+    try:
+        with patch("gobby.workflows.engine.core.normalize_tool_fields", side_effect=normalize):
+            response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+    finally:
+        marker.reset(token)
+    assert response.decision == "allow"
+    assert worker_threads and all(worker != loop_thread for worker in worker_threads)
+    assert observed_context == ["delivery"]
+    assert released.is_set()
+    assert event.data["canonical_tool_kind"] == "execute"
+
+
 # Session id columns are native uuid in PostgreSQL; synthetic ids like
 # "sess-1" would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
@@ -1963,10 +1999,25 @@ class TestBeforeToolBlockTracking:
 
         assert variables["tool_block_pending"] is True
 
-    async def test_provider_success_clears_tool_block_despite_stale_error_alias(
-        self, db: HubDatabase, manager: RuleDefinitionManager
+    @pytest.mark.parametrize(
+        "payload,expected_pending",
+        [
+            pytest.param({"success": True}, False, id="payload-success"),
+            pytest.param(
+                {"success": False, "error": "close_review_required"},
+                True,
+                id="payload-failure",
+            ),
+        ],
+    )
+    async def test_provider_success_tracks_mcp_payload_despite_stale_error_alias(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        payload: dict[str, Any],
+        expected_pending: bool,
     ) -> None:
-        """A provider success hook outranks an is_error alias derived from the result body."""
+        """Provider success outranks stale aliases while preserving MCP payload failure."""
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"tool_block_pending": True}
@@ -1975,13 +2026,13 @@ class TestBeforeToolBlockTracking:
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "is_error": True,
-                "tool_output": {"success": False, "error": "close_review_required"},
+                "tool_output": payload,
             },
         )
         event.metadata["is_failure"] = False
         await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
 
-        assert variables["tool_block_pending"] is False
+        assert variables["tool_block_pending"] is expected_pending
 
 
 class TestConsecutiveToolBlocks:

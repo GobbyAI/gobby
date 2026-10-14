@@ -27,6 +27,7 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._path_scope import checkout_root
 from gobby.hooks.code_navigation import search_navigation_metadata, shell_command_name
+from gobby.utils import spawn
 
 exported_git_selector: ContextVar[bool] = ContextVar("exported_git_selector", default=False)
 
@@ -204,9 +205,11 @@ def _positional_checkout_is_path(
     try:
         if branch_candidate is not None:
             revision = "@{-1}" if branch_candidate == "-" else branch_candidate
-            ref = subprocess.run(
+            ref = spawn.run(
                 [
                     "git",
+                    "-c",
+                    "core.fsmonitor=false",
                     "-C",
                     cwd,
                     "rev-parse",
@@ -216,6 +219,7 @@ def _positional_checkout_is_path(
                     f"{revision}^{{commit}}",
                 ],
                 capture_output=True,
+                check=False,
                 timeout=1,
                 env=env,
             )
@@ -225,9 +229,22 @@ def _positional_checkout_is_path(
                 return None
         if any(Path(path).exists() for path in paths):
             return True
-        result = subprocess.run(
-            ["git", "--literal-pathspecs", "-C", cwd, "ls-files", "--cached", "-z", "--", *paths],
+        result = spawn.run(
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "--literal-pathspecs",
+                "-C",
+                cwd,
+                "ls-files",
+                "--cached",
+                "-z",
+                "--",
+                *paths,
+            ],
             capture_output=True,
+            check=False,
             timeout=1,
             # Inspect the proven checkout, never an inherited repository selector.
             env=env,
