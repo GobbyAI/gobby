@@ -87,7 +87,7 @@ Per phase and leaf:
   - 3.2, #23853 **Planning definitions retire with the spawned review round**: changes. The `review.md` sentence it rewrites lost its build clause in 2.3, and the Grok template sync test is now parametrized, so the leaf drops one parameter instead of deleting a test.
   - 3.3, #23854 **Discovery and review stage definitions retire**: stands.
   - 3.4, #23855 **Kept definitions drop the stage tools**: changes. 2.3 already removed the `build-coordinator` row from `rules/AGENTS.md`.
-  - 3.5, #23856 **Stage tools, review transitions, stage CLI and stage routes go**: changes. The `workflows/hooks.py` delete-lines proof is re-derived, the `task-enforcement` count becomes 20, and `test_lifecycle_session_links.py` is a Target.
+  - 3.5, #23856 **Stage tools, review transitions, stage CLI and stage routes go**: changes. The `workflows/hooks.py` delete-lines proof is re-derived, the `task-enforcement` count becomes 20 in `rules/AGENTS.md` and in the `test_worker_safety_rules.py` parametrize that pins it, and `test_lifecycle_session_links.py` is a Target.
 - P4, #23842 **P4: Stage readers and task storage**: changes in both leaves.
   - 4.1, #23857 **Nothing outside task storage reads or writes stages or the automation columns**: changes. `list_tasks` moved to `_listing.py`, so the `_crud.py` proof is re-derived and `_listing.py` joins the Targets with `attention_roster.py`, `reporter.yaml`, `tests/agents/test_coordination_seat_definitions.py` and `tests/agents/test_task_recovery.py`. The compact list column `stage` becomes `state`.
   - 4.2, #23858 **Task storage drops stages and the automation columns**: changes. File sizes are refreshed, and `test_reopen_build_state.py` loses one more stage case.
@@ -1108,6 +1108,7 @@ Targets:
 - `tests/workflows/test_monolith_guard.py::*` — scope-reason: the task-transition rule names two tools
 - `tests/framing_corpus.py::*` — scope-reason: drop the deleted rule name
 - `tests/workflows/test_retired_bundled_definitions.py::*` — scope-reason: list the deleted rule
+- `tests/workflows/test_worker_safety_rules.py::*` — scope-reason: the task-enforcement rule-reference count drops from 21 to 20
 - `tests/agents/test_bundled_agent_contract.py`
 - `tests/tasks/test_expansion_qa_coverage.py::*` — scope-reason: coverage results carry no review action
 - `tests/workflows/test_expansion_qa_rejection.py::*` — scope-reason: assert pass state and failures instead of a review action
@@ -1183,6 +1184,7 @@ Tests:
 - `test_monolith_guard.py`: `test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance` expects `{"gobby-tasks:close_task", "gobby-tasks:de_escalate_task"}`.
 - `tests/framing_corpus.py`: drop `block-needs-review-interactive`.
 - `test_retired_bundled_definitions.py`: add `block-needs-review-interactive` to `RETIRED_RULES`.
+- `test_worker_safety_rules.py`: the `test_rule_reference_counts_match_yaml` parametrize row becomes `("task-enforcement", 20)`, and `("worker-safety", 58)` stays.
 - `test_bundled_agent_contract.py`: `REMOVED_LIFECYCLE_TOOLS` adds the 19 stage tools and `backfill_plan_review_lessons`.
 - `test_expansion_qa_coverage.py`: `test_hash_prefixed_root_ref_matches_registry_written_manifest` asserts `result["qa_result"]["scope"]["root_task"] == _ROOT_REF` instead of the review action argument. Delete `test_interactive_coverage_persists_inapplicable_review_action` and `test_spawned_coverage_persists_legacy_review_action_shape`.
 - `test_expansion_qa_rejection.py`: `test_missing_row_triggers_rejection` asserts `result["passed"] is False` and one failure with `section_id` `A1`, `item_id` `A1.1`, `status` `invalid`, `detail` "artifact src/example.py was not referenced" and `leaves` `["#13244"]`. `test_zero_missing_invalid_triggers_approval` asserts `result["passed"] is True`, an empty `result["qa_result"]["failures"]` and no `review_action` key.
@@ -1209,7 +1211,7 @@ Tests:
 - 3.5.1 - gobby-tasks and gobby-tasks-ops register none of the 20 removed tools, and their registered inventory matches the independent classification. test: `tests/workflows/test_task_enforcement_rules.py::TestRequireTasksSkillForMutations::test_real_registry_inventory_matches_independent_classification`. test: `tests/mcp_proxy/tools/test_read_only_classification.py::test_task_ops_read_only_classification_is_exact`.
 - 3.5.2 - No bundled definition or skill names a removed tool, and every tool a definition names is registered. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_and_skill_assets_do_not_reference_removed_lifecycle_tools`. test: `tests/agents/test_bundled_agent_contract.py::test_bundled_agent_mcp_references_match_registered_tool_inventory`.
 - 3.5.3 - The daemon serves no `/api/stages` route and no per-task stage route, and the CLI has no stage or review command. behavior: "create_stages_router" absent from `src/gobby/servers/_app_routes.py`. behavior: "register_task_stage_routes" absent from `src/gobby/servers/routes/tasks.py`. behavior: "stages" absent from `src/gobby/cli/__init__.py`. file: `src/gobby/cli/tasks/main.py`.
-- 3.5.4 - The interactive review block is gone, and the commit and monolith gates block only `close_task` and `de_escalate_task`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`. test: `tests/workflows/test_monolith_guard.py::test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance`.
+- 3.5.4 - The interactive review block is gone, and the commit and monolith gates block only `close_task` and `de_escalate_task`. test: `tests/workflows/test_retired_bundled_definitions.py::test_retired_rules_are_absent_from_bundled_templates`. test: `tests/workflows/test_monolith_guard.py::test_bundled_rules_cover_commit_transitions_turn_end_and_required_guidance`. test: `tests/workflows/test_worker_safety_rules.py::test_rule_reference_counts_match_yaml`.
 - 3.5.5 - Expansion coverage reports pass state and failures without a stage review action, and the start tool has no stage pipeline flag. test: `tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection`. test: `tests/mcp_proxy/tools/tasks/test_mcp_proxy_tools_tasks_expansion.py::test_start_expansion_schema_accepts_reset_output`.
 - 3.5.6 - The capability audits cite no deleted module or command, and the reference library passes. test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
 
