@@ -24,7 +24,10 @@ from gobby.tasks import (
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
-from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots, derivation_fingerprint
+from gobby.tasks.transcript_evidence_snapshots import (
+    clear_evidence_snapshots,
+    derivation_fingerprint,
+)
 from gobby.tasks.transcript_evidence_transfer import ChunkedPayload
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_outcomes import (
