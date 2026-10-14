@@ -55,7 +55,7 @@ def test_cutover_refuses_node_bootstrap_before_build(
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", forbid("promote"))
     monkeypatch.setattr(cutover_module, "start", click.Command("start", callback=forbid("start")))
     monkeypatch.setattr(subprocess, "run", forbid("subprocess"))
-    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
+    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover, prepare_artifacts=False)
     assert result.exit_code != 0, result.output
     assert (
         "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
@@ -235,6 +235,7 @@ def _write_stub(path: Path, identity: dict[str, int | str], version: str = VERSI
 
 def _artifacts(root: Path, identity: dict[str, int | str]) -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-q")
     (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
     for member in SET_MEMBERS:
         crate = root / "crates" / member
@@ -366,6 +367,7 @@ def _invoke_cli(
     dirty: list[str] | None = None,
     identity: dict[str, int | str] | None = None,
     extra_args: tuple[str, ...] = (),
+    prepare_artifacts: bool = True,
 ) -> Result:
     workspace = tmp_path / "workspace"
     (workspace / "crates").mkdir(parents=True)
@@ -373,6 +375,8 @@ def _invoke_cli(
     pin = workspace / "src" / "gobby" / "storage" / "schema_expected_identity.json"
     pin.parent.mkdir(parents=True)
     pin.write_text(json.dumps(identity or _identity(420)), encoding="utf-8")
+    if prepare_artifacts:
+        _artifacts(workspace, identity or _identity(420))
     monkeypatch.setattr(cutover_module, "run_cutover", run_cutover)
     monkeypatch.setattr(cutover_module, "_dirty_schema_inputs", lambda _root: list(dirty or []))
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "managed-bin"))
@@ -604,6 +608,8 @@ class _FakeRuntime:
 def _stub_cutover_pipeline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, events: list[str]
 ) -> None:
+    _artifacts(tmp_path, _identity(420))
+
     def promote(*_args: object, **_kwargs: object) -> None:
         events.append("promote")
 

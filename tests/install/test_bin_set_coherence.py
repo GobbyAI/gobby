@@ -10,6 +10,7 @@ import pytest
 from gobby.cli import install_setup
 from gobby.cli.install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from gobby.install import bin_freshness_promotion
+from gobby.install.bin_release_identity import BinaryReleaseIdentity
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
     promote_workspace_binary_set,
@@ -185,6 +186,7 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
         destination: Path,
         prepare_staged: Callable[[Path], None] | None = None,
         workspace_root: Path | None = None,
+        identity: BinaryReleaseIdentity | None = None,
     ) -> None:
         if destination.name == "ghook":
             raise OSError("synthetic promote failure")
@@ -193,6 +195,7 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
             destination=destination,
             prepare_staged=prepare_staged,
             workspace_root=workspace_root,
+            identity=identity,
         )
 
     monkeypatch.setattr(bin_freshness_promotion, "stage_and_promote_binary_file", fail_on_ghook)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 import tomllib
 from dataclasses import asdict, dataclass
@@ -94,21 +95,43 @@ def workspace_source_identity(root: Path, name: str) -> str:
     crates = _crate_closure(root, root / "crates" / RELEASE_CRATES[name])
     digest = hashlib.sha256()
     files: set[Path] = set()
-    for crate in crates:
-        for path in crate.rglob("*"):
-            relative = path.relative_to(crate)
-            if path.is_file() and not any(
-                part in {"target", ".git", "tests", "benches", "examples", "docs", "__pycache__"}
-                for part in relative.parts
-            ):
-                files.add(path)
-    for name in ("Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"):
-        path = root / name
-        if path.is_file():
+    try:
+        visible = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--",
+                *(crate.relative_to(root).as_posix() for crate in sorted(crates)),
+                "Cargo.toml",
+                "rust-toolchain.toml",
+                ".cargo/config.toml",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BinaryReleaseVersionError(
+            "workspace source identity unavailable; use a Git checkout"
+        ) from exc
+    for filename in visible.split(b"\0"):
+        if not filename:
+            continue
+        path = root / os.fsdecode(filename)
+        if path.is_file() and not any(
+            part in {"tests", "benches", "examples", "docs"}
+            for part in path.relative_to(root).parts
+        ):
             files.add(path)
     for path in sorted(files):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
+        with path.open("rb") as source:
+            digest.update(hashlib.file_digest(source, "sha256").digest())
     digest.update(_locked_dependencies(root, crates))
     return digest.hexdigest()
 
@@ -118,7 +141,12 @@ def release_identity_path(bin_dir: Path, name: str) -> Path:
 
 
 def check_binary_release(
-    name: str, source: Path, *, bin_dir: Path, workspace_root: Path | None
+    name: str,
+    source: Path,
+    *,
+    bin_dir: Path,
+    workspace_root: Path | None,
+    source_identity: str | None = None,
 ) -> BinaryReleaseIdentity:
     """Fail closed before promotion when an installed version conceals new sources."""
     version = probe_native_bin_version(source)
@@ -127,9 +155,12 @@ def check_binary_release(
     artifact_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
     candidate = BinaryReleaseIdentity(
         version,
-        workspace_source_identity(workspace_root, name)
-        if workspace_root is not None
-        else f"artifact:{artifact_sha256}",
+        source_identity
+        or (
+            workspace_source_identity(workspace_root, name)
+            if workspace_root is not None
+            else f"artifact:{artifact_sha256}"
+        ),
         artifact_sha256,
     )
     installed = bin_dir / native_bin_name(name)

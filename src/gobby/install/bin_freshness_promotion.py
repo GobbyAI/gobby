@@ -10,7 +10,7 @@ import subprocess  # nosec B404 # reads git commit times for staleness reporting
 import tarfile
 import tempfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from io import BytesIO
 from pathlib import Path
 from typing import IO
@@ -60,12 +60,17 @@ def stage_and_promote_binary_file(
     destination: Path,
     prepare_staged: Callable[[Path], None] | None = None,
     workspace_root: Path | None = None,
+    identity: BinaryReleaseIdentity | None = None,
 ) -> None:
     """Copy a local binary to staging and atomically promote it."""
 
     name = destination.stem if destination.suffix == ".exe" else destination.name
-    identities = preflight_binary_promotions(
-        {name: source}, bin_dir=destination.parent, workspace_root=workspace_root
+    identities = (
+        {name: identity}
+        if identity is not None
+        else preflight_binary_promotions(
+            {name: source}, bin_dir=destination.parent, workspace_root=workspace_root
+        )
     )
 
     def write_staged(staged_binary: Path) -> None:
@@ -118,7 +123,11 @@ def install_staged_cargo_binary(
 
 
 def preflight_binary_promotions(
-    candidates: dict[str, Path], *, bin_dir: Path, workspace_root: Path | None = None
+    candidates: dict[str, Path],
+    *,
+    bin_dir: Path,
+    workspace_root: Path | None = None,
+    source_identities: Mapping[str, str] | None = None,
 ) -> dict[str, BinaryReleaseIdentity]:
     """Check every workspace release before any member or daemon is changed."""
     managed = {name: source for name, source in candidates.items() if name in RELEASE_CRATES}
@@ -132,7 +141,13 @@ def preflight_binary_promotions(
             )
         workspace_root = crates_root.parent
     return {
-        name: check_binary_release(name, source, bin_dir=bin_dir, workspace_root=workspace_root)
+        name: check_binary_release(
+            name,
+            source,
+            bin_dir=bin_dir,
+            workspace_root=workspace_root,
+            source_identity=source_identities[name] if source_identities is not None else None,
+        )
         for name, source in managed.items()
     }
 

@@ -21,7 +21,7 @@ from gobby.cli.runtime import get_cli_runtime
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_freshness_promotion import preflight_binary_promotions
-from gobby.install.bin_release_identity import BinaryReleaseVersionError
+from gobby.install.bin_release_identity import BinaryReleaseVersionError, workspace_source_identity
 from gobby.install.bin_set_coherence import (
     REBUILD_REMEDY,
     BinarySetCoherenceError,
@@ -241,23 +241,29 @@ def run_cutover(
     start_refusal: Callable[[Path], str | None],
 ) -> None:
     """Build and prove the candidate, stop, then promote and start the new set."""
-    artifacts = _build_artifacts(root)
     try:
-        preflight_binary_promotions(artifacts, bin_dir=bin_dir, workspace_root=root)
+        sources = {name: workspace_source_identity(root, name) for name in _BINARY_NAMES}
+        artifacts = _build_artifacts(root)
+        preflight_binary_promotions(
+            artifacts, bin_dir=bin_dir, workspace_root=root, source_identities=sources
+        )
     except BinaryReleaseVersionError as exc:
         raise CutoverError(f"refusing to promote: {exc}") from exc
     if refusal := start_refusal(artifacts["gdaemon"]):
         raise CutoverError(f"refusing to promote: {refusal}")
     _prove_catalog_freshness(root, artifacts["gdaemon"])
+    _require_unchanged_sources(root, sources)
     # Only the actual stop proves that the running route accepts shutdown and
     # that the old process exited. Never replace its binaries before that proof.
     if not stop_daemon():
         raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
     try:
+        _require_unchanged_sources(root, sources)
         promote_workspace_binary_set(
             artifacts,
             bin_dir=bin_dir,
             workspace_root=root,
+            source_identities=sources,
             metadata=WorkspacePromotionMetadata(
                 install_method=_INSTALL_METHOD,
                 target=_platform_target(),
@@ -271,6 +277,12 @@ def run_cutover(
         raise CutoverError(
             f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
         ) from exc
+
+
+def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:
+    for name, identity in sources.items():
+        if workspace_source_identity(root, name) != identity:
+            raise CutoverError(f"{name}: source changed during cutover; rebuild before promotion")
 
 
 @click.command()

@@ -25,12 +25,15 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         crate = root / "crates" / name
         (crate / "src").mkdir(parents=True)
         dependency = '\n[dependencies]\ngobby-core = { path = "../gcore" }\n'
+        if name == "gclient":
+            dependency += 'gobby-terminal = { path = "../gterminal" }\n'
         (crate / "Cargo.toml").write_text(
             f'[package]\nname = "{name}"\nversion = "1.0.0"\n'
             + (dependency if name != "gcore" else "")
         )
         (crate / "src" / "lib.rs").write_text("pub fn initial() {}\n")
     monkeypatch.setattr(promotion, "_workspace_crates_root", lambda: root / "crates")
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
     return root
 
 
@@ -48,6 +51,64 @@ def binary(path: Path, version: str = "1.0.0") -> Path:
     )
     path.chmod(0o755)
     return path
+
+
+@pytest.mark.parametrize("member", ["gterm", "gclient"])
+def test_ignored_dependency_outputs_allow_same_source_repromotion(
+    workspace: Path, tmp_path: Path, member: str
+) -> None:
+    (workspace / ".gitignore").write_text(".zig-cache/\nzig-pkg/\nzig-out/\n")
+    source = binary(tmp_path / "artifacts" / member)
+    destination = tmp_path / "bin" / member
+    promotion.stage_and_promote_binary_file(source, destination=destination)
+    receipt = (destination.parent / f".{member}-release-identity.json").read_bytes()
+    for name in (".zig-cache", "zig-pkg", "zig-out"):
+        output = workspace / "crates/gterminal/vendor/libghostty-vt" / name / "output"
+        output.parent.mkdir(parents=True)
+        output.write_bytes(b"local build output")
+    promotion.stage_and_promote_binary_file(source, destination=destination)
+    assert destination.read_bytes() == source.read_bytes()
+    assert (destination.parent / f".{member}-release-identity.json").read_bytes() == receipt
+
+
+@pytest.mark.parametrize("phase", ["build", "stop"])
+def test_cutover_refuses_sources_changed_after_build_snapshot(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    sources = {
+        name: binary(tmp_path / "artifacts" / name) for name in ("gcode", "gdaemon", "ghook")
+    }
+    calls: list[str] = []
+
+    def change_source() -> None:
+        (workspace / "crates/gcore/src/lib.rs").write_text("pub fn changed() {}\n")
+
+    def build(_root: Path) -> dict[str, Path]:
+        if phase == "build":
+            change_source()
+        return sources
+
+    def stop() -> bool:
+        calls.append("stop")
+        if phase == "stop":
+            change_source()
+        return True
+
+    monkeypatch.setattr(cutover, "_build_artifacts", build)
+    monkeypatch.setattr(cutover, "_prove_catalog_freshness", lambda *_args: None)
+    monkeypatch.setattr(
+        cutover, "promote_workspace_binary_set", lambda *_args, **_kwargs: calls.append("promote")
+    )
+    monkeypatch.setattr(cutover, "_verify_restart_target", lambda *_args: None)
+    with pytest.raises(cutover.CutoverError, match="source changed"):
+        cutover.run_cutover(
+            workspace,
+            tmp_path / "bin",
+            stop_daemon=stop,
+            start_daemon=lambda: calls.append("start"),
+            start_refusal=lambda _candidate: None,
+        )
+    assert calls == (["stop"] if phase == "stop" else [])
 
 
 def test_component_guard_uses_installed_name_for_renamed_candidate(
