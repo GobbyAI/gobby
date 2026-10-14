@@ -4163,6 +4163,11 @@ Verification planned:
     for hub modules, and through real credentials in 1.5.5. None runs under
     the break-glass default.
   - O4: 1.1 states that its manifest entry carries `tdd: false`.
+- 2026-10-14: Consensus on the O1 to O4 repair. Plan Adversary gobby#16491
+  verified 30f4656c56 (SHA-256 31e9eb2ca9) with no new blocking finding or
+  unresolved decision, and Plan Writer gobby#16490 agrees that O1 to O4 are
+  resolved. Security gobby#16011 cleared O3 at 30f4656c56. Standard
+  validation is warning-free.
 
 ## V2: Verification
 `kind: verification`
