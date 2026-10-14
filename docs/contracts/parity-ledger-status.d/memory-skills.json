@@ -1,1 +1,514 @@
-{}
+{
+  "CLI gobby memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/main.py::memory; Rust CLI group/subcommand dispatch parity for gobby memory remains under #21563 Memory and search."
+  },
+  "CLI gobby memory backfill-unscoped-lessons": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::backfill_unscoped_lessons_command; Rust CLI command callback parity for gobby memory backfill-unscoped-lessons remains under #21563 Memory and search."
+  },
+  "CLI gobby memory backup": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/export.py::backup_memories; Rust CLI command callback parity for gobby memory backup remains under #21563 Memory and search."
+  },
+  "CLI gobby memory clear-graph": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/graph.py::clear_graph; Rust CLI command callback parity for gobby memory clear-graph remains under #21563 Memory and search."
+  },
+  "CLI gobby memory create": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::create; Rust CLI command callback parity for gobby memory create remains under #21563 Memory and search."
+  },
+  "CLI gobby memory dedupe": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/maintenance.py::dedupe_memories; Rust CLI command callback parity for gobby memory dedupe remains under #21563 Memory and search."
+  },
+  "CLI gobby memory delete": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::delete; Rust CLI command callback parity for gobby memory delete remains under #21563 Memory and search."
+  },
+  "CLI gobby memory dream": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/dream.py::memory_dream; Rust CLI group/subcommand dispatch parity for gobby memory dream remains under #21563 Memory and search."
+  },
+  "CLI gobby memory dream revert": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/dream.py::memory_dream_revert; Rust CLI command callback parity for gobby memory dream revert remains under #21563 Memory and search."
+  },
+  "CLI gobby memory dream status": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/dream.py::memory_dream_status; Rust CLI command callback parity for gobby memory dream status remains under #21563 Memory and search."
+  },
+  "CLI gobby memory export": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/export.py::export_memories; Rust CLI command callback parity for gobby memory export remains under #21563 Memory and search."
+  },
+  "CLI gobby memory graph-counts": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/graph.py::graph_counts; Rust CLI command callback parity for gobby memory graph-counts remains under #21563 Memory and search."
+  },
+  "CLI gobby memory invalidate": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/graph.py::invalidate; Rust CLI command callback parity for gobby memory invalidate remains under #21563 Memory and search."
+  },
+  "CLI gobby memory list": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::list_memories; Rust CLI command callback parity for gobby memory list remains under #21563 Memory and search."
+  },
+  "CLI gobby memory rebuild-crossrefs": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/indices.py::rebuild_crossrefs; Rust CLI command callback parity for gobby memory rebuild-crossrefs remains under #21563 Memory and search."
+  },
+  "CLI gobby memory rebuild-graph": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/graph.py::rebuild_graph; Rust CLI command callback parity for gobby memory rebuild-graph remains under #21563 Memory and search."
+  },
+  "CLI gobby memory recall": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::recall; Rust CLI command callback parity for gobby memory recall remains under #21563 Memory and search."
+  },
+  "CLI gobby memory reconcile": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/indices.py::reconcile; Rust CLI command callback parity for gobby memory reconcile remains under #21563 Memory and search."
+  },
+  "CLI gobby memory reindex-embeddings": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/indices.py::reindex_embeddings; Rust CLI command callback parity for gobby memory reindex-embeddings remains under #21563 Memory and search."
+  },
+  "CLI gobby memory restore": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/export.py::restore_memories; Rust CLI command callback parity for gobby memory restore remains under #21563 Memory and search."
+  },
+  "CLI gobby memory show": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::show_memory; Rust CLI command callback parity for gobby memory show remains under #21563 Memory and search."
+  },
+  "CLI gobby memory stats": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::memory_stats; Rust CLI command callback parity for gobby memory stats remains under #21563 Memory and search."
+  },
+  "CLI gobby memory update": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/memory/crud.py::update_memory; Rust CLI command callback parity for gobby memory update remains under #21563 Memory and search."
+  },
+  "CLI gobby skills": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::skills; Rust CLI group/subcommand dispatch parity for gobby skills remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills disable": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::disable; Rust CLI command callback parity for gobby skills disable remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills doc": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::doc; Rust CLI command callback parity for gobby skills doc remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills enable": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::enable; Rust CLI command callback parity for gobby skills enable remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills hub": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::hub; Rust CLI group/subcommand dispatch parity for gobby skills hub remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills hub add": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::hub_add; Rust CLI command callback parity for gobby skills hub add remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills hub list": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::hub_list; Rust CLI command callback parity for gobby skills hub list remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills init": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::init; Rust CLI command callback parity for gobby skills init remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills install": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::install; Rust CLI command callback parity for gobby skills install remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills list": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::list_skills; Rust CLI command callback parity for gobby skills list remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills meta": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::meta; Rust CLI group/subcommand dispatch parity for gobby skills meta remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills meta get": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::meta_get; Rust CLI command callback parity for gobby skills meta get remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills meta set": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::meta_set; Rust CLI command callback parity for gobby skills meta set remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills meta unset": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::meta_unset; Rust CLI command callback parity for gobby skills meta unset remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills new": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::new; Rust CLI command callback parity for gobby skills new remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills remove": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::remove; Rust CLI command callback parity for gobby skills remove remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills search": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::search; Rust CLI command callback parity for gobby skills search remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills show": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::show; Rust CLI command callback parity for gobby skills show remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills update": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::update; Rust CLI command callback parity for gobby skills update remains under #21568 Remaining route families (Skills)."
+  },
+  "CLI gobby skills validate": {
+    "status": "proxied",
+    "note": "Python src/gobby/cli/skills.py::validate; Rust CLI command callback parity for gobby skills validate remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP DELETE /api/memories/{memory_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::delete_memory; Rust HTTP handler parity for DELETE /api/memories/{memory_id} remains under #21563 Memory and search."
+  },
+  "HTTP DELETE /api/skills/{skill_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::delete_skill; Rust HTTP handler parity for DELETE /api/skills/{skill_id} remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::list_memories; Rust HTTP handler parity for GET /api/memories remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/graph": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::memory_graph; Rust HTTP handler parity for GET /api/memories/graph remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/graph/counts": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::graph_counts; Rust HTTP handler parity for GET /api/memories/graph/counts remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/graph/entities": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::entity_graph; Rust HTTP handler parity for GET /api/memories/graph/entities remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/graph/entities/{entity_key}/neighbors": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::entity_neighbors; Rust HTTP handler parity for GET /api/memories/graph/entities/{entity_key}/neighbors remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/graph/rebuild/status": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::rebuild_knowledge_graph_status; Rust HTTP handler parity for GET /api/memories/graph/rebuild/status remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/search": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::search_memories; Rust HTTP handler parity for GET /api/memories/search remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/stats": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::memory_stats; Rust HTTP handler parity for GET /api/memories/stats remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/memories/{memory_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::get_memory; Rust HTTP handler parity for GET /api/memories/{memory_id} remains under #21563 Memory and search."
+  },
+  "HTTP GET /api/skills": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::list_skills; Rust HTTP handler parity for GET /api/skills remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/hubs": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::list_hubs; Rust HTTP handler parity for GET /api/skills/hubs remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/hubs/search": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::search_hubs; Rust HTTP handler parity for GET /api/skills/hubs/search remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/search": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::search_skills; Rust HTTP handler parity for GET /api/skills/search remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/stats": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::skill_stats; Rust HTTP handler parity for GET /api/skills/stats remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/{skill_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::get_skill; Rust HTTP handler parity for GET /api/skills/{skill_id} remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/{skill_id}/export": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::export_skill; Rust HTTP handler parity for GET /api/skills/{skill_id}/export remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/{skill_id}/files": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::list_skill_files; Rust HTTP handler parity for GET /api/skills/{skill_id}/files remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /api/skills/{skill_id}/files/{file_path:path}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::read_skill_file; Rust HTTP handler parity for GET /api/skills/{skill_id}/files/{file_path:path} remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP GET /memory/dream/{run_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory_dream.py::memory_dream_status; Rust HTTP handler parity for GET /memory/dream/{run_id} remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::create_memory; Rust HTTP handler parity for POST /api/memories remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/crossrefs/rebuild": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::rebuild_crossrefs; Rust HTTP handler parity for POST /api/memories/crossrefs/rebuild remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/embeddings/reindex": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::reindex_embeddings; Rust HTTP handler parity for POST /api/memories/embeddings/reindex remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/graph/clear": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::clear_knowledge_graph; Rust HTTP handler parity for POST /api/memories/graph/clear remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/graph/rebuild": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::rebuild_knowledge_graph; Rust HTTP handler parity for POST /api/memories/graph/rebuild remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/invalidate": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::invalidate_memories; Rust HTTP handler parity for POST /api/memories/invalidate remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/reconcile": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::reconcile_memory_stores; Rust HTTP handler parity for POST /api/memories/reconcile remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/{memory_id}/demote": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::demote_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/demote remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/{memory_id}/move": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::move_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/move remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/{memory_id}/promote": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::promote_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/promote remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/memories/{memory_id}/restore": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::restore_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/restore remains under #21563 Memory and search."
+  },
+  "HTTP POST /api/skills": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::create_skill; Rust HTTP handler parity for POST /api/skills remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/hubs/install": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::install_from_hub; Rust HTTP handler parity for POST /api/skills/hubs/install remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/import": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::import_skill; Rust HTTP handler parity for POST /api/skills/import remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/restore-defaults": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::restore_defaults; Rust HTTP handler parity for POST /api/skills/restore-defaults remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/scan": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::scan_skill; Rust HTTP handler parity for POST /api/skills/scan remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/{skill_id}/move-to-installed": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::move_to_installed; Rust HTTP handler parity for POST /api/skills/{skill_id}/move-to-installed remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/{skill_id}/move-to-project": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::move_to_project; Rust HTTP handler parity for POST /api/skills/{skill_id}/move-to-project remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /api/skills/{skill_id}/restore": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::restore_skill; Rust HTTP handler parity for POST /api/skills/{skill_id}/restore remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP POST /memory/dream": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory_dream.py::memory_dream; Rust HTTP handler parity for POST /memory/dream remains under #21563 Memory and search."
+  },
+  "HTTP POST /memory/dream/{run_id}/revert": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory_dream.py::memory_dream_revert; Rust HTTP handler parity for POST /memory/dream/{run_id}/revert remains under #21563 Memory and search."
+  },
+  "HTTP PUT /api/memories/{memory_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/memory.py::update_memory; Rust HTTP handler parity for PUT /api/memories/{memory_id} remains under #21563 Memory and search."
+  },
+  "HTTP PUT /api/skills/{skill_id}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::update_skill; Rust HTTP handler parity for PUT /api/skills/{skill_id} remains under #21568 Remaining route families (Skills)."
+  },
+  "HTTP PUT /api/skills/{skill_id}/files/{file_path:path}": {
+    "status": "proxied",
+    "note": "Python src/gobby/servers/routes/skills.py::write_skill_file; Rust HTTP handler parity for PUT /api/skills/{skill_id}/files/{file_path:path} remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-memory:backup_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::backup_memories; Rust MCP tool handler parity for gobby-memory:backup_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:create_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_write.py::create_memory; Rust MCP tool handler parity for gobby-memory:create_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:delete_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_write.py::delete_memory; Rust MCP tool handler parity for gobby-memory:delete_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:demote_memory_from_global": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::demote_memory_from_global; Rust MCP tool handler parity for gobby-memory:demote_memory_from_global remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:densify_knowledge_graph_cooccurrence": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::densify_knowledge_graph_cooccurrence; Rust MCP tool handler parity for gobby-memory:densify_knowledge_graph_cooccurrence remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:get_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::get_memory; Rust MCP tool handler parity for gobby-memory:get_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:get_related_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::get_related_memories; Rust MCP tool handler parity for gobby-memory:get_related_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:list_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::list_memories; Rust MCP tool handler parity for gobby-memory:list_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:memory_dream": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream; Rust MCP tool handler parity for gobby-memory:memory_dream remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:memory_dream_decisions": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_decisions; Rust MCP tool handler parity for gobby-memory:memory_dream_decisions remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:memory_dream_revert": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_revert; Rust MCP tool handler parity for gobby-memory:memory_dream_revert remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:memory_dream_status": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_status; Rust MCP tool handler parity for gobby-memory:memory_dream_status remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:memory_stats": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::memory_stats; Rust MCP tool handler parity for gobby-memory:memory_stats remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:move_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::move_memory; Rust MCP tool handler parity for gobby-memory:move_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:promote_memory_to_global": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::promote_memory_to_global; Rust MCP tool handler parity for gobby-memory:promote_memory_to_global remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:rebuild_crossrefs": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::rebuild_crossrefs; Rust MCP tool handler parity for gobby-memory:rebuild_crossrefs remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:rebuild_knowledge_graph": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::rebuild_knowledge_graph; Rust MCP tool handler parity for gobby-memory:rebuild_knowledge_graph remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:recluster_knowledge_graph_entities": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::recluster_knowledge_graph_entities; Rust MCP tool handler parity for gobby-memory:recluster_knowledge_graph_entities remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:reindex_embeddings": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::reindex_embeddings; Rust MCP tool handler parity for gobby-memory:reindex_embeddings remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:restore_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::restore_memories; Rust MCP tool handler parity for gobby-memory:restore_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:restore_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_write.py::restore_memory; Rust MCP tool handler parity for gobby-memory:restore_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:review_task_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_review.py::review_task_memories; Rust MCP tool handler parity for gobby-memory:review_task_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:search_knowledge_graph": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::search_knowledge_graph; Rust MCP tool handler parity for gobby-memory:search_knowledge_graph remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:search_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory.py::search_memories; Rust MCP tool handler parity for gobby-memory:search_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:surface_memories": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_surface.py::surface_memories; Rust MCP tool handler parity for gobby-memory:surface_memories remains under #21563 Memory and search."
+  },
+  "MCP gobby-memory:update_memory": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/memory_write.py::update_memory; Rust MCP tool handler parity for gobby-memory:update_memory remains under #21563 Memory and search."
+  },
+  "MCP gobby-skills:get_skill": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill; Rust MCP tool handler parity for gobby-skills:get_skill remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:get_skill_file": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_file_tool; Rust MCP tool handler parity for gobby-skills:get_skill_file remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:get_skill_files": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_files_tool; Rust MCP tool handler parity for gobby-skills:get_skill_files remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:install_skill": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/install_skill.py::install_skill; Rust MCP tool handler parity for gobby-skills:install_skill remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:list_hubs": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/hub_tools.py::list_hubs; Rust MCP tool handler parity for gobby-skills:list_hubs remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:list_skills": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/list_skills.py::list_skills; Rust MCP tool handler parity for gobby-skills:list_skills remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:materialize_skill_scripts": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/materialize_skill_scripts.py::materialize_tool; Rust MCP tool handler parity for gobby-skills:materialize_skill_scripts remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:move_skill_to_installed": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/move_skill.py::move_skill_to_installed; Rust MCP tool handler parity for gobby-skills:move_skill_to_installed remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:move_skill_to_project": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/move_skill.py::move_skill_to_project; Rust MCP tool handler parity for gobby-skills:move_skill_to_project remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:remove_skill": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/remove_skill.py::remove_skill; Rust MCP tool handler parity for gobby-skills:remove_skill remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:restore_skill": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/restore_skill.py::restore_skill; Rust MCP tool handler parity for gobby-skills:restore_skill remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:search_hub": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/hub_tools.py::search_hub; Rust MCP tool handler parity for gobby-skills:search_hub remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:search_skills": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/search_skills.py::search_skills; Rust MCP tool handler parity for gobby-skills:search_skills remains under #21568 Remaining route families (Skills)."
+  },
+  "MCP gobby-skills:update_skill": {
+    "status": "proxied",
+    "note": "Python src/gobby/mcp_proxy/tools/skills/update_skill.py::update_skill; Rust MCP tool handler parity for gobby-skills:update_skill remains under #21568 Remaining route families (Skills)."
+  }
+}

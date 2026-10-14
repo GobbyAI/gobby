@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1097. Unclassified: 783.
+Public surfaces and evidence gates: 1097. Unclassified: 655.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -121,29 +121,29 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `CLI gobby mcp-proxy show-template` | **unclassified** |  |
 | `CLI gobby mcp-proxy status` | **unclassified** |  |
 | `CLI gobby mcp-server` | **unclassified** |  |
-| `CLI gobby memory` | **unclassified** |  |
-| `CLI gobby memory backfill-unscoped-lessons` | **unclassified** |  |
-| `CLI gobby memory backup` | **unclassified** |  |
-| `CLI gobby memory clear-graph` | **unclassified** |  |
-| `CLI gobby memory create` | **unclassified** |  |
-| `CLI gobby memory dedupe` | **unclassified** |  |
-| `CLI gobby memory delete` | **unclassified** |  |
-| `CLI gobby memory dream` | **unclassified** |  |
-| `CLI gobby memory dream revert` | **unclassified** |  |
-| `CLI gobby memory dream status` | **unclassified** |  |
-| `CLI gobby memory export` | **unclassified** |  |
-| `CLI gobby memory graph-counts` | **unclassified** |  |
-| `CLI gobby memory invalidate` | **unclassified** |  |
-| `CLI gobby memory list` | **unclassified** |  |
-| `CLI gobby memory rebuild-crossrefs` | **unclassified** |  |
-| `CLI gobby memory rebuild-graph` | **unclassified** |  |
-| `CLI gobby memory recall` | **unclassified** |  |
-| `CLI gobby memory reconcile` | **unclassified** |  |
-| `CLI gobby memory reindex-embeddings` | **unclassified** |  |
-| `CLI gobby memory restore` | **unclassified** |  |
-| `CLI gobby memory show` | **unclassified** |  |
-| `CLI gobby memory stats` | **unclassified** |  |
-| `CLI gobby memory update` | **unclassified** |  |
+| `CLI gobby memory` | proxied | Python src/gobby/cli/memory/main.py::memory; Rust CLI group/subcommand dispatch parity for gobby memory remains under #21563 Memory and search. |
+| `CLI gobby memory backfill-unscoped-lessons` | proxied | Python src/gobby/cli/memory/crud.py::backfill_unscoped_lessons_command; Rust CLI command callback parity for gobby memory backfill-unscoped-lessons remains under #21563 Memory and search. |
+| `CLI gobby memory backup` | proxied | Python src/gobby/cli/memory/export.py::backup_memories; Rust CLI command callback parity for gobby memory backup remains under #21563 Memory and search. |
+| `CLI gobby memory clear-graph` | proxied | Python src/gobby/cli/memory/graph.py::clear_graph; Rust CLI command callback parity for gobby memory clear-graph remains under #21563 Memory and search. |
+| `CLI gobby memory create` | proxied | Python src/gobby/cli/memory/crud.py::create; Rust CLI command callback parity for gobby memory create remains under #21563 Memory and search. |
+| `CLI gobby memory dedupe` | proxied | Python src/gobby/cli/memory/maintenance.py::dedupe_memories; Rust CLI command callback parity for gobby memory dedupe remains under #21563 Memory and search. |
+| `CLI gobby memory delete` | proxied | Python src/gobby/cli/memory/crud.py::delete; Rust CLI command callback parity for gobby memory delete remains under #21563 Memory and search. |
+| `CLI gobby memory dream` | proxied | Python src/gobby/cli/memory/dream.py::memory_dream; Rust CLI group/subcommand dispatch parity for gobby memory dream remains under #21563 Memory and search. |
+| `CLI gobby memory dream revert` | proxied | Python src/gobby/cli/memory/dream.py::memory_dream_revert; Rust CLI command callback parity for gobby memory dream revert remains under #21563 Memory and search. |
+| `CLI gobby memory dream status` | proxied | Python src/gobby/cli/memory/dream.py::memory_dream_status; Rust CLI command callback parity for gobby memory dream status remains under #21563 Memory and search. |
+| `CLI gobby memory export` | proxied | Python src/gobby/cli/memory/export.py::export_memories; Rust CLI command callback parity for gobby memory export remains under #21563 Memory and search. |
+| `CLI gobby memory graph-counts` | proxied | Python src/gobby/cli/memory/graph.py::graph_counts; Rust CLI command callback parity for gobby memory graph-counts remains under #21563 Memory and search. |
+| `CLI gobby memory invalidate` | proxied | Python src/gobby/cli/memory/graph.py::invalidate; Rust CLI command callback parity for gobby memory invalidate remains under #21563 Memory and search. |
+| `CLI gobby memory list` | proxied | Python src/gobby/cli/memory/crud.py::list_memories; Rust CLI command callback parity for gobby memory list remains under #21563 Memory and search. |
+| `CLI gobby memory rebuild-crossrefs` | proxied | Python src/gobby/cli/memory/indices.py::rebuild_crossrefs; Rust CLI command callback parity for gobby memory rebuild-crossrefs remains under #21563 Memory and search. |
+| `CLI gobby memory rebuild-graph` | proxied | Python src/gobby/cli/memory/graph.py::rebuild_graph; Rust CLI command callback parity for gobby memory rebuild-graph remains under #21563 Memory and search. |
+| `CLI gobby memory recall` | proxied | Python src/gobby/cli/memory/crud.py::recall; Rust CLI command callback parity for gobby memory recall remains under #21563 Memory and search. |
+| `CLI gobby memory reconcile` | proxied | Python src/gobby/cli/memory/indices.py::reconcile; Rust CLI command callback parity for gobby memory reconcile remains under #21563 Memory and search. |
+| `CLI gobby memory reindex-embeddings` | proxied | Python src/gobby/cli/memory/indices.py::reindex_embeddings; Rust CLI command callback parity for gobby memory reindex-embeddings remains under #21563 Memory and search. |
+| `CLI gobby memory restore` | proxied | Python src/gobby/cli/memory/export.py::restore_memories; Rust CLI command callback parity for gobby memory restore remains under #21563 Memory and search. |
+| `CLI gobby memory show` | proxied | Python src/gobby/cli/memory/crud.py::show_memory; Rust CLI command callback parity for gobby memory show remains under #21563 Memory and search. |
+| `CLI gobby memory stats` | proxied | Python src/gobby/cli/memory/crud.py::memory_stats; Rust CLI command callback parity for gobby memory stats remains under #21563 Memory and search. |
+| `CLI gobby memory update` | proxied | Python src/gobby/cli/memory/crud.py::update_memory; Rust CLI command callback parity for gobby memory update remains under #21563 Memory and search. |
 | `CLI gobby merge` | **unclassified** |  |
 | `CLI gobby merge abort` | **unclassified** |  |
 | `CLI gobby merge apply` | **unclassified** |  |
@@ -241,33 +241,33 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `CLI gobby sessions stats` | **unclassified** |  |
 | `CLI gobby sessions summarize` | **unclassified** |  |
 | `CLI gobby sessions terminate-terminal` | **unclassified** |  |
-| `CLI gobby skills` | **unclassified** |  |
-| `CLI gobby skills disable` | **unclassified** |  |
-| `CLI gobby skills doc` | **unclassified** |  |
-| `CLI gobby skills enable` | **unclassified** |  |
-| `CLI gobby skills hub` | **unclassified** |  |
-| `CLI gobby skills hub add` | **unclassified** |  |
-| `CLI gobby skills hub list` | **unclassified** |  |
-| `CLI gobby skills init` | **unclassified** |  |
-| `CLI gobby skills install` | **unclassified** |  |
-| `CLI gobby skills list` | **unclassified** |  |
-| `CLI gobby skills meta` | **unclassified** |  |
-| `CLI gobby skills meta get` | **unclassified** |  |
-| `CLI gobby skills meta set` | **unclassified** |  |
-| `CLI gobby skills meta unset` | **unclassified** |  |
-| `CLI gobby skills new` | **unclassified** |  |
-| `CLI gobby skills remove` | **unclassified** |  |
-| `CLI gobby skills search` | **unclassified** |  |
-| `CLI gobby skills show` | **unclassified** |  |
-| `CLI gobby skills update` | **unclassified** |  |
-| `CLI gobby skills validate` | **unclassified** |  |
-| `CLI gobby stages` | proxied | Python src/gobby/cli/stages.py::stages; blocked on a Rust stage-registry CLI dispatcher. Owner: #21568 Remaining route families. |
-| `CLI gobby stages defaults` | proxied | Python src/gobby/cli/stages.py::defaults; blocked on Rust task-type default-stage listing/replacement and ordered stage parsing. Owner: #21568 Remaining route families. |
-| `CLI gobby stages delete` | proxied | Python src/gobby/cli/stages.py::delete_stage; blocked on Rust guarded stage-registry deletion and CLI error rendering. Owner: #21568 Remaining route families. |
-| `CLI gobby stages list` | proxied | Python src/gobby/cli/stages.py::list_stages; blocked on Rust stage-registry listing including deleted entries. Owner: #21568 Remaining route families. |
-| `CLI gobby stages restore` | proxied | Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21568 Remaining route families. |
-| `CLI gobby stages show` | proxied | Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21568 Remaining route families. |
-| `CLI gobby stages update` | proxied | Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families. |
+| `CLI gobby skills` | proxied | Python src/gobby/cli/skills.py::skills; Rust CLI group/subcommand dispatch parity for gobby skills remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills disable` | proxied | Python src/gobby/cli/skills.py::disable; Rust CLI command callback parity for gobby skills disable remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills doc` | proxied | Python src/gobby/cli/skills.py::doc; Rust CLI command callback parity for gobby skills doc remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills enable` | proxied | Python src/gobby/cli/skills.py::enable; Rust CLI command callback parity for gobby skills enable remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills hub` | proxied | Python src/gobby/cli/skills.py::hub; Rust CLI group/subcommand dispatch parity for gobby skills hub remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills hub add` | proxied | Python src/gobby/cli/skills.py::hub_add; Rust CLI command callback parity for gobby skills hub add remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills hub list` | proxied | Python src/gobby/cli/skills.py::hub_list; Rust CLI command callback parity for gobby skills hub list remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills init` | proxied | Python src/gobby/cli/skills.py::init; Rust CLI command callback parity for gobby skills init remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills install` | proxied | Python src/gobby/cli/skills.py::install; Rust CLI command callback parity for gobby skills install remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills list` | proxied | Python src/gobby/cli/skills.py::list_skills; Rust CLI command callback parity for gobby skills list remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills meta` | proxied | Python src/gobby/cli/skills.py::meta; Rust CLI group/subcommand dispatch parity for gobby skills meta remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills meta get` | proxied | Python src/gobby/cli/skills.py::meta_get; Rust CLI command callback parity for gobby skills meta get remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills meta set` | proxied | Python src/gobby/cli/skills.py::meta_set; Rust CLI command callback parity for gobby skills meta set remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills meta unset` | proxied | Python src/gobby/cli/skills.py::meta_unset; Rust CLI command callback parity for gobby skills meta unset remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills new` | proxied | Python src/gobby/cli/skills.py::new; Rust CLI command callback parity for gobby skills new remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills remove` | proxied | Python src/gobby/cli/skills.py::remove; Rust CLI command callback parity for gobby skills remove remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills search` | proxied | Python src/gobby/cli/skills.py::search; Rust CLI command callback parity for gobby skills search remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills show` | proxied | Python src/gobby/cli/skills.py::show; Rust CLI command callback parity for gobby skills show remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills update` | proxied | Python src/gobby/cli/skills.py::update; Rust CLI command callback parity for gobby skills update remains under #21568 Remaining route families (Skills). |
+| `CLI gobby skills validate` | proxied | Python src/gobby/cli/skills.py::validate; Rust CLI command callback parity for gobby skills validate remains under #21568 Remaining route families (Skills). |
+| `CLI gobby stages` | proxied | Python src/gobby/cli/stages.py::stages; blocked on a Rust stage-registry CLI dispatcher. Owner: #21560 Tasks family. |
+| `CLI gobby stages defaults` | proxied | Python src/gobby/cli/stages.py::defaults; blocked on Rust task-type default-stage listing/replacement and ordered stage parsing. Owner: #21560 Tasks family. |
+| `CLI gobby stages delete` | proxied | Python src/gobby/cli/stages.py::delete_stage; blocked on Rust guarded stage-registry deletion and CLI error rendering. Owner: #21560 Tasks family. |
+| `CLI gobby stages list` | proxied | Python src/gobby/cli/stages.py::list_stages; blocked on Rust stage-registry listing including deleted entries. Owner: #21560 Tasks family. |
+| `CLI gobby stages restore` | proxied | Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21560 Tasks family. |
+| `CLI gobby stages show` | proxied | Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21560 Tasks family. |
+| `CLI gobby stages update` | proxied | Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21560 Tasks family. |
 | `CLI gobby start` | **unclassified** |  |
 | `CLI gobby status` | **unclassified** |  |
 | `CLI gobby stop` | **unclassified** |  |
@@ -375,15 +375,15 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP DELETE /api/config/secrets/{name}` | **unclassified** |  |
 | `HTTP DELETE /api/cron/jobs/{job_id}` | **unclassified** |  |
 | `HTTP DELETE /api/mcp/servers/{name}` | **unclassified** |  |
-| `HTTP DELETE /api/memories/{memory_id}` | **unclassified** |  |
+| `HTTP DELETE /api/memories/{memory_id}` | proxied | Python src/gobby/servers/routes/memory.py::delete_memory; Rust HTTP handler parity for DELETE /api/memories/{memory_id} remains under #21563 Memory and search. |
 | `HTTP DELETE /api/pipelines/definitions/{definition_id}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:373`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::delete_project via gdaemon front-door fallback; blocked on a native Rust project deletion route and guards. Owner: #21568 Remaining route families. |
 | `HTTP DELETE /api/rules/{name}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:396`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/sessions/{session_id}/stop` | **unclassified** |  |
-| `HTTP DELETE /api/skills/{skill_id}` | **unclassified** |  |
+| `HTTP DELETE /api/skills/{skill_id}` | proxied | Python src/gobby/servers/routes/skills.py::delete_skill; Rust HTTP handler parity for DELETE /api/skills/{skill_id} remains under #21568 Remaining route families (Skills). |
 | `HTTP DELETE /api/source-control/clones/{clone_id}` | **unclassified** |  |
 | `HTTP DELETE /api/source-control/worktrees/{worktree_id}` | **unclassified** |  |
-| `HTTP DELETE /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21568 Remaining route families. |
+| `HTTP DELETE /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21560 Tasks family. |
 | `HTTP DELETE /api/tasks/{task_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}; Python handler `src/gobby/servers/routes/tasks.py:491`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/tasks/{task_id}/comments/{comment_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}/comments/{comment_id}; Python handler `src/gobby/servers/routes/tasks_comment_routes.py:122`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}; Python handler `src/gobby/servers/routes/tasks_dependency_routes.py:174`; Rust front-door dispatch currently proxies this family. |
@@ -459,15 +459,15 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP GET /api/mcp/templates` | **unclassified** |  |
 | `HTTP GET /api/mcp/tools` | **unclassified** |  |
 | `HTTP GET /api/mcp/{server_name}/tools` | **unclassified** |  |
-| `HTTP GET /api/memories` | **unclassified** |  |
-| `HTTP GET /api/memories/graph` | **unclassified** |  |
-| `HTTP GET /api/memories/graph/counts` | **unclassified** |  |
-| `HTTP GET /api/memories/graph/entities` | **unclassified** |  |
-| `HTTP GET /api/memories/graph/entities/{entity_key}/neighbors` | **unclassified** |  |
-| `HTTP GET /api/memories/graph/rebuild/status` | **unclassified** |  |
-| `HTTP GET /api/memories/search` | **unclassified** |  |
-| `HTTP GET /api/memories/stats` | **unclassified** |  |
-| `HTTP GET /api/memories/{memory_id}` | **unclassified** |  |
+| `HTTP GET /api/memories` | proxied | Python src/gobby/servers/routes/memory.py::list_memories; Rust HTTP handler parity for GET /api/memories remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/graph` | proxied | Python src/gobby/servers/routes/memory.py::memory_graph; Rust HTTP handler parity for GET /api/memories/graph remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/graph/counts` | proxied | Python src/gobby/servers/routes/memory.py::graph_counts; Rust HTTP handler parity for GET /api/memories/graph/counts remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/graph/entities` | proxied | Python src/gobby/servers/routes/memory.py::entity_graph; Rust HTTP handler parity for GET /api/memories/graph/entities remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/graph/entities/{entity_key}/neighbors` | proxied | Python src/gobby/servers/routes/memory.py::entity_neighbors; Rust HTTP handler parity for GET /api/memories/graph/entities/{entity_key}/neighbors remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/graph/rebuild/status` | proxied | Python src/gobby/servers/routes/memory.py::rebuild_knowledge_graph_status; Rust HTTP handler parity for GET /api/memories/graph/rebuild/status remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/search` | proxied | Python src/gobby/servers/routes/memory.py::search_memories; Rust HTTP handler parity for GET /api/memories/search remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/stats` | proxied | Python src/gobby/servers/routes/memory.py::memory_stats; Rust HTTP handler parity for GET /api/memories/stats remains under #21563 Memory and search. |
+| `HTTP GET /api/memories/{memory_id}` | proxied | Python src/gobby/servers/routes/memory.py::get_memory; Rust HTTP handler parity for GET /api/memories/{memory_id} remains under #21563 Memory and search. |
 | `HTTP GET /api/metrics/current` | **unclassified** |  |
 | `HTTP GET /api/metrics/snapshots` | **unclassified** |  |
 | `HTTP GET /api/observations/unmodeled` | **unclassified** |  |
@@ -499,15 +499,15 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP GET /api/sessions/{session_id}/token-events` | **unclassified** |  |
 | `HTTP GET /api/sessions/{session_id}/transcript` | **unclassified** |  |
 | `HTTP GET /api/sessions/{session_id}/transcript/status` | **unclassified** |  |
-| `HTTP GET /api/skills` | **unclassified** |  |
-| `HTTP GET /api/skills/hubs` | **unclassified** |  |
-| `HTTP GET /api/skills/hubs/search` | **unclassified** |  |
-| `HTTP GET /api/skills/search` | **unclassified** |  |
-| `HTTP GET /api/skills/stats` | **unclassified** |  |
-| `HTTP GET /api/skills/{skill_id}` | **unclassified** |  |
-| `HTTP GET /api/skills/{skill_id}/export` | **unclassified** |  |
-| `HTTP GET /api/skills/{skill_id}/files` | **unclassified** |  |
-| `HTTP GET /api/skills/{skill_id}/files/{file_path:path}` | **unclassified** |  |
+| `HTTP GET /api/skills` | proxied | Python src/gobby/servers/routes/skills.py::list_skills; Rust HTTP handler parity for GET /api/skills remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/hubs` | proxied | Python src/gobby/servers/routes/skills.py::list_hubs; Rust HTTP handler parity for GET /api/skills/hubs remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/hubs/search` | proxied | Python src/gobby/servers/routes/skills.py::search_hubs; Rust HTTP handler parity for GET /api/skills/hubs/search remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/search` | proxied | Python src/gobby/servers/routes/skills.py::search_skills; Rust HTTP handler parity for GET /api/skills/search remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/stats` | proxied | Python src/gobby/servers/routes/skills.py::skill_stats; Rust HTTP handler parity for GET /api/skills/stats remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/{skill_id}` | proxied | Python src/gobby/servers/routes/skills.py::get_skill; Rust HTTP handler parity for GET /api/skills/{skill_id} remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/{skill_id}/export` | proxied | Python src/gobby/servers/routes/skills.py::export_skill; Rust HTTP handler parity for GET /api/skills/{skill_id}/export remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/{skill_id}/files` | proxied | Python src/gobby/servers/routes/skills.py::list_skill_files; Rust HTTP handler parity for GET /api/skills/{skill_id}/files remains under #21568 Remaining route families (Skills). |
+| `HTTP GET /api/skills/{skill_id}/files/{file_path:path}` | proxied | Python src/gobby/servers/routes/skills.py::read_skill_file; Rust HTTP handler parity for GET /api/skills/{skill_id}/files/{file_path:path} remains under #21568 Remaining route families (Skills). |
 | `HTTP GET /api/source-control/branches` | **unclassified** |  |
 | `HTTP GET /api/source-control/branches/{branch_name:path}/commits` | **unclassified** |  |
 | `HTTP GET /api/source-control/clones` | **unclassified** |  |
@@ -515,7 +515,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP GET /api/source-control/status` | **unclassified** |  |
 | `HTTP GET /api/source-control/worktrees` | **unclassified** |  |
 | `HTTP GET /api/source-control/worktrees/stats` | **unclassified** |  |
-| `HTTP GET /api/stages/registry` | proxied | Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21568 Remaining route families. |
+| `HTTP GET /api/stages/registry` | proxied | Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21560 Tasks family. |
 | `HTTP GET /api/task-types/{task_type}/default-stages` | proxied | Blocked on #21560 Tasks family: implement native GET /api/task-types/{task_type}/default-stages; Python handler `src/gobby/servers/routes/stages.py:114`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/tasks` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks; Python handler `src/gobby/servers/routes/tasks.py:294`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/tasks/{task_id}` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}; Python handler `src/gobby/servers/routes/tasks.py:421`; Rust front-door dispatch currently proxies this family. |
@@ -531,7 +531,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP GET /api/webhooks` | **unclassified** |  |
 | `HTTP GET /docs` | **unclassified** |  |
 | `HTTP GET /docs/oauth2-redirect` | **unclassified** |  |
-| `HTTP GET /memory/dream/{run_id}` | **unclassified** |  |
+| `HTTP GET /memory/dream/{run_id}` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream_status; Rust HTTP handler parity for GET /memory/dream/{run_id} remains under #21563 Memory and search. |
 | `HTTP GET /openapi.json` | **unclassified** |  |
 | `HTTP GET /redoc` | **unclassified** |  |
 | `HTTP HEAD /docs` | **unclassified** |  |
@@ -605,17 +605,17 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP POST /api/mcp/tools/schema` | **unclassified** |  |
 | `HTTP POST /api/mcp/tools/search` | **unclassified** |  |
 | `HTTP POST /api/mcp/{server_name}/tools/{tool_name}` | **unclassified** |  |
-| `HTTP POST /api/memories` | **unclassified** |  |
-| `HTTP POST /api/memories/crossrefs/rebuild` | **unclassified** |  |
-| `HTTP POST /api/memories/embeddings/reindex` | **unclassified** |  |
-| `HTTP POST /api/memories/graph/clear` | **unclassified** |  |
-| `HTTP POST /api/memories/graph/rebuild` | **unclassified** |  |
-| `HTTP POST /api/memories/invalidate` | **unclassified** |  |
-| `HTTP POST /api/memories/reconcile` | **unclassified** |  |
-| `HTTP POST /api/memories/{memory_id}/demote` | **unclassified** |  |
-| `HTTP POST /api/memories/{memory_id}/move` | **unclassified** |  |
-| `HTTP POST /api/memories/{memory_id}/promote` | **unclassified** |  |
-| `HTTP POST /api/memories/{memory_id}/restore` | **unclassified** |  |
+| `HTTP POST /api/memories` | proxied | Python src/gobby/servers/routes/memory.py::create_memory; Rust HTTP handler parity for POST /api/memories remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/crossrefs/rebuild` | proxied | Python src/gobby/servers/routes/memory.py::rebuild_crossrefs; Rust HTTP handler parity for POST /api/memories/crossrefs/rebuild remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/embeddings/reindex` | proxied | Python src/gobby/servers/routes/memory.py::reindex_embeddings; Rust HTTP handler parity for POST /api/memories/embeddings/reindex remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/graph/clear` | proxied | Python src/gobby/servers/routes/memory.py::clear_knowledge_graph; Rust HTTP handler parity for POST /api/memories/graph/clear remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/graph/rebuild` | proxied | Python src/gobby/servers/routes/memory.py::rebuild_knowledge_graph; Rust HTTP handler parity for POST /api/memories/graph/rebuild remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/invalidate` | proxied | Python src/gobby/servers/routes/memory.py::invalidate_memories; Rust HTTP handler parity for POST /api/memories/invalidate remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/reconcile` | proxied | Python src/gobby/servers/routes/memory.py::reconcile_memory_stores; Rust HTTP handler parity for POST /api/memories/reconcile remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/{memory_id}/demote` | proxied | Python src/gobby/servers/routes/memory.py::demote_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/demote remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/{memory_id}/move` | proxied | Python src/gobby/servers/routes/memory.py::move_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/move remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/{memory_id}/promote` | proxied | Python src/gobby/servers/routes/memory.py::promote_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/promote remains under #21563 Memory and search. |
+| `HTTP POST /api/memories/{memory_id}/restore` | proxied | Python src/gobby/servers/routes/memory.py::restore_memory; Rust HTTP handler parity for POST /api/memories/{memory_id}/restore remains under #21563 Memory and search. |
 | `HTTP POST /api/pipelines/approve/{token}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/approve/{token}; Python handler `src/gobby/servers/routes/pipelines.py:432`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:284`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions/import` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/import; Python handler `src/gobby/servers/routes/pipeline_definitions.py:238`; Rust front-door dispatch currently proxies this family. |
@@ -651,20 +651,20 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP POST /api/sessions/{session_id}/stop` | **unclassified** |  |
 | `HTTP POST /api/sessions/{session_id}/variables/get` | **unclassified** |  |
 | `HTTP POST /api/sessions/{session_id}/variables/set` | **unclassified** |  |
-| `HTTP POST /api/skills` | **unclassified** |  |
-| `HTTP POST /api/skills/hubs/install` | **unclassified** |  |
-| `HTTP POST /api/skills/import` | **unclassified** |  |
-| `HTTP POST /api/skills/restore-defaults` | **unclassified** |  |
-| `HTTP POST /api/skills/scan` | **unclassified** |  |
-| `HTTP POST /api/skills/{skill_id}/move-to-installed` | **unclassified** |  |
-| `HTTP POST /api/skills/{skill_id}/move-to-project` | **unclassified** |  |
-| `HTTP POST /api/skills/{skill_id}/restore` | **unclassified** |  |
+| `HTTP POST /api/skills` | proxied | Python src/gobby/servers/routes/skills.py::create_skill; Rust HTTP handler parity for POST /api/skills remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/hubs/install` | proxied | Python src/gobby/servers/routes/skills.py::install_from_hub; Rust HTTP handler parity for POST /api/skills/hubs/install remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/import` | proxied | Python src/gobby/servers/routes/skills.py::import_skill; Rust HTTP handler parity for POST /api/skills/import remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/restore-defaults` | proxied | Python src/gobby/servers/routes/skills.py::restore_defaults; Rust HTTP handler parity for POST /api/skills/restore-defaults remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/scan` | proxied | Python src/gobby/servers/routes/skills.py::scan_skill; Rust HTTP handler parity for POST /api/skills/scan remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/{skill_id}/move-to-installed` | proxied | Python src/gobby/servers/routes/skills.py::move_to_installed; Rust HTTP handler parity for POST /api/skills/{skill_id}/move-to-installed remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/{skill_id}/move-to-project` | proxied | Python src/gobby/servers/routes/skills.py::move_to_project; Rust HTTP handler parity for POST /api/skills/{skill_id}/move-to-project remains under #21568 Remaining route families (Skills). |
+| `HTTP POST /api/skills/{skill_id}/restore` | proxied | Python src/gobby/servers/routes/skills.py::restore_skill; Rust HTTP handler parity for POST /api/skills/{skill_id}/restore remains under #21568 Remaining route families (Skills). |
 | `HTTP POST /api/source-control/branches/checkout` | **unclassified** |  |
 | `HTTP POST /api/source-control/clones/{clone_id}/sync` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees/cleanup` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees/{worktree_id}/sync` | **unclassified** |  |
-| `HTTP POST /api/stages/registry/{name}/restore` | proxied | Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21568 Remaining route families. |
+| `HTTP POST /api/stages/registry/{name}/restore` | proxied | Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21560 Tasks family. |
 | `HTTP POST /api/tasks` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks; Python handler `src/gobby/servers/routes/tasks.py:392`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/tasks/{task_id}/claim` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/claim; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:121`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/tasks/{task_id}/close` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/close; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:200`; Rust front-door dispatch currently proxies this family. |
@@ -678,8 +678,8 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP POST /api/variables/{ref}/restore-from-template` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/variables/{ref}/restore-from-template; Python handler `src/gobby/servers/routes/variable_definitions.py:188`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/voice/transcribe` | **unclassified** |  |
 | `HTTP POST /api/webhooks/test` | **unclassified** |  |
-| `HTTP POST /memory/dream` | **unclassified** |  |
-| `HTTP POST /memory/dream/{run_id}/revert` | **unclassified** |  |
+| `HTTP POST /memory/dream` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream; Rust HTTP handler parity for POST /memory/dream remains under #21563 Memory and search. |
+| `HTTP POST /memory/dream/{run_id}/revert` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream_revert; Rust HTTP handler parity for POST /memory/dream/{run_id}/revert remains under #21563 Memory and search. |
 | `HTTP PUT /api/agents/definitions/{definition_id}` | **unclassified** |  |
 | `HTTP PUT /api/comms/channels/{channel_id}` | **unclassified** |  |
 | `HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate` | **unclassified** |  |
@@ -687,16 +687,16 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `HTTP PUT /api/config/template` | **unclassified** |  |
 | `HTTP PUT /api/files/user-md` | **unclassified** |  |
 | `HTTP PUT /api/mcp/servers/{name}` | **unclassified** |  |
-| `HTTP PUT /api/memories/{memory_id}` | **unclassified** |  |
+| `HTTP PUT /api/memories/{memory_id}` | proxied | Python src/gobby/servers/routes/memory.py::update_memory; Rust HTTP handler parity for PUT /api/memories/{memory_id} remains under #21563 Memory and search. |
 | `HTTP PUT /api/pipelines/definitions/{definition_id}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:336`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/pipelines/definitions/{definition_id}/toggle` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/pipelines/definitions/{definition_id}/toggle; Python handler `src/gobby/servers/routes/pipeline_definitions.py:324`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::update_project via gdaemon front-door fallback; blocked on native Rust project updates and checkout-scoped approval/validation config writes. Owner: #21568 Remaining route families. |
 | `HTTP PUT /api/rules/bulk-toggle` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/bulk-toggle; Python handler `src/gobby/servers/routes/rules.py:231`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/rules/{name}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:297`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/rules/{name}/toggle` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/{name}/toggle; Python handler `src/gobby/servers/routes/rules.py:422`; Rust front-door dispatch currently proxies this family. |
-| `HTTP PUT /api/skills/{skill_id}` | **unclassified** |  |
-| `HTTP PUT /api/skills/{skill_id}/files/{file_path:path}` | **unclassified** |  |
-| `HTTP PUT /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families. |
+| `HTTP PUT /api/skills/{skill_id}` | proxied | Python src/gobby/servers/routes/skills.py::update_skill; Rust HTTP handler parity for PUT /api/skills/{skill_id} remains under #21568 Remaining route families (Skills). |
+| `HTTP PUT /api/skills/{skill_id}/files/{file_path:path}` | proxied | Python src/gobby/servers/routes/skills.py::write_skill_file; Rust HTTP handler parity for PUT /api/skills/{skill_id}/files/{file_path:path} remains under #21568 Remaining route families (Skills). |
+| `HTTP PUT /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21560 Tasks family. |
 | `HTTP PUT /api/task-types/{task_type}/default-stages` | proxied | Blocked on #21560 Tasks family: implement native PUT /api/task-types/{task_type}/default-stages; Python handler `src/gobby/servers/routes/stages.py:131`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/variables/{ref}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/variables/{ref}; Python handler `src/gobby/servers/routes/variable_definitions.py:151`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/variables/{ref}/toggle` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/variables/{ref}/toggle; Python handler `src/gobby/servers/routes/variable_definitions.py:138`; Rust front-door dispatch currently proxies this family. |
@@ -789,32 +789,32 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `MCP gobby-hub:list_all_projects` | **unclassified** |  |
 | `MCP gobby-hub:list_cross_project_sessions` | **unclassified** |  |
 | `MCP gobby-hub:list_cross_project_tasks` | **unclassified** |  |
-| `MCP gobby-memory:backup_memories` | **unclassified** |  |
-| `MCP gobby-memory:create_memory` | **unclassified** |  |
-| `MCP gobby-memory:delete_memory` | **unclassified** |  |
-| `MCP gobby-memory:demote_memory_from_global` | **unclassified** |  |
-| `MCP gobby-memory:densify_knowledge_graph_cooccurrence` | **unclassified** |  |
-| `MCP gobby-memory:get_memory` | **unclassified** |  |
-| `MCP gobby-memory:get_related_memories` | **unclassified** |  |
-| `MCP gobby-memory:list_memories` | **unclassified** |  |
-| `MCP gobby-memory:memory_dream` | **unclassified** |  |
-| `MCP gobby-memory:memory_dream_decisions` | **unclassified** |  |
-| `MCP gobby-memory:memory_dream_revert` | **unclassified** |  |
-| `MCP gobby-memory:memory_dream_status` | **unclassified** |  |
-| `MCP gobby-memory:memory_stats` | **unclassified** |  |
-| `MCP gobby-memory:move_memory` | **unclassified** |  |
-| `MCP gobby-memory:promote_memory_to_global` | **unclassified** |  |
-| `MCP gobby-memory:rebuild_crossrefs` | **unclassified** |  |
-| `MCP gobby-memory:rebuild_knowledge_graph` | **unclassified** |  |
-| `MCP gobby-memory:recluster_knowledge_graph_entities` | **unclassified** |  |
-| `MCP gobby-memory:reindex_embeddings` | **unclassified** |  |
-| `MCP gobby-memory:restore_memories` | **unclassified** |  |
-| `MCP gobby-memory:restore_memory` | **unclassified** |  |
-| `MCP gobby-memory:review_task_memories` | **unclassified** |  |
-| `MCP gobby-memory:search_knowledge_graph` | **unclassified** |  |
-| `MCP gobby-memory:search_memories` | **unclassified** |  |
-| `MCP gobby-memory:surface_memories` | **unclassified** |  |
-| `MCP gobby-memory:update_memory` | **unclassified** |  |
+| `MCP gobby-memory:backup_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::backup_memories; Rust MCP tool handler parity for gobby-memory:backup_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:create_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory_write.py::create_memory; Rust MCP tool handler parity for gobby-memory:create_memory remains under #21563 Memory and search. |
+| `MCP gobby-memory:delete_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory_write.py::delete_memory; Rust MCP tool handler parity for gobby-memory:delete_memory remains under #21563 Memory and search. |
+| `MCP gobby-memory:demote_memory_from_global` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::demote_memory_from_global; Rust MCP tool handler parity for gobby-memory:demote_memory_from_global remains under #21563 Memory and search. |
+| `MCP gobby-memory:densify_knowledge_graph_cooccurrence` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::densify_knowledge_graph_cooccurrence; Rust MCP tool handler parity for gobby-memory:densify_knowledge_graph_cooccurrence remains under #21563 Memory and search. |
+| `MCP gobby-memory:get_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::get_memory; Rust MCP tool handler parity for gobby-memory:get_memory remains under #21563 Memory and search. |
+| `MCP gobby-memory:get_related_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::get_related_memories; Rust MCP tool handler parity for gobby-memory:get_related_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:list_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::list_memories; Rust MCP tool handler parity for gobby-memory:list_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:memory_dream` | proxied | Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream; Rust MCP tool handler parity for gobby-memory:memory_dream remains under #21563 Memory and search. |
+| `MCP gobby-memory:memory_dream_decisions` | proxied | Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_decisions; Rust MCP tool handler parity for gobby-memory:memory_dream_decisions remains under #21563 Memory and search. |
+| `MCP gobby-memory:memory_dream_revert` | proxied | Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_revert; Rust MCP tool handler parity for gobby-memory:memory_dream_revert remains under #21563 Memory and search. |
+| `MCP gobby-memory:memory_dream_status` | proxied | Python src/gobby/mcp_proxy/tools/memory_dream.py::memory_dream_status; Rust MCP tool handler parity for gobby-memory:memory_dream_status remains under #21563 Memory and search. |
+| `MCP gobby-memory:memory_stats` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::memory_stats; Rust MCP tool handler parity for gobby-memory:memory_stats remains under #21563 Memory and search. |
+| `MCP gobby-memory:move_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::move_memory; Rust MCP tool handler parity for gobby-memory:move_memory remains under #21563 Memory and search. |
+| `MCP gobby-memory:promote_memory_to_global` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::promote_memory_to_global; Rust MCP tool handler parity for gobby-memory:promote_memory_to_global remains under #21563 Memory and search. |
+| `MCP gobby-memory:rebuild_crossrefs` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::rebuild_crossrefs; Rust MCP tool handler parity for gobby-memory:rebuild_crossrefs remains under #21563 Memory and search. |
+| `MCP gobby-memory:rebuild_knowledge_graph` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::rebuild_knowledge_graph; Rust MCP tool handler parity for gobby-memory:rebuild_knowledge_graph remains under #21563 Memory and search. |
+| `MCP gobby-memory:recluster_knowledge_graph_entities` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::recluster_knowledge_graph_entities; Rust MCP tool handler parity for gobby-memory:recluster_knowledge_graph_entities remains under #21563 Memory and search. |
+| `MCP gobby-memory:reindex_embeddings` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::reindex_embeddings; Rust MCP tool handler parity for gobby-memory:reindex_embeddings remains under #21563 Memory and search. |
+| `MCP gobby-memory:restore_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::restore_memories; Rust MCP tool handler parity for gobby-memory:restore_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:restore_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory_write.py::restore_memory; Rust MCP tool handler parity for gobby-memory:restore_memory remains under #21563 Memory and search. |
+| `MCP gobby-memory:review_task_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory_review.py::review_task_memories; Rust MCP tool handler parity for gobby-memory:review_task_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:search_knowledge_graph` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::search_knowledge_graph; Rust MCP tool handler parity for gobby-memory:search_knowledge_graph remains under #21563 Memory and search. |
+| `MCP gobby-memory:search_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory.py::search_memories; Rust MCP tool handler parity for gobby-memory:search_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:surface_memories` | proxied | Python src/gobby/mcp_proxy/tools/memory_surface.py::surface_memories; Rust MCP tool handler parity for gobby-memory:surface_memories remains under #21563 Memory and search. |
+| `MCP gobby-memory:update_memory` | proxied | Python src/gobby/mcp_proxy/tools/memory_write.py::update_memory; Rust MCP tool handler parity for gobby-memory:update_memory remains under #21563 Memory and search. |
 | `MCP gobby-merge:analyze_merge_landscape` | **unclassified** |  |
 | `MCP gobby-merge:cherry_pick_into_worktree` | **unclassified** |  |
 | `MCP gobby-merge:inspect_merge_state` | **unclassified** |  |
@@ -896,20 +896,20 @@ Public surfaces and evidence gates: 1097. Unclassified: 783.
 | `MCP gobby-sessions:set_handoff` | **unclassified** |  |
 | `MCP gobby-sessions:set_title` | **unclassified** |  |
 | `MCP gobby-sessions:terminate_terminal` | **unclassified** |  |
-| `MCP gobby-skills:get_skill` | **unclassified** |  |
-| `MCP gobby-skills:get_skill_file` | **unclassified** |  |
-| `MCP gobby-skills:get_skill_files` | **unclassified** |  |
-| `MCP gobby-skills:install_skill` | **unclassified** |  |
-| `MCP gobby-skills:list_hubs` | **unclassified** |  |
-| `MCP gobby-skills:list_skills` | **unclassified** |  |
-| `MCP gobby-skills:materialize_skill_scripts` | **unclassified** |  |
-| `MCP gobby-skills:move_skill_to_installed` | **unclassified** |  |
-| `MCP gobby-skills:move_skill_to_project` | **unclassified** |  |
-| `MCP gobby-skills:remove_skill` | **unclassified** |  |
-| `MCP gobby-skills:restore_skill` | **unclassified** |  |
-| `MCP gobby-skills:search_hub` | **unclassified** |  |
-| `MCP gobby-skills:search_skills` | **unclassified** |  |
-| `MCP gobby-skills:update_skill` | **unclassified** |  |
+| `MCP gobby-skills:get_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill; Rust MCP tool handler parity for gobby-skills:get_skill remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:get_skill_file` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_file_tool; Rust MCP tool handler parity for gobby-skills:get_skill_file remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:get_skill_files` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_files_tool; Rust MCP tool handler parity for gobby-skills:get_skill_files remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:install_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/install_skill.py::install_skill; Rust MCP tool handler parity for gobby-skills:install_skill remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:list_hubs` | proxied | Python src/gobby/mcp_proxy/tools/skills/hub_tools.py::list_hubs; Rust MCP tool handler parity for gobby-skills:list_hubs remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:list_skills` | proxied | Python src/gobby/mcp_proxy/tools/skills/list_skills.py::list_skills; Rust MCP tool handler parity for gobby-skills:list_skills remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:materialize_skill_scripts` | proxied | Python src/gobby/mcp_proxy/tools/skills/materialize_skill_scripts.py::materialize_tool; Rust MCP tool handler parity for gobby-skills:materialize_skill_scripts remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:move_skill_to_installed` | proxied | Python src/gobby/mcp_proxy/tools/skills/move_skill.py::move_skill_to_installed; Rust MCP tool handler parity for gobby-skills:move_skill_to_installed remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:move_skill_to_project` | proxied | Python src/gobby/mcp_proxy/tools/skills/move_skill.py::move_skill_to_project; Rust MCP tool handler parity for gobby-skills:move_skill_to_project remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:remove_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/remove_skill.py::remove_skill; Rust MCP tool handler parity for gobby-skills:remove_skill remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:restore_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/restore_skill.py::restore_skill; Rust MCP tool handler parity for gobby-skills:restore_skill remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:search_hub` | proxied | Python src/gobby/mcp_proxy/tools/skills/hub_tools.py::search_hub; Rust MCP tool handler parity for gobby-skills:search_hub remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:search_skills` | proxied | Python src/gobby/mcp_proxy/tools/skills/search_skills.py::search_skills; Rust MCP tool handler parity for gobby-skills:search_skills remains under #21568 Remaining route families (Skills). |
+| `MCP gobby-skills:update_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/update_skill.py::update_skill; Rust MCP tool handler parity for gobby-skills:update_skill remains under #21568 Remaining route families (Skills). |
 | `MCP gobby-tasks-ops:add_stage` | proxied | Blocked on #21560 Tasks family: port `add_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:370`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
 | `MCP gobby-tasks-ops:append_description_section` | proxied | Blocked on #21560 Tasks family: port `append_description_section` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:240`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
 | `MCP gobby-tasks-ops:approve_review` | proxied | Blocked on #21560 Tasks family: port `approve_review` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_review.py:364`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |

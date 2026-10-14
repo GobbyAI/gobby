@@ -77,31 +77,31 @@
   },
   "CLI gobby stages": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::stages; blocked on a Rust stage-registry CLI dispatcher. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::stages; blocked on a Rust stage-registry CLI dispatcher. Owner: #21560 Tasks family."
   },
   "CLI gobby stages defaults": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::defaults; blocked on Rust task-type default-stage listing/replacement and ordered stage parsing. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::defaults; blocked on Rust task-type default-stage listing/replacement and ordered stage parsing. Owner: #21560 Tasks family."
   },
   "CLI gobby stages delete": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::delete_stage; blocked on Rust guarded stage-registry deletion and CLI error rendering. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::delete_stage; blocked on Rust guarded stage-registry deletion and CLI error rendering. Owner: #21560 Tasks family."
   },
   "CLI gobby stages list": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::list_stages; blocked on Rust stage-registry listing including deleted entries. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::list_stages; blocked on Rust stage-registry listing including deleted entries. Owner: #21560 Tasks family."
   },
   "CLI gobby stages restore": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21560 Tasks family."
   },
   "CLI gobby stages show": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21560 Tasks family."
   },
   "CLI gobby stages update": {
     "status": "proxied",
-    "note": "Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21560 Tasks family."
   },
   "HTTP DELETE /api/projects/{project_id}": {
     "status": "proxied",
@@ -109,7 +109,7 @@
   },
   "HTTP DELETE /api/stages/registry/{name}": {
     "status": "proxied",
-    "note": "Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21560 Tasks family."
   },
   "HTTP GET /api/projects": {
     "status": "proxied",
@@ -125,7 +125,7 @@
   },
   "HTTP GET /api/stages/registry": {
     "status": "proxied",
-    "note": "Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21560 Tasks family."
   },
   "HTTP PATCH /api/projects/{project_id}": {
     "status": "proxied",
@@ -149,7 +149,7 @@
   },
   "HTTP POST /api/stages/registry/{name}/restore": {
     "status": "proxied",
-    "note": "Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21560 Tasks family."
   },
   "HTTP PUT /api/projects/{project_id}": {
     "status": "proxied",
@@ -157,7 +157,7 @@
   },
   "HTTP PUT /api/stages/registry/{name}": {
     "status": "proxied",
-    "note": "Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families."
+    "note": "Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21560 Tasks family."
   },
   "MCP gobby-plans:append_plan_changelog_round": {
     "status": "proxied",
