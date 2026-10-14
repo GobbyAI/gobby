@@ -2738,6 +2738,11 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
     `[call(mock_session)]` exactly, so the new remote branch would change its
     call. Its other `complete_agent_run` checks either name a session on the
     handler's own machine or use `assert_called_once()`.
+    `test_session_end_complete_agent_run` also builds a bare `MagicMock`
+    session, so it takes the remote branch, and its `TurnLifecycleReducer`
+    reads a `MagicMock` store (`get` calls `AttentionStateManager.get`). The
+    generation read therefore has its own guard, so a failed read cannot
+    skip the one call that test asserts.
     `tests/hooks/test_session_events_coverage.py` checks only
     `assert_called_once()` or raises from the call, and
     `tests/hooks/test_session_lookup_metadata.py` asserts it is not called.
@@ -2840,10 +2845,13 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
   no-activity check and before `_terminate_agent_run` records the counts.
   Every caller that passes nothing behaves as before.
 - `handle_session_end`: for a session whose `machine_id` is not
-  `self._get_machine_id()`, inside the existing `try` it reads the reducer
-  as `getattr(self, "_turn_lifecycle", None)`, as the method already reads
-  `_liveness_monitor`, takes its `get(session.id).generation` (0 when there
-  is no reducer), and calls `complete_agent_run(session, attested_turns=generation)`.
+  `self._get_machine_id()`, it reads the reducer as
+  `getattr(self, "_turn_lifecycle", None)`, as the method already reads
+  `_liveness_monitor`, and takes its `get(session.id).generation` in its own
+  `try`. No reducer, or a read that raises (logged as a warning), gives 0, so
+  the completion call always follows. It then calls
+  `complete_agent_run(session, attested_turns=generation)` inside the
+  existing `try`.
   A session on the hub's own machine keeps `complete_agent_run(session)`. Each
   forwarded prompt submit began one turn, so a node run that began a turn
   completes, and one that never began a turn still fails "no activity".
@@ -2867,6 +2875,11 @@ can settle first, and 2.6.8 and 2.6.9 both complete through the
   and for an active run the reconciler calls `dead_reason`, where `None` means
   a completion is settling the run, and otherwise calls
   `cleanup_agent(run, terminal_payload=<reason>)`.
+  - A row's exit, when the take carries one, decides the row before any
+    `agents` or `accepted` listing. node-halves 2.6's `watch_exits` removes
+    the run from its agent list when it commits the exit, so the newest
+    snapshot never lists a run whose exit the same take carries, and the
+    rule keeps a hookless exit from being lost if one ever does.
   - Listed in `agents` and pending: 1.4's route already recorded the
     entry's workspace row before it answered 200, so the reconciler calls
     `record_spawn_identity`.
