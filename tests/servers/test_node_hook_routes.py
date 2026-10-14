@@ -52,15 +52,7 @@ def _client(db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
-@pytest.mark.parametrize(
-    ("processed", "live", "expected"),
-    [
-        (False, False, "execute"),
-        (False, True, "retain"),
-        (True, True, "unlink"),
-    ],
-)
-def test_replay_route(
+def _assert_replay_disposition(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
     processed: bool,
@@ -87,16 +79,7 @@ def test_replay_route(
     }
 
 
-@pytest.mark.parametrize("path", ["/api/nodes/hooks/replay", "/api/nodes/receipts"])
-@pytest.mark.parametrize(
-    ("identity", "detail"),
-    [
-        ("missing", "node_identity_required"),
-        ("forged", "node_identity_required"),
-        ("local", "machine_is_local"),
-    ],
-)
-def test_node_identity_required(
+def _assert_node_identity_required(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
     path: str,
@@ -112,17 +95,7 @@ def test_node_identity_required(
     assert response.json() == {"detail": detail}
 
 
-@pytest.mark.parametrize("path", ["/api/nodes/hooks/replay", "/api/nodes/receipts"])
-@pytest.mark.parametrize(
-    ("body", "detail"),
-    [
-        ({"v": 2}, "unsupported_version"),
-        ({"v": 1, "extra": True}, "invalid_body"),
-        ({"v": True}, "invalid_body"),
-        ({"v": "1"}, "invalid_body"),
-    ],
-)
-def test_invalid_body(
+def _assert_invalid_body(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
     path: str,
@@ -139,12 +112,30 @@ def test_invalid_body(
             "live": False,
         }
         if path.endswith("replay")
-        else {"v": 1, "op": "ack", "receipt_id": "unknown", "delivery_generation": 1}
+        else {
+            "v": 1,
+            "op": "ack",
+            "receipt_id": "00000000-0000-4000-8000-000000000000",
+            "delivery_generation": 1,
+        }
     )
     with _client(temp_db, monkeypatch) as client:
         response = client.post(path, headers=_headers(), json=valid | body)
     assert response.status_code == 422
     assert response.json() == {"detail": detail}
+
+
+def _assert_invalid_receipt_id(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    with _client(temp_db, monkeypatch) as client:
+        response = client.post(
+            "/api/nodes/receipts",
+            headers=_headers(),
+            json={"v": 1, "op": op, "receipt_id": "malformed", "delivery_generation": 1},
+        )
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_body"}
 
 
 @pytest.fixture
@@ -163,7 +154,7 @@ def node_session(
     )
 
 
-def test_receipts_route(
+def _assert_receipts_acknowledged_once(
     session_manager: SessionManager,
     node_session: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,8 +194,7 @@ def test_receipts_route(
     messages.mark_delivered_batch.assert_called_once_with(["message"], node_session)
 
 
-@pytest.mark.parametrize("op", ["ack", "release"])
-def test_foreign_receipts_refused(
+def _assert_foreign_receipts_refused(
     session_manager: SessionManager,
     node_session: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -233,7 +223,7 @@ def test_foreign_receipts_refused(
     assert stored is not None and stored["state"] == "prepared"
 
 
-def test_release_receipt_route(
+def _assert_release_receipt_route(
     session_manager: SessionManager,
     node_session: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -246,3 +236,85 @@ def test_release_receipt_route(
         duplicate = client.post("/api/nodes/receipts", headers=_headers(), json=body)
     assert first.status_code == 200 and first.json() == {"released": True}
     assert duplicate.json() == {"released": False}
+
+
+def _assert_request_boundary(
+    db: HubDatabase, monkeypatch: pytest.MonkeyPatch, path: str, proof: str
+) -> None:
+    if proof in {"missing", "forged", "local"}:
+        detail = "machine_is_local" if proof == "local" else "node_identity_required"
+        _assert_node_identity_required(db, monkeypatch, path, proof, detail)
+    else:
+        bodies: dict[str, dict[str, Any]] = {
+            "version": {"v": 2},
+            "extra": {"extra": True},
+            "bool": {"v": True},
+            "string": {"v": "1"},
+        }
+        detail = "unsupported_version" if proof == "version" else "invalid_body"
+        _assert_invalid_body(db, monkeypatch, path, bodies[proof], detail)
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        "execute",
+        "live",
+        "processed",
+        "missing",
+        "forged",
+        "local",
+        "version",
+        "extra",
+        "bool",
+        "string",
+    ],
+)
+def test_replay_route(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, proof: str) -> None:
+    if proof in {"execute", "live", "processed"}:
+        expected = {"execute": "execute", "live": "retain", "processed": "unlink"}[proof]
+        _assert_replay_disposition(
+            temp_db, monkeypatch, proof == "processed", proof != "execute", expected
+        )
+    else:
+        _assert_request_boundary(temp_db, monkeypatch, "/api/nodes/hooks/replay", proof)
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        "ack",
+        "release",
+        "foreign-ack",
+        "foreign-release",
+        "missing",
+        "forged",
+        "local",
+        "version",
+        "extra",
+        "bool",
+        "string",
+        "malformed-ack",
+        "malformed-release",
+    ],
+)
+def test_receipts_route(
+    session_manager: SessionManager,
+    node_session: str,
+    monkeypatch: pytest.MonkeyPatch,
+    proof: str,
+) -> None:
+    if proof == "ack":
+        _assert_receipts_acknowledged_once(session_manager, node_session, monkeypatch)
+    elif proof == "release":
+        _assert_release_receipt_route(session_manager, node_session, monkeypatch)
+    elif proof.startswith("foreign-"):
+        _assert_foreign_receipts_refused(
+            session_manager, node_session, monkeypatch, proof.removeprefix("foreign-")
+        )
+    elif proof.startswith("malformed-"):
+        _assert_invalid_receipt_id(
+            session_manager.db, monkeypatch, proof.removeprefix("malformed-")
+        )
+    else:
+        _assert_request_boundary(session_manager.db, monkeypatch, "/api/nodes/receipts", proof)

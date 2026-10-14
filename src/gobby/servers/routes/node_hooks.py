@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -33,7 +34,7 @@ class ReceiptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     v: Literal[1]
     op: Literal["ack", "release"]
-    receipt_id: str
+    receipt_id: UUID = Field(strict=False)
     delivery_generation: int = Field(ge=1)
 
 
@@ -72,7 +73,7 @@ def _receipt(
     )
     row = db.fetchone(
         "SELECT s.machine_id FROM hook_receipt_effects r "
-        "JOIN sessions s ON s.id = r.session_id WHERE r.receipt_id::text = %s",
+        "JOIN sessions s ON s.id = r.session_id WHERE r.receipt_id = %s",
         (body.receipt_id,),
     )
     if row is None or not is_local_machine_owner(str(row["machine_id"]), machine):
@@ -80,14 +81,14 @@ def _receipt(
     if body.op == "release":
         return {
             "released": release_receipt(
-                db, receipt_id=body.receipt_id, delivery_generation=body.delivery_generation
+                db, receipt_id=str(body.receipt_id), delivery_generation=body.delivery_generation
             )
             is not None
         }
     manager = getattr(request.app.state, "hook_manager", None)
     committed = acknowledge_and_apply_receipt(
         db,
-        receipt_id=body.receipt_id,
+        receipt_id=str(body.receipt_id),
         delivery_generation=body.delivery_generation,
         message_manager=getattr(manager, "_inter_session_msg_manager", None),
         variable_manager=SessionVariableManager(db),
