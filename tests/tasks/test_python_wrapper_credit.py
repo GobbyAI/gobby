@@ -170,6 +170,13 @@ def test_inline_python_commands_are_diagnostic_only(command: str) -> None:
         "caffeinate -i pytest -q",
         "perl scripts/check.pl",
         "ruby scripts/check.rb",
+        "uvx CPython -m pytest",
+        "uvx Python@3.14 -m pytest",
+        "PYTHON3 -m pytest",
+        "Uv run python -m pytest",
+        "Timeout 60 python -m pytest",
+        "perl5.34 scripts/check.pl",
+        "ruby3.3 scripts/check.rb",
     ],
 )
 def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> None:
@@ -233,6 +240,18 @@ def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> 
         "stdbuf --future-option python -c 'print(0)'",
         "sudo --future-option python -c 'print(0)'",
         "caffeinate --future-option python -c 'print(0)'",
+        "uvx CPython -c 'print(0)'",
+        "uvx Python@3.14 -c 'print(0)'",
+        "uvx PYTHON -c 'print(0)'",
+        "PYTHON3 -c 'print(0)'",
+        "Perl -e 'exit 0'",
+        "Ruby -e 'exit 0'",
+        "NODE -e 'process.exit(0)'",
+        "Bash -c 'exit 0'",
+        "Uv run python -c 'print(0)'",
+        "Timeout 60 python -c 'print(0)'",
+        "perl5.34 -e 'exit 0'",
+        "ruby3.3 -e 'exit 0'",
     ],
 )
 def test_ambiguous_interpreter_and_launcher_forms_get_no_credit(command: str) -> None:

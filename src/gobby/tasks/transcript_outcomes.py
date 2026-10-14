@@ -33,6 +33,7 @@ _NODE_WRAPPERS = {"node", "nodejs"}
 _PYTHON_EXECUTABLE = re.compile(
     r"(?:python|cpython|pypy|graalpy|pyodide)(?:\d+(?:\.\d+)*)?t?(?:@[\s\S]+)?"
 )
+_SCRIPT_EXECUTABLE = re.compile(r"(?:perl|ruby)(?:\d+(?:\.\d+)*)?")
 _UV_DIRECT_COMMANDS = frozenset(
     {"pip", "lock", "sync", "tree", "version", "build", "export", "format"}
 )
@@ -222,7 +223,7 @@ def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
         return "js_repl wrapper"
     if executable in _NODE_WRAPPERS:
         return "node wrapper"
-    if executable in {"perl", "ruby"} and (not arguments or arguments[0].startswith("-")):
+    if _SCRIPT_EXECUTABLE.fullmatch(executable) and (not arguments or arguments[0].startswith("-")):
         return f"{executable} interpreter wrapper"
     if _PYTHON_EXECUTABLE.fullmatch(executable):
         return _python_wrapper_reason(arguments)
@@ -287,7 +288,7 @@ def _first_executable(parsed: ParsedShellCommand) -> tuple[str, tuple[str, ...]]
         if _ENV_ASSIGNMENT_PREFIX.match(tokens[0]):
             tokens = tokens[1:]
             continue
-        executable = os.path.basename(tokens[0])
+        executable = os.path.basename(tokens[0]).lower()
         arguments = tokens[1:]
         if executable in {"uv", "uvx"}:
             inner = _uv_run_arguments(arguments if executable == "uv" else ("run", *arguments))
