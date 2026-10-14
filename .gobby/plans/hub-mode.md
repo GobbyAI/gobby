@@ -144,9 +144,12 @@ Writer decisions:
     `POST /api/agents/spawn`) choose the remote flow. The origin machine is the
     calling session's, so a node agent that reports to a hub coordinator spawns
     on its node. The parent session is only the reporting relationship. Dispatch,
-    cron, and feedback spawns stay local (decision 11). A remote spawn refuses
-    `resume` and placement with typed errors: resume needs the node's provider
-    thread files, and placement is a gclient-local pane feature.
+    cron, and feedback spawns stay local (decision 11). A resume routes to the
+    resumed session's machine, overriding `machine` and the origin, because
+    the provider thread files live there, and it runs in the workspace that
+    session's earlier run used (node-halves Decision 23). A remote spawn
+    refuses placement with a typed error, because placement is a
+    gclient-local pane feature.
 14. **No datastore credential crosses to a node** (ROADMAP decision 17). A
     remote spawn issues no managed credential, writes no prompt file, and
     creates no directory on the hub. `agent.spawn` carries the run's identity
@@ -511,7 +514,7 @@ Targets:
     the wire. Its machine routing refuses with `checkout_unresolved`,
     `machine_not_found`, and `machine_not_owned`, each `stage: "none"` before
     any command, and reuses `node_offline`. Hub-flow result codes such as
-    `not_stopped`, `spawn_in_doubt`, `remote_resume_unsupported`, and
+    `not_stopped`, `spawn_in_doubt`, `remote_placement_unsupported`, and
     `machine_cap_reached` (2.5's per-machine `max_active_agents` ceiling)
     stay in their own sections.
   - **Stage.** Every error carries `stage`. A node sets `"none"` when the
@@ -1257,6 +1260,7 @@ Targets:
 - `src/gobby/servers/routes/agent_spawn.py::AgentSpawnRequest`
 - `src/gobby/servers/routes/agent_spawn.py::create_agent_spawn_router`
 - `src/gobby/agents/spawn.py::prepare_terminal_spawn`
+- `src/gobby/agents/spawn.py::prepare_terminal_resume`
 - `src/gobby/agents/spawn.py::_prepare_run_for_session`
 - `src/gobby/agents/session.py::ChildSessionConfig`
 - `src/gobby/agents/session.py::ChildSessionManager.create_child_session`
@@ -1353,6 +1357,28 @@ it is already its own section, 2.6.
 - The hub inserts a remote workspace's row from the node's report (Decision
   15, 1.4), so this flow writes no `worktrees` or `clones` row and sets no
   task artifact.
+- A resume (`resume_session_id`) runs inside `spawn_agent_impl` today:
+  - `src/gobby/mcp_proxy/tools/spawn_agent/_resume.py::resolve_resume_target`
+    resolves the reference in the project and refuses a session in another
+    project, a provider without native resume or other than the requested
+    one, a live session or one with a live run, a deleted session, a
+    session with no recorded provider thread, and a refused seat retype. It
+    returns the `Session`, whose `machine_id` names where its provider
+    thread files are.
+  - The provider is the session's `source`, and the model and reasoning
+    effort default to the session's.
+  - The resume metadata gains `provider_native_session_id`,
+    `resume_existing_session: True` and the `resume_previous_*` fields.
+  - `prepare_terminal_resume(existing_session_id=, original_run_id=, relaunch=True, …)`
+    rebinds the session to a successor run through `_prepare_run_for_session`
+    and passes `credential_manager` to `_issue_prelaunch_credential`, which
+    issues nothing for `None`.
+  - When `cleanup_agent_runtime_state` (`src/gobby/agents/runtime_cleanup.py`)
+    settles a run whose metadata has `resume_existing_session`, it keeps the
+    session.
+- `spawn_agent_impl` gates agy on the hub's own install (`ensure_agy_support`)
+  before any side effect. A node gates agy on its own install
+  (node-halves 2.6).
 - `max_active_agents` (`DaemonConfig`, `src/gobby/config/app.py`) is
   `Field(default=20, ge=1, description="Maximum active agents per project.")`
   with no upper bound. The live config store sets it to 100 (desired and
@@ -1397,6 +1423,11 @@ it is already its own section, 2.6.
   - `POST /api/agents/spawn` uses the verified front-door identity's machine.
   - An absent value counts as this machine. The parent session never sets the
     origin.
+- A request with `resume_session_id` resolves the reference in the project
+  (`SessionManager.resolve_session_reference`) and passes the session's
+  `machine_id` as `requested`, overriding `machine` and the origin
+  (Decision 13). A reference that does not resolve takes the local path,
+  where `spawn_agent_impl` returns its error.
 - Each caller then calls `resolve_target_machine` with the context's project id,
   `machine`, and the origin. A local result follows today's path. A remote
   result calls `spawn_remote_agent`. A refusal returns its typed code as the
@@ -1440,13 +1471,17 @@ it is already its own section, 2.6.
   contract asset, so the per-machine use is stated in Decision 19 and the
   node-commands contract instead.
 - `spawn_remote_agent(..., routed: RoutedMachine)` takes the 1.3 result, the
-  only source of a routed machine. It refuses `resume_session_id` with
-  `remote_resume_unsupported` and a placement request with
-  `remote_placement_unsupported`. Otherwise:
+  only source of a routed machine. It refuses a placement request with
+  `remote_placement_unsupported`. A resume first calls
+  `resolve_resume_target` and returns its error as the local flow does,
+  takes the provider, model and reasoning defaults from the session, and
+  builds the resume metadata as `spawn_agent_impl` does. Then:
   1. It runs the local flow's agent-body, provider, model, and depth checks,
      the `runner.can_spawn` gate, and `TaskSpawnLease` admission. The
      callers' per-project `reserve_agent_slot` still applies, so a remote
-     spawn passes both the project cap and the machine ceiling.
+     spawn passes both the project cap and the machine ceiling. The hub's
+     agy gate is not among these checks, because the node gates agy on its
+     own install (node-halves 2.6).
   2. Machine ceiling (Decision 19). It takes a per-machine `asyncio.Lock`,
      keyed by `routed.machine_id` in a module-level dict in `remote_spawn.py`,
      and holds it through step 3's `create_pending`. Lock order is project
@@ -1464,17 +1499,26 @@ it is already its own section, 2.6.
      terminal_id, machine_id=<target>, session_id=<child>,
      agent_run_id=<run>)`. Session, run, and terminal rows then all name the
      target before anything is sent. It then releases the machine lock.
-  4. It sends one `agent.spawn` (1.1): the run, session, parent, project, and
-     terminal ids, the child's `agent_depth`, `max_agent_depth`,
-     `workflow_name`, `provider`, `model`, `provider_args`,
-     `reasoning_effort`, `sandbox`, `timeout_seconds`, `prompt`, `title`,
-     `source_root=routed.checkout_root`, and `workspace`:
+     A resume calls `prepare_terminal_resume` in place of
+     `prepare_terminal_spawn`, with `existing_session_id`,
+     `original_run_id` and `relaunch=True` as the local flow passes them,
+     and the same `routed_machine_id`, `credential_manager=None` and
+     `workspace_path`. `prepare_terminal_resume` passes `routed_machine_id`
+     to `_prepare_run_for_session`, so the successor run is on the target
+     and the hub writes no file or directory for it.
+  4. It sends one `agent.spawn` (1.1) whose payload node-halves 3.2's
+     `build_spawn_payload` builds from the run, the request, the
+     resolvers' results and the resume metadata, with
+     `source_root=routed.checkout_root`. The builder maps `workspace`:
      - `mode` is the request's isolation, else the agent body's, else
        `none`.
      - For `worktree` or `clone`, `branch_name` is the request's, else
        `agent/<run_id>`. `base_branch` is the request's, else the agent
        body's. `inherit` or no value sends `null`, and the node uses
        `source_root`'s current branch (1.1).
+     - A resume whose request names no isolation names the workspace its
+       session's earlier run used on the node as `existing` (node-halves
+       Decision 23).
   5. `{accepted: true}` returns the run id, child session id, and terminal id
      with status `pending`. The hub records nothing more here. 2.6 promotes
      the run from the node's report.
@@ -1482,7 +1526,9 @@ it is already its own section, 2.6.
      pending terminal (`fail_pending`) and settles the run with
      `_roll_back_run`, which also ends the lease, and returns the error's
      code. A hub restart between those calls leaves a pending terminal for
-     2.6's fence or an active run for 2.6's run sweep.
+     2.6's fence or an active run for 2.6's run sweep. A resumed run's
+     metadata has `resume_existing_session`, so its rollback keeps the
+     session, as a local resume's rollback does.
   7. Any other outcome leaves the spawn in doubt. That covers a `null` or
      `"partial"` stage and a caller that goes away after the send. The run and
      terminal stay pending, the lease stays attached, and the caller gets
@@ -1495,9 +1541,11 @@ Consumers unchanged:
 - `tests/agents/test_backend_ingress.py` — no-edit-reason: it asserts `terminal_backend` is absent and rejected; an added optional `machine` field changes neither.
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path; re-run as verification.
 - `tests/mcp_proxy/tools/spawn_agent/test_factory.py` — no-edit-reason: it asserts named schema properties, which an added optional property leaves intact, and its `_parent_session_project_context` tests pin the session machine to the local machine, so resolving with this machine's id returns the same checkout.
-- `tests/agents/test_spawn.py` — no-edit-reason: it patches `_prepare_run_for_session` or calls it by keyword without `routed_machine_id`, so its runs keep this machine and their environment.
-- `tests/agents/test_spawn_resume.py` — no-edit-reason: it patches `_prepare_run_for_session`; `prepare_terminal_resume` keeps calling it without `routed_machine_id`.
-- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` — no-edit-reason: its local flow passes no `routed_machine_id` to `prepare_terminal_spawn`, so its sessions keep the local guard and its runs keep this machine.
+- `tests/agents/test_spawn.py` — no-edit-reason: it patches `_prepare_run_for_session` or calls it, `prepare_terminal_spawn` and `prepare_terminal_resume` by keyword without `routed_machine_id`, so its runs keep this machine and their environment.
+- `src/gobby/agents/resume_executor.py` — no-edit-reason: its daemon-stop resume calls `prepare_terminal_resume` without `routed_machine_id`, so its runs keep this machine.
+- `tests/agents/test_spawn_prepare_resume.py` — no-edit-reason: it calls `prepare_terminal_resume` without `routed_machine_id`, so its runs keep this machine; re-run as verification.
+- `tests/agents/test_spawn_resume.py` — no-edit-reason: it patches `_prepare_run_for_session` and calls `prepare_terminal_resume` without `routed_machine_id`, which then passes `None`, so its runs keep this machine.
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` — no-edit-reason: its local flow passes no `routed_machine_id` to `prepare_terminal_spawn` or `prepare_terminal_resume`, so its sessions keep the local guard and its runs keep this machine.
 - `src/gobby/agents/__init__.py` — no-edit-reason: it re-exports `ChildSessionConfig` by name.
 - `src/gobby/agents/spawn_executor_support.py` — no-edit-reason: it checks only that `create_child_session` is callable by name.
 - `tests/agents/test_agents_session.py` — no-edit-reason: it builds `ChildSessionConfig` without `routed_machine_id` and calls `create_child_session` for the local machine; re-run as verification.
@@ -1518,10 +1566,10 @@ Consumers unchanged:
 - `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
 - `tests/mcp_proxy/tools/spawn_agent/test_spawn_project_context.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
 - `tests/mcp_proxy/tools/spawn_agent/test_spawn_scope_proxy.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
-- `tests/mcp_proxy/tools/spawn_agent/test_spawn_worktree_reference_resolution.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
+- `tests/mcp_proxy/tools/spawn_agent/test_spawn_worktree_reference_resolution.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path, and its resume patches `prepare_terminal_resume` on that path.
 - `tests/mcp_proxy/tools/tasks/test_lifecycle_close_orchestration.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
 - `tests/mcp_proxy/tools/test_parallel_dispatch.py` — no-edit-reason: its spawns omit `machine` and take the unchanged local path.
-- `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: its resumes omit `machine` and take the unchanged local path.
+- `tests/mcp_proxy/tools/test_spawn_agent_resume.py` — no-edit-reason: its resumes name this machine's sessions and take the unchanged local path, where it calls `spawn_agent_impl` and patches `prepare_terminal_resume`; re-run as verification.
 - `tests/skills/test_reference_library.py` — no-edit-reason: it validates documented launch arguments against the schema, and an added optional property accepts them.
 - `src/gobby/mcp_proxy/tools/spawn_agent/_spawn_guards.py` — no-edit-reason: the remote flow calls `configured_max_active_agents()` as is, and `agent_slot_cap_refusal`, `reserve_agent_slot`, and `_SLOT_LOCKS` keep the per-project cap.
 - `tests/contracts/http/config_schema.json` — no-edit-reason: it carries the key's default and description but no bounds, and both stay.
@@ -1596,7 +1644,7 @@ Consumers unchanged:
 - `src/gobby/workflows/engine/core.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/agents/test_agent_command_builder.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/agents/test_local_context_setup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/agents/test_resume_executor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
+- `tests/agents/test_resume_executor.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses, and it patches `prepare_terminal_resume` in `resume_executor`, whose call is unchanged.
 - `tests/agents/test_resume_sandbox_gate.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/agents/test_sandbox.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/agents/test_sandbox_network.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -1772,7 +1820,7 @@ Consumers unchanged:
 - `tests/workflows/test_workflow_hooks.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_spawn.py tests/mcp_proxy/tools/spawn_agent/ tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_backend_ingress.py tests/agents/test_spawn.py tests/agents/test_spawn_resume.py tests/agents/test_agents_session.py tests/sessions/test_sessions_manager.py tests/agents/test_runbook_seat_titles.py tests/integration/test_terminal_mode_worktrees.py tests/storage/agents/test_active_run_scope.py tests/storage/test_machine_scope_writers.py tests/config/test_runtime_config_contract.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_spawn.py tests/mcp_proxy/tools/spawn_agent/ tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_backend_ingress.py tests/agents/test_spawn.py tests/agents/test_spawn_resume.py tests/agents/test_spawn_prepare_resume.py tests/agents/test_resume_executor.py tests/mcp_proxy/tools/test_spawn_agent_resume.py tests/agents/test_agents_session.py tests/sessions/test_sessions_manager.py tests/agents/test_runbook_seat_titles.py tests/integration/test_terminal_mode_worktrees.py tests/storage/agents/test_active_run_scope.py tests/storage/test_machine_scope_writers.py tests/config/test_runtime_config_contract.py -v`.
 
 **Acceptance:**
 
@@ -1782,7 +1830,7 @@ Verification planned:
 - 2.5.4 - A `stage: "none"` failure of `agent.spawn`, including `node_offline` and `node_routing_unavailable`, fails the pending terminal, cancels the run, and ends the lease, with no local process or pane call and no further command. test: `tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database`.
 - 2.5.5 - A `node_timeout` or a `node_reply_lost` on `agent.spawn` returns `spawn_in_doubt` and leaves the run and terminal pending and the lease attached, with no rollback. test: `tests/hub/test_remote_spawn.py::test_in_doubt_spawn_keeps_state`.
 - 2.5.6 - A node caller whose parent is on the hub spawns on the node, and a hub caller whose parent is on a node spawns locally in the hub's checkout. test: `tests/hub/test_remote_spawn.py::test_origin_is_the_calling_session`.
-- 2.5.7 - Remote resume and placement are refused with typed codes. test: `tests/hub/test_remote_spawn.py::test_unsupported_routes_refused`.
+- 2.5.7 - A placement request is refused with `remote_placement_unsupported`. A resume of a node session routes to that node whatever `machine` and the origin say, rebinds the session to a successor run on that node with no hub file or credential, and sends `resume_session_id` with the session's earlier workspace as `existing`; a resume that `resolve_resume_target` refuses sends nothing and returns its error; and a remote agy spawn does not consult the hub's agy gate. test: `tests/hub/test_remote_spawn.py::test_resume_routes_and_placement_refused`.
 - 2.5.8 - A spawn whose target is this machine takes the local path unchanged. test: `tests/hub/test_remote_spawn.py::test_local_target_unchanged`.
 - 2.5.9 - With a checkout on the target and none on the hub, both the MCP tool and `POST /api/agents/spawn` spawn on the target. test: `tests/hub/test_remote_spawn.py::test_remote_target_needs_no_hub_checkout`.
 - 2.5.10 - `register` for another machine without `routed_machine_id`, and `register_session` for another machine, raise `MachineOwnershipMismatchError`; a `routed_machine_id` that differs from `machine_id` raises it too; a routed registration for an unenrolled machine raises `MachineNotRegisteredError`; and none writes a row. test: `tests/hub/test_remote_spawn.py::test_foreign_session_needs_routed_machine`.
@@ -2336,6 +2384,15 @@ deferral:
   resolved, including the published revision kept across `take` and the
   intervening-take schedule in 1.4.5. Standard validation is warning-free,
   and no blocking finding remains.
+- 2026-10-13: Cross-plan amendment from node-halves Plan Writer gobby#16767
+  for Josh's "No deferrals" ruling (node-halves Decision 23), relayed by
+  gobby#15977. A resume routes to the resumed session's machine and is no
+  longer refused: 2.5 resolves the session, rebinds it to a successor run on
+  the node through `prepare_terminal_resume`, and builds `agent.spawn` with
+  node-halves 3.2's `build_spawn_payload`, which names the session's earlier
+  workspace. Decision 13, the hub-flow code list and 2.5.7 change to match,
+  and the hub's agy gate stays on the local path. The M1 manifest below
+  predates this amendment and must be re-derived.
 
 ## V2: Verification
 `kind: verification`
