@@ -7133,3 +7133,34 @@ freshly built and installed binaries, before #21559 closes.
   `TBD-at-expansion` ledgers with their own items D1.1, D1.2 and D2.1 (PA-5); and
   4.1.5 names `config_effective.json` (PA-6). No enhancer edits were received
   before consensus.
+- 2026-10-14: Consensus between Plan Writer #16764 and Plan Adversary #16491 on
+  the revision at 6b5e3d58eb. It supersedes the 2026-10-13 consensus, whose
+  deferral ledgers left the plan under Josh's no-deferral policy. The plan now
+  carries the operator's D1 reversal (Python publishes the active config state,
+  and all config is native) and Orchestrator #15977's 2026-10-14 rulings, each
+  recorded in the Decision Record. The adversary's eleven findings were accepted
+  and repaired:
+  - RF-F1 and RF-F2: no deferrals. All 18 P5 config routes, the managed challenge,
+    the capability-token handshake, managed issuance, rotation with the
+    `grant.json` rewrite, grant presentation and the durable revocation read are
+    planned natively in P4 and P5.
+  - RF-F3: 3.3 publishes the KEK the way `_publish_private_file` does.
+  - RF-F4: the native-default statement moved to 1.1's `FrontDoorBootstrap` doc
+    comment and 6.4's guide.
+  - RF-F5: 3.2 decodes the grant header structurally.
+  - RF-F6: every leaf that changes a shipped binary's source owns its 0.0.1 bump
+    and the managed pins (Constraints, Release ownership).
+  - RF-F7: 3.3 runs `_get_dek`'s existing-secrets guard before creating an
+    envelope.
+  - RF-F8: 5.1, 5.5 and 5.6 re-export their public accessors through
+    `crates/gcore/src/config/mod.rs`.
+  - RF-F9: `icu_casemap` and `icu_casemap_data` 2.1.1 are the one named exception
+    to the lock rule, with E1's lock gate.
+  - RF-F10: 5.13 signals process groups through the locked `nix`, with
+    `unsafe_code` still forbidden.
+  - RF-F11: E1's soak probe registers each cleanup before its write and restores in
+    `finally` without clobbering other changes. It reports unresolved cleanups
+    with a recovery command, asserts `apply_status` `applied`, and is exercised by
+    a forced failure after each write.
+
+  No enhancer edits were received before consensus.
