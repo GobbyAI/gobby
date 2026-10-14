@@ -381,3 +381,19 @@ def test_legacy_signature_comparison_failure_refuses_promotion(
         release.check_binary_release("gcode", source, bin_dir=installed.parent, workspace_root=None)
     assert installed.read_bytes() == original
     assert not release_identity_path(installed.parent, "gcode").exists()
+
+
+def test_unverified_installed_version_names_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = binary(tmp_path / "build" / "gcode", "1.0.1")
+    installed = binary(tmp_path / "bin" / "gcode", "1.0.0")
+    original = installed.read_bytes()
+    monkeypatch.setattr(
+        release, "probe_native_bin_version", lambda path: "1.0.1" if path == source else None
+    )
+    with pytest.raises(
+        release.BinaryReleaseVersionError, match=r"gcode.*remove.*unverified.*rebuild.*install"
+    ):
+        release.check_binary_release("gcode", source, bin_dir=installed.parent, workspace_root=None)
+    assert installed.read_bytes() == original
