@@ -844,6 +844,59 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
     assert "'working-tree'" not in result.tests[0].body
 
 
+@pytest.mark.parametrize("declaring_file", ["render.rs", "render/mod.rs"])
+def test_rust_validation_runs_match_committed_path_module(
+    tmp_path: Path, declaring_file: str
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/src/commands"
+    source_dir.mkdir(parents=True)
+    test_file = source_dir / "render_tests.rs"
+    test_file.write_text(
+        "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n",
+        encoding="utf-8",
+    )
+    declaration = source_dir / declaring_file
+    declaration.parent.mkdir(parents=True, exist_ok=True)
+    relative_path = "../render_tests.rs" if declaring_file.endswith("mod.rs") else "render_tests.rs"
+    declaration.write_text(
+        f'// #[path = "{relative_path}"] mod fake;\n'
+        f'#[cfg(test)]\n#[path = "{relative_path}"]\nmod tests;\n',
+        encoding="utf-8",
+    )
+    linked_sha = _commit(repo, "Rust path module acceptance fixture")
+    declaration.write_text("mod unrelated;\n", encoding="utf-8")
+
+    result = evaluate_acceptance_artifacts(
+        criteria="test: crates/example/src/commands/render_tests.rs::ties_are_numeric",
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+    assert result.passed, result.findings
+    test = result.tests[0]
+    assert validation_run_covers_test(
+        "cargo nextest run -p example",
+        "PASS [0.001s] example commands::render::tests::ties_are_numeric",
+        test,
+    )
+    assert validation_run_names_test(
+        "cargo test -p example",
+        "test commands::render::tests::ties_are_numeric ... FAILED\npanicked at 'tie order'",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example",
+        "PASS [0.001s] example commands::unrelated::tests::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example",
+        "PASS [0.001s] example commands::render_tests::ties_are_numeric",
+        test,
+    )
+
+
 def test_rust_test_body_is_extracted_from_linked_commit(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     test_file = repo / "crates" / "example" / "tests" / "feature.rs"
@@ -905,6 +958,9 @@ fn protocol_frame_roundtrip() {
 }
 """
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("frame_protocol",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=(
@@ -958,6 +1014,9 @@ def test_test_named_helper_call_is_not_delegation(
     body: str,
 ) -> None:
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",
@@ -1015,6 +1074,9 @@ def test_delegation_only_body_still_requires_an_executable_assertion(
     finding: str,
 ) -> None:
     monkeypatch.setattr(artifacts_module, "_resolve_test_body", AsyncMock(return_value=(body, ())))
+    monkeypatch.setattr(
+        artifacts_module, "resolve_rust_module", AsyncMock(return_value=("schema_contract",))
+    )
 
     result = evaluate_acceptance_artifacts(
         criteria=f"Contract is executable.\ntest: {path}::{symbol}",

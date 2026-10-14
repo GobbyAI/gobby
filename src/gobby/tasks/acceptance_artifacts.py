@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from gobby.tasks.acceptance_rust_modules import resolve_rust_module, rust_source_module
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
 _ARTIFACT_REF_RE = re.compile(
@@ -89,6 +90,7 @@ class AcceptanceTest:
     body: str
     # Same-file functions the test reaches through bare calls (braced languages).
     helpers: tuple[str, ...] = ()
+    rust_module: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,10 +268,13 @@ async def resolve_acceptance_tests_async(
             continue
         try:
             body, helpers = await _resolve_test_body(path, symbol, repo_path, candidate)
+            rust_module = (
+                await resolve_rust_module(path, candidate, repo_path) if _is_rust(path) else None
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
-        tests.append(AcceptanceTest(reference, path, symbol, body, helpers))
+        tests.append(AcceptanceTest(reference, path, symbol, body, helpers, rust_module))
     return tuple(tests), tuple(findings)
 
 
@@ -350,15 +355,10 @@ def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
     if Path(test.path).suffix != ".rs":
         return False
 
-    path_parts = list(PurePosixPath(test.path).with_suffix("").parts)
-    if len(path_parts) >= 3 and path_parts[0] == "crates":
-        path_parts = path_parts[2:]
-
-    is_integration_test = bool(path_parts and path_parts[0] == "tests")
-    if path_parts and path_parts[0] in {"src", "tests"}:
-        path_parts = path_parts[1:]
-    if path_parts and path_parts[-1] in {"lib", "main", "mod"}:
-        path_parts.pop()
+    path_parts = test.rust_module if test.rust_module is not None else rust_source_module(test.path)
+    source_parts = PurePosixPath(test.path).parts
+    source_parts = source_parts[2:] if source_parts[:1] == ("crates",) else source_parts
+    is_integration_test = bool(source_parts and source_parts[0] == "tests")
     if not path_parts:
         return False
 
