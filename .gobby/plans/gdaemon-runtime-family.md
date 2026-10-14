@@ -629,8 +629,18 @@ The shared vector (`tests/fixtures/secret_seal_vector.json`) holds:
 - a Rust-sealed token with its AAD and plaintext;
 - a Python-encrypted `secrets` value.
 
-Python generates its half; the Rust test generates and commits its half once. Each
-language opens the other's token.
+Each half is generated once and committed; the tests only read the committed bytes:
+
+- Python's half (KEK, wrapped DEK, Python-sealed token, encrypted secret) comes from
+  one `uv run python -c` call into `src/gobby/storage/secrets.py::SecretStore` with
+  a fixed key-file KEK.
+- Rust's half comes from
+  `crates/gruntime/tests/secrets.rs::generate_rust_seal_vector`, an `#[ignore]` test
+  that unwraps the committed DEK, seals a fixed plaintext and AAD, and writes the
+  token into the fixture. The executor runs it once with `--run-ignored only`,
+  then commits the fixture.
+
+Each language then opens the other's token from the committed file.
 
 Research context:
 - The Python source of truth is `src/gobby/storage/secrets.py`:
@@ -1015,7 +1025,9 @@ installed binaries:
    3. Then `gdaemon compare-report --since <window start>` exits 0, with nonzero
       `match` and `verified` counts.
 4. **Backend kill (exit criterion 2).**
-   1. With `runtime: native` live, kill the Python backend.
+   1. With `runtime: native` live, send a `global` announcement, wait for a quiet
+      window with no live spawned worker or close validator, as for a restart, then
+      kill the Python backend.
    2. `gcode` still handshakes and reads effective config until the supervisor
       restarts the backend.
 5. **Flip and rollback (exit criterion 3).** `runtime: native` and then
