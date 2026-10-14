@@ -58,7 +58,7 @@ def _cargo_shell_environment(
         bash_content = f"if [ -r {original} ]; then . {original}; fi\n"
     restore_bash = f"export BASH_ENV={shlex.quote(str(bash_env))}\n"
     _write_shell_startup(bash_env, bash_content + restore_path + restore_bash)
-    for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin"):
+    for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"):
         # Respect a caller's ZDOTDIR and the usual HOME fallback, without copying
         # or modifying user startup files. Reset ZDOTDIR after each phase so the
         # following phase also passes through this run's protected overlay.
@@ -69,10 +69,12 @@ def _cargo_shell_environment(
             "else\n  unset ZDOTDIR\nfi\n"
             + f"if [ -r {original} ]; then . {original}; fi\n"
             + 'export GOBBY_CARGO_ORIGINAL_ZDOTDIR="${ZDOTDIR-}"\n'
-            + restore_path
-            + f"export ZDOTDIR={shlex.quote(str(shell_home))}\n"
-            + restore_bash
         )
+        # Logout leaves the user's directory in place for the system logout file.
+        if name != ".zlogout":
+            content += (
+                restore_path + f"export ZDOTDIR={shlex.quote(str(shell_home))}\n" + restore_bash
+            )
         _write_shell_startup(shell_home / name, content)
     return {
         "BASH_ENV": str(bash_env),

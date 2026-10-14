@@ -333,6 +333,58 @@ def test_zsh_startup_can_redirect_later_files(
     assert result.stdout.splitlines() == [str(launcher.assets / "cargo-bin" / "cargo"), "yes"]
 
 
+@pytest.mark.parametrize("startup_dir", ["home", "custom", "redirected"])
+@pytest.mark.parametrize("flags", ["-c", "-lc", "-lic"])
+def test_zsh_logout_forwards_original_directory(
+    launcher: CargoLauncher, tmp_path: Path, startup_dir: str, flags: str
+) -> None:
+    zsh = shutil.which("zsh")
+    if zsh is None:
+        pytest.skip("zsh is not installed")
+    home = tmp_path / "logout home"
+    home.mkdir()
+    original = home
+    env = {"HOME": str(home), "PATH": launcher.env["PATH"]}
+    if startup_dir != "home":
+        original = home / "custom"
+        original.mkdir()
+        if startup_dir == "custom":
+            env["ZDOTDIR"] = str(original)
+        else:
+            (home / ".zshenv").write_text('export ZDOTDIR="$HOME/custom"\n', encoding="utf-8")
+    (original / ".zlogout").write_text(
+        'printf "logout:%s\\n" "${ZDOTDIR:-$HOME}"\n', encoding="utf-8"
+    )
+    command = [zsh, flags, "exit 0"]
+    before = subprocess.run(
+        command, env=env, text=True, capture_output=True, check=False, timeout=10
+    )
+    assert before.returncode == 0, before.stderr
+    if flags == "-lic":
+        assert before.stdout.splitlines() == [f"logout:{original}"]
+    elif flags == "-c":
+        assert before.stdout == ""
+    env.update(
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=launcher.node,
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=env,
+        )
+    )
+    result = subprocess.run(
+        command,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == before.stdout
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)
