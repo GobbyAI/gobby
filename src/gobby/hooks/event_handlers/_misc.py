@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import subprocess
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -519,7 +520,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         try:
             base_branch, base_commit_sha = await select_worktree_base(git_manager, None)
-        except RuntimeError as exc:
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
             return HookResponse(
                 decision="block", reason=f"Cannot create branch '{worktree_name}': {exc}"
             )
@@ -528,14 +529,19 @@ class MiscEventHandlerMixin(EventHandlersBase):
         if self._worktree_manager and project_id:
             existing = self._worktree_manager.get_by_branch(project_id, worktree_name)
             if existing and Path(existing.worktree_path).exists():
-                head = await git_manager.run_git_command(
-                    ["rev-parse", "HEAD"], cwd=existing.worktree_path, timeout=5
-                )
+                try:
+                    head = await git_manager.run_git_command(
+                        ["rev-parse", "HEAD"], cwd=existing.worktree_path, timeout=5
+                    )
+                except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                    return HookResponse(
+                        decision="block", reason=f"Cannot inspect worktree '{worktree_name}': {exc}"
+                    )
                 if head.returncode != 0 or head.stdout.strip() != base_commit_sha:
                     return HookResponse(
                         decision="block",
                         reason=f"Existing worktree '{worktree_name}' differs from selected commit; "
-                        "preserving it for explicit refresh.",
+                        "preserving it. Continue in that worktree directly, or choose a new worktree name.",
                     )
                 self.logger.info(
                     "WORKTREE_CREATE reusing existing worktree for '%s': %s",
@@ -576,7 +582,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 raise RuntimeError(
                     f"Cannot inspect branch '{worktree_name}': {existing_tip.stderr.strip()}"
                 )
-        except RuntimeError as exc:
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
             return HookResponse(
                 decision="block", reason=f"Cannot create branch '{worktree_name}': {exc}"
             )

@@ -15,7 +15,11 @@ task artifacts and current ownership before creating another workspace.
 3. Explicit bare names and `refs/heads/<name>` select local branches. Explicit
    `origin/<name>` and `refs/remotes/origin/<name>` fetch only that remote ref.
    Creation uses the captured commit even if the selected branch later advances;
-   an existing destination branch at a different commit is refused.
+   an existing destination branch at a different commit is refused with
+   `create_branch=True`. With `create_branch=False`, creation captures and checks
+   out the existing destination branch's tip, preserving its commits and recording
+   the selected base as its merge target. The base must differ from the destination;
+   self-base requests return `merge_target_is_source_branch` before side effects.
    `provider` optionally installs hooks. Check the returned creation result,
    including existing-worktree diagnostics, before assuming a new row was created.
 4. Claim with `claim_worktree`; use `link_task_to_worktree` for an existing row.
@@ -24,6 +28,12 @@ task artifacts and current ownership before creating another workspace.
 5. Reuse a prepared worktree with `spawn_agent(worktree_id=...)`; follow the
    [agent isolation](../agents/isolation.md) reference for spawn precedence and
    recovery. Preserve a reused checkout when a rebase reports conflicts.
+
+The Claude worktree-create hook blocks re-entry at a different selected commit.
+Continue in the preserved worktree directly or choose a new worktree name.
+Isolation repair aborts spawn on malformed selected `.mcp.json` (invalid JSON,
+non-object root or `mcpServers`) and preserves those bytes. If tracked provider
+files cannot be inspected, repair refuses to copy parent hooks.
 
 Persisted states include active, stale, merged and abandoned; ownership is a
 separate session field. `abandon_worktree` and `reactivate_worktree` change

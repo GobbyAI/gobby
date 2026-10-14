@@ -79,6 +79,12 @@ async def create_worktree(
     Returns:
         GitOperationResult with success status and message
     """
+    if base_branch.removeprefix("refs/heads/") == branch_name.removeprefix("refs/heads/"):
+        return GitOperationResult(
+            success=False,
+            message="Choose a merge base different from the worktree branch",
+            error="merge_target_is_source_branch",
+        )
     if await rejects_unreferenced_sha_base(runner, base_branch):
         return GitOperationResult(
             success=False,

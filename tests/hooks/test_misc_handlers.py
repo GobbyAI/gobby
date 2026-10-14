@@ -475,6 +475,69 @@ class TestNotificationHandlerEdgeCases:
 
 
 class TestWorktreeHandlers:
+    """Tests for worktree creation and removal hooks."""
+
+    async def test_worktree_reentry_preserves_mismatched_head(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
+    ) -> None:
+        child = tmp_path / "existing"
+        child.mkdir()
+        sentinel = child / "task-work.txt"
+        sentinel.write_text("preserved work")
+        storage = mock_dependencies["worktree_manager"]
+        storage.get_by_branch.return_value = SimpleNamespace(worktree_path=str(child))
+        manager = MagicMock(repo_path="/repo")
+        manager.get_current_branch = AsyncMock(return_value="main")
+        manager.get_local_commit = AsyncMock(return_value="caller-tip")
+        manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=0, stdout="task-tip", stderr="")
+        )
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "existing"}, source="claude"
+        )
+        with patch(
+            "gobby.hooks.event_handlers._misc.resolve_project_context",
+            return_value=(manager, "project", None),
+        ):
+            response = await EventHandlers(**mock_dependencies).handle_worktree_create(event)
+        assert response.decision == "block"
+        assert response.worktree_path is None
+        assert response.reason is not None and "differs from selected commit" in response.reason
+        assert "choose a new worktree name" in response.reason
+        assert sentinel.read_text() == "preserved work"
+        manager.create_worktree.assert_not_called()
+        manager.prune_worktrees.assert_not_called()
+        storage.delete.assert_not_called()
+        storage.create.assert_not_called()
+
+    @pytest.mark.parametrize("phase", ["base", "branch", "head"])
+    async def test_worktree_create_timeout_returns_block_reason(
+        self, mock_dependencies: dict[str, Any], tmp_path: Path, phase: str
+    ) -> None:
+        storage = mock_dependencies["worktree_manager"]
+        storage.get_by_branch.return_value = (
+            SimpleNamespace(worktree_path=str(tmp_path)) if phase == "head" else None
+        )
+        manager = MagicMock(repo_path="/repo")
+        manager.get_current_branch = AsyncMock(return_value="main")
+        manager.get_local_commit = AsyncMock(return_value="caller-tip")
+        timeout = subprocess.TimeoutExpired("git rev-parse", 5)
+        if phase == "base":
+            manager.get_local_commit.side_effect = timeout
+        manager.run_git_command = AsyncMock(side_effect=timeout)
+        event = make_event(HookEventType.WORKTREE_CREATE, data={"name": "child"}, source="claude")
+        with patch(
+            "gobby.hooks.event_handlers._misc.resolve_project_context",
+            return_value=(manager, "project", None),
+        ):
+            response = await EventHandlers(**mock_dependencies).handle_worktree_create(event)
+        assert response.decision == "block"
+        assert response.reason is not None and "timed out" in response.reason
+        assert response.worktree_path is None
+        manager.create_worktree.assert_not_called()
+        storage.delete.assert_not_called()
+        storage.create.assert_not_called()
+
     async def test_worktree_create_uses_exact_local_head(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:
@@ -518,8 +581,6 @@ class TestWorktreeHandlers:
             ).strip()
             == selected
         )
-
-    """Test WORKTREE_CREATE and WORKTREE_REMOVE default behavior."""
 
     @pytest.mark.parametrize("state", ["ancestor", "equal", "ahead", "diverged", "raced"])
     @pytest.mark.parametrize("use_local", [True, False])
@@ -663,7 +724,6 @@ class TestWorktreeHandlers:
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
         git_manager.repo_path = "/repo"
-        git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.has_unpushed_commits = AsyncMock(return_value=(False, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
@@ -759,7 +819,6 @@ class TestWorktreeHandlers:
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-        git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
@@ -799,7 +858,6 @@ class TestWorktreeHandlers:
         git_manager = MagicMock(repo_path="/repo")
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
-        git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.has_unpushed_commits = AsyncMock(return_value=(True, 0))
         git_manager.run_git_command = AsyncMock(
             return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
@@ -839,8 +897,6 @@ class TestWorktreeHandlers:
             source="claude",
         )
         git_manager = MagicMock(repo_path="/repo")
-        git_manager.get_current_branch = AsyncMock(return_value="main")
-        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
         git_manager.get_current_branch = AsyncMock(return_value="main")
         git_manager.get_local_commit = AsyncMock(return_value=None)
 

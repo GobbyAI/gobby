@@ -83,6 +83,24 @@ async def create_worktree(
             success=False, error=str(exc), error_code="base_branch_refs_unavailable"
         )
 
+    if base_branch == branch_name.removeprefix("refs/heads/"):
+        return WorktreeCreationResult(
+            success=False,
+            error="Choose a merge base different from the worktree branch",
+            error_code="merge_target_is_source_branch",
+        )
+
+    if not create_branch:
+        branch_ref = f"refs/heads/{branch_name.removeprefix('refs/heads/')}"
+        existing_tip = await git_manager.get_local_commit(f"{branch_ref}^{{commit}}")
+        if not existing_tip:
+            return WorktreeCreationResult(
+                success=False,
+                error=f"Branch '{branch_name}' does not exist",
+                error_code="branch_not_found",
+            )
+        base_commit_sha = existing_tip
+
     existing = await asyncio.to_thread(worktree_storage.get_by_branch, project_id, branch_name)
     if existing:
         return WorktreeCreationResult(

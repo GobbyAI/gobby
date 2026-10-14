@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.worktrees.creation import WorktreeCreationResult, create_worktree
-from gobby.worktrees.git import WorktreeGitManager
+from gobby.worktrees.git import GitOperationResult, WorktreeGitManager
 
 
 def git(repo: Path, *args: str) -> str:
@@ -82,11 +82,103 @@ async def test_existing_branch_mismatch_is_rejected(repo: Path, tmp_path: Path) 
     selected = git(repo, "rev-parse", "HEAD")
     child = tmp_path / "existing-fork"
     result = await WorktreeGitManager(repo).create_worktree(
-        child, "existing", base_branch="main", base_commit_sha=selected, create_branch=False
+        child, "existing", base_branch="main", base_commit_sha=selected, create_branch=True
     )
     assert not result.success
     assert not child.exists()
     assert result.error == "existing_branch_commit_mismatch"
+
+
+async def test_existing_branch_checkout_preserves_tip_and_merge_base(
+    repo: Path, tmp_path: Path
+) -> None:
+    git(repo, "checkout", "-b", "existing")
+    git(repo, "commit", "--allow-empty", "-m", "existing work")
+    existing_tip = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "main")
+    base_tip = git(repo, "rev-parse", "HEAD")
+    child = tmp_path / "existing-checkout"
+    storage = MagicMock()
+    storage.get_by_branch.return_value = None
+    storage.create.side_effect = lambda **values: SimpleNamespace(id="existing", **values)
+    result = await create_worktree(
+        git_manager=WorktreeGitManager(repo),
+        worktree_storage=storage,
+        project_id="project",
+        branch_name="existing",
+        base_branch="main",
+        worktree_path=str(child),
+        create_branch=False,
+        sidecar_writer=AsyncMock(),
+        event_emitter=MagicMock(return_value={}),
+    )
+    assert result.success, result.error
+    assert result.worktree is not None and result.worktree.base_branch == "main"
+    assert git(child, "rev-parse", "HEAD") == existing_tip
+    assert git(repo, "rev-parse", "main") == base_tip
+
+
+async def test_existing_checkout_refuses_branch_movement_after_selection(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git(repo, "branch", "existing")
+    selected = git(repo, "rev-parse", "existing")
+    child = tmp_path / "raced-existing"
+    manager = WorktreeGitManager(repo)
+    original_create = manager.create_worktree
+
+    async def move_branch_then_create(
+        *,
+        worktree_path: str | Path,
+        branch_name: str,
+        base_branch: str,
+        base_commit_sha: str,
+        create_branch: bool = True,
+    ) -> GitOperationResult:
+        git(repo, "checkout", "existing")
+        git(repo, "commit", "--allow-empty", "-m", "concurrent task work")
+        git(repo, "checkout", "main")
+        return await original_create(
+            worktree_path, branch_name, base_branch, base_commit_sha, create_branch
+        )
+
+    monkeypatch.setattr(manager, "create_worktree", move_branch_then_create)
+    storage = MagicMock()
+    storage.get_by_branch.return_value = None
+    result = await create_worktree(
+        git_manager=manager,
+        worktree_storage=storage,
+        project_id="project",
+        branch_name="existing",
+        base_branch="main",
+        worktree_path=str(child),
+        create_branch=False,
+    )
+    assert not result.success and result.error == "existing_branch_commit_mismatch"
+    assert git(repo, "rev-parse", "existing") != selected
+    assert not child.exists()
+    storage.create.assert_not_called()
+
+
+@pytest.mark.parametrize("base", ["existing", "refs/heads/existing"])
+async def test_self_base_is_rejected_before_creation(repo: Path, tmp_path: Path, base: str) -> None:
+    git(repo, "branch", "existing")
+    child = tmp_path / "self-base"
+    storage = MagicMock()
+    result = await create_worktree(
+        git_manager=WorktreeGitManager(repo),
+        worktree_storage=storage,
+        project_id="project",
+        branch_name="existing",
+        base_branch=base,
+        worktree_path=str(child),
+        create_branch=False,
+    )
+    assert not result.success
+    assert result.error_code == "merge_target_is_source_branch"
+    assert not child.exists()
+    storage.get_by_branch.assert_not_called()
+    storage.create.assert_not_called()
 
 
 async def test_detached_default_has_no_side_effects(repo: Path, tmp_path: Path) -> None:

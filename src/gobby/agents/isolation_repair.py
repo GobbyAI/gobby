@@ -93,6 +93,7 @@ async def _copy_cli_hooks(
 
     Claude and Codex use copied project directories, and Droid generates its hook
     files separately.
+    If tracked-file inspection fails, repair aborts before copying parent bytes.
 
     Args:
         source_path: Path to the source repository
@@ -259,6 +260,10 @@ async def _patch_mcp_config_for_isolation(
 
     For Claude provider, also patches ``~/.claude.json`` to register the
     isolated path as a project with the correct MCP server config.
+
+    Malformed selected ``.mcp.json`` (invalid JSON, non-object root or
+    ``mcpServers``) raises ValueError and aborts spawn, preserving its bytes.
+    Repair never replaces malformed selected config with the parent's config.
     """
 
     mcp_config = {

@@ -235,6 +235,42 @@ async def test_repair_preserves_selected_provider_and_mcp_bytes(repo: Path, tmp_
     }
 
 
+@pytest.mark.parametrize("selected_config", ["{", "[]", '{"mcpServers": []}'])
+async def test_repair_refuses_malformed_selected_mcp_without_overwriting(
+    repo: Path, tmp_path: Path, selected_config: str
+) -> None:
+    (repo / ".mcp.json").write_text(selected_config)
+    git(repo, "add", ".mcp.json")
+    git(repo, "commit", "-m", "malformed selected config")
+    child = tmp_path / "invalid-mcp"
+    git(repo, "clone", "--local", str(repo), str(child))
+    (repo / ".mcp.json").write_text('{"mcpServers": {"parent": {"command": "dirty"}}}')
+    with pytest.raises(ValueError):
+        await repair_isolation_environment(
+            main_repo_path=str(repo), isolated_path=str(child), provider="codex"
+        )
+    assert (child / ".mcp.json").read_text() == selected_config
+    assert git(child, "status", "--porcelain", "--", ".mcp.json") == ""
+
+
+async def test_repair_refuses_provider_copy_when_tracked_files_are_unavailable(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.utils.daemon_git import daemon_git
+
+    child = tmp_path / "uninspectable"
+    git(repo, "clone", "--local", str(repo), str(child))
+    selected_hooks = (child / ".codex/dirty-parent-sentinel.txt").read_text()
+    (repo / ".codex/dirty-parent-sentinel.txt").write_text("dirty parent")
+    monkeypatch.setattr(daemon_git, "run", AsyncMock(return_value=None))
+    with pytest.raises(RuntimeError, match="Cannot inspect tracked provider files"):
+        await repair_isolation_environment(
+            main_repo_path=str(repo), isolated_path=str(child), provider="codex"
+        )
+    assert (child / ".codex/dirty-parent-sentinel.txt").read_text() == selected_hooks
+    assert git(child, "status", "--porcelain", "--", ".codex") == ""
+
+
 async def test_refresh_preserves_workspace_ancestry(repo: Path, tmp_path: Path) -> None:
     child = tmp_path / "reuse"
     git(repo, "worktree", "add", "-b", "candidate", str(child))
