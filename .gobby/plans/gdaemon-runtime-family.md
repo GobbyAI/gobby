@@ -6880,8 +6880,12 @@ freshly built and installed binaries, before #21559 closes.
       traffic, with at least one config read and one interactive handshake per
       active project and managed handshakes from ordinary agent runs. It must hold
       no pending config activation, which includes the interval between a config
-      commit and Python's reconcile of it. A backend restart inside the window is
-      allowed, because requests that cannot reach Python record `skipped` (2.1).
+      commit and Python's reconcile of it. The one exception is the soak probe's
+      PATCH pair (step 3), whose activations the probe itself waits out: each
+      PATCH answers 200 only after Python's reconcile publishes its revision
+      (Write wait), and a `reconcile_failed` answer fails the probe's status
+      assertion. A backend restart inside the window is allowed, because requests
+      that cannot reach Python record `skipped` (2.1).
    3. Write evidence uses an API-key client (Orchestrator #15977, 2026-10-14). Once
       inside the window, the operator must run this soak probe from the main
       checkout, and it must print `soak probe passed`. `DaemonClient` reads the
