@@ -129,6 +129,8 @@ async def resolve_rust_module(
         if source_path in seen:
             raise ValueError(f"cyclic Rust path module: {source_path}")
         if source_path not in declarations:
+            if PurePosixPath(source_path).parent == PurePosixPath(root) / "tests":
+                return ()
             return rust_source_module(source_path)
         if len(declarations[source_path]) != 1:
             raise ValueError(f"ambiguous Rust path module: {source_path}")
@@ -154,16 +156,16 @@ def rust_evidence_names_test(
     source_parts = PurePosixPath(path).parts
     source_parts = source_parts[2:] if source_parts[:1] == ("crates",) else source_parts
     is_integration_test = bool(source_parts and source_parts[0] == "tests")
-    if not path_parts:
+    if not path_parts and rust_module is None:
         return False
 
     module_prefix = "::".join(re.escape(part) for part in path_parts)
     symbol = re.escape(symbol)
-    module_test = re.compile(
-        rf"(?<![\w:]){module_prefix}::{symbol}\b"
-        if is_integration_test and rust_module is not None
-        else rf"(?<![\w:]){module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b"
-    )
+    if rust_module is not None:
+        test_name = f"{module_prefix}::{symbol}" if module_prefix else symbol
+        module_test = re.compile(rf"(?<![\w:]){test_name}\b")
+    else:
+        module_test = re.compile(rf"(?<![\w:]){module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b")
     integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(path).stem)}\b")
     symbol_word = re.compile(rf"\b{symbol}\b")
 
@@ -171,6 +173,7 @@ def rust_evidence_names_test(
         module_test.search(line)
         or (
             is_integration_test
+            and rust_module is None
             and len(source_parts) == 2
             and integration_stem.search(line)
             and symbol_word.search(line)
