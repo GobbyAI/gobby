@@ -79,6 +79,36 @@
     {
       "surface": "mcp",
       "server": "gobby-communications",
+      "tool": "send_operator_message",
+      "audience": "agent; requires an installed operator_messaging grant",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/messages.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "create_communications_registry.send_operator_message"
+      },
+      "verification": [
+        "operator-send-contract",
+        "operator-send-tests"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-communications",
+      "tool": "send_operator_attachment",
+      "audience": "agent; requires an installed operator_messaging grant",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/communications.py",
+        "symbol": "create_communications_registry.send_operator_attachment"
+      },
+      "verification": [
+        "operator-send-contract",
+        "operator-send-tests"
+      ]
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-communications",
       "tool": "send_message",
       "audience": "agent",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/messages.md",
@@ -584,6 +614,16 @@
     }
   ],
   "evidence": [
+    {
+      "id": "operator-send-contract",
+      "command": "get_tool_schema(server_name=gobby-communications, tool_name=send_operator_message/send_operator_attachment); gcode symbol-at src/gobby/mcp_proxy/tools/communications.py:108 and :140",
+      "result": "On 2026-10-13, inspected both schemas and source symbols: message requires channel/content; attachment requires channel/file_path, with optional caption, filename and content_type. Both require an installed operator_messaging grant, target the enrolled operator Telegram DM, accept no destination and preserve conversation attachment state. No external delivery performed."
+    },
+    {
+      "id": "operator-send-tests",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run --no-sync pytest tests/mcp_proxy/tools/test_mcp_proxy_tools_communications.py -k test_send_operator_message_requires_installed_operator_grant -q --no-cov",
+      "result": "6 passed, 77 deselected in 5.99s. Both tools covered with allowed/denied installed grants and failed delivery using mocks; no external delivery performed."
+    },
     {
       "id": "inventory",
       "command": "gcode outline/symbol-at on communications MCP registry, CLI and HTTP routes; AST route inventory",

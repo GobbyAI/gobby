@@ -102,7 +102,7 @@
       "tool": "list_tasks",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/overview.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_crud.py",
+        "path": "src/gobby/mcp_proxy/tools/tasks/_listing.py",
         "symbol": "list_tasks"
       },
       "verification": [

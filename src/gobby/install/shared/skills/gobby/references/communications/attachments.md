@@ -18,6 +18,14 @@ fails before sending. Select the intended workspace file; do not bypass the
 containment check. An inactive channel, unsupported adapter attachment method,
 or provider failure requires correcting that cause before retrying.
 
+For an authorized operator attachment, fetch
+`gobby-communications:send_operator_attachment` and supply `channel` and
+`file_path`; `caption` (default empty), `filename`, and `content_type` are optional.
+The caller's installed agent definition must explicitly grant
+`operator_messaging`. The tool targets the enrolled operator's Telegram DM,
+accepts no destination, and preserves conversation attachment state. The same
+workspace containment and delivery checks apply.
+
 To send text as a document without a file, operators use
 `gobby comms attach CHANNEL_NAME FILENAME`, which reads stdin, or the
 authenticated `POST /api/comms/attachment` endpoint. Both are content-fed and
@@ -33,3 +41,5 @@ retrying the whole attachment to avoid duplicates.
 See [attachment sends](../../../../../../../../docs/guides/telegram.md#mcp-sends)
 and [provider limits](../../../../../../../../docs/guides/telegram.md#limits-and-dependencies).
 Documenting an attachment workflow does not authorize uploading user files.
+
+_Last verified: 2026-10-13_
