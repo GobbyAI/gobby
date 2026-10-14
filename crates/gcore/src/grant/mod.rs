@@ -70,6 +70,7 @@ pub enum GrantError {
     /// The daemon refused the credential; carries its typed rejection code.
     Unauthorized(String),
     Timeout,
+    BootstrapConfig(String),
     Malformed(String),
     Io(String),
 }
@@ -107,6 +108,7 @@ impl fmt::Display for GrantError {
             Self::Revoked => f.write_str("grant revoked"),
             Self::Unauthorized(code) => write!(f, "daemon rejected the credential: {code}"),
             Self::Timeout => f.write_str("grant operation timed out"),
+            Self::BootstrapConfig(message) => write!(f, "bootstrap configuration error: {message}"),
             Self::Malformed(message) => write!(f, "malformed grant: {message}"),
             Self::Io(message) => write!(f, "grant io error: {message}"),
         }
@@ -130,6 +132,7 @@ impl GrantError {
             Self::Revoked => "revoked",
             Self::Unauthorized(_) => "unauthorized",
             Self::Timeout => "timeout",
+            Self::BootstrapConfig(_) => "bootstrap_config",
             Self::Malformed(_) => "malformed",
             Self::Io(_) => "io",
         }
