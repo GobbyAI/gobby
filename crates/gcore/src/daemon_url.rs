@@ -27,21 +27,25 @@ use crate::bootstrap::{DaemonEndpoint, read_daemon_endpoint, read_daemon_endpoin
 /// This is the resolver all Gobby binaries share: `GOBBY_DAEMON_URL` wins,
 /// then `GOBBY_PORT`, then `GOBBY_DAEMON_PORT`, then the `bootstrap.yaml`
 /// endpoint.
-pub fn daemon_url() -> String {
-    env_override(
+/// Wrong-typed bootstrap `daemon_url` values return a configuration error.
+/// Environment overrides bypass bootstrap parsing; null/blank URLs are absent.
+pub fn daemon_url() -> anyhow::Result<String> {
+    if let Some(url) = env_override(
         std::env::var("GOBBY_DAEMON_URL").ok().as_deref(),
         std::env::var("GOBBY_PORT").ok().as_deref(),
         std::env::var("GOBBY_DAEMON_PORT").ok().as_deref(),
-    )
-    .unwrap_or_else(|| endpoint_to_url(&read_daemon_endpoint()))
+    ) {
+        return Ok(url);
+    }
+    Ok(endpoint_to_url(&read_daemon_endpoint()?))
 }
 
 /// Compose the daemon dial URL from a specific bootstrap file path.
 ///
 /// Env overrides do not apply — an explicit path is already an override.
 /// Exposed for tests and for callers that know the path explicitly.
-pub fn daemon_url_at(path: &Path) -> String {
-    endpoint_to_url(&read_daemon_endpoint_at(path))
+pub fn daemon_url_at(path: &Path) -> anyhow::Result<String> {
+    Ok(endpoint_to_url(&read_daemon_endpoint_at(path)?))
 }
 
 /// Apply the env-override contract: a non-empty `GOBBY_DAEMON_URL` beats a
@@ -116,13 +120,39 @@ mod tests {
     fn default_url_when_file_missing() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nope.yaml");
-        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://127.0.0.1:60887");
+    }
+
+    #[test]
+    fn wrong_typed_bootstrap_daemon_url_fails_closed() {
+        for value in ["123", "1.5", "true", "[http://localhost:61234]", "{url: x}"] {
+            let (_dir, path) =
+                write_bootstrap(&format!("daemon_url: {value}\ndaemon_port: 61234\n"));
+            assert_eq!(
+                daemon_url_at(&path).unwrap_err().to_string(),
+                "daemon_url must be a string",
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn null_and_blank_bootstrap_daemon_url_are_absent() {
+        for value in ["null", "''", "'   '"] {
+            let (_dir, path) =
+                write_bootstrap(&format!("daemon_url: {value}\ndaemon_port: 61234\n"));
+            assert_eq!(
+                daemon_url_at(&path).unwrap(),
+                "http://127.0.0.1:61234",
+                "{value}"
+            );
+        }
     }
 
     #[test]
     fn wildcard_ipv4_normalizes_to_loopback() {
         let (_dir, path) = write_bootstrap("daemon_port: 60887\nbind_host: 0.0.0.0\n");
-        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://127.0.0.1:60887");
     }
 
     #[test]
@@ -132,7 +162,7 @@ mod tests {
 bind_host: "::"
 "#,
         );
-        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://127.0.0.1:60887");
     }
 
     #[test]
@@ -142,13 +172,13 @@ bind_host: "::"
 bind_host: "::0"
 "#,
         );
-        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://127.0.0.1:60887");
     }
 
     #[test]
     fn localhost_normalizes_to_numeric_loopback() {
         let (_dir, path) = write_bootstrap("daemon_port: 60887\nbind_host: localhost\n");
-        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://127.0.0.1:60887");
         assert_eq!(dial_host("LOCALHOST"), "127.0.0.1");
     }
 
@@ -170,14 +200,17 @@ bind_host: "::0"
             let (_dir, path) =
                 write_bootstrap(&format!("daemon_port: 61234\nbind_host: \"{host}\"\n"));
             assert_eq!(
-                daemon_url_at(&path),
+                daemon_url_at(&path).unwrap(),
                 format!("http://{expected}:61234"),
                 "{host}"
             );
             let (_dir, explicit) = write_bootstrap(&format!(
                 "daemon_url: https://hub.example.test:7443\nbind_host: \"{host}\"\n"
             ));
-            assert_eq!(daemon_url_at(&explicit), "https://hub.example.test:7443");
+            assert_eq!(
+                daemon_url_at(&explicit).unwrap(),
+                "https://hub.example.test:7443"
+            );
         }
     }
 
@@ -188,7 +221,10 @@ bind_host: "::0"
              daemon_port: 61234\n\
              bind_host: 10.0.0.5\n",
         );
-        assert_eq!(daemon_url_at(&path), "http://gobby.example.test:62000");
+        assert_eq!(
+            daemon_url_at(&path).unwrap(),
+            "http://gobby.example.test:62000"
+        );
     }
 
     #[test]
@@ -198,7 +234,7 @@ bind_host: "::0"
 bind_host: "::1"
 "#,
         );
-        assert_eq!(daemon_url_at(&path), "http://[::1]:61234");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://[::1]:61234");
     }
 
     #[test]
@@ -208,7 +244,7 @@ bind_host: "::1"
 bind_host: "[::1]"
 "#,
         );
-        assert_eq!(daemon_url_at(&path), "http://[::1]:61234");
+        assert_eq!(daemon_url_at(&path).unwrap(), "http://[::1]:61234");
     }
 
     #[test]
@@ -278,11 +314,7 @@ bind_host: "[::1]"
         .into();
 
         let dir = tempdir().unwrap();
-        fs::write(
-            dir.path().join("bootstrap.yaml"),
-            "daemon_url: http://bootstrap.invalid:61111/\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join("bootstrap.yaml"), "daemon_url: 123\n").unwrap();
         // SAFETY: env mutation is serialized through TEST_ENV_LOCK and
         // restored before the lock is released.
         unsafe {
@@ -291,16 +323,22 @@ bind_host: "[::1]"
             std::env::set_var("GOBBY_PORT", "61999");
             std::env::set_var("GOBBY_DAEMON_PORT", "62000");
         }
-        let with_url = daemon_url();
+        let with_url = daemon_url().unwrap();
         // SAFETY: as above.
         unsafe { std::env::remove_var("GOBBY_DAEMON_URL") };
-        let with_port = daemon_url();
+        let with_port = daemon_url().unwrap();
         // SAFETY: as above.
         unsafe { std::env::remove_var("GOBBY_PORT") };
-        let with_deprecated_port_alias = daemon_url();
+        let with_deprecated_port_alias = daemon_url().unwrap();
         // SAFETY: as above.
         unsafe { std::env::remove_var("GOBBY_DAEMON_PORT") };
-        let from_bootstrap = daemon_url();
+        let wrong_type = daemon_url().unwrap_err().to_string();
+        fs::write(
+            dir.path().join("bootstrap.yaml"),
+            "daemon_url: http://bootstrap.invalid:61111/\n",
+        )
+        .unwrap();
+        let from_bootstrap = daemon_url().unwrap();
 
         // SAFETY: still holding TEST_ENV_LOCK; restores the original values.
         unsafe {
@@ -315,6 +353,7 @@ bind_host: "[::1]"
         assert_eq!(with_url, "http://override.invalid:1234");
         assert_eq!(with_port, "http://127.0.0.1:61999");
         assert_eq!(with_deprecated_port_alias, "http://127.0.0.1:62000");
+        assert_eq!(wrong_type, "daemon_url must be a string");
         assert_eq!(from_bootstrap, "http://bootstrap.invalid:61111");
     }
 }

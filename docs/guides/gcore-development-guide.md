@@ -76,23 +76,24 @@ pub struct DaemonEndpoint {
 }
 
 pub fn bootstrap_path() -> Option<PathBuf>;
-pub fn read_daemon_endpoint() -> DaemonEndpoint;
-pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint;
+pub fn read_daemon_endpoint() -> anyhow::Result<DaemonEndpoint>;
+pub fn read_daemon_endpoint_at(path: &Path) -> anyhow::Result<DaemonEndpoint>;
 ```
 
 `read_daemon_endpoint` is the lookup callers want. `read_daemon_endpoint_at`
 accepts an explicit path for tests. Missing/unreadable files and malformed YAML
 return defaults; individual absent or invalid fields use their own defaults,
 preserving valid siblings. The optional full `daemon_url` is preserved for the
-URL resolver. These readers do not surface errors.
+URL resolver. A number, boolean, list or mapping in `daemon_url` returns
+`daemon_url must be a string`; null and blank strings are absent.
 
 `DaemonEndpoint` returns the raw endpoint as written. `0.0.0.0` and `::` are valid listen addresses but invalid dial addresses — normalization is the caller's job, or the `daemon_url` module's, not this one's.
 
 ### `daemon_url`
 
 ```rust
-pub fn daemon_url() -> String;
-pub fn daemon_url_at(path: &Path) -> String;
+pub fn daemon_url() -> anyhow::Result<String>;
+pub fn daemon_url_at(path: &Path) -> anyhow::Result<String>;
 ```
 
 The one daemon-URL resolver every Gobby binary shares. `daemon_url()` applies a single env-override contract before reading bootstrap:
@@ -105,15 +106,15 @@ The one daemon-URL resolver every Gobby binary shares. `daemon_url()` applies a 
 
 `daemon_url_at(path)` reads a specific bootstrap file and never consults the env — an explicit path is already an override.
 
-Host/port dial normalization rewrites wildcard listen hosts (`0.0.0.0`, `::`,
-`::0`, `[::]`), empty hosts and case-insensitive `localhost` to `127.0.0.1`, and
-brackets bare IPv6 literals (`::1` → `[::1]`). Other hostnames and explicit IPv4
-literals pass through. A full URL override is not rewritten through this helper.
+Host/port dial normalization uses loopback. Wildcard listen hosts (`0.0.0.0`, `::`,
+`::0`, `[::]`), empty hosts, hostnames and non-loopback IPv4 addresses use
+`127.0.0.1`; explicit IPv4 loopback addresses stay intact. Other IPv6 addresses
+use `[::1]`. A full URL override is not rewritten through this helper.
 
 ```rust
-let url = gobby_core::daemon_url::daemon_url();
+let url = gobby_core::daemon_url::daemon_url()?;
 // "http://127.0.0.1:60887" for default bootstrap
-// "http://10.0.0.5:61234" if bootstrap has bind_host: 10.0.0.5
+// "http://127.0.0.1:61234" if bootstrap has bind_host: 10.0.0.5
 // "http://127.0.0.1:60887" if bootstrap has bind_host: 0.0.0.0
 // GOBBY_DAEMON_URL / GOBBY_PORT win over all of the above
 ureq::post(&format!("{url}/api/hooks/execute")).send_string(body)?;
@@ -311,13 +312,15 @@ Baseline tests are fast, perform no network I/O, and keep filesystem writes insi
 
 ## Design Decisions
 
-### Why Infallible Defaults Instead of `Result`
+### Defaults and Configuration Errors
 
-`read_daemon_endpoint` and friends return `DaemonEndpoint` (not `Result<DaemonEndpoint>`). The reasoning:
+`read_daemon_endpoint` and the URL resolver return `Result` so an explicit
+wrong-typed `daemon_url` fails closed, matching Python's bootstrap parser.
 
-- Every consumer wants *some* endpoint to dial. Erroring at startup because `~/.gobby/bootstrap.yaml` doesn't exist would force every binary to handle the error identically (fall back to loopback + 60887). Centralizing that fallback here is the right move.
-- The daemon defaults are well-known and stable. There's no "right" error message to surface — "use loopback" is always the answer.
-- If a binary genuinely needs to know whether the file existed (e.g. for a setup-wizard prompt), it can call `bootstrap_path()` and `Path::exists()` directly.
+Missing files and malformed YAML retain the default loopback endpoint. Null and
+blank URLs use the configured host and port. Environment URL/port overrides
+take precedence and bypass bootstrap parsing. A caller must propagate an explicit
+configuration error rather than silently dial a different daemon.
 
 `read_project_id` *does* return `Result` because there's no sane default for "I asked for a project ID and there isn't one" — the caller has to decide what that means.
 

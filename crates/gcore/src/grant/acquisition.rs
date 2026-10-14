@@ -65,9 +65,12 @@ impl<'a> AcquireRequest<'a> {
     ///
     /// `acquire_with` never reads the environment; production `acquire` and
     /// daemon presentation retries go through here so tests can isolate.
-    pub fn from_process(project_root: &'a Path) -> Self {
+    pub fn from_process(project_root: &'a Path) -> Result<Self, GrantError> {
         let mut request = Self::new(project_root);
-        request.daemon_url = Some(crate::daemon_url::daemon_url());
+        request.daemon_url = Some(
+            crate::daemon_url::daemon_url()
+                .map_err(|error| GrantError::Malformed(error.to_string()))?,
+        );
         request.session_id = std::env::var("GOBBY_SESSION_ID")
             .ok()
             .map(|value| value.trim().to_owned())
@@ -84,17 +87,19 @@ impl<'a> AcquireRequest<'a> {
                     .ok()
                     .filter(|value| !value.trim().is_empty())
             });
-        request
+        Ok(request)
     }
 
     /// Snapshot process environment for a project id with no project root.
     ///
     /// Identity comes from `project_id` alone; managed and interactive sources
     /// are resolved exactly as `from_process` does for a checkout.
-    pub fn from_process_for_project_id(project_id: &str) -> AcquireRequest<'static> {
-        let mut request = AcquireRequest::from_process(Path::new(""));
+    pub fn from_process_for_project_id(
+        project_id: &str,
+    ) -> Result<AcquireRequest<'static>, GrantError> {
+        let mut request = AcquireRequest::from_process(Path::new(""))?;
         request.project_id = Some(project_id.to_owned());
-        request
+        Ok(request)
     }
 }
 
@@ -118,7 +123,7 @@ pub(super) struct AcquireCtx {
 }
 
 pub fn acquire(project_root: impl AsRef<Path>) -> Result<AcquiredGrant, GrantError> {
-    acquire_with(&AcquireRequest::from_process(project_root.as_ref()))
+    acquire_with(&AcquireRequest::from_process(project_root.as_ref())?)
 }
 
 pub fn acquire_with(request: &AcquireRequest<'_>) -> Result<AcquiredGrant, GrantError> {
@@ -202,7 +207,8 @@ impl AcquireCtx {
                 None => match request.home {
                     Some(home) => crate::daemon_url::daemon_url_at(&home.join("bootstrap.yaml")),
                     None => crate::daemon_url::daemon_url(),
-                },
+                }
+                .map_err(|error| GrantError::Malformed(error.to_string()))?,
             },
             now: request.now.unwrap_or_else(unix_now),
             session_id: request.session_id.clone(),

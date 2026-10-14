@@ -298,7 +298,8 @@ fn fnv1a64(bytes: &[u8]) -> String {
 }
 
 fn daemon_host_port(daemon_url: &str) -> (String, u16) {
-    let endpoint = gobby_core::bootstrap::read_daemon_endpoint();
+    // This fallback supplies diagnostic metadata only, never a dial target.
+    let endpoint = gobby_core::bootstrap::read_daemon_endpoint().unwrap_or_default();
     let trimmed = daemon_url.trim();
     let scheme = trimmed.split_once("://").map(|(scheme, _)| scheme);
     let authority = trimmed

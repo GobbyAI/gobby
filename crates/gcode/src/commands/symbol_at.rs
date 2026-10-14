@@ -112,7 +112,7 @@ pub fn run(
     let (snippet, symbol_bytes) = symbol_source(&source, selected.symbol);
 
     if symbol_bytes > 0 && source.len() > symbol_bytes {
-        let url = gobby_core::daemon_url::daemon_url();
+        let url = gobby_core::daemon_url::daemon_url()?;
         savings::report_savings(
             &url,
             source.len(),

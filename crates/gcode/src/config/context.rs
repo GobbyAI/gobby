@@ -415,7 +415,7 @@ impl Context {
             code_vectors,
             runtime_config_capture_degraded: false,
             indexing,
-            daemon_url: Some(gobby_core::daemon_url::daemon_url()),
+            daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
             grant_ai,
             index_scope,
         })
@@ -435,7 +435,8 @@ impl Context {
         services: ServiceConfigSelection,
     ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
-        let request = grant::AcquireRequest::from_process_for_project_id(&project_id);
+        let request = grant::AcquireRequest::from_process_for_project_id(&project_id)
+            .map_err(CliError::grant)?;
         let maintenance_request = request
             .managed_bootstrap
             .as_deref()
@@ -454,6 +455,8 @@ impl Context {
         let request = managed_root
             .as_deref()
             .map(grant::AcquireRequest::from_process)
+            .transpose()
+            .map_err(CliError::grant)?
             .unwrap_or(request);
         let acquired = grant::acquire_with(&request).map_err(CliError::grant)?;
         // Acquisition may refresh or reread the file used for classification.
@@ -504,7 +507,7 @@ impl Context {
             code_vectors,
             runtime_config_capture_degraded: false,
             indexing,
-            daemon_url: Some(gobby_core::daemon_url::daemon_url()),
+            daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
             grant_ai,
             index_scope: ProjectIndexScope::Single,
         })

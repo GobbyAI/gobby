@@ -108,12 +108,23 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
 
+    let resolve_daemon_url = || {
+        gobby_core::daemon_url::daemon_url().map_err(|error| {
+            emit_exit(action_from_failure(
+                hook_type,
+                &cfg,
+                transport::DeliveryFailureKind::Other,
+                &error.to_string(),
+            ))
+        })
+    };
+
     let direct_post_after_enqueue_failure =
         |failure_detail: String| -> Result<HookAction, ExitCode> {
             if args.enqueue_only {
                 let enqueue_error = format!("enqueue failed: {failure_detail}");
                 if planned_shutdown::fail_open_after_enqueue_failure(hook_type) {
-                    let daemon_url = gobby_core::daemon_url::daemon_url();
+                    let daemon_url = resolve_daemon_url()?;
                     let _ = diagnostics::record_failure(diagnostics::FailureContext {
                         envelope: &env,
                         envelope_id: None,
@@ -140,7 +151,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             if args.detach {
                 detach::detach();
             }
-            let daemon_url = gobby_core::daemon_url::daemon_url();
+            let daemon_url = resolve_daemon_url()?;
             // No inbox file exists on this direct-POST fallback.
             let missing_enqueued_path = PathBuf::new();
             let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
@@ -210,7 +221,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     // Best-effort POST. A delivered envelope stays durable until its mapped
     // provider action has been written and stdout has flushed.
-    let daemon_url = gobby_core::daemon_url::daemon_url();
+    let daemon_url = match resolve_daemon_url() {
+        Ok(url) => url,
+        Err(exit_code) => return exit_code,
+    };
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
     let mut receipt = None;
     let action = match report.outcome {

@@ -345,7 +345,7 @@ fn daemon_url_falls_back_when_bootstrap_path_is_unavailable() {
         ],
         || {
             assert_eq!(
-                gobby_core::daemon_url::daemon_url(),
+                gobby_core::daemon_url::daemon_url().unwrap(),
                 "http://127.0.0.1:60887"
             );
         },
@@ -370,7 +370,7 @@ fn daemon_url_normalizes_wildcard_bootstrap_bind_host() {
         ],
         || {
             assert_eq!(
-                gobby_core::daemon_url::daemon_url(),
+                gobby_core::daemon_url::daemon_url().unwrap(),
                 "http://127.0.0.1:61234"
             );
         },

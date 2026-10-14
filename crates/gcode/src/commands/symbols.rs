@@ -53,7 +53,7 @@ pub fn outline(
             })
             .sum();
         if outline_bytes > 0 && file_bytes > outline_bytes {
-            let url = gobby_core::daemon_url::daemon_url();
+            let url = gobby_core::daemon_url::daemon_url()?;
             savings::report_savings(
                 &url,
                 file_bytes,
@@ -297,7 +297,7 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
             if let Some(source) = read_symbol_source(&ctx.project_root, &s)? {
                 // Report savings: symbol bytes vs full file bytes
                 if source.symbol_bytes > 0 && source.file_bytes > source.symbol_bytes {
-                    let url = gobby_core::daemon_url::daemon_url();
+                    let url = gobby_core::daemon_url::daemon_url()?;
                     savings::report_savings(
                         &url,
                         source.file_bytes,

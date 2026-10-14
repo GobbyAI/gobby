@@ -188,9 +188,11 @@ fn dispatch_inner(args: Vec<String>, env: CommandEnv) -> Result<i32, CommandErro
         return Ok(0);
     }
     let json = parsed.switch("--json");
-    let url = parsed
-        .take("--daemon-url")
-        .unwrap_or_else(gobby_core::daemon_url::daemon_url);
+    let url = match parsed.take("--daemon-url") {
+        Some(url) => url,
+        None => gobby_core::daemon_url::daemon_url()
+            .map_err(|error| CommandError::connection(error.to_string()))?,
+    };
     let token_file = parsed.take("--token-file").map(PathBuf::from);
     let action = verbs::Action::parse(parsed, &env)?;
     let token = match token_file {
