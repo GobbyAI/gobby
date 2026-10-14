@@ -1505,7 +1505,7 @@ Targets:
 - `crates/gdaemon/src/nodes/agents/sandbox/monitor.rs`
 - `crates/gdaemon/tests/node_agents.rs`
 
-**Granularity:** one leaf with seven acceptance items. They are the steps of
+**Granularity:** one leaf with eight acceptance items. They are the steps of
 one chokepoint (ROADMAP decision 6) in the Python order. The provider homes
 and the `ps` shim each add paths to the policy the chokepoint hashes and
 verifies, so none of them can ship apart from the hash it changes.
@@ -1582,6 +1582,13 @@ verifies, so none of them can ship apart from the hash it changes.
   and returns `[node, runner, "--settings", <settings>, "--violations", <violations>, "--", ...argv]`.
   With the sandbox disabled, or on `provider-native`, it returns the argv
   unchanged. The node has neither case (Decision 32).
+- `prepare_sandbox_launch` returns `provider_args` of
+  `["-c", "features.shell_snapshot=false"]` for codex and `[]` for every
+  other provider, because a shell snapshot can restore a stale `PATH` after
+  the run's shell startup (`src/gobby/agents/srt_runtime.py`, asserted in
+  `tests/agents/test_srt_runtime.py` for each provider).
+  `build_cli_command` appends them as `sandbox_args` after codex's flags
+  and overrides and before the resume id and the prompt.
 - `src/gobby/agents/sandbox_gate.py::require_managed_srt` refuses a config
   that is not `enabled` with backend `srt`, with
   `spawn_agent requires managed SRT (enabled=<enabled>, backend=<backend>)`.
@@ -1599,6 +1606,10 @@ verifies, so none of them can ship apart from the hash it changes.
   32). `prepare_launch` then performs the `srt` steps above in the Python
   order, and each refusal names the Python lockout reason. Every launch it
   returns wraps the argv; it has no disabled or `provider-native` result.
+  The returned `SandboxLaunch` carries `provider_args`:
+  `["-c", "features.shell_snapshot=false"]` for codex and none for claude,
+  grok, droid and agy, as Python's does. 2.6 passes them to the command
+  builder as `sandbox_args`.
 - `SRT_VERSION` is a constant. A test reads
   `src/gobby/utils/dependency_requirements.py` with `include_str!` and asserts
   that `SRT_RELEASE` pins the same version.
@@ -1628,6 +1639,7 @@ Verification planned:
 - 2.5.5 - A claude `task-close-reviewer` on `srt` gets a private config home with the seeded `.claude.json`, the copied settings, the transcript symlink and the three variables, and a symlinked source is refused. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_claude_reviewer_home`.
 - 2.5.6 - Droid on `srt` on macOS gets the signed `ps` copy first on `PATH` and in the read paths, and a failed copy or signature leaves the launch running without it. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_droid_ps_shim`.
 - 2.5.7 - On macOS a launch connects to a live monitor on the version-addressed socket, or starts one that answers `ready` and sets `GOBBY_SRT_MONITOR_SOCKET` and `GOBBY_SRT_RUN_KEY`; a prior backlog for the run is recovered first, a backlog owned by a live monitor or a monitor that never answers is a lockout, and the monitor survives a node daemon restart. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_shared_srt_monitor`.
+- 2.5.8 - A codex launch's `SandboxLaunch` carries `provider_args` `["-c", "features.shell_snapshot=false"]`, and claude, grok, droid and agy launches carry none, matching `prepare_sandbox_launch` for each provider. test: `crates/gdaemon/tests/node_agents.rs::chokepoint_codex_shell_snapshot_off`.
 
 ### 2.6 Provider launch, exits and host reconciliation [category: code] (depends: 2.5, 2.12)
 `kind: deliverable`
@@ -1669,8 +1681,9 @@ its own dependencies to the same file.
     `--dangerously-bypass-approvals-and-sandbox`, which requires an
     enforced sandbox, and the terminal UI uses
     `--ask-for-approval never --disable guardian_approval`; `-C <cwd>`; each
-    config override as `-c`; `-c check_for_update_on_startup=false`; the
-    resume id last. Only a headless launch puts the prompt on the argv
+    config override as `-c`; `-c check_for_update_on_startup=false`; under
+    SRT, the launch's `sandbox_args` `-c features.shell_snapshot=false`
+    (2.5); the resume id last. Only a headless launch puts the prompt on the argv
     (`src/gobby/agents/provider_capabilities.py::codex_launches_headless`:
     agent `task-close-reviewer` on an enforced `srt` sandbox). Every other
     codex launch gets its prompt typed by 2.10.
@@ -1812,6 +1825,8 @@ its own dependencies to the same file.
   for `build_cli_command`, the codex overrides and `apply_native_env_policy`:
   each provider in each of its modes, with and without a resume id, codex
   headless and with `codex_oss_provider`, and a fixed ambient environment.
+  Each case passes `sandbox_args` as 2.5 returns them for its provider, so
+  every codex case carries `-c features.shell_snapshot=false`.
   `tests/agents/test_node_launch_corpus.py` (new) runs the Python functions
   on each case and compares; with `GOBBY_RECORD_NODE_LAUNCH_CORPUS=1` it
   rewrites the corpus.
@@ -3727,6 +3742,12 @@ Verification planned:
   `-c features.shell_snapshot=false`, and the plan did not port it. The M1
   manifest stamped at 4359ed3302 is withdrawn; its bytes stay in Git
   history. A fresh adversary review and M1 follow the revision.
+- 2026-10-14: Revision for NH-O1. 2.5's `prepare_launch` returns codex's
+  `provider_args` `-c features.shell_snapshot=false` and none for the other
+  four providers (new 2.5.8). 2.6 passes them as `sandbox_args`, after
+  codex's overrides and before the resume id, and its launch corpus
+  carries them. gobby#15977 adds #22407 to the expansion edge notes for
+  the carried-over Droid TODO in 2.5's `ps_shim.rs`.
 
 ## V2: Verification
 `kind: verification`
