@@ -42,8 +42,10 @@ and worktrees in gdaemon), planned in `.gobby/plans/node-halves.md`. A node
 agent's hooks reach the hub through #24150 (S2.11 node half: the node-local
 envelope ledger forwards each envelope to the hub), planned there too. P1 to
 P4 test against a fake route or a fake node, and P5 runs the real pair.
-#24149 (S2.7 hub half) later redoes the Python callers in Rust and reuses the
-envelope and the route.
+#24149 (S2.7 hub half: machine-scoped attention, roster, response routing and
+dispatch gate in Rust) ports these Python callers to Rust and reuses the
+envelope and the route. It is its own Lane 5 epic, and "Relations that set no
+edge" under Constraints gives the reason it is not a leaf here.
 
 ## Decision Record
 `kind: framing`
@@ -78,12 +80,34 @@ Operator decisions (Josh, 2026-10-12, relayed by Orchestrator gobby#15977):
 6. **Q5 a. Remote respond.** Responding to another machine's attention entry
    routes a terminal write to the owning node, with a typed `node_offline` when
    it is disconnected.
-7. **Q6 a. Remote attention source.** Story B uses hook-driven attention only.
-   Node pane detection and its reporting route are planned with #24148.
+7. **Q6 a. Remote attention source.** Josh chose hook-driven attention for
+   Story B. His later "No deferrals" ruling (memory 878d0c35) requires every
+   capability on all five providers, so a node agent's attention reaches the
+   hub two ways, and both feed the same `AgentAttentionTracker`:
+   - Hooks. Claude and codex send `PermissionRequest` and droid sends
+     `Notification` (`src/gobby/adapters/capabilities.py`,
+     `src/gobby/adapters/droid_contract.py`). The node forwards each envelope
+     to `POST /api/hooks/execute` (#24150), and the hub handles it as it
+     handles a local hook.
+   - Pane reports. node-halves 2.13 ports the pane detectors to gdaemon, 2.14
+     puts a `pane` block (attention, injections, composer, idle, a 15-line
+     tail) on each agent entry of the node report, and node-halves 3.3
+     (`src/gobby/hub/remote_pane.py`) applies it on the hub through
+     `AgentAttentionTracker.apply` from 1.4's report route. Grok and agy have
+     no hook directory on a node (node-halves 2.3.3), so this is their path.
+     It runs for the other three providers too, as local pane detection does.
+
+   5.1 proves attention for each provider through its path.
 8. **Standalone and the hub's own machine** execute in-process, as today
    (ROADMAP decision 13).
 9. **Remote terminal viewing** stays with S4.3 #20202 (Remote gobby attach) and
-   S2.8. The terminals view per machine is #21549 (machine-scoped terminals).
+   S2.8. The terminals view per machine has landed: #21549 (Machine-scope
+   terminal list, get, and attach_locator) closed on 2026-09-02, and gclient's
+   terminals section (`crates/gclient/src/ui/sidebar/terminals.rs::terminal_rows`)
+   lists the client's own panes only while the machine filter admits the local
+   machine (`machine_admits`). Listing or opening another machine's terminals
+   needs remote attach, and "Relations that set no edge" under Constraints
+   gives the reason #20202 is not a leaf here.
 
 Writer decisions:
 
@@ -148,7 +172,9 @@ Writer decisions:
       the command open.
 
     The two request-facing callers (the MCP `spawn_agent` tool and
-    `POST /api/agents/spawn`) choose the remote flow. The origin machine is the
+    `POST /api/agents/spawn`) choose the remote flow. Agent sessions and the
+    `gobby agents spawn` CLI call the tool; no client UI posts an agent spawn
+    today (Architecture, Story 1). The origin machine is the
     calling session's, so a node agent that reports to a hub coordinator spawns
     on its node. The parent session is only the reporting relationship. Dispatch,
     cron, and feedback spawns stay local (decision 11). A resume routes to the
@@ -190,13 +216,16 @@ Writer decisions:
       directly, and the workspace tools route a node's row there.
 16. **Hook machine binding.** Q3 trusts `sessions.machine_id`, which comes from
     the hook envelope (`ClaudeCodeAdapter` reads `input_data["machine_id"]`).
-    When a hook request carries a verified front-door identity, the hub rejects
-    an envelope whose `machine_id` is missing or differs from the key's machine
-    (2.2). A hook from another machine then binds only that machine's session
-    rows: every hook lookup that matches a row by an id the event supplies
-    treats another machine's row as a miss, before any write (2.2). A local
-    hook binds any row, as today. The envelope machine is the marker because it
-    reaches every adapter's event and every replayed envelope.
+    The hub binds the envelope machine to the caller at ingress (2.2). A hook
+    request with a verified front-door identity must name the key's machine,
+    and one without an identity must name the hub's own machine. Anything else
+    is refused with `hook_machine_mismatch`. Every hook then binds only its own
+    machine's session rows: every hook lookup that matches a row by an id the
+    event supplies treats another machine's row as a miss, before any write
+    (2.2). The rule has no exception for the hub's machine, so a local hook
+    never binds a node's pre-created row (Orchestrator gobby#15977's security
+    return, 2026-10-14: fail closed). The envelope machine is the marker
+    because it reaches every adapter's event and every replayed envelope.
 17. **Every section is in scope (Josh's "No deferrals" ruling, memory
     878d0c35, relayed by gobby#15977 on 2026-10-13).** The gdaemon route is
     1.2: it extends the node channel's registry and handler, which #24090
@@ -347,9 +376,12 @@ Writer decisions:
     would keep showing its last state.
 22. **The live proof pairs isolated daemons and fake providers (P5).** Every
     spawn runs under managed SRT (`require_managed_srt`), so the live test
-    links the operator's installed SRT into both isolated homes, as
-    `tests/e2e/conftest.py::link_operator_srt` does, and skips when it is
-    absent. Each of the five providers is a fake script on the node's
+    links the operator's installed SRT into both isolated homes through
+    `tests/e2e/conftest.py::link_operator_srt`. It fails when SRT is absent
+    or fails verification, because this test is the acceptance for every
+    remote capability and must not pass by skipping: it calls the helper and
+    turns the helper's `pytest.skip` into `pytest.fail` with the same
+    message. Each of the five providers is a fake script on the node's
     `PATH` that the real launch path starts. Rejected: the real provider
     CLIs, which need credentials, network access, and admission. The hub
     and the node run as test instances with temporary `HOME` and
@@ -375,32 +407,19 @@ Writer decisions:
   node channel loops. Only hello, ack, and ping/pong cross the channel
   today (`.gobby/plans/gdaemon-node-channel.md`, Decision 9); 1.2 adds the
   command frames. #24268 (1.1) landed the version 1 contract.
-- **Cross-plan edges with `.gobby/plans/node-halves.md`.** The Orchestrator
-  sets these at expansion; the coverage grammar carries no cross-plan
-  dependency.
-  - node-halves 3.1 blocks 1.2, 1.3, and 1.4, which build or check `v`
-    against the `CONTRACT_VERSION` it sets to 2. node-halves 2.1 also
-    blocks 1.2, because both declare a module in
-    `crates/gdaemon/src/nodes/mod.rs`. The same edge orders node-halves
-    1.5 (node hook ingress arm), which also edits
-    `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, before 1.2,
-    because node-halves runs 1.5 before 1.6 and 1.6 before 2.1.
-  - 1.2 blocks node-halves 2.7, because both change
-    `crates/gdaemon/src/nodes/channel.rs` (1.2 `hub_channel`, 2.7
-    `run_client`).
-  - node-halves 3.2 blocks 2.5, which calls its `build_spawn_payload`.
-  - 1.4 blocks node-halves 3.2, whose `resumed_workspace` orders a
-    session's workspace rows by the `updated_at` that 1.4 moves (1.4.7),
-    and node-halves 3.3, which adds one call to 1.4's report route.
-  - 2.3 and 2.4 block node-halves 3.4, whose runtime relies on 2.3's write
-    guard and calls 2.4's `remote_cancel`. 2.6 blocks node-halves 3.6, so a
-    run its terminate route kills settles through 2.6's reconciler.
-  - node-halves 3.1 blocks 4.1, which bumps the same contract to version 3
-    in the same files.
-  - node-halves 2.14, the last node agent leaf, blocks 4.2 and 4.6, which
-    add handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and
-    `crates/gdaemon/src/nodes/agents/mod.rs`.
-  - Every node-halves leaf blocks 5.1, which runs the real node.
+- **Cross-plan edges.** The coverage grammar has no cross-plan dependency.
+  "Cross-plan edges set at expansion", after these constraints, lists every
+  edge between this plan's leaves and other work, and the Orchestrator sets
+  them from that table when the leaves exist.
+- **Deferral holders this plan supersedes.** The expansion of 2026-10-13
+  created four holder tasks under #21575, and the Orchestrator retires each
+  at expansion, once its sections have leaves:
+  - #24280 (Remote workspace lifecycle, D1) is replaced by 4.1 to 4.5.
+  - #24281 (gdaemon internal node-command route over the node channel, D2)
+    is replaced by 1.2.
+  - #24282 (Machine-scoped project view, D3) is replaced by 4.6 to 4.8 and
+    3.2.4.
+  - #24283 (Live hub-to-node proof, D4) is replaced by 5.1.
 - **Hooks from node agents.** A remote agent's hooks reach the hub's
   `POST /api/hooks/execute` only through #24150's node ledger (ROADMAP decision
   17: `ghook` posts through the local node).
@@ -411,9 +430,9 @@ Writer decisions:
     takes `handle_pre_created_session`. That path updates the row (`update`,
     `backfill_terminal_context`) and starts the run. It never calls `register`,
     and neither method checks the machine, so 2.2 checks it at every hook
-    lookup: a hook from another machine binds only that machine's rows, and a
-    foreign row counts as a miss. Session end settles the run as it does
-    locally.
+    lookup: every hook binds only its own machine's rows, the hub's included,
+    and another machine's row counts as a miss. Session end settles the run
+    as it does locally.
   - A node session that misses that lookup reaches `register_session`, which
     keeps `require_local_machine_id` and is refused (Decision 18). Examples are
     a `/clear` successor and an operator's own CLI on the node; #24151 owns
@@ -429,6 +448,105 @@ Writer decisions:
 - **Test isolation.** pytest runs use
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`
   and never the full suite. Rust tests run through `cargo nextest run -p <crate>`.
+
+## Cross-plan edges set at expansion
+`kind: framing`
+
+Each row is one edge between a leaf of this plan and work outside it. With
+"blocked by", the external work closes before the leaf starts. With "blocks",
+the leaf closes before the external work starts. node-halves leaves are
+numbered as in `.gobby/plans/node-halves.md` (#24148, #24150), and
+node-halves' own table lists the same edges between the two plans. Edges
+between this plan's own leaves are heading dependencies and reach the
+manifest.
+
+| Leaf | External work | Edge | Reason |
+| --- | --- | --- | --- |
+| 1.2 | node-halves 2.1 (Durable node agent state) | blocked by | Both declare a module in `crates/gdaemon/src/nodes/mod.rs`. The edge also orders node-halves 1.5's change to `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, which 1.2 edits, because node-halves 2.1 follows 1.5 through 1.6. |
+| 1.2 | node-halves 2.7 (Command dispatch over the node channel) | blocks | Both change `crates/gdaemon/src/nodes/channel.rs`: 1.2 `hub_channel`, node-halves 2.7 `run_client`. |
+| 1.2 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.2 checks `v` against the `CONTRACT_VERSION` that node-halves 3.1 sets to 2. |
+| 1.2 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 reuses 1.2's route when it ports the hub's callers to Rust. |
+| 1.3 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.3 builds `v` from `CONTRACT_VERSION`. |
+| 1.4 | node-halves 1.3 (Hub routes for node replay decisions and receipts) | blocked by | Both add a router in `src/gobby/servers/_app_routes.py::register_routes`. |
+| 1.4 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 1.4's routes check `v` against `CONTRACT_VERSION`. |
+| 1.4 | node-halves 3.2 (Hub spawn payload builder) | blocks | `resumed_workspace` orders a session's workspace rows by the `updated_at` that 1.4's `record_remote_workspaces` moves (1.4.7). |
+| 1.4 | node-halves 3.3 (Node pane state on the hub) | blocks | node-halves 3.3 changes 1.4's report route in `src/gobby/servers/routes/nodes.py`: it replaces the report with `redact_report_panes(report)` at route entry and applies each agent's `pane` block. It adds `test_report_pane_text_redacted` to 1.4's `tests/servers/test_node_routes.py`. |
+| 2.2 | #24151 (S2.11 hub half: hook ingress and rule engine in Rust) | blocks | #24151 ports `POST /api/hooks/execute` to Rust, so it carries 2.2's ingress machine check and binding rule. |
+| 2.3 | node-halves 3.4 (Remote terminal runtime) | blocks | The remote runtime relies on 2.3's write guard. |
+| 2.3 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 ports 2.3's remote write to Rust. |
+| 2.4 | node-halves 3.4 (Remote terminal runtime) | blocks | The remote runtime calls 2.4's `remote_cancel`. |
+| 2.4 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 ports 2.4's remote cancel to Rust. |
+| 2.5 | node-halves 3.2 (Hub spawn payload builder) | blocked by | 2.5 calls `build_spawn_payload`, which fills the `resume_session_id` (the provider-native thread id) and the `existing` workspace mode that node-halves 3.1 adds to the contract. |
+| 2.5 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149's dispatch gate ports 2.5's machine routing to Rust. |
+| 2.6 | node-halves 3.6 (Terminate route) | blocks | A run the terminate route kills settles through 2.6's reconciler when the node's exit arrives. |
+| 3.1 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 ports 3.1's hub-wide roster to Rust. |
+| 3.3 | #24149 (S2.7 hub half: machine-scoped attention, roster, response routing and dispatch gate in Rust) | blocks | #24149 ports 3.3's response routing to Rust. |
+| 4.1 | node-halves 3.1 (Node-commands contract version 2) | blocked by | 4.1 bumps the same contract to version 3 in the same files. |
+| 4.2 | node-halves 2.15 (Node sandbox reaping and records) | blocked by | 4.2 adds handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs` and edits node-halves 2.3's `workspace.rs`. node-halves 2.15 is the last node agent leaf. It depends on node-halves 3.9, 3.9 on 3.3, and 3.3 follows this plan's 1.4 (row above), so 4.2 also waits for 1.4. No P1 leaf depends on a P4 leaf, so the chain has no cycle. |
+| 4.6 | node-halves 2.15 (Node sandbox reaping and records) | blocked by | 4.6 adds a handler to `crates/gdaemon/src/nodes/agents/commands.rs` and `crates/gdaemon/src/nodes/agents/mod.rs`. It follows 1.4 through the same chain as 4.2. |
+| 5.1 | Every node-halves leaf: 1.1 to 1.6, 2.1 to 2.15 and 3.1 to 3.9 | blocked by | 5.1 runs the real node, including its hook forwarding (P1 there) and the pane attention that grok and agy depend on (node-halves 2.13, 2.14, 3.3; Decision 7). |
+
+Relations that set no edge:
+- #24151 (S2.11 hub half: hook ingress and rule engine in Rust) as a leaf
+  here. Registering a session that a node forwards and the hub did not
+  pre-register is a fourth write by the key-verified foreign-machine path.
+  Orchestrator gobby#15977 limited that path to three uses on 2026-10-12
+  (Decision 18), and #24151 owns the fourth: Josh's decision B
+  (2026-10-12) made it the Lane 5 epic for hub hook ingress, blocked by
+  #21562 (Sessions and transcripts), #21567 (Workflows, rules, pipelines,
+  build, and validation) and #21566 (External-MCP transport multiplexer as a
+  delegated backend). Until it lands, a node session that misses its
+  pre-created row, such as a `/clear` successor or an operator's own CLI on
+  the node, is refused at registration (Constraints, "Hooks from node
+  agents"). The 2.2 row above is the edge.
+- #24149 (S2.7 hub half: machine-scoped attention, roster, response routing
+  and dispatch gate in Rust) as a leaf here. Josh's decision B split S2.7
+  into a node half (#24148) and this hub half, which ports this plan's
+  Python callers to Rust and is blocked by #21560 (Tasks family) and #21555
+  (API keys and node registration: user-issued machine-bound keys replace
+  the shared daemon token). Those Rust families do not exist yet, and Josh's
+  decision C put the Python routing in this epic. The rows above are the
+  edges.
+- #20202 (Plan hub-wide terminal roster, attach routing, and capability
+  tokens for remote gclient attach), S4.3. Josh's Q0 a scopes this epic to
+  hub-side routing of commands (Decision 1). #20202 is its own planning task
+  whose output is its own plan for four items that move terminal bytes,
+  not commands: a hub-wide terminal roster, `terminal.machine_id` to daemon
+  endpoint resolution, short-lived per-terminal attach tokens, and a
+  hub-node relay with backpressure. The attach-token model is an open
+  security design that needs its own decision record with Josh. Its blocker
+  #19600 (Two-machine end-to-end acceptance) closed on 2026-10-08, so it can
+  be planned now. Its plan builds on 3.1's roster and 3.2's machine filter,
+  which deliver the agents part of the gclient-workspace-sidebar 3.2.4
+  deferral it carries. It shares no Target with this plan.
+- #21549 (Machine-scope terminal list, get, and attach_locator) closed on
+  2026-09-02, and gclient's terminals section follows the machine filter
+  (Decision 9).
+- Per-user visibility of the roster and of attention broadcasts. ROADMAP
+  decision 17 makes the hub the tenant and defers per-user privacy inside a
+  hub to S4.4 #17769 (Per-user auth and multi-user, labeled `later`). This
+  plan checks ownership on every action aimed at a machine (1.5) and leaves
+  what a hub's users can see to S4.4.
+- node-halves 2.9 (Checkout registration) registers a checkout on any
+  forwarded hook, whatever the hub answers, so no leaf here waits on it
+  beyond 5.1's row.
+- node-halves 3.5 (Hub routes for launch outcomes) and 3.9 (Node sandbox
+  records on the hub) change 1.4's report route after node-halves 3.3, so
+  they follow 1.4 through the 1.4 to node-halves 3.3 row.
+- #24268 (1.1, closed) landed the version 1 contract that node-halves 3.1
+  and this plan's 4.1 extend.
+- node-halves 2.15 (Node sandbox reaping and records) and this plan's 2.1
+  (Hub machine-local loops skip other machines' rows). 2.1.3 skips
+  post-terminal cleanup's `srt_reap` and `sandbox_reap` phases for another
+  machine's run, and node-halves 2.15 performs both on the node (node-halves
+  Decision 33). Neither changes the other's Targets, so neither waits on the
+  other.
+- An agent launcher in gclient or the web UI. Neither has one today
+  (Architecture, Story 1): gclient's live `Daemon::spawn` opens a shell
+  through `terminal_create`, and its `spawn_agent` serves only the scripted
+  test daemon. A launcher is new UI, which Josh's Q0 a (Decision 1) leaves
+  outside this epic's hub-side routing. 2.5 gives both spawn callers
+  `machine`, so a launcher needs no hub change.
 
 ## Architecture
 `kind: framing`
@@ -475,20 +593,29 @@ flowchart LR
   NG --> WS
 ```
 
-**Story 1: spawn on another machine from gclient.** Josh works in gclient
-on the hub machine and starts an agent for project P on his laptop, node N.
-N registered its checkout of P earlier. The spawn returns a pending run at
-once; the agent appears in the roster under N after N's next report.
+**Story 1: spawn on another machine from a hub session.** Josh's
+coordinator session on the hub machine calls the MCP `spawn_agent` tool for
+project P with `machine` set to his laptop, node N. N registered its
+checkout of P earlier. The spawn returns a pending run at once; the agent
+appears in the roster under N after N's next report.
+`POST /api/agents/spawn` with `machine` takes the same path. No client UI
+starts an agent today: gclient's live `Daemon::spawn`
+(`crates/gclient/src/daemon/live_connect.rs`) opens a shell through the
+WebSocket `terminal_create` message, `spawn_agent` exists only on gclient's
+scripted test daemon, and the web UI has no launch dialog. The
+`gobby agents spawn` CLI posts to the MCP tool. So this plan adds `machine`
+to the two spawn callers and builds no launcher ("Relations that set no
+edge" under Constraints).
 
 ```mermaid
 sequenceDiagram
-  actor U as Josh in gclient
+  actor U as Josh's hub session
   participant FD as Hub front door
   participant PY as Python hub
   participant DB as Hub database
   participant N as Node N gdaemon
-  U->>FD: POST /api/agents/spawn with machine N
-  FD->>PY: proxied with the user's verified identity
+  U->>FD: MCP spawn_agent with machine N
+  FD->>PY: proxied with the caller's verified identity
   PY->>DB: read N's checkout row for P
   PY->>FD: GET /api/internal/nodes/connected
   PY->>DB: pre-register session, run, and pending terminal on N
@@ -594,6 +721,11 @@ and a node can register its checkouts and report its runs to the hub.
 ### 1.1 Hub-node contract: command envelope, node bodies, golden corpus, and typed models [category: code]
 `kind: deliverable`
 
+Delivered by #24268 (Hub-node contract: command envelope, node bodies,
+golden corpus, and typed models), closed 2026-10-14. This section records
+what that leaf delivered. Node-halves 3.1 (contract version 2) and this
+plan's 4.1 (version 3) extend the same files.
+
 Targets:
 - `docs/contracts/node-commands.md`
 - `crates/gdaemon/src/node_commands.rs`
@@ -691,12 +823,16 @@ Targets:
         names the same path. It launches the provider there. It sets the
         seven identity variables from the typed fields, `GOBBY_DAEMON_URL` to
         its own front door, and `GOBBY_PROMPT_FILE` to a node-local file
-        holding `prompt`. It builds the provider command, applies its SRT
+        holding `prompt`. Node-halves 2.6 writes that file mode 0600 in the
+        node's `prompts/` directory, mode 0700, and removes it once
+        `prepare_launch` has copied it. It builds the provider command, applies its SRT
         chokepoint, enforces `timeout_seconds`, and closes the pane when the
         agent process exits.
       - A failure before launch removes what it prepared and reports an exit
-        with `launched: false`. Preparation has a node-side deadline, which
-        #24148 sets; passing it is a failure with reason `prepare_timeout`.
+        with `launched: false`. Preparation has a node-side deadline;
+        passing it is a failure with reason `prepare_timeout`. Node-halves
+        3.1 sets it at 300 seconds, from acceptance to the host's spawn
+        commit (node-halves Decision 19), in contract version 2.
       - Before its first filesystem effect, the node writes a preparation
         record for the run, naming the workspace path and branch it will
         create, to the same node-local durable state as its cancel records.
@@ -788,11 +924,11 @@ Verification planned:
 
 **Acceptance:**
 
-- 1.1.1 - The contract specifies both frames, the three v1 commands with payload and result fields, both node bodies, the error codes with their producers and stage rule, including the hub-client codes 1.3 raises and the route codes 1.4 answers, the node duties with the report ordering rule, the durable preparation record, and the 1,000-run spawn refusal, the internal route, and the versioning rule. file: `docs/contracts/node-commands.md`.
+- 1.1.1 - The contract specifies both frames, the three v1 commands with payload and result fields, both node bodies, the error codes with their producers and stage rule, including the hub-client codes 1.3 raises and the route codes 1.4 answers, the node duties with the report ordering rule, the durable preparation record, and the 1,000-run spawn refusal, the internal route, and the versioning rule. file: `docs/contracts/node-commands.md`, sections "Frames", "Error codes" (with "Hub-client codes" and "Hub route codes"), "v1 commands", "Node bodies", "Node duties" and "Internal route", and the versioning rule in its opening paragraphs.
 - 1.1.2 - The Rust types round-trip every corpus message byte-equivalently and reject an unknown field. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
 - 1.1.3 - The Python models round-trip every corpus message and reject an unknown field. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
 - 1.1.4 - In the Python models, a checkout or report body naming `machine_id`, an `agent.spawn` payload carrying `env` or `cwd`, and a report list of 1,001 entries all fail validation. test: `tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine`.
-- 1.1.5 - `ROADMAP.md` shows S4.2 depending on #24090. file: `ROADMAP.md`.
+- 1.1.5 - `ROADMAP.md` shows S4.2 depending on #24090. file: `ROADMAP.md`, section "Stage 4 — hub and node live, story B (#21546)", the Edges line `` `S4.2` ← `S1.2`, #24090 ``.
 
 ### 1.2 gdaemon internal node-command route over the node channel [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1041,7 +1177,12 @@ shared refusals pinned twice.
     `checkout_conflict`, `CheckoutRootTakenError` 409 `checkout_root_taken`,
     and a sentinel or overlay refusal 422 `checkout_rejected`.
   - It never reads or writes the path.
-- `POST /api/nodes/report` runs these steps in order:
+- `POST /api/nodes/report` runs these steps in order. node-halves 3.3 later
+  inserts one step before step 1: right after the body parses, the route
+  replaces the report with `src/gobby/hub/remote_pane.py::redact_report_panes(report)`,
+  so every later step and log line sees only redacted pane text, and it adds
+  `tests/servers/test_node_routes.py::test_report_pane_text_redacted`
+  (Cross-plan edges).
   1. `node_report_inbox().admit(identity.machine_id, hub_epoch, revision)`
      answers 409 `stale_report` with the current `hub_epoch` when the body's
      epoch is not the inbox's, or when its revision is not above the
@@ -1121,6 +1262,98 @@ Verification planned:
 - 1.4.5 - A report with a null epoch, or with the epoch of a replaced inbox standing in for a hub restart, answers 409 `stale_report` with the current epoch. So does a report whose revision is at or below the machine's high-water, whether it is a duplicate or arrives out of order. None of them writes a workspace row or touches the snapshot. When two admitted reports finish out of order, the higher revision's snapshot stays. In the intervening-take schedule, revisions r1 and r2 both pass `admit`, r2 commits and `put`s, `take` returns r2's snapshot, and r1 then commits and `put`s: r1's snapshot is never installed, its exits merge, the next `take` returns nothing for that machine, and after a report above r2 is `put` the next `take` returns that report's snapshot with r1's exits. test: `tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier`.
 - 1.4.6 - Before the route answers 200, a live agent entry with a workspace and a `launched: true` exit with a workspace each insert one `worktrees` row, or a `clones` row in clone mode. Each row carries the key's machine, the path, the branch, the base branch, the run's task, and the child session. A repeated entry inserts nothing more. An entry whose terminal is on another machine or names another run inserts none. The row survives a replaced inbox, the task gains no artifact, and the hub's `list_worktrees()` does not return the row. test: `tests/servers/test_node_routes.py::test_reported_workspace_is_durable_before_200`.
 - 1.4.7 - A report naming a recorded path again moves that row's `updated_at` and inserts no row, and in one report carrying an exited run's workspace and a live run's, the live run's row has the later `updated_at`. test: `tests/servers/test_node_routes.py::test_reported_workspace_moves_updated_at`.
+
+### 1.5 Callers act only on machines they own [category: code] (depends: 1.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hub/caller_scope.py`
+- `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`
+- `src/gobby/servers/websocket/server.py::WebSocketServer._handle_connection`
+- `tests/hub/test_caller_scope.py`
+- `tests/servers/test_caller_scope_binding.py`
+
+**Research context:**
+- Orchestrator gobby#15977's security return (2026-10-14) asks for an
+  `owner_user_id` check on every action aimed at a machine, failing closed:
+  cancel (2.4), terminal write (2.3), attention respond (3.3), merge and
+  delete by row id (4.3, 4.4), and the node status reads (4.7). Spawn
+  already checks it (1.3's `machine_not_owned`).
+- `AuthService.authenticate` (`src/gobby/servers/auth_service.py`) returns
+  an `AuthDecision` whose `user_id` is set only from
+  `verified_front_door_identity`: a request that came through gdaemon with
+  the front-door secret and a key's user, machine, and key ids. A request
+  with the local CLI token, which sandboxed runs cannot read, has no user.
+  `AuthMiddleware.dispatch` (`src/gobby/servers/middleware/auth.py`) calls
+  it and does not keep the decision.
+- Every WebSocket connection has a user: `verify_ws_identity` returns the
+  verified identity's `user_id`, and `src/gobby/servers/websocket/auth.py`
+  refuses a connection without one. `WebSocketServer._handle_connection`
+  (`src/gobby/servers/websocket/server.py`) reads `websocket.user_id` and
+  runs the message loop. Its `terminal_services` (attached after
+  construction) holds `manager`, a `TerminalManager` with `db`.
+- `Machine.owner_user_id` is required, and
+  `LocalMachineManager(db).get(machine_id)` reads one row
+  (`src/gobby/storage/machines.py`). `src/gobby/servers/routes/api_keys.py::mint_key`
+  already refuses `machine is None or machine.owner_user_id != principal.user_id`
+  with 403 `machine_not_owned`.
+- `contextvars` reach every task the request's code creates:
+  `asyncio.create_task` and `asyncio.to_thread` copy the current context,
+  and Starlette's `BaseHTTPMiddleware` runs the endpoint in a task created
+  inside `dispatch`. `WriteCoordinator.write` creates its `_dispatch` task
+  inside the caller's task (`src/gobby/terminals/write_coordinator.py`).
+- `src/gobby/utils/session_context.py` keeps the existing request-scoped
+  context variables for MCP calls; the caller scope is a separate variable
+  because it binds for every HTTP request and WebSocket message.
+- Per-user visibility of the roster and of attention broadcasts is S4.4's
+  (Cross-plan edges, "Relations that set no edge").
+
+**Implementation:**
+- `caller_scope.py`:
+  - `CallerScope(user_id: str, db: HubDatabase | None)`, a frozen
+    dataclass, and the context variable `_caller_scope`, default `None`.
+  - `bind_caller(user_id: str | None, db: HubDatabase | None) -> Token | None`
+    binds a scope when `user_id` is non-empty and returns the token, and
+    binds nothing for no user. `reset_caller(token)` resets a token that is
+    not `None`.
+  - `require_machine_owned(machine_id: str | None) -> None`. An unbound
+    context returns at once: it is a hub-internal loop or a local-token
+    request. A bound scope reads `LocalMachineManager(scope.db).get(machine_id or require_machine_id())`.
+    A missing row raises `NodeCommandError("machine_not_found", ..., stage="none")`,
+    and a row whose `owner_user_id` is not the scope's user raises
+    `NodeCommandError("machine_not_owned", ..., stage="none")`. The rule has
+    no exception for the hub's own machine. A scope whose `db` is `None`
+    refuses every machine with `machine_not_found`, so a binding that cannot
+    read ownership fails closed.
+- `AuthMiddleware.dispatch`: when the decision is allowed, it calls
+  `bind_caller(decision.user_id, require_hub_database(self.server.services.database))`,
+  awaits `call_next`, and resets the token in `finally`.
+- `WebSocketServer._handle_connection` binds the connection's user before
+  the message loop, with `self.terminal_services.manager.db` when terminal
+  services are attached and `None` otherwise, and resets it in the
+  handler's `finally`. Messages handled off the loop (`_start_off_loop`)
+  run in tasks created inside the handler, so they inherit the binding.
+- 2.3, 2.4, 3.3, 4.3, 4.4, and 4.7 each call `require_machine_owned` where
+  the action names its machine and map the refusal to their own error.
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: it adds `AuthMiddleware` with the same arguments.
+- `src/gobby/servers/middleware/__init__.py` — no-edit-reason: it re-exports `AuthMiddleware` by name.
+- `tests/servers/test_auth_middleware.py` — no-edit-reason: allowed and refused decisions answer as before; the binding only adds request context; re-run as verification.
+- `tests/servers/test_http_middleware.py` — no-edit-reason: its responses are unchanged; re-run as verification.
+- `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it attaches no terminal services and reaches no guarded action, so its connections bind a scope that nothing reads.
+- `tests/servers/test_ws_asgi_endpoint.py` — no-edit-reason: it reaches no guarded action; re-run as verification.
+- `tests/servers/test_terminal_ws_resize.py` — no-edit-reason: a resize is not a guarded action; re-run as verification.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/servers/test_websocket_server_disconnects.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_terminal_ws_resize.py -v`.
+
+**Acceptance:**
+
+- 1.5.1 - `require_machine_owned` returns for an unbound context without reading the database, returns for a bound user that owns the machine, and raises `NodeCommandError` with `stage="none"` for a bound user: `machine_not_found` for an unknown machine or a scope without a database, and `machine_not_owned` for another user's machine, the hub's own machine included. test: `tests/hub/test_caller_scope.py::test_require_machine_owned`.
+- 1.5.2 - Code a bound request runs through `asyncio.create_task` and `asyncio.to_thread` sees the binding, and the binding is gone once the token is reset. test: `tests/hub/test_caller_scope.py::test_binding_reaches_child_tasks`.
+- 1.5.3 - An HTTP request with a verified front-door identity runs its endpoint with that user bound, a request with the local token runs unbound, and neither binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_verified_user`.
+- 1.5.4 - Each message on a WebSocket connection runs with the connection's user bound, and the binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
 
 ## P2: Machine-correct hub loops and remote callers
 `kind: framing`
@@ -1236,19 +1469,74 @@ Targets:
 - `src/gobby/hooks/project_context.py::_project_id_from_existing_session`
 - `tests/servers/test_hook_machine_binding.py`
 - `tests/hooks/test_session_binding.py`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_found_and_updated`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_backfills_terminal_context`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_renames_empty_title_with_cwd`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_with_parent`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_with_agent_run_id`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_agent_run_start_error`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_message_processor_error`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_pre_created_session_coordinator_error`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_live_pre_created_session_omits_startup_persona`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_first_pre_created_pickup_defers_startup_persona_to_first_prompt`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartPreCreatedSession.test_context_loss_sources_reset_first_prompt_agent_context`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_handoff_db_error_still_returns_session_banner`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_new_session_start_renames_captured_tmux_pane`
+- `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_compact_terminal_identity_conflict_blocks_before_registration`
 - `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_resume_of_a_known_session_is_never_promoted_to_clear`
-- `tests/hooks/test_session_events_coverage.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
-- `tests/hooks/test_handler_execution.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
-- `tests/hooks/test_session_coordinator.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
-- `tests/hooks/test_transcript_path_derivation.py::*` — scope-reason: tests that model a local hook from a fixed machine id pin the hub's machine to it
+- `tests/hooks/test_session_lookup_metadata.py::test_valid_platform_session_metadata_is_preserved_and_enriched`
+- `tests/hooks/test_session_lookup_metadata.py::test_terminal_context_backfill_adds_cwd_and_renames_empty_title`
+- `tests/hooks/test_session_lookup_metadata.py::test_revival_judges_the_seat_recorded_from_this_hook`
+- `tests/hooks/test_session_lookup_metadata.py::test_root_cwd_platform_session_metadata_sets_project_on_event_data`
+- `tests/hooks/test_session_lookup_metadata.py::test_root_cwd_terminal_context_session_sets_project_before_lookup`
+- `tests/hooks/test_session_lookup_metadata.py::test_user_prompt_submit_weak_context_recovers_tmux_session_without_registering`
+- `tests/hooks/test_session_lookup_metadata.py::test_grok_tool_hook_from_another_process_in_the_pane_auto_registers`
+- `tests/hooks/test_session_lookup_metadata.py::test_hand_started_grok_parent_survives_first_of_three_process_bound_children`
+- `tests/hooks/test_session_lookup_metadata.py::test_task_context_uses_stage_native_state`
+- `tests/hooks/test_session_lookup_metadata.py::test_task_context_preserves_explicit_task_and_enriches_matching_link`
+- `tests/hooks/test_session_events_coverage.py::TestSessionStartAndHelpers.test_handle_session_start_pre_created`
+- `tests/hooks/test_session_events_coverage.py::TestSessionMoreCoverage.test_handle_session_start_gobby_session_id_terminal`
+- `tests/hooks/test_session_events_coverage.py::TestSessionMoreCoverage.test_handle_session_start_codex_terminal`
+- `tests/hooks/test_hook_manager.py::TestHookCheckoutIngress.test_non_cwd_resolutions_do_not_register_rebind_or_refresh`
+- `tests/hooks/test_hooks_context.py::test_session_start_context_injection`
+- `tests/hooks/test_handler_execution.py::TestReturnValues.test_session_banner_in_system_message_not_context`
+- `tests/servers/test_mcp_routes.py::_hook_envelope`
+- `tests/servers/test_mcp_routes.py::TestHooksEndpoints.test_execute_hook_envelope_critical_metadata_does_not_change_payload`
+- `tests/servers/test_http_endpoints.py::_hook_envelope`
+- `tests/servers/routes/test_hold_open_gate.py::_hook_envelope`
+- `tests/servers/routes/mcp/test_hook_cancelled_receipt_safety.py::_envelope`
+- `tests/servers/routes/mcp/test_hook_envelope_lease_release.py::_envelope`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::_post_claude_hook`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_envelope_id_marks_processed_and_skips_duplicate`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_envelope_id_active_processing_duplicate_returns_conflict`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_envelope_id_malformed_marker_returns_clear_conflict`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_envelope_id_replays_terminal_denial`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_aged_stop_block_is_reevaluated_instead_of_replayed`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_envelope_id_processed_marker_without_response_returns_conflict`
+- `tests/servers/routes/mcp/test_hook_session_metadata.py::test_codex_stop_hook_timeout_blocks_fail_safe`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::_agy_pre_invocation_envelope`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::_agy_post_invocation_envelope`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::test_execute_hook_dispatches_agy_adapter`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::TestAgyAdapterTimeoutFencing.test_non_agy_adapter_timeout_uses_the_same_fencing`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::TestAgyStartupClaimPreflight.test_preinvocation_claims_startup_context_before_adapter_runs`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::TestAgyStartupClaimPreflight.test_durable_preinvocation_stages_startup_claim_without_committing`
+- `tests/servers/routes/test_hooks_agy_dispatch.py::TestAgyAdapterTimeoutFencing.test_timeout_invalidates_startup_claim_and_does_not_commit`
+- `tests/servers/routes/test_hooks_droid_dispatch.py::test_execute_hook_dispatches_droid_adapter`
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py::test_inbox_replays_codex_session_end_once_with_real_cleanup`
+- `tests/e2e/test_daemon_auth.py::_hook_payload`
+- `tests/e2e/test_daemon_auth.py::_protected_requests`
 
-**Granularity:** nine acceptance items and six production files, one outcome:
-a hook from another machine can neither claim another machine's identity nor
-bind another machine's session row. The ingress check without the lookup guard
-leaves HM-F17 open, because a node with its correct envelope machine could
-still name a hub row's id. The lookup guard without the ingress check would
-trust an envelope machine no key binds. The six files are the one ingress and
-every hook lookup that binds a row from an id the event supplies.
+**Granularity:** ten acceptance items and six production files, one outcome:
+a hook can neither claim another machine's identity nor bind another
+machine's session row. The ingress check without the lookup guard leaves
+HM-F17 open, because a node with its correct envelope machine could still
+name a hub row's id. The lookup guard without the ingress check would trust
+an envelope machine no key binds. The six files are the one ingress and
+every hook lookup that binds a row from an id the event supplies. The test
+Targets are the 31 existing tests whose matched rows lack the event's
+machine, which the rule turns into misses, and the route-test envelope
+helpers, inline envelopes and agy rows that the ingress check would refuse
+or mismatch.
 
 **Research context:**
 - `execute_hook` is nested in `create_hooks_router` and serves
@@ -1300,32 +1588,70 @@ every hook lookup that binds a row from an id the event supplies.
 - A session-start miss reaches `register_session`, which keeps
   `require_local_machine_id` and refuses another machine (Decision 18).
 - Tests:
-  - The pre-created tests in `tests/hooks/test_session_start_handlers.py` put
-    the row on "unknown-machine" and send a local event, so they bind as
-    today.
-  - The test session's machine is the developer's or one minted in the temp
-    home (`safe_gobby_home_dir`, `tests/conftest.py`). A test that sends
-    events from a fixed id such as `21000000-0000-4000-8000-000000000001`
-    without pinning `gobby.utils.machine_id._cached_machine_id` therefore
-    models a remote event. `tests/hooks/test_hooks_manager.py` pins it.
-  - A literal sweep (2026-10-12) found four files that use such an id with no
-    pin: `test_session_events_coverage.py`, `test_handler_execution.py`,
-    `test_session_coordinator.py`, and `test_transcript_path_derivation.py`.
-    `test_resume_of_a_known_session_is_never_promoted_to_clear` binds a mock
-    row with no machine from `…0008`.
+  - A static audit (2026-10-14) walked every test that feeds a session row to
+    one of these lookups through a mocked `get`, `find_by_external_id`,
+    `find_by_external_id_any_project`, `find_active_by_external_id`,
+    `recover_session` or `resolve_compact_continuation`. It compared the
+    matched row's machine with the event's machine. In 31 tests they differ
+    or the row has none:
+    15 in `tests/hooks/test_session_start_handlers.py` (the pre-created tests
+    put the row on "unknown-machine" and send a local event), 10 in
+    `tests/hooks/test_session_lookup_metadata.py`, three in
+    `tests/hooks/test_session_events_coverage.py`, and one each in
+    `tests/hooks/test_hook_manager.py`, `tests/hooks/test_hooks_context.py` and
+    `tests/hooks/test_handler_execution.py`. The symmetric rule turns each
+    match into a miss, so these are the test Targets.
+  - Every other audited test gives its rows and its events the same machine,
+    whether through a shared fixed id such as
+    `21000000-0000-4000-8000-000000000001` or a pin of
+    `gobby.utils.machine_id._cached_machine_id`, so it binds as today.
+  - A second audit (2026-10-14) walked every test that posts to
+    `/api/hooks/execute` (`tests/servers/`, `tests/e2e/`) or replays an inbox
+    envelope through it. None of their envelopes names a machine except
+    `tests/e2e/conftest.py`, whose default `21000000-0000-4000-8000-000000000002`
+    is the isolated daemon's own machine, and
+    `tests/e2e/test_daemon_auth.py::_hook_payload`, which names
+    "auth-e2e-machine" under the daemon bearer token, so no verified identity.
+    Most tests build the envelope through one helper per module; 12 tests
+    that reach the new check build it inline. Tests that the route refuses
+    before the adapter
+    (`hook_type`, `source`, missing `HookManager`, unsupported source,
+    response capability below floor) never reach the new check.
+  - ghook always stamps `input_data.machine_id` from the local machine file,
+    or stamps `machine_id_error` and removes `machine_id`
+    (`crates/ghook/src/dispatch.rs`, `inject_machine_identity`). A
+    machineless envelope is malformed today, and
+    `gobby.hooks.events.require_hook_machine_id` rejects it at registration as
+    "malformed hook ingress"; the ingress check moves that rejection to the
+    route entry.
+  - Agy's startup-claim preflight (`src/gobby/hooks/startup_claim_preflight.py`)
+    adopts a hinted row only when `_hint_mismatch` finds the row's
+    `machine_id` equal to the envelope's, whenever the envelope names one, and
+    `_resolve_or_register_session` registers only the local machine
+    (`require_local_machine_id`). Once every envelope names its machine, the
+    preflight needs no edit. Three agy tests store their row on
+    "machine-agy" while the envelope names none; with the envelope naming the
+    hub's machine, `_hint_mismatch` would reject that row.
+  - `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py`
+    stores rows on `checkout.machine_id`, which the isolated checkout fixture
+    takes from `get_machine_id()` (`tests/conftest.py`).
 
 **Implementation:**
-- After parsing the body, `execute_hook` reads the verified identity. When it is
-  present, `input_data.machine_id` must be present and equal the key's machine,
-  or the hook answers 403 `{"code":"hook_machine_mismatch"}` before any adapter
-  runs. A request without an identity (local ghook on the hub's own machine) is
-  unchanged.
+- `execute_hook` checks the envelope machine after its existing request
+  validations (`hook_type`, `source`, `HookManager`, supported source,
+  response capability) and before `claim_envelope_processing`, so a refused
+  envelope leaves no claim and no processed marker. It reads the verified
+  identity. When it is present, `input_data.machine_id` must be present and
+  equal the key's machine. When it is absent (local ghook),
+  `input_data.machine_id` must be present and equal `get_machine_id()`, the
+  hub's machine. Otherwise the hook answers 403
+  `{"code":"hook_machine_mismatch"}` before any adapter runs.
 - `src/gobby/hooks/session_binding.py` defines
-  `session_binds_event(row_machine_id: str | None, event_machine_id: str | None) -> bool`.
-  It is true when `event_machine_id` is empty or equals `get_machine_id()`, or
-  when `is_local_machine_owner(row_machine_id, event_machine_id)`. A local hook
-  binds any row, as today; a hook from another machine binds only that
-  machine's rows.
+  `session_binds_event(row_machine_id: str | None, event_machine_id: str | None) -> bool`,
+  which returns `is_local_machine_owner(row_machine_id, event_machine_id)`
+  and nothing else. It has no case for the hub's machine: every hook binds
+  only its own machine's rows, so a local hook never binds a node's row, and
+  an event or row with no machine binds nothing.
 - Each lookup above applies it to the row it matched, before any write. A row
   that does not bind counts as a miss:
   - `handle_session_start`: both `get` results, before the `external_id`
@@ -1334,10 +1660,9 @@ every hook lookup that binds a row from an id the event supplies.
     candidate.
   - `_resolve_metadata_platform_session`: drops the header's row and its
     metadata, as it does for an unknown id.
-  - `resolve`: for an event from another machine, it reads the resolved id's
-    row, or uses `cached_session` when that is the row. A foreign row yields no
-    platform session id, no mutation, no enrichment, and no
-    `_platform_session_id`. A local event reads nothing more.
+  - `resolve`: for every event it reads the resolved id's row, or uses
+    `cached_session` when that is the row. A foreign row yields no platform
+    session id, no mutation, no enrichment, and no `_platform_session_id`.
   - `_recover_compact_session`: a foreign compact row is no match, before
     `reconcile_compact_session_activity`.
   - `resolve_hook_project_context`: each of its three session paths treats a
@@ -1349,43 +1674,58 @@ every hook lookup that binds a row from an id the event supplies.
 - A remote miss at session start reaches `register_session`, which refuses
   another machine. So a node session that misses its pre-created row is
   refused, as the Constraints say, and #24151 owns registering it.
-- Tests that model a local hook from a fixed machine id pin the hub's machine
-  to that id, as `tests/hooks/test_hooks_manager.py` does. Tests that model a
-  remote event give their rows the event's machine. The verification run over
-  `tests/hooks/` finds any further test of either kind.
+- Test fixes, one rule per kind, each keeping what the test asserts:
+  - Each of the 31 lookup tests gives its matched row the event's machine. No
+    test pins the hub's machine to make a foreign row bind.
+  - Each envelope helper and inline envelope among the route-test Targets
+    sets `input_data["machine_id"]` to `get_machine_id()` at call time, which
+    is the module's pinned id where the module pins one.
+    `test_inbox_replays_codex_session_end_once_with_real_cleanup` names
+    `checkout.machine_id`. `tests/e2e/test_daemon_auth.py::_protected_requests`
+    passes the isolated daemon's machine (its `<gobby_home>/machine_id`) to
+    `_hook_payload`, which names it in place of "auth-e2e-machine".
+  - The three agy tests that store a row on "machine-agy" store it on
+    `get_machine_id()`. The mismatching-hint test keeps "other-machine".
+- The verification run covers every module above; a further test whose row
+  and event machines differ, or whose envelope names no machine, is a defect
+  this section fixes by the same rules.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/mcp/__init__.py` — no-edit-reason: it re-exports `create_hooks_router` by name.
-- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: its hook requests carry no front-door identity, so they take the unchanged path; re-run as verification.
+- `src/gobby/hooks/startup_claim_preflight.py` — no-edit-reason: `_hint_mismatch` already compares the row's machine with the envelope's, and the ingress check makes every envelope name one.
+- `tests/servers/test_http_server.py` — no-edit-reason: its three hook tests are refused for `hook_type`, `source` or an unsupported source before the new check; re-run as verification.
+- `tests/e2e/conftest.py` — no-edit-reason: its envelopes default to `21000000-0000-4000-8000-000000000002`, the isolated daemon's own machine file.
+- `tests/hooks/test_session_coordinator.py` — no-edit-reason: its rows and events share `MACHINE_ID`, so they bind under the rule; re-run as verification.
+- `tests/hooks/test_transcript_path_derivation.py` — no-edit-reason: its rows and events share one fixed machine id, so they bind under the rule; re-run as verification.
 - `src/gobby/sessions/machine_scope.py` — no-edit-reason: `is_local_machine_owner` is reused as is.
 - `src/gobby/sessions/compact_identity.py` — no-edit-reason: `resolve_compact_continuation` stays machine-agnostic, and both of its hook callers apply the predicate to its result.
 - `src/gobby/storage/sessions/_registration_recovery.py` — no-edit-reason: `recover_session` is unchanged, and its result is checked by its hook caller.
-- `tests/hooks/test_hooks_manager.py` — no-edit-reason: it pins the hub's machine to its event machine, so its events stay local.
+- `tests/hooks/test_hooks_manager.py` — no-edit-reason: its rows and events share the machine it pins, so they bind under the rule.
 - `src/gobby/hooks/hook_manager.py` — no-edit-reason: it calls `SessionLookupService.resolve` and `resolve_hook_project_context`, whose signatures are unchanged.
-- `tests/hooks/test_session_lookup_metadata.py` — no-edit-reason: it pins the hub's machine to `_REAL_MACHINE_ID`; the verification run covers it, and any test there that models a local hook from another fixed id takes the pin rule above.
-- `tests/hooks/test_spawned_grok_child_binding.py` — no-edit-reason: it calls `resolve` with an unchanged signature; the verification run covers it under the same pin rule.
-- `tests/hooks/test_hook_extracted_helpers.py` — no-edit-reason: it calls `resolve_hook_project_context` with an unchanged signature; the verification run covers it under the same pin rule.
-- `tests/hooks/test_session_activation_reconciliation.py` — no-edit-reason: it pins the hub's machine to `LOCAL_MACHINE_ID`, so its events stay local.
-- `tests/hooks/test_hook_manager.py` — no-edit-reason: it pins the hub's machine, so its events stay local; re-run as verification.
+- `tests/hooks/test_spawned_grok_child_binding.py` — no-edit-reason: it calls `resolve` with an unchanged signature, and the lookup audit found no row whose machine differs from its event's; re-run as verification.
+- `tests/hooks/test_hook_extracted_helpers.py` — no-edit-reason: it calls `resolve_hook_project_context` with an unchanged signature, and the lookup audit found no row whose machine differs from its event's; re-run as verification.
+- `tests/hooks/test_session_activation_reconciliation.py` — no-edit-reason: its rows and events share `LOCAL_MACHINE_ID`, so they bind under the rule.
 - `tests/events/test_coordination_holds.py` — no-edit-reason: it calls `resolve` with an unchanged signature; re-run as verification.
-- `tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py` — no-edit-reason: it pins the hub's machine, so its events stay local; re-run as verification.
+- `tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py` — no-edit-reason: its rows and events share the machine it pins, so they bind under the rule; re-run as verification.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_hook_machine_binding.py tests/hooks/ tests/servers/routes/mcp_endpoints/ tests/events/test_coordination_holds.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_hook_machine_binding.py tests/hooks/ tests/servers/routes/mcp_endpoints/ tests/servers/routes/mcp/ tests/servers/routes/test_hooks_agy_dispatch.py tests/servers/routes/test_hooks_droid_dispatch.py tests/servers/routes/test_hold_open_gate.py tests/servers/test_http_endpoints.py tests/servers/test_http_server.py tests/servers/test_mcp_routes.py tests/events/test_coordination_holds.py -v`.
+- `tests/e2e/test_daemon_auth.py::test_http_auth_matrix`, under a Release Manager e2e grant.
 
 **Acceptance:**
 
 - 2.2.1 - A key-authenticated hook whose envelope names another machine, or names none, is refused with `hook_machine_mismatch` before any adapter runs, and one naming the key's machine is processed. test: `tests/servers/test_hook_machine_binding.py::test_envelope_machine_must_match_key`.
-- 2.2.2 - A hook without a front-door identity keeps today's behavior. test: `tests/servers/test_hook_machine_binding.py::test_local_hook_unchanged`.
-- 2.2.3 - `session_binds_event` binds any row for an empty or hub-machine event, and for any other event machine only a row on that machine. test: `tests/hooks/test_session_binding.py::test_binding_predicate`.
+- 2.2.2 - A hook without a front-door identity whose envelope names another machine, or names none, is refused with `hook_machine_mismatch` before any envelope claim or adapter, and one naming the hub's machine is processed. test: `tests/servers/test_hook_machine_binding.py::test_unverified_hook_must_name_hub_machine`.
+- 2.2.3 - `session_binds_event` is true only when the row and the event name the same non-empty machine, the hub's included, and false when either is empty. test: `tests/hooks/test_session_binding.py::test_binding_predicate`.
 - 2.2.4 - A remote session start that names another machine's row by `external_id`, by `terminal_context.gobby_session_id`, by a web-chat `external_id`, or by compact terminal identity changes nothing on that row and reaches `register_session`, which refuses it. test: `tests/hooks/test_session_binding.py::test_session_start_skips_foreign_rows`.
 - 2.2.5 - On start and non-start events, an `X-Gobby-Session-Id` header that names another machine's row is dropped with no mutation and no task enrichment. test: `tests/hooks/test_session_binding.py::test_session_header_skips_foreign_row`.
 - 2.2.6 - A remote non-start event whose `external_id` or compact terminal identity matches another machine's row gets no platform session id, and that row is not revived, backfilled, or reactivated. test: `tests/hooks/test_session_binding.py::test_non_start_lookup_skips_foreign_row`.
 - 2.2.7 - With no explicit project, a remote event whose session ids name another machine's rows takes its project from its cwd and never from those rows. test: `tests/hooks/test_session_binding.py::test_project_context_skips_foreign_rows`.
 - 2.2.8 - A remote session start that names its own machine's pre-created row by `terminal_context.gobby_session_id` takes `handle_pre_created_session` and updates that row. test: `tests/hooks/test_session_binding.py::test_same_machine_precreated_row_binds`.
 - 2.2.9 - A pending clear attempt still cannot claim a resume whose persisted row is on the event's machine. test: `tests/hooks/test_session_start_handlers.py::TestSessionStartNewSession.test_resume_of_a_known_session_is_never_promoted_to_clear`.
+- 2.2.10 - A hub-machine session start that names a node's row by `terminal_context.gobby_session_id` leaves that row unchanged and registers a new hub session. test: `tests/hooks/test_session_binding.py::test_local_hook_skips_node_rows`.
 
-### 2.3 Remote terminal writes go through the node [category: code] (depends: 1.3)
+### 2.3 Remote terminal writes go through the node [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
 
 Targets:
@@ -1408,9 +1748,17 @@ Targets:
 - `tests/terminals/fakes.py::make_memory_terminal`, used by about fifty test
   files, gives every fake terminal a random `machine_id`. Under a local-machine
   check those terminals would all read as remote.
+- 1.5's `require_machine_owned` refuses a caller bound by a verified
+  identity or a WebSocket connection when it does not own the machine, and
+  returns at once for an unbound caller, such as message wakes and other
+  hub-internal writers.
 - The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
+- `_dispatch` first calls `require_machine_owned(terminal.machine_id)`, for
+  local and remote terminals alike. A `NodeCommandError` becomes
+  `NodeTerminalWriteError` with its code and `stage="none"`, so nothing is
+  sent and `_write_locked` clears the latch.
 - `_dispatch` records the composer-ledger observation as today. Then, when
   `terminal.machine_id` is not local, it returns
   `remote_terminal.write(terminal, request)` and skips `runtime_for`.
@@ -1447,8 +1795,9 @@ Verification planned:
 - 2.3.3 - A partial node failure surfaces `stage="partial"` and keeps the latch. test: `tests/hub/test_remote_terminal_write.py::test_partial_stage_propagates`.
 - 2.3.4 - A local terminal write never contacts the client. test: `tests/hub/test_remote_terminal_write.py::test_local_write_unchanged`.
 - 2.3.5 - When a fake node takes the write and its reply is lost (`node_timeout`) or unreadable (`node_reply_lost`), the write returns `IndeterminateWrite`, the latch stays, and a retry with the same action key sends no second `terminal.write`. test: `tests/hub/test_remote_terminal_write.py::test_lost_reply_is_indeterminate`.
+- 2.3.6 - A bound caller that does not own the terminal's machine, local or remote, gets `NodeTerminalWriteError` with `machine_not_owned` and `stage="none"`, nothing reaches the runtime or the node client, and the latch is cleared; the owner's write and an unbound write proceed. test: `tests/hub/test_remote_terminal_write.py::test_write_needs_owned_machine`.
 
-### 2.4 Remote cancel goes through the node [category: code] (depends: 1.3)
+### 2.4 Remote cancel goes through the node [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
 
 Targets:
@@ -1463,10 +1812,16 @@ Targets:
   `{"success": False, "error", "error_code"}` and leaves run status to its
   callers. Callers include the MCP and CLI `kill_agent`, the dispatcher, and the
   watchdog.
+- 1.5's `require_machine_owned` returns at once for an unbound caller, so
+  the dispatcher, watchdog, lifecycle monitor and pipeline kills, which run
+  outside any request, are never refused.
 - The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
-- At the top of `kill_agent`, a run whose `machine_id` is set and not local
+- `kill_agent` first calls `require_machine_owned(run.machine_id)`. A
+  `NodeCommandError` returns `{"success": False, "error": <message>, "error_code": <code>}`
+  before any signal, terminal close or node command.
+- Then a run whose `machine_id` is set and not local
   returns `remote_cancel.cancel(run, db, signal_name=..., close_terminal=..., terminal_action=..., terminal_reason=...)`.
   `AgentRun.machine_id` defaults to `require_machine_id()`, so existing local
   runs never reach the guard.
@@ -1502,6 +1857,7 @@ Verification planned:
 - 2.4.3 - With `close_terminal`, a stopped reply settles the terminal row as a local close would. test: `tests/hub/test_remote_cancel.py::test_close_terminal_settles_row`.
 - 2.4.4 - A `not_found` reply returns success like a stopped one. test: `tests/hub/test_remote_cancel.py::test_not_found_counts_as_stopped`.
 - 2.4.5 - A `{stopped: false}` reply returns `error_code: not_stopped` and leaves the terminal row unchanged. test: `tests/hub/test_remote_cancel.py::test_not_stopped_is_failure`.
+- 2.4.6 - A bound caller that does not own the run's machine, local or remote, gets `error_code: machine_not_owned`, and no PID is signalled, no terminal closed and no `agent.cancel` sent; an unbound caller's kill proceeds. test: `tests/hub/test_remote_cancel.py::test_cancel_needs_owned_machine`.
 
 ### 2.5 Remote spawn goes through the node [category: code] (depends: 1.3, 2.1, 2.2, 2.4)
 `kind: deliverable`
@@ -1647,8 +2003,8 @@ it is already its own section, 2.6.
   `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
   pins the default and the minimum.
 - No indexed symbol narrower than `DaemonConfig` covers the field, so
-  Consumers unchanged lists each of its 244 consumers that the validator
-  reports. In `src/`, only `configured_max_active_agents` reads
+  Consumers unchanged lists each consumer that the validator reports,
+  except the files another section already targets. In `src/`, only `configured_max_active_agents` reads
   `DaemonConfig.max_active_agents` (`gcode grep -w max_active_agents`,
   2026-10-12); the build flow's `max_active_agents` is `BuildConfig`'s own
   field (`src/gobby/config/build.py`). No test sets it above 20. The
@@ -1752,7 +2108,12 @@ it is already its own section, 2.6.
        `stage: "none"`, as `resolve_spawn_sandbox` does locally. It does
        not call `resolve_spawn_sandbox`, whose `require_managed_srt` runs
        `verify_srt_installation()` on the hub's machine; the node verifies
-       its own install (node-halves 2.5), as it gates agy.
+       its own install (node-halves 2.5), as it gates agy. The hub trusts
+       the node's SRT because the node enforces it twice (node-halves
+       Decision 32): its dispatch refuses a payload whose sandbox is not
+       `srt` with `invalid_payload` before anything is recorded
+       (node-halves 2.7), and its launch chokepoint `prepare_launch` always
+       runs the SRT steps (node-halves 2.5).
   2. Machine ceiling (Decision 19). It takes a per-machine `asyncio.Lock`,
      keyed by `routed.machine_id` in a module-level dict in `remote_spawn.py`,
      and holds it through step 3's `create_pending`. Lock order is project
@@ -1787,9 +2148,14 @@ it is already its own section, 2.6.
        `agent/<run_id>`. `base_branch` is the request's, else the agent
        body's. `inherit` or no value sends `null`, and the node uses
        `source_root`'s current branch (1.1).
-     - A resume whose request names no isolation names the workspace its
-       session's earlier run used on the node as `existing` (node-halves
-       Decision 23).
+     - A resume sends the session's provider thread id as
+       `resume_session_id` and, when the session has an active workspace
+       row on that node, that workspace as `existing`: the most recently
+       updated active `worktrees` or `clones` row, as
+       `{mode: "existing", path, branch_name, base_branch: null}`
+       (node-halves 3.2, Decision 23). With no such row, the request's
+       isolation maps as for a new spawn. The Gobby session reference never
+       enters the payload.
   5. `{accepted: true}` returns the run id, child session id, and terminal id
      with status `pending`. The hub records nothing more here. 2.6 promotes
      the run from the node's report.
@@ -1903,7 +2269,6 @@ Consumers unchanged:
 - `src/gobby/servers/routes/llm.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/servers/websocket/chat/_messaging.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/servers/websocket/chat/runtime_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `src/gobby/servers/websocket/server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/servers/websocket/session_control.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/sessions/lifecycle.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/sessions/transcript_processing.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -1983,7 +2348,6 @@ Consumers unchanged:
 - `tests/hooks/test_broadcaster.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/hooks/test_config_hook_extensions.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/hooks/test_hook_manager_factory_injection.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/hooks/test_hooks_context.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/hooks/test_hooks_manager.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/hooks/test_staged_effects_receipt_route.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/install/test_hook_timeout_staging.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2015,7 +2379,6 @@ Consumers unchanged:
 - `tests/scheduler/test_system_automation_loop.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/conftest.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/mcp_endpoints/test_bridge.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_agent_spawn_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_agents_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_api_key_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2025,7 +2388,6 @@ Consumers unchanged:
 - `tests/servers/routes/test_configuration_effective_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_configuration_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_embeddings_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/servers/routes/test_hooks_agy_dispatch.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_hub_files_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_llm_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_rules_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2048,14 +2410,12 @@ Consumers unchanged:
 - `tests/servers/test_app_factory_vite_proxy.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_chat_session.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_http_broadcaster.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/servers/test_http_endpoints.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_http_init.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_http_middleware.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_local_context_consumers.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_local_llm.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_local_provider_models.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_managed_clear_identity.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/servers/test_mcp_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/websocket/chat/test_agy_backend.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/websocket/chat/test_launch_contracts.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2100,7 +2460,7 @@ Verification planned:
 - 2.5.4 - A `stage: "none"` failure of `agent.spawn`, including `node_offline` and `node_routing_unavailable`, fails the pending terminal, cancels the run, and ends the lease, with no local process or pane call and no further command. test: `tests/hub/test_remote_spawn.py::test_definite_failure_settles_in_database`.
 - 2.5.5 - A `node_timeout` or a `node_reply_lost` on `agent.spawn` returns `spawn_in_doubt` and leaves the run and terminal pending and the lease attached, with no rollback. test: `tests/hub/test_remote_spawn.py::test_in_doubt_spawn_keeps_state`.
 - 2.5.6 - A node caller whose parent is on the hub spawns on the node, and a hub caller whose parent is on a node spawns locally in the hub's checkout. test: `tests/hub/test_remote_spawn.py::test_origin_is_the_calling_session`.
-- 2.5.7 - A placement request is refused with `remote_placement_unsupported`. A resume of a node session routes to that node whatever `machine` and the origin say, rebinds the session to a successor run on that node with no hub file or credential, and sends `resume_session_id` with the session's earlier workspace as `existing`; a resume that `resolve_resume_target` refuses sends nothing and returns its error; and a remote agy spawn does not consult the hub's agy gate. test: `tests/hub/test_remote_spawn.py::test_resume_routes_and_placement_refused`.
+- 2.5.7 - A placement request is refused with `remote_placement_unsupported`. A resume of a node session routes to that node whatever `machine` and the origin say, rebinds the session to a successor run on that node with no hub file or credential, and sends the session's provider thread id as `resume_session_id` and, when the session has an active workspace row on that node, that workspace as `existing`; with no such row the request's isolation maps as for a new spawn; a resume that `resolve_resume_target` refuses sends nothing and returns its error; and a remote agy spawn does not consult the hub's agy gate. test: `tests/hub/test_remote_spawn.py::test_resume_routes_and_placement_refused`.
 - 2.5.8 - A spawn whose target is this machine takes the local path unchanged. test: `tests/hub/test_remote_spawn.py::test_local_target_unchanged`.
 - 2.5.9 - With a checkout on the target and none on the hub, both the MCP tool and `POST /api/agents/spawn` spawn on the target. test: `tests/hub/test_remote_spawn.py::test_remote_target_needs_no_hub_checkout`.
 - 2.5.10 - `register` for another machine without `routed_machine_id`, and `register_session` for another machine, raise `MachineOwnershipMismatchError`; a `routed_machine_id` that differs from `machine_id` raises it too; a routed registration for an unenrolled machine raises `MachineNotRegisteredError`; and none writes a row. test: `tests/hub/test_remote_spawn.py::test_foreign_session_needs_routed_machine`.
@@ -2381,7 +2741,7 @@ Verification planned:
 - 3.2.3 - A remote agent in project B, absent from both fetched windows while project A is focused, stays in project B and is not admitted to project A's view. test: `crates/gclient/tests/roster_machines.rs::agents_use_roster_project`.
 - 3.2.4 - A new window lists only the current machine's agents, and choosing all machines lists every machine's agents. test: `crates/gclient/tests/roster_machines.rs::new_window_defaults_to_current_machine`.
 
-### 3.3 Attention respond on another machine's entry [category: code] (depends: 2.3, 3.1)
+### 3.3 Attention respond on another machine's entry [category: code] (depends: 1.5, 2.3, 3.1)
 `kind: deliverable`
 
 Targets:
@@ -2413,16 +2773,32 @@ Targets:
   machine-filtered. Its `capture` snapshots through the local runtime.
 - 2.3 routes the write to the owning node. The tests drive a fake node client;
   5.1 proves live delivery.
+- An entry's attention state reaches the hub from the owning machine's hooks
+  (claude and codex `PermissionRequest`, droid `Notification`) or from its
+  node's pane reports (grok and agy, node-halves 3.3) (Decision 7). The hub
+  cannot capture a node's pane.
+- 1.5's `require_machine_owned` refuses a bound caller that does not own the
+  machine. 2.3's write check would refuse too, but only after `respond` has
+  claimed the episode on the local path.
 
 **Implementation:**
-- `AttentionPane` gains `remote: bool = False`. For a row whose `machine_id` is
-  not local, `_resolve_attention_pane` returns `AttentionPane(target=row.id,
-  remote=True)` with a capture that returns `None`.
+- `AttentionPane` gains `machine_id: str | None = None` and
+  `remote: bool = False`. `_resolve_attention_pane` sets `machine_id` from
+  the terminal row; `None` stands for the hub's own machine, which
+  `require_machine_owned` reads as such, so the panes tests build keep
+  their calls. For a
+  row whose `machine_id` is not local, it returns `AttentionPane(target=row.id,
+  machine_id=row.machine_id, remote=True)` with a capture that returns `None`.
+- `respond` calls `require_machine_owned(pane.machine_id)` after the identity
+  check and before any claim, capture or injection, for local and remote
+  panes alike. A `NodeCommandError` answers 403 `{"code": <code>}` and
+  leaves the episode open.
 - `AttentionInjectionError` gains an optional `code`. `inject_answer` copies
   `NodeTerminalWriteError.code` into it.
 - For a remote pane, `respond` keeps the lock, the identity check, and the
-  option check. It skips the capture and the detector, because hook state is
-  authoritative (Q6). It always injects first and clears afterwards:
+  option check. It skips the capture and the detector, because the entry's
+  state comes from the owning machine's hooks or its node's pane reports. It
+  always injects first and clears afterwards:
   - Success clears the episode against its stored identity and answers
     `accepted`.
   - `stage="none"` keeps the episode.
@@ -2437,7 +2813,7 @@ Consumers unchanged:
 - `src/gobby/servers/routes/__init__.py` — no-edit-reason: it re-exports `create_attention_router` by name.
 - `tests/agents/test_attention_metadata.py` — no-edit-reason: it reads the roster only, which 3.3 does not change.
 - `tests/servers/test_attention_native_roster.py` — no-edit-reason: it reads the roster only, which 3.3 does not change.
-- `tests/servers/test_attention_respond.py` — no-edit-reason: its terminals come from `make_memory_terminal`, which 2.3 makes local, so respond keeps the local path and its 502 codes; re-run as verification.
+- `tests/servers/test_attention_respond.py` — no-edit-reason: its terminals come from `make_memory_terminal`, which 2.3 makes local, so respond keeps the local path and its 502 codes, and its requests carry no verified identity, so the ownership check returns at once; re-run as verification.
 - `tests/terminals/test_tmux_runtime.py` — no-edit-reason: it asserts only `stage`, and the added `code` defaults to `None`.
 
 Verification planned:
@@ -2450,6 +2826,7 @@ Verification planned:
 - 3.3.3 - A request naming a stale episode gets 409 and sends nothing. test: `tests/servers/test_attention_remote_respond.py::test_stale_episode_sends_nothing`.
 - 3.3.4 - A lost reply answers 502 `injection_indeterminate` and retires the entry, and a retry sends no second `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry`.
 - 3.3.5 - Two concurrent responses to one entry send one `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once`.
+- 3.3.6 - A bound caller that does not own the entry's machine, local or remote, gets 403 `machine_not_owned` before any claim, capture or write, and the entry stays open; the owner's response proceeds. test: `tests/servers/test_attention_remote_respond.py::test_respond_needs_owned_machine`.
 
 ## P4: Remote workspaces and the machine-scoped project view
 `kind: framing`
@@ -2473,9 +2850,12 @@ Targets:
 
 **Research context:**
 - node-halves 3.1 sets `CONTRACT_VERSION` to 2 in both models, and every
-  handler and route refuses another `v` (cross-plan edge under
-  Constraints). The corpus is `{"messages": [{name, kind, json}]}`, and
-  Python's `parse_message(kind, raw)` dispatches through `_PARSERS`.
+  handler and route refuses another `v` ("Cross-plan edges set at
+  expansion": node-halves 3.1 blocks 4.1). It also writes the 300-second
+  preparation deadline (node-halves Decision 19) into the contract's "Node
+  duties", with a doc test, so 4.1 leaves that text as it is. The corpus is
+  `{"messages": [{name, kind, json}]}`, and Python's
+  `parse_message(kind, raw)` dispatches through `_PARSERS`.
 - The review of #24268 (session 16011, 2026-10-13) found three parity gaps:
   Python's `NodeModel` lacks `strict=True`, so `"1"` parses as an integer
   and `1` as a boolean; a Rust `Option` field accepts omission, because
@@ -2505,10 +2885,13 @@ Targets:
   - `checkout.status`: `{project_id, root_path}` returns
     `{current_branch, branch_count, ahead, behind}`, where
     `current_branch`, `ahead`, and `behind` may be null.
-- The contract states each command's node rules from 4.2 and 4.6: the path
-  and root checks, the `busy` rule, the merge and removal steps, and that
-  `checkout.status` is read-only, so every error it answers carries
-  `stage: "none"`.
+- The contract gains a section "v3 commands", after the version 2 text,
+  with one subsection per command giving its payload, result, outcomes and
+  stage rule. "Node duties" gains each command's node rules from 4.2 and
+  4.6: the path and root checks, the `busy` rule, the merge and removal
+  steps, and that `checkout.status` is read-only, so every error it answers
+  carries `stage: "none"`. The opening paragraphs name version 3 and gain
+  the strictness rule for nullable fields.
 - Parity: the Python base model gains `strict=True`. Every Rust `Option`
   field carries `#[serde(deserialize_with = "Option::deserialize")]`, so a
   missing field fails and an explicit null parses, matching Python's
@@ -2524,11 +2907,11 @@ Verification planned:
 
 **Acceptance:**
 
-- 4.1.1 - Every corpus message, including the three new commands and one reply per outcome, round-trips through the Rust models with `v` equal to `CONTRACT_VERSION`. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
-- 4.1.2 - The same corpus round-trips through the Python models with `v` equal to `CONTRACT_VERSION`. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
+- 4.1.1 - `CONTRACT_VERSION` is 3 in the Rust models, and the corpus's `workspace.merge`, `workspace.remove` and `checkout.status` commands and one reply per outcome each parse into their v3 Rust type with `v` equal to `CONTRACT_VERSION` and re-encode to the same bytes. test: `crates/gdaemon/tests/node_command_parity.rs::v3_commands_round_trip`.
+- 4.1.2 - `CONTRACT_VERSION` is 3 in the Python models, and the same messages each parse into their v3 Python model with `v` equal to `CONTRACT_VERSION` and re-encode to the same bytes. test: `tests/hub/test_node_command_parity.py::test_v3_commands_round_trip`.
 - 4.1.3 - The Rust models refuse every message in the corpus's `invalid` list. test: `crates/gdaemon/tests/node_command_parity.rs::invalid_messages_fail`.
 - 4.1.4 - The Python models refuse every message in the corpus's `invalid` list. test: `tests/hub/test_node_command_parity.py::test_invalid_messages_fail`.
-- 4.1.5 - The contract specifies version 3's three commands with their payloads, results, outcomes, node rules, and stage rule, and the strictness rule for nullable fields. file: `docs/contracts/node-commands.md`.
+- 4.1.5 - The contract specifies version 3's three commands with their payloads, results, outcomes, node rules, and stage rule, and the strictness rule for nullable fields. file: `docs/contracts/node-commands.md`, section "v3 commands" with its `workspace.merge`, `workspace.remove` and `checkout.status` subsections, the three commands' entries in "Node duties", and the strictness rule in its opening paragraphs.
 
 ### 4.2 Node workspace.merge and workspace.remove handlers [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -2552,7 +2935,8 @@ would leave the claim with one user and a second leaf that must re-prove it.
   `request_id`, `v`, and `command` first, and runs per-run queues), and 2.1
   `mod.rs` (`NodeAgents` and its durable state, including the launched
   workspace record kept until a report carrying the run's exit gets 200).
-  This leaf lands after node-halves 2.14 (Constraints).
+  This leaf lands after node-halves 2.15, the last node agent leaf ("Cross-plan
+  edges set at expansion").
 - The local merge oracle is `_merge_worktree_impl`
   (`src/gobby/mcp_proxy/tools/worktrees/_sync.py`) and `_merge_clone_impl`
   (`src/gobby/mcp_proxy/tools/_clones_operations.py`): the ref checks, the
@@ -2651,7 +3035,7 @@ Verification planned:
 - 4.2.7 - A path outside the project's node roots, another project's root, a relative or non-top-level `source_root`, and an invalid branch name each answer `invalid_payload` with `stage: "none"` and touch nothing. test: `crates/gdaemon/tests/node_workspace_finish.rs::paths_outside_node_roots_refused`.
 - 4.2.8 - Through `dispatch`, removal of a worktree whose directory is already gone answers `removed`, prunes, and deletes the branch when the branch is merged or absent; with an unmerged remaining branch and no `force_delete_branch` it answers `unmerged` and keeps the branch; a gone clone answers `removed`; a repeated removal answers `removed` again; and a missing path whose parent is outside the node roots, or whose name is not one component, answers `invalid_payload`. test: `crates/gdaemon/tests/node_workspace_finish.rs::remove_missing_path_through_dispatch`.
 
-### 4.3 Hub remote workspace module and tool routing [category: code] (depends: 1.3, 1.4, 4.1)
+### 4.3 Hub remote workspace module and tool routing [category: code] (depends: 1.3, 1.4, 1.5, 4.1)
 `kind: deliverable`
 
 Targets:
@@ -2758,6 +3142,13 @@ Targets:
   `create_clone_read_registry`) gain `machine_id: str | None`, added to an
   explicit `input_schema` where one exists. Null or this machine's id keeps
   today's query; another machine reads `list_remote`.
+- Ownership (1.5): every wrapped call first calls `require_machine_owned`
+  with the routed row's machine, or with `None`, the hub's machine, when the
+  call stays local; `list_<kind>` does the same with the `machine_id` it is
+  given. A `NodeCommandError` returns
+  `{"success": False, "error_code": <code>, "stage": "none"}` before any
+  command, original call or row change. An unbound caller passes at once,
+  so 4.5's expiry loop and registries used outside a request are unaffected.
 
 Consumers unchanged:
 - `src/gobby/servers/http.py` — no-edit-reason: it already passes `db` with both storages, so its registries gain the wrapper through the unchanged call.
@@ -2786,8 +3177,9 @@ Verification planned:
 - 4.3.4 - `get_worktree` and `get_clone` return a node's row; for a local row, a path-addressed call, and an unmatched or ambiguous prefix, the wrapper calls neither `resolve_reference` nor `get` and the original runs with its arguments untouched; every wrapped tool keeps its input schema; and `setup_internal_registries` without `db` installs no wrapper. test: `tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged`.
 - 4.3.5 - `list_worktrees` and `list_clones` with a node's `machine_id` list only that machine's rows, and without it only this machine's. test: `tests/hub/test_remote_workspaces.py::test_list_tools_take_machine_id`.
 - 4.3.6 - An offline node returns `node_offline` with `stage: "none"` and changes no row, and `sync_worktree` and `release_worktree` on a node's row still return `machine_ownership_mismatch`. test: `tests/hub/test_remote_workspaces.py::test_offline_and_other_tools_refuse`.
+- 4.3.7 - A bound caller that does not own the machine gets `machine_not_owned` from `get_<kind>`, `merge_<kind>` and `delete_<kind>` on that machine's row, local or remote, and from `list_<kind>` naming that machine, with no command and no row change; the owner and an unbound caller proceed. test: `tests/hub/test_remote_workspaces.py::test_workspace_tools_need_owned_machine`.
 
-### 4.4 REST workspace routes list by machine and finish through the node [category: code] (depends: 4.3)
+### 4.4 REST workspace routes list by machine and finish through the node [category: code] (depends: 1.5, 4.3)
 `kind: deliverable`
 
 Targets:
@@ -2817,6 +3209,11 @@ Targets:
 - `run_clone_operation` reads the owner first. `delete_clone` on a node's
   clone goes to `remove_remote` with the same mapping, and `sync_clone`
   keeps its 409 (Decision 20).
+- Ownership (1.5): `delete_worktree` and `run_clone_operation` call
+  `require_machine_owned` with the row's machine after reading the owner
+  and before any local or remote action, and `GET /worktrees` and
+  `GET /clones` do the same with the `machine_id` they are given. A refusal
+  answers 403 `{error_code, stage: "none"}` and changes nothing.
 
 Verification planned:
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_remote_workspace_routes.py -v`.
@@ -2826,6 +3223,7 @@ Verification planned:
 - 4.4.1 - `GET /worktrees` and `GET /clones` with a node's `machine_id` list that machine's rows, and without it this machine's. test: `tests/servers/test_remote_workspace_routes.py::test_list_routes_take_machine_id`.
 - 4.4.2 - `DELETE /worktrees/{id}` and the clone delete on a node's row remove through the node, answer 200 and delete the row on `removed`, and answer 409, 503, or 502 with the code and keep the row otherwise. test: `tests/servers/test_remote_workspace_routes.py::test_delete_routes_finish_through_node`.
 - 4.4.3 - The clone sync route on a node's clone answers 409 `machine_ownership_mismatch` and sends nothing. test: `tests/servers/test_remote_workspace_routes.py::test_sync_route_keeps_ownership_refusal`.
+- 4.4.4 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from the worktree and clone deletes on that machine's row and from the list routes naming that machine, and nothing is sent or deleted; the owner's request proceeds. test: `tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine`.
 
 ### 4.5 Remote workspace expiry [category: code] (depends: 4.3)
 `kind: deliverable`
@@ -2915,7 +3313,7 @@ Verification planned:
 - 4.6.3 - `parse_upstream_track` produces every entry of the golden. test: `tests/hub/test_upstream_track_golden.py::test_golden_matches_python_parser`.
 - 4.6.4 - A relative or non-top-level `root_path` answers `invalid_payload`, and a failing git answers `command_failed`, both with `stage: "none"`. test: `crates/gdaemon/tests/node_checkout_status.rs::status_refusals_change_nothing`.
 
-### 4.7 Hub projects and source-control status take machine_id [category: code] (depends: 1.3, 4.3)
+### 4.7 Hub projects and source-control status take machine_id [category: code] (depends: 1.3, 1.5, 4.3)
 `kind: deliverable`
 
 Targets:
@@ -2958,6 +3356,10 @@ Targets:
   only on success. A `NodeCommandError` answers 200 with
   `current_branch`, `ahead`, and `behind` null and `branch_count` 0. `worktree_count` and `clone_count`
   come from 4.3's `list_remote`, and `repo_path` is the node's root.
+- Ownership (1.5): `list_projects` and `get_status` given a `machine_id`
+  call `require_machine_owned(machine_id)` first. A refusal answers 403
+  `{error_code}` with no command, no cache read and no checkout read.
+  Without `machine_id` both keep today's local path.
 
 Consumers unchanged:
 - `src/gobby/servers/routes/files.py` — no-edit-reason: it calls `_projects_to_responses(server, visible)`, whose new keyword defaults to today's behavior.
@@ -2973,6 +3375,7 @@ Verification planned:
 - 4.7.2 - `/api/source-control/status?machine_id=<node>&project_id=<p>` answers the node's git fields and that machine's worktree and clone counts, and a second call within 30 s sends no command. test: `tests/servers/test_machine_scoped_projects.py::test_remote_status_cached`.
 - 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call; a node that disconnects after a cached success answers null git fields on the very next call without a command; and a failed connected-machines read also answers null git fields. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
 - 4.7.4 - Without `machine_id`, both routes answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
+- 4.7.5 - A request with a verified identity whose user does not own the named machine gets 403 `machine_not_owned` from both routes, and no `checkout.status` is sent and no cached status returned; the owner's request proceeds. test: `tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine`.
 
 ### 4.8 gclient projects pane follows the machine filter [category: code] (depends: 3.2, 4.4, 4.7)
 `kind: deliverable`
@@ -2986,7 +3389,7 @@ Targets:
 - `crates/gclient/src/daemon/rest.rs::RestClient::projects`
 - `crates/gclient/src/daemon/rest.rs::RestClient::source_status`
 - `crates/gclient/src/daemon/rest.rs::RestClient::worktrees`
-- `crates/gclient/src/daemon/rest/tests.rs::one_deadline_spans_send_and_body`
+- `crates/gclient/src/daemon/rest/tests.rs::*` — scope-reason: `one_deadline_spans_send_and_body` passes the new `machine` argument, and the file gains `machine_id_query_only_when_given`
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: `Workspace` gains `project_scope`, `Workspace::scripted` sets it, and the worktree re-exports name `live_loop::worktrees`
 - `crates/gclient/src/app/live.rs::*` — scope-reason: `Workspace::live` sets `project_scope`
 - `crates/gclient/src/app/live_sidebar.rs::*` — scope-reason: the sidebar fetch carries the scope through `fetch_sidebar_rows`, `start_sidebar_refetch`, `apply_sidebar_fetch`, `SidebarFetch`, `SidebarRequest`, and `SidebarRequest::run`, and the file gains `scope_projects_to`
@@ -3065,7 +3468,7 @@ Verification planned:
 - 4.8.2 - `None`, `ALL_MACHINES`, and the local machine's id scope the pane to the local machine. test: `crates/gclient/tests/projects_machine_scope.rs::local_and_all_scope_to_this_machine`.
 - 4.8.3 - A fetch started before a scope change does not replace the new scope's rows. test: `crates/gclient/tests/projects_machine_scope.rs::stale_scope_fetch_dropped`.
 - 4.8.4 - With a node scoped, opening a worktree or the new and open worktree dialogs shows a warning toast and starts no shell and no request, and removing a worktree sends `DELETE /worktrees/{id}`. test: `crates/gclient/tests/projects_machine_scope.rs::node_worktree_actions`.
-- 4.8.5 - A REST project, status, and worktree request carries `machine_id` only when a machine is given. test: `crates/gclient/src/daemon/rest/tests.rs::one_deadline_spans_send_and_body`.
+- 4.8.5 - `RestClient::projects`, `source_status`, and `worktrees` add `machine_id=<id>` to the request query when given a machine and send no `machine_id` when given `None`. test: `crates/gclient/src/daemon/rest/tests.rs::machine_id_query_only_when_given`.
 
 ## P5: Live hub-to-node proof
 `kind: framing`
@@ -3073,12 +3476,17 @@ Verification planned:
 **Goal**: a real hub and a real node, both isolated test instances, carry
 every command and report in this plan end to end (Decision 22).
 
-### 5.1 Live hub-to-node proof with isolated daemons and fake providers [category: test] (depends: 1.2, 2.5, 2.6, 3.3, 4.2, 4.4, 4.5, 4.6, 4.7)
+### 5.1 Live hub-to-node proof with isolated daemons and fake providers [category: code] (depends: 1.2, 1.5, 2.5, 2.6, 3.3, 4.2, 4.4, 4.5, 4.6, 4.7)
 `kind: deliverable`
 
 Targets:
 - `tests/e2e/test_hub_node_live.py`
 - `tests/e2e/fake_provider.py`
+
+**Granularity:** eight acceptance items, one outcome: the live pair proves
+every remote capability on every provider. The items share one hub, one
+node, one fake script and one SRT setup, and each capability's step needs
+the runs the earlier steps create.
 
 **Research context:**
 - `tests/e2e/test_hub_node_pair.py` holds `pair_hub` (a hub-mode
@@ -3088,21 +3496,30 @@ Targets:
   `prepare_daemon_env`'s native bin directory), with `_wait_listener` and
   `_wait_connection`. `pair_node` sets `GOBBY_HOME` and not `HOME`.
 - `tests/e2e/conftest.py::link_operator_srt(home)` links the operator's
-  `~/.gobby/tools/srt/<version>` into an isolated home and skips when it is
-  absent; `e2e_srt_spawn_home` keeps `GOBBY_HOME` outside the workspace.
+  `~/.gobby/tools/srt/<version>` into an isolated home and calls
+  `pytest.skip` when SRT is absent or fails verification; 5.1 turns that
+  skip into a failure (Decision 22). `e2e_srt_spawn_home` keeps
+  `GOBBY_HOME` outside the workspace.
   `tests/e2e/test_composer_live_proof.py` runs providers under SRT that
   call `ghook`.
 - Every spawn runs under managed SRT, and the hub never sends a disabled
   sandbox (2.5). node-halves 2.6 seeds `~/.claude.json` and
   `~/.codex/config.toml` under `HOME`, so both daemons need a temporary
   `HOME`.
-- Hook-driven attention: `handle_permission_request` calls
+- Attention reaches the hub two ways (Decision 7). Claude and codex send
+  `PermissionRequest`, which `handle_permission_request` turns into
   `_enter_turn_wait(event, "approval")`
-  (`src/gobby/hooks/event_handlers/_misc.py`). Grok and agy have no hook
-  directory (node-halves 2.3.3), so their runs settle through the node's
-  exit report (2.6). The node's agy gate needs version 1.1.18 (node-halves
-  2.6), and codex receives its prompt after the composer marker
-  (node-halves 2.10).
+  (`src/gobby/hooks/event_handlers/_misc.py`), and droid sends
+  `Notification`. Grok and agy have no hook directory (node-halves 2.3.3):
+  node-halves 2.14's pane monitor matches their pane against the bundled
+  detection manifests, whose positive approval case per provider is in
+  `crates/gdaemon/tests/fixtures/pane_detection/corpus.json` (node-halves
+  2.12, 2.13), and node-halves 3.3 applies the report's `pane` block on the
+  hub. Grok and agy runs settle through the node's exit report (2.6). The
+  node's agy gate needs version 1.1.18 (node-halves 2.6), and codex
+  receives its prompt after the composer marker (node-halves 2.10).
+- The test calls the hub with its local token, so 1.5's ownership checks
+  return at once; 1.5, 2.3, 2.4, 3.3, 4.3, 4.4 and 4.7 prove the refusals.
 - node-halves 2.9 registers a checkout on the first hook from its root.
   A hook from an operator's own CLI on the node is refused at session
   registration (Constraints), which the test expects.
@@ -3113,33 +3530,43 @@ Targets:
   homes, and creates a git checkout of a test project on the node side. It
   never touches the operator's hub, database, or `~/.gobby`, and teardown
   stops both daemons and removes `tmp_path`.
+- `require_srt(home)` in the test module calls `link_operator_srt(home)`,
+  catches `pytest.skip.Exception`, and calls `pytest.fail` with the same
+  message. Setup links SRT only through it.
 - `fake_provider.py` is one script that the test installs on the node's
   `PATH` as `claude`, `codex`, `grok`, `droid`, and `agy`. It answers
-  `--version` (agy with 1.1.18). Otherwise it runs in its pane: codex
-  prints the composer marker from the pane-detection corpus and reads its
-  prompt; claude, codex, and droid pipe a session-start envelope into
-  `ghook --cli=<provider> --type=session-start` with the run's
-  `GOBBY_SESSION_ID`; claude can send a permission request and wait for a
-  line; each writes what it read to a file in its workspace, commits it,
-  sends its stop and session-end hooks where it has hooks, and exits.
-- Steps:
+  `--version` (agy with 1.1.18). Otherwise it runs in its pane:
+  - codex prints the composer marker from the pane-detection corpus and
+    reads its prompt; claude, codex, and droid pipe a session-start
+    envelope into `ghook --cli=<provider> --type=session-start` with the
+    run's `GOBBY_SESSION_ID`;
+  - it reads one line from its pane and writes it to a file in its
+    workspace;
+  - it asks for attention through its provider's path: claude and codex
+    pipe a `PermissionRequest` envelope and droid a `Notification`
+    envelope into `ghook`, and grok and agy print their provider's positive
+    approval pane from the detection corpus;
+  - it reads the answer line, appends it to the file, commits it, sends its
+    stop and session-end hooks where it has hooks, and exits.
+- Steps, each run for claude, codex, grok, droid, and agy:
   1. One `ghook` session-start from the checkout root registers the node's
-     checkout.
-  2. For each provider, `POST /api/agents/spawn` with `machine` set to the
-     node and worktree isolation; the report promotes the run live and
-     records the worktree row, and the run settles completed.
-  3. For claude: a terminal write reaches the pane, its permission request
-     raises an attention entry under the node's machine, and the respond
-     route types the answer into the pane.
-  4. A waiting grok run is cancelled through `kill_agent` and settles
-     cancelled.
-  5. `merge_worktree` on claude's worktree merges on the node, and
-     `delete_worktree` removes it and its row; `merge_clone` and
-     `delete_clone` do the same for a clone run.
-  6. `/api/projects?machine_id=<node>` and
-     `/api/source-control/status?machine_id=<node>` show the node's
-     checkout and branch, and after the node stops the status shows null
-     git fields.
+     checkout (once, before the providers).
+  2. `POST /api/agents/spawn` with `machine` set to the node and worktree
+     isolation; the report promotes the run live and records the worktree
+     row on the node's machine.
+  3. A terminal write through `send_keys` reaches the pane, and the fake
+     records the line.
+  4. The fake's attention request raises an attention entry under the
+     node's machine, and the respond route types the answer, which the fake
+     records before the run settles completed.
+  5. `merge_worktree` on the run's worktree merges on the node, and
+     `delete_worktree` removes it and its row.
+  6. A second spawn waits at its attention prompt and is cancelled through
+     `kill_agent`; it settles cancelled.
+- Then one claude run with clone isolation goes through `merge_clone` and
+  `delete_clone`, and `/api/projects?machine_id=<node>` and
+  `/api/source-control/status?machine_id=<node>` show the node's checkout
+  and branch, with null git fields once the node stops.
 
 Verification planned:
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_live.py -v -m e2e`.
@@ -3148,10 +3575,12 @@ Verification planned:
 
 - 5.1.1 - The node's first hook from its checkout root registers that checkout on the hub under the node's machine. test: `tests/e2e/test_hub_node_live.py::test_node_registers_checkout`.
 - 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed, through hooks for claude, codex, and droid and through the exit report for grok and agy. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
-- 5.1.3 - A terminal write reaches the claude fake's pane, and its permission request raises an attention entry on the node's machine whose response the fake receives. test: `tests/e2e/test_hub_node_live.py::test_terminal_write_and_attention_respond_reach_node`.
-- 5.1.4 - A cancel stops a waiting run on the node, and the run settles cancelled. test: `tests/e2e/test_hub_node_live.py::test_cancel_stops_node_agent`.
-- 5.1.5 - A worktree and a clone each merge into the node's checkout and are removed from the node, with the hub row marked merged and then deleted. test: `tests/e2e/test_hub_node_live.py::test_merge_and_remove_through_node`.
-- 5.1.6 - The projects view and status for the node's machine show its checkout and branch, and null git fields once the node stops. test: `tests/e2e/test_hub_node_live.py::test_projects_view_for_node_machine`.
+- 5.1.3 - For each of the five providers, a terminal write reaches the fake's pane on the node, and the fake records the written line. test: `tests/e2e/test_hub_node_live.py::test_terminal_write_reaches_each_provider`.
+- 5.1.4 - For each of the five providers, the fake's attention request raises an attention entry on the node's machine, through `PermissionRequest` for claude and codex, `Notification` for droid, and the node's pane report for grok and agy, and the respond route's answer reaches the fake. test: `tests/e2e/test_hub_node_live.py::test_attention_respond_reaches_each_provider`.
+- 5.1.5 - For each of the five providers, a cancel stops a run waiting on the node, and the run settles cancelled. test: `tests/e2e/test_hub_node_live.py::test_cancel_stops_each_provider`.
+- 5.1.6 - For each of the five providers, the run's worktree merges into the node's checkout and is removed from the node, with the hub row marked merged and then deleted, and one clone does the same through `merge_clone` and `delete_clone`. test: `tests/e2e/test_hub_node_live.py::test_merge_and_remove_each_provider`.
+- 5.1.7 - The projects view and status for the node's machine show its checkout and branch, and null git fields once the node stops. test: `tests/e2e/test_hub_node_live.py::test_projects_view_for_node_machine`.
+- 5.1.8 - With the operator's SRT directory pointed at an empty directory, `require_srt` fails with `link_operator_srt`'s message and does not skip. test: `tests/e2e/test_hub_node_live.py::test_missing_srt_fails`.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -3290,6 +3719,32 @@ Verification planned:
   is warning-free.
 - 2026-10-14: M1 withdrawn for Orchestrator gobby#15977's return of the stamped
   plan; the Plan Adversary derives a fresh M1 after the repair.
+- 2026-10-14: Revised for Orchestrator gobby#15977's return, items A to H.
+  - A: 5.1 proves spawn, terminal write, attention, cancel, merge and
+    removal for claude, codex, grok, droid and agy. Grok and agy's attention
+    reaches the hub through node-halves' pane reports (Decision 7). #24151,
+    #24149, #20202, #21549 and an agent launcher in gclient each carry an
+    edge or a stated reason ("Cross-plan edges set at expansion").
+  - B: 1.1 and 4.1 take the 300-second preparation deadline from
+    node-halves 3.1. 2.2 names each hook test that sends an envelope with no
+    machine or stores a row on another machine, and its fix.
+  - C: the new "Cross-plan edges set at expansion" section has one row per
+    edge, including 4.2 and 4.6.
+  - D: new leaf 1.5 binds each caller to the machines it owns, and cancel
+    (2.4), terminal write (2.3), attention respond (3.3), workspace actions
+    (4.3, 4.4) and per-machine status (4.7) refuse another user's machine.
+    2.2 requires every hook to name a machine: the key's machine for a
+    verified hook, the hub's otherwise. A hook binds only rows on its own
+    machine. 1.1 follows node-halves 2.6 for the owner-only prompt file and
+    2.5 cites node-halves Decision 32 for the node's sandbox refusal.
+  - E: 4.8.5, 4.1.1 and 4.1.2 add their own tests, 5.1 fails without SRT,
+    and 1.1.1, 1.1.5 and 4.1.5 name exact files and sections.
+  - F: 1.1 is delivered by #24268, 5.1 is a code leaf, and the narrative
+    leaves task types to the Plan Adversary.
+  - G: 2.5 maps a resume to `resume_session_id` and the `existing`
+    workspace mode, after node-halves 3.1 and 3.2. Story 1 now starts from an
+    agent session, because no client UI posts an agent spawn today.
+  - H: Constraints states what supersedes #24280 to #24283.
 
 ## V2: Verification
 `kind: verification`
@@ -3298,8 +3753,8 @@ These are completion gates for the implementation. Except for plan validation,
 none has run yet. Each must pass after its leaves land and before #21575 closes.
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/ tests/agents/test_hub_local_loops.py tests/servers/test_node_routes.py tests/servers/test_hook_machine_binding.py tests/servers/test_attention_roster_machines.py tests/servers/test_attention_remote_respond.py tests/servers/test_remote_workspace_routes.py tests/servers/test_machine_scoped_projects.py -v
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_live.py -v -m e2e
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/ tests/agents/test_hub_local_loops.py tests/servers/test_node_routes.py tests/servers/test_caller_scope_binding.py tests/servers/test_hook_machine_binding.py tests/hooks/test_session_binding.py tests/servers/test_attention_roster_machines.py tests/servers/test_attention_remote_respond.py tests/servers/test_remote_workspace_routes.py tests/servers/test_machine_scoped_projects.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_live.py tests/e2e/test_daemon_auth.py::test_http_auth_matrix -v -m e2e
 cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity) + binary(node_internal_route) + binary(node_workspace_finish) + binary(node_checkout_status)'
 cargo nextest run -p gobby-client
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
@@ -3310,4 +3765,7 @@ uv run gobby plans validate .gobby/plans/hub-mode.md -p .
   that runs during planning.
 - P1 to P4 drive a fake route or a fake node; 5.1 runs a real isolated hub
   and node.
+- Each section's "Verification planned" commands, which also re-run the
+  existing suites that section edits, must pass as well.
+- The e2e commands need a Release Manager e2e grant.
 - Run these from the worktree root. Do not run the full pytest suite.
