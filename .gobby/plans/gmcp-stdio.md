@@ -8,7 +8,7 @@ Plan artifact: `.gobby/plans/gmcp-stdio.md`
 `kind: framing`
 
 This plan specifies #23275 (`gobby-mcp` crate: native MCP transports with OAuth
-and DCR). That task is deferred section D3 of
+and CIMD). That task is deferred section D3 of
 `.gobby/plans/gdaemon-api-keys-nodes.md` (#21555, API keys and node
 registration), which carries deferred section D1 of the plan of record
 `.gobby/plans/gdaemon-front-door.md`. Lane 7 first planned it in place under
@@ -44,6 +44,8 @@ start command that `gobby install` records (Decision 5).
   `gobby mcp-server` text (1.8).
 - `gmcp` starts a stopped local daemon at launch, as the wrapper does, by
   running the start command `gobby install` records (1.4, 1.9).
+- After Josh authorizes its release, `gmcp` installs as a published binary,
+  and Homebrew installs require its formula (1.10).
 
 **Internal servers.** Internal Python servers such as `gobby-tasks` keep
 running in the daemon until they are ported, and their proxy tool calls route
@@ -55,9 +57,10 @@ the internal server. `gmcp` replaces the REST wrapper only (Decision 7). When a
 server is later ported to Rust behind the same REST route, `gmcp` does not
 change.
 
-Live activation, the streamable HTTP transport, OAuth, publishing, and the
-post-switch smoke proof are deferred sections D1, D2, D3, D5, and D6, each with
-an owner. D4 (thin nodes) was withdrawn on 2026-10-13, when item 1.5.5 took over
+The pre-switch promotion, the post-switch smoke proof, and the release are
+operations in the Activation section, each with an owner and the leaves it
+waits for. The streamable HTTP transport and OAuth are deferred sections D2
+and D3. D4 (thin nodes) was withdrawn on 2026-10-13, when item 1.5.5 took over
 its proof (ruling 4).
 
 ## Decision Record
@@ -65,7 +68,8 @@ its proof (ruling 4).
 
 Orchestrator rulings (gobby#14972, 2026-10-05). Josh bounced the plan on
 2026-10-13 for open questions and ruled on them the same day: he confirmed 1,
-decided 3, reversed 5, and kept D5.
+decided 3, reversed 5, and kept publishing for his release authorization
+(1.10 and Activation step 3).
 
 1. **Option (a).** `crates/gmcp` joins the workspace now. The timing rule in
    `crates/AGENTS.md` covers `RouteFamily` crates only, and `gmcp` is a client
@@ -239,11 +243,12 @@ Writer decisions:
   - `docs/evidence/**`, `docs/plans/**`, `docs/audits/**`, `docs/archive/**`,
     `tests/fixtures/provider_contracts/**`, and `CHANGELOG.md` hold dated history
     and are excluded.
-- **Landing order.** D1 (pre-switch promotion) must be complete before 1.6
-  lands, and 1.6's Lane Manager holds that landing until D1 confirms. The
-  daemon restart that follows the 1.6 landing makes
-  spawns launch `~/.gobby/bin/gmcp`. D6 (post-switch smoke proof) runs after
-  that restart.
+- **Landing order.** Activation step 1 (pre-switch promotion) must be
+  complete before 1.6 lands, and 1.6's Lane Manager holds that landing until
+  step 1 confirms. The daemon restart that follows the 1.6 landing makes
+  spawns launch `~/.gobby/bin/gmcp`. Activation step 2 (post-switch smoke
+  proof) runs after that restart. 1.10 lands only after Activation step 3
+  publishes the release.
 
 ## Parent D3 Mapping
 `kind: framing`
@@ -622,6 +627,7 @@ Targets:
 - `src/gobby/install/version_pins.py::*` — scope-reason: pin `gmcp` 0.1.0 and list it in `UNPUBLISHED_MANAGED_BINS`
 - `.github/workflows/release-gmcp.yml`
 - `.github/workflows/rust-ci.yml`
+- `docs/guides/release-guide.md`
 - `tests/cli/test_install_setup_gmcp.py`
 - `tests/cli/test_install_setup.py::*` — scope-reason: the managed-binary install cases patch `_install_gmcp` beside `_install_gclient`
 - `tests/cli/test_install_components.py::*` — scope-reason: adds the `gmcp` component promotion case
@@ -650,14 +656,19 @@ Targets:
   version, runs clippy and nextest, asserts the packaged file list, publishes to
   crates.io, and uploads macOS/Linux tarballs. `rust-ci.yml` has per-crate
   clippy and nextest steps, and path filters that name each release workflow.
-- `distribution.py::HOMEBREW_HELPERS` needs a tap formula outside this
-  repository, which is deferred to D5.
+- `docs/guides/release-guide.md` lists every crate that has a release workflow
+  in its Current Release Set table, with `gobby-client` at `gclient-v0.1.0`
+  although `gclient` is still unpublished. Its Version Rules list every tag
+  prefix.
+- `distribution.py::HOMEBREW_HELPERS` needs a formula in the
+  `GobbyAI/homebrew-tap` repository. Activation step 3 adds the formula, and
+  1.10 lists `gmcp`.
 
 **Implementation:**
 - `install_setup_gmcp.py` mirrors `install_setup_gclient.py` for crate dir
   `gmcp`, package `gobby-mcp`, binary `gmcp`, and stamp `.gmcp-version`. It
   provides the workspace build path and the unpublished guard. The
-  GitHub-release and cargo paths follow gclient's shape, so D5 only flips the
+  GitHub-release and cargo paths follow gclient's shape, so 1.10 only flips the
   published flag.
 - `install_setup_gmcp.py` also provides
   `write_daemon_start_command(gobby_home, argv)`. It writes `argv` as a JSON
@@ -676,7 +687,9 @@ Targets:
 - `release-gmcp.yml` mirrors `release-gclient.yml` with `gmcp-v*` tags and
   requires `contracts/*.json` and `assets/progressive-discovery.md` in the
   package list. `rust-ci.yml` gains the `gobby-mcp` clippy and nextest steps
-  and the workflow path filter.
+  and the workflow path filter. The release guide adds a `gobby-mcp` row
+  (`gmcp`, `0.1.0`, `gmcp-v0.1.0`, crates.io + GitHub binaries) and `gmcp-v*`
+  to the tag prefixes.
 
 **Focused verification (planned):**
 `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/cli/test_install_setup_gmcp.py tests/cli/test_install_setup.py tests/cli/test_install_components.py tests/install/test_bin_freshness.py tests/install/test_version_pins.py -q`,
@@ -688,7 +701,7 @@ then `uv run ruff check` and `uv run mypy` on the touched modules.
 - 1.4.2 - A default install runs the `gmcp` installer with the other managed binaries. test: `tests/cli/test_install_setup.py::test_managed_native_binaries_include_gmcp`.
 - 1.4.3 - `gobby install gmcp` promotes only `gmcp` and does not claim the daemon singleton. test: `tests/cli/test_install_components.py::test_gmcp_component_promotes_client_binary`.
 - 1.4.4 - Freshness treats a `gcore` or `gmcp` source change as making `gmcp` stale, and the pins mark it unpublished at 0.1.0. test: `tests/install/test_bin_freshness.py::test_gmcp_tracks_gmcp_and_gcore`.
-- 1.4.5 - The release workflow publishes on `gmcp-v*` tags and fails when the package list lacks the contract or asset files. behavior: "gmcp-v" in `.github/workflows/release-gmcp.yml`.
+- 1.4.5 - The release workflow publishes on `gmcp-v*` tags and fails when the package list lacks the contract or asset files, and the release guide lists the `gmcp-v*` prefix. behavior: "gmcp-v" in `.github/workflows/release-gmcp.yml` and `docs/guides/release-guide.md`.
 - 1.4.6 - After a `gmcp` promotion by the default install or by `gobby install gmcp`, `<GOBBY_HOME>/gmcp-daemon-start.json` holds the JSON array `[<installer's sys.executable>, "-m", "gobby.cli", "start"]` with mode 0644, and a second promotion replaces it whole. test: `tests/cli/test_install_setup_gmcp.py::test_promotion_records_daemon_start_command` and `tests/cli/test_install_components.py::test_gmcp_component_records_daemon_start_command`.
 
 ### 1.5 E2e and server tests drive `gmcp` or the routes, not the wrapper [category: test] (depends: 1.3)
@@ -790,7 +803,7 @@ with `gmcp` and `gdaemon` built by `cargo build -p gobby-mcp -p gobby-daemon`
 - 1.5.4 - The scrubbed Codex child environment carries `GOBBY_SESSION_ID`, `GOBBY_HOME`, `GOBBY_DAEMON_URL`, and `GOBBY_MANAGED_EXECUTION_BOOTSTRAP` naming the private grant envelope, and no variable or override carries the capability. In that environment, `daemon_auth_headers()` returns the envelope's capability as the Bearer with the child's session and run headers. test: `tests/agents/test_spawn_executor.py::test_scrubbed_child_env_reaches_daemon_proxy_identity`.
 - 1.5.5 - On an enrolled node, `gmcp` given only the node home resolves the node's front door and key from the node's `bootstrap.yaml`, and `list_mcp_servers` returns the hub's internal servers, `gobby-tasks` among them, through the relay. test: `tests/e2e/test_hub_node_pair.py::test_gmcp_on_node_reaches_hub_through_relay`.
 
-### 1.6 Every launch site starts `~/.gobby/bin/gmcp` [category: code] (depends: 1.3, 1.4, 1.5)
+### 1.6 Every launch site starts `~/.gobby/bin/gmcp` [category: code] (depends: 1.3, 1.4, 1.5, 1.9)
 `kind: deliverable`
 
 Targets:
@@ -886,10 +899,13 @@ Targets:
 - `_declare_gobby_mcp_server` writes the same entry into the managed Grok
   `config.toml`.
 - `provider_mcp_config_error` requires the `gmcp` entry.
-- `clients.md` describes `gmcp` as the stdio transport. `gmcp` does not start
-  the daemon; it reports `DAEMON_UNAVAILABLE` with `gobby start` guidance.
-- **Landing gate.** This leaf's Lane Manager holds its landing until D1
-  confirms that `~/.gobby/bin/gmcp` is promoted on the hub.
+- `clients.md` describes `gmcp` as the stdio transport. It keeps the
+  wrapper's claim that the transport can start the daemon, which 1.9 ports:
+  `gmcp` starts a stopped local daemon through the command `gobby install`
+  records, and otherwise reports `DAEMON_UNAVAILABLE` with `gobby start`
+  guidance.
+- **Landing gate.** This leaf's Lane Manager holds its landing until
+  Activation step 1 confirms that `~/.gobby/bin/gmcp` is promoted on the hub.
 
 **Granularity:** one leaf. Every production target writes, repairs, or
 describes the one `gobby` MCP entry. If the sites switched separately, some
@@ -1304,25 +1320,54 @@ with `gmcp` and `gdaemon` built by `cargo build -p gobby-mcp -p gobby-daemon`
 - 1.9.4 - Closing stdin while the command runs exits 0 within 2 s, and the command still runs to completion. test: `crates/gmcp/tests/daemon_start.rs::stdin_close_leaves_start_running`.
 - 1.9.5 - With an isolated daemon stopped and its home's record written by 1.4's writer, opening a `gmcp` session brings the daemon's `/api/health` to 200. test: `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart::test_gmcp_starts_a_stopped_daemon`.
 
-## D1 Pre-switch promotion: `gmcp` on the hub before launch sites switch (depends: 1.3, 1.4, 1.9)
-`kind: deferred`
+### 1.10 `gmcp` is a published managed binary [category: code] (depends: 1.4)
+`kind: deliverable`
 
-- D1.1: after 1.1 to 1.4 and 1.9 land, the Release Manager runs
-  `gobby install gmcp` from the main checkout and confirms that
-  `~/.gobby/bin/gmcp --version` answers and that
-  `~/.gobby/gmcp-daemon-start.json` names the main checkout's Python. This
-  needs no daemon restart.
-- D1.2: the Release Manager tells 1.6's Lane Manager that 1.6 may land.
+Targets:
+- `src/gobby/install/version_pins.py::*` — scope-reason: `UNPUBLISHED_MANAGED_BINS` drops `gmcp`; 1.4 targets the same file with this scope
+- `src/gobby/install/distribution.py::HOMEBREW_HELPERS`
+- `src/gobby/install/distribution.py::HOMEBREW_HELPER_FORMULAE`
+- `tests/install/test_version_pins.py::*` — scope-reason: `test_published_state_is_explicit_for_managed_binaries` asserts `gmcp` is published; 1.4 targets the same file with this scope
+- `tests/install/test_distribution.py::test_homebrew_helper_detection_fails_with_brew_guidance_when_missing`
 
-```yaml
-deferral:
-  task_ref: "TBD-at-expansion"
-  reason: "Promoting a binary into the operator's ~/.gobby/bin and releasing a held landing are Release Manager operations outside any leaf. Expansion manifests reject the manual category, so this expands as a planning task held needs-planning with blocked-by edges to 1.1 to 1.4 and 1.9; the Orchestrator retypes it to manual."
-  owner: "release-manager"
-  original_acceptance_items:
-    - D1.1
-    - D1.2
-```
+**Research context:**
+- Josh ruled on 2026-10-13 that the tag, crates.io publishing, and the
+  Homebrew tap wait for his release authorization. Until then `gmcp` installs
+  from the checkout, like `gclient` and `gterm`, which
+  `version_pins.py::UNPUBLISHED_MANAGED_BINS` still lists.
+- 1.4 pins `gmcp` 0.1.0, lists it as unpublished, and adds
+  `release-gmcp.yml`, which publishes `gobby-mcp` to crates.io and uploads
+  tarballs on a `gmcp-v*` tag. `install_setup_gmcp.py` follows
+  `src/gobby/cli/install_setup_gclient.py`, where `is_published("gclient")`
+  chooses the release and cargo paths over the checkout build. Removing `gmcp`
+  from the unpublished set therefore switches the installer by itself.
+- `distribution.py::verify_homebrew_managed_bins` checks each
+  `HOMEBREW_HELPERS` name through its `HOMEBREW_HELPER_FORMULAE` formula on a
+  Homebrew-managed install. Listing `gmcp` before `GobbyAI/homebrew-tap` has a
+  `gobby-mcp` formula would fail every Homebrew install.
+- `test_published_state_is_explicit_for_managed_binaries` asserts the
+  unpublished set, and
+  `test_homebrew_helper_detection_fails_with_brew_guidance_when_missing`
+  asserts the helper tuple and the formula map. The other tests in
+  `tests/install/test_distribution.py` iterate `HOMEBREW_HELPERS`, so they
+  cover `gmcp` without edits.
+- This leaf lands only after Activation step 3 has published `gmcp-v0.1.0`
+  and added the formula. Activation step 4 holds it until then.
+
+**Implementation:**
+- Remove `gmcp` from `UNPUBLISHED_MANAGED_BINS`.
+- Append `gmcp` to `HOMEBREW_HELPERS`, and map it to `gobby-mcp` in
+  `HOMEBREW_HELPER_FORMULAE`.
+- Update the two tests' expected values.
+
+**Focused verification (planned):**
+`DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_version_pins.py tests/install/test_distribution.py tests/cli/test_install_setup_gmcp.py -q`,
+then `uv run ruff check` and `uv run mypy` on the touched modules.
+
+**Acceptance:**
+
+- 1.10.1 - `is_published("gmcp")` is true, and `gterm` and `gclient` stay unpublished. test: `tests/install/test_version_pins.py::test_published_state_is_explicit_for_managed_binaries`.
+- 1.10.2 - A Homebrew-managed install without the `gobby-mcp` formula's `gmcp` fails with brew guidance naming `gobby-mcp`. test: `tests/install/test_distribution.py::test_homebrew_helper_detection_fails_with_brew_guidance_when_missing`.
 
 ## D2 Streamable HTTP transport as the `mcp` route family
 `kind: deferred`
@@ -1376,44 +1421,37 @@ deferral:
     - D3.5
 ```
 
-## D5 Publish `gmcp`
-`kind: deferred`
+## Activation
+`kind: framing`
 
-- D5.1: the first `gmcp-v0.1.0` tag publishes `gobby-mcp` to crates.io and
-  attaches the release tarballs.
-- D5.2: `version_pins.py` drops `gmcp` from `UNPUBLISHED_MANAGED_BINS`.
-- D5.3: the Homebrew tap gains a `gobby-mcp` formula, and
-  `distribution.py::HOMEBREW_HELPERS` lists `gmcp`.
+These steps are operations. Each one changes the operator's hub or an
+external repository, which no implementation leaf may do, so expansion
+creates no task for them. Each names its owner and the leaves it waits for.
 
-```yaml
-deferral:
-  task_ref: "TBD-at-expansion"
-  reason: "Josh ruled on 2026-10-13 that the tag, crates.io publishing, and the external Homebrew tap run when he authorizes a release; until then gmcp installs from the checkout like gclient."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D5.1
-    - D5.2
-    - D5.3
-```
-
-## D6 Post-switch smoke proof (depends: 1.6)
-`kind: deferred`
-
-- D6.1: after 1.6 lands and its daemon restart completes, a newly spawned
-  Claude agent and a newly spawned Codex agent each list Gobby tools within
-  their first turn.
-- D6.2: during a later daemon restart, a live `gmcp` answers
-  `DAEMON_UNAVAILABLE` and recovers afterwards without relaunch.
-
-```yaml
-deferral:
-  task_ref: "TBD-at-expansion"
-  reason: "The proof needs the 1.6 landing, a live daemon restart, and fresh spawns on the operator's hub, which are Orchestrator operations outside any leaf. It expands as a planning task held needs-planning with a blocked-by edge to 1.6; the Orchestrator retypes it to manual."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D6.1
-    - D6.2
-```
+1. **Pre-switch promotion.** Owner: the Release Manager. It runs after the
+   1.1 to 1.4 and 1.9 leaves land, and needs no daemon restart.
+   - Run `gobby install gmcp` from the main checkout.
+   - Confirm that `~/.gobby/bin/gmcp --version` answers, and that
+     `~/.gobby/gmcp-daemon-start.json` names the main checkout's Python.
+   - Tell 1.6's Lane Manager that 1.6 may land.
+2. **Post-switch smoke proof.** Owner: the Orchestrator. It runs after the
+   1.6 leaf lands and its daemon restart completes.
+   - A newly spawned Claude agent and a newly spawned Codex agent each list
+     Gobby tools within their first turn.
+   - During the next daemon restart, a live `gmcp` answers
+     `DAEMON_UNAVAILABLE` and recovers afterwards without relaunch. 1.1.5
+     and 1.5.2 prove this behavior in tests; this step observes it on the
+     hub.
+   - The Orchestrator records both observations on #23275.
+3. **Release.** Owner: the Orchestrator, on Josh's release authorization. It
+   runs after the 1.4 leaf lands.
+   - Push the first `gmcp-v0.1.0` tag. `release-gmcp.yml` then publishes
+     `gobby-mcp` to crates.io and attaches the release tarballs.
+   - Add a `gobby-mcp` formula for `gmcp` to `GobbyAI/homebrew-tap`.
+   - Remove the hold that step 4 places on 1.10.
+4. **Hold on 1.10.** Owner: the Orchestrator. When expansion creates the
+   1.10 leaf, the Orchestrator labels it `needs-decision`, which automated
+   dispatch never selects. 1.10 would otherwise land before a release exists.
 
 ## Deferral Finalization
 `kind: framing`
@@ -1438,11 +1476,8 @@ root is #23275. Drafting creates no tasks, labels, or edges.
    records Josh's CIMD-only ruling. #23519 (Shared-token cutover: gdaemon
    validates keys and Python trusts only the front door) closed on 2026-10-09,
    so the task needs no edge on it.
-3. D1, D5, and D6: expansion creates each task with its provenance label and
-   criteria. Confirm the edges: D1 is blocked by the 1.3, 1.4, and 1.9 leaves,
-   and D6 is blocked by the 1.6 leaf.
-4. Run `gobby-tasks:check_dependency_cycles`. Then confirm that the D1, D2, D3,
-   D5, and D6 deferrals validate against #23275 before releasing any leaf.
+3. Run `gobby-tasks:check_dependency_cycles`. Then confirm that the D2 and D3
+   deferrals validate against #23275 before releasing any leaf.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1588,15 +1623,29 @@ root is #23275. Drafting creates no tasks, labels, or edges.
     `tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart`.
   - The Adversary derives and applies a fresh M1 from this commit.
   - No disagreement went to the Orchestrator.
+- 2026-10-13: Before the plan went to Josh, the Orchestrator gobby#15977
+  returned it at `17b17064bc` under his rule against deferred sections. The
+  M1 derived from those bytes was not committed.
+  - D1 and D6 become Activation steps 1 and 2, operations that name an owner
+    and the leaves they wait for. 1.1.5 and 1.5.2 still prove D6.2's behavior.
+  - D5 becomes leaf 1.10 for the in-repo publish flags, plus Activation steps
+    3 and 4: the tag, the crates.io publish, the tap formula, and the hold on
+    1.10 until Josh authorizes the release.
+  - Deferral Finalization keeps only the D2 and D3 steps.
+  - The sweep also found two stale spots. 1.4 now updates the release guide.
+    1.6 now depends on 1.9, and its `clients.md` text keeps the auto-start
+    claim that 1.9 ports.
+  - D2 and D3 went to the Orchestrator for Josh, with the reasons they cannot
+    be planned as leaves here. They stay deferred until he rules.
 
 ## V2: Verification
 `kind: verification`
 
 These are completion gates for the implementation. Except for plan validation,
-none has run yet. Each runs after the 1.1 to 1.9 leaves land, and each must
+none has run yet. Each runs after the 1.1 to 1.10 leaves land, and each must
 hold before #23275 closes.
 
-1. The focused suites of 1.1 to 1.9 must pass together against the test hub,
+1. The focused suites of 1.1 to 1.10 must pass together against the test hub,
    with `cargo nextest run -p gobby-mcp` and
    `cargo clippy -p gobby-mcp --all-targets -- -D warnings` (heavy work).
 2. `tests/e2e/test_stateless_ambient_session.py` and
@@ -1605,4 +1654,5 @@ hold before #23275 closes.
 3. `uv run gobby plans validate .gobby/plans/gmcp-stdio.md -p <root>` must
    pass, and `gcode grep -F "gobby mcp-server" src` must hit only the 1.6
    repair.
-4. D6 must record the post-switch smoke proof.
+4. Activation step 2 must have recorded the post-switch smoke proof on
+   #23275, and Activation step 3 must have published `gmcp-v0.1.0`.
