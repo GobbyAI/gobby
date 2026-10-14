@@ -3056,6 +3056,9 @@ Verification planned:
   sandbox build,
   `apply_write_grant(definition_sandbox_config(daemon_config, agent_body), write_grant)`,
   in place of `resolve_spawn_sandbox`.
+- 2026-10-14: Consensus with Plan Adversary gobby#16791 on the no-deferrals
+  revision, after NH-11 to NH-14. NH-12 closed against hub-mode 1.4.7 at
+  09cd20cba2, NH-13 and NH-14 closed at 927f53f1d4, and no finding is open.
 
 ## V2: Verification
 `kind: verification`
