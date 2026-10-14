@@ -1,1 +1,310 @@
-{}
+{
+  "CLI gobby comms": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:43` (`comms`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms attach": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:132` (`attach_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms channels": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:180` (`channels_group`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms channels add": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:221` (`channels_add_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms channels list": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:186` (`channels_list_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms channels list-default": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:336` (`_channels_list_default`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms channels remove": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:303` (`channels_remove_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms send": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:93` (`send_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby comms status": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/communications.py:49` (`status_cmd`); blocked on #21583 Communications to port channel, conversation and delivery services. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:82` (`cron`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron add": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:128` (`add_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron edit": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:349` (`edit_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron list": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:88` (`list_jobs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron park": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:255` (`park_system_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron remove": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:335` (`remove_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron run": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:202` (`run_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron runs": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:295` (`list_runs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron toggle": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:234` (`toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby cron wake": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/cron.py:275` (`wake_system_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby hub-backup": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/hub_backup/cli.py:183` (`hub_backup`); blocked on #21568 Remaining route families to port multi-store hub backup/restore; no explicit Stage 2 owner exists, and the Orchestrator may reassign. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby hub-backup restore": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/hub_backup/cli.py:264` (`restore_hub_backup`); blocked on #21568 Remaining route families to port multi-store hub backup/restore; no explicit Stage 2 owner exists, and the Orchestrator may reassign. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby nodes": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/workspaces.py:170` (`nodes`); blocked on #21564 Attention, agents, dispatch and worktrees / #24149 hub roster to port machine inventory served by Python workspaces registry list_nodes. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby nodes list": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/workspaces.py:546` (`list_nodes`); blocked on #21564 Attention, agents, dispatch and worktrees / #24149 hub roster to port machine inventory served by Python workspaces registry list_nodes. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby webhooks": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/extensions.py:513` (`webhooks`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby webhooks list": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/extensions.py:518` (`webhooks_list`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "CLI gobby webhooks test": {
+    "status": "proxied",
+    "note": "Python callback `src/gobby/cli/extensions.py:571` (`webhooks_test`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch. #21571 Operator verbs on the client must replace this Python verb."
+  },
+  "HTTP DELETE /api/comms/channels/{channel_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:240` (`create_communications_router::remove_channel`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP DELETE /api/cron/jobs/{job_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:256` (`create_cron_router::delete_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP GET /api/comms/channels": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:179` (`create_communications_router::list_channels`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP GET /api/comms/channels/{channel_id}/status": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:257` (`create_communications_router::get_channel_status`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP GET /api/comms/messages": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:271` (`create_communications_router::list_messages`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP GET /api/comms/webhooks/{channel_name}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:101` (`create_communications_router::verify_webhook`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP GET /api/cron/jobs": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:148` (`create_cron_router::list_jobs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP GET /api/cron/jobs/{job_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:203` (`create_cron_router::get_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP GET /api/cron/jobs/{job_id}/runs": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:330` (`create_cron_router::list_runs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP GET /api/cron/runs/{run_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:350` (`create_cron_router::get_run`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP GET /api/webhooks": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/mcp/webhooks.py:31` (`create_webhooks_router::list_webhooks`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch."
+  },
+  "HTTP PATCH /api/cron/jobs/{job_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:218` (`create_cron_router::update_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP POST /api/comms/attachment": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:141` (`create_communications_router::send_attachment`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP POST /api/comms/channels": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:189` (`create_communications_router::create_channel`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP POST /api/comms/send": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:115` (`create_communications_router::send_message`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP POST /api/comms/webhooks/{channel_name}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:56` (`create_communications_router::receive_webhook`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "HTTP POST /api/cron/jobs": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:174` (`create_cron_router::create_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP POST /api/cron/jobs/{job_id}/run": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:290` (`create_cron_router::run_job_now`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP POST /api/cron/jobs/{job_id}/toggle": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/cron.py:273` (`create_cron_router::toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
+  },
+  "HTTP POST /api/webhooks/test": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/mcp/webhooks.py:71` (`create_webhooks_router::test_webhook`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch."
+  },
+  "HTTP PUT /api/comms/channels/{channel_id}": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/communications.py:208` (`create_communications_router::update_channel`); blocked on #21583 Communications to port channel, conversation and delivery services."
+  },
+  "MCP gobby-communications:add_channel": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:476` (`create_communications_registry::add_channel`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:attach_conversation": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:262` (`create_communications_registry::attach_conversation`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:detach_conversation": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:275` (`create_communications_registry::detach_conversation`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:get_messages": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:427` (`create_communications_registry::get_messages`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:link_identity": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:596` (`create_communications_registry::link_identity`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:list_channels": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:398` (`create_communications_registry::list_channels`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:list_conversation_attachments": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:252` (`create_communications_registry::list_conversation_attachments`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:list_identities": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:618` (`create_communications_registry::list_identities`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:remove_channel": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:503` (`create_communications_registry::remove_channel`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:resolve_operator_conversation": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:235` (`create_communications_registry::resolve_operator_conversation`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:send_attachment": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:316` (`create_communications_registry::send_attachment`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:send_message": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:175` (`create_communications_registry::send_message`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:send_operator_attachment": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:140` (`create_communications_registry::send_operator_attachment`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:send_operator_message": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:108` (`create_communications_registry::send_operator_message`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:send_proactive_message": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:568` (`create_communications_registry::send_proactive_message`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:set_channel_project": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:515` (`create_communications_registry::set_channel_project`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-communications:unlink_identity": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/communications.py:656` (`create_communications_registry::unlink_identity`); blocked on #21583 Communications to port channel, conversation and delivery services. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:create_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:98` (`create_cron_registry::create_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:delete_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:297` (`create_cron_registry::delete_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:get_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:184` (`create_cron_registry::get_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:list_cron_jobs": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:67` (`create_cron_registry::list_cron_jobs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:list_cron_runs": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:362` (`create_cron_registry::list_cron_runs`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:run_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:319` (`create_cron_registry::run_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:toggle_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:274` (`create_cron_registry::toggle_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-cron:update_cron_job": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/cron.py:205` (`create_cron_registry::update_cron_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-hub:get_machine_id": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/hub.py:111` (`create_hub_registry::get_machine_id`); blocked on #21559 Config, runtime handshake and grants to port the machine identity tool. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-hub:hub_stats": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/hub.py:345` (`create_hub_registry::hub_stats`); blocked on #21589 Admin, metrics, traces and telemetry to port aggregate hub statistics. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-hub:list_all_projects": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/hub.py:138` (`create_hub_registry::list_all_projects`); blocked on #21585 Projects, files and hub documents to port cross-project project inventory. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-hub:list_cross_project_sessions": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/hub.py:291` (`create_hub_registry::list_cross_project_sessions`); blocked on #21562 Sessions and transcripts to port cross-project session queries. #21570 MCP front door flip must re-front this registry onto Rust."
+  },
+  "MCP gobby-hub:list_cross_project_tasks": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/mcp_proxy/tools/hub.py:206` (`create_hub_registry::list_cross_project_tasks`); blocked on #21560 Tasks to port cross-project task queries. #21570 MCP front door flip must re-front this registry onto Rust."
+  }
+}
