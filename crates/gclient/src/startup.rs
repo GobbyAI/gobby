@@ -464,7 +464,13 @@ pub fn resolve_probe_env_at(
 }
 
 fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
-    let default_daemon_url = gobby_core::daemon_url::daemon_url();
+    let default_daemon_url = match &args.daemon_url {
+        Some(url) => url.clone(),
+        None => gobby_core::daemon_url::daemon_url().map_err(|err| StartupError::TokenFile {
+            path: "~/.gobby/bootstrap.yaml".into(),
+            detail: err.to_string(),
+        })?,
+    };
     let default_gobby_home = if args.token_file.is_some() {
         PathBuf::new()
     } else {

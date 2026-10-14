@@ -167,15 +167,16 @@ fn connect_after_grant_rehandshake(original: anyhow::Error) -> anyhow::Result<Cl
             ),
         )));
     };
-    let acquired =
-        match crate::grant::rehandshake(&crate::grant::AcquireRequest::from_process(&root)) {
-            Ok(acquired) => acquired,
-            Err(error) => {
-                return Err(indexed_path_lost_after_rehandshake(
-                    original.context(format!("grant rehandshake failed: {error}")),
-                ));
-            }
-        };
+    let acquired = match crate::grant::AcquireRequest::from_process(&root)
+        .and_then(|request| crate::grant::rehandshake(&request))
+    {
+        Ok(acquired) => acquired,
+        Err(error) => {
+            return Err(indexed_path_lost_after_rehandshake(
+                original.context(format!("grant rehandshake failed: {error}")),
+            ));
+        }
+    };
     let crate::grant::PostgresCapability::Direct { dsn, .. } =
         &acquired.bundle.capabilities.postgres
     else {

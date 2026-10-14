@@ -95,7 +95,7 @@ fn present_via_daemon<T>(
         require_acquired_grant(&grant, capability)?;
         return send(&grant);
     };
-    let request = AcquireRequest::from_process(&root);
+    let request = AcquireRequest::from_process(&root)?;
     let mut last_ai = None;
     match crate::grant::present_bundle_with_single_retry(&request, &grant, |bundle| {
         if let Err(error) = require_acquired_grant(bundle, capability) {
@@ -134,7 +134,7 @@ pub fn transcribe_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_api_key()?;
-    let url = daemon_url(VOICE_TRANSCRIBE_PATH);
+    let url = daemon_url(VOICE_TRANSCRIBE_PATH)?;
     let file_name = file_name.to_string();
     let mime = mime.to_string();
     let language = options
@@ -193,7 +193,7 @@ pub fn describe_image_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_api_key()?;
-    let url = daemon_url(VISION_EXTRACT_PATH);
+    let url = daemon_url(VISION_EXTRACT_PATH)?;
     let file_name = file_name.to_string();
     let mime = mime.to_string();
     let provider = binding.provider.clone();
@@ -295,7 +295,7 @@ fn generate_text_via_daemon(
     cfg.require_granted(capability)?;
     let client = daemon_client()?;
     let token = read_api_key()?;
-    let url = daemon_url(TEXT_GENERATE_PATH);
+    let url = daemon_url(TEXT_GENERATE_PATH)?;
     let (candidate_timeout, cli_candidate_timeout) = budget.candidate_timeouts();
     // An explicit daemon candidate chain pins the exact provider/model
     // sequence. Otherwise the daemon selects candidates from the requested
@@ -361,7 +361,7 @@ pub fn embed_via_daemon(
     let binding = cfg.binding(capability);
     let client = daemon_client()?;
     let token = read_api_key()?;
-    let url = daemon_url(EMBEDDINGS_PATH);
+    let url = daemon_url(EMBEDDINGS_PATH)?;
     let body = embeddings_request_body(
         input,
         is_query,

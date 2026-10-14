@@ -115,7 +115,7 @@ pub fn daemon_agentic_chat(
             "daemon agentic chat profile is required",
         ));
     }
-    let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH);
+    let url = daemon_url(DAEMON_CHAT_COMPLETIONS_PATH)?;
     let client = daemon_client()?;
     let token = read_api_key()?;
     let request_id = uuid::Uuid::new_v4().to_string();

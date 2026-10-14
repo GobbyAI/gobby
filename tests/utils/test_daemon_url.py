@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.utils.daemon_url import (
     DaemonUrlError,
     daemon_url,
@@ -178,6 +179,36 @@ def test_invalid_bootstrap_daemon_url_raises(tmp_path: Path) -> None:
 
     with pytest.raises(DaemonUrlError):
         resolve_daemon_url(path, env={})
+
+
+@pytest.mark.parametrize("value", [123, 1.5, True, ["http://localhost:61234"], {"url": "x"}])
+def test_wrong_typed_bootstrap_daemon_url_raises(tmp_path: Path, value: object) -> None:
+    path = _write_bootstrap(tmp_path / "bootstrap.yaml", yaml.safe_dump({"daemon_url": value}))
+
+    with pytest.raises(BootstrapConfigError, match="^daemon_url must be a string$"):
+        resolve_daemon_url(path, env={})
+
+
+def test_null_bootstrap_daemon_url_is_absent(tmp_path: Path) -> None:
+    path = _write_bootstrap(tmp_path / "bootstrap.yaml", "daemon_url: null\ndaemon_port: 61234\n")
+
+    assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:61234"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"GOBBY_DAEMON_URL": "http://localhost:61234"}, "http://localhost:61234"),
+        ({"GOBBY_PORT": "61234"}, "http://127.0.0.1:61234"),
+        ({"GOBBY_DAEMON_PORT": "61234"}, "http://127.0.0.1:61234"),
+    ],
+)
+def test_env_override_bypasses_wrong_typed_bootstrap_url(
+    tmp_path: Path, env: dict[str, str], expected: str
+) -> None:
+    path = _write_bootstrap(tmp_path / "bootstrap.yaml", "daemon_url: 123\n")
+
+    assert resolve_daemon_url(path, env=env) == expected
 
 
 @pytest.mark.parametrize("value", ["", " \t\r\n ", "\x1c", "\x1d", "\x1e", "\x1f"])

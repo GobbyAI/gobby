@@ -75,12 +75,14 @@ fn install_provenance_for_running_binary() -> (Option<String>, Option<String>) {
     read_install_provenance(dir)
 }
 
-pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
+pub fn diagnose(cli: &str, hook_type: &str) -> anyhow::Result<DiagnoseOutput> {
     let cfg = CliConfig::for_cli(cli);
     let cli_recognized = cfg.is_some();
 
-    let endpoint = bootstrap::read_daemon_endpoint();
-    let url = daemon_url::daemon_url();
+    let url = daemon_url::daemon_url()?;
+    // An environment override can bypass an invalid bootstrap URL. These
+    // fields describe bootstrap metadata only; `url` is the checked dial target.
+    let endpoint = bootstrap::read_daemon_endpoint().unwrap_or_default();
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project_root = project::find_project_root(&cwd);
@@ -110,7 +112,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
         .unwrap_or(false);
     let failure_inventory = diagnostics::failure_inventory();
 
-    DiagnoseOutput {
+    Ok(DiagnoseOutput {
         schema_version: DIAGNOSE_SCHEMA_VERSION,
         ghook_version: GHOOK_VERSION,
         cli: cli.to_string(),
@@ -132,7 +134,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
         failure_dir: failure_inventory.failure_dir,
         recent_failure_count: failure_inventory.recent_failure_count,
         recent_failures: failure_inventory.recent_failures,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -142,7 +144,7 @@ mod tests {
 
     #[test]
     fn unknown_cli_marked_not_recognized() {
-        let d = diagnose("unsupported", "session-start");
+        let d = diagnose("unsupported", "session-start").unwrap();
         assert!(!d.cli_recognized);
         assert!(d.source.is_none());
         assert!(!d.critical);
@@ -151,7 +153,7 @@ mod tests {
 
     #[test]
     fn claude_session_start_is_critical_with_terminal_context() {
-        let d = diagnose("claude", "session-start");
+        let d = diagnose("claude", "session-start").unwrap();
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("claude"));
         assert!(d.critical);
@@ -160,7 +162,7 @@ mod tests {
 
     #[test]
     fn codex_pre_tool_use_noncritical_with_terminal_context() {
-        let d = diagnose("codex", "PreToolUse");
+        let d = diagnose("codex", "PreToolUse").unwrap();
         assert!(d.cli_recognized);
         assert!(!d.critical);
         assert!(d.terminal_context_enabled);
@@ -181,7 +183,7 @@ mod tests {
             "PostInvocation",
             "Stop",
         ] {
-            let d = diagnose("agy", hook_type);
+            let d = diagnose("agy", hook_type).unwrap();
             assert!(d.cli_recognized);
             assert_eq!(d.source.as_deref(), Some("agy"));
             assert!(!d.critical, "{hook_type}");
@@ -210,7 +212,7 @@ mod tests {
             ("agy", "Stop", false),
             ("agy", "PreToolUse", false),
         ] {
-            let output = diagnose(cli, hook_type);
+            let output = diagnose(cli, hook_type).unwrap();
             assert!(output.cli_recognized, "{cli} should be recognized");
             assert_eq!(output.source.as_deref(), Some(cli));
             assert_eq!(output.critical, critical, "{cli} {hook_type}");
@@ -219,7 +221,7 @@ mod tests {
 
     #[test]
     fn droid_session_start_is_recognized_critical_with_terminal_context_enabled() {
-        let d = diagnose("droid", "SessionStart");
+        let d = diagnose("droid", "SessionStart").unwrap();
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("droid"));
         assert!(d.critical);
@@ -228,7 +230,7 @@ mod tests {
 
     #[test]
     fn grok_session_start_is_recognized_critical_with_terminal_context_enabled() {
-        let d = diagnose("grok", "session_start");
+        let d = diagnose("grok", "session_start").unwrap();
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("grok"));
         assert!(d.critical);
@@ -237,7 +239,7 @@ mod tests {
 
     #[test]
     fn grok_pre_tool_use_is_recognized_noncritical_with_terminal_context() {
-        let d = diagnose("grok", "pre_tool_use");
+        let d = diagnose("grok", "pre_tool_use").unwrap();
         assert!(d.cli_recognized);
         assert_eq!(d.source.as_deref(), Some("grok"));
         assert!(!d.critical);
@@ -263,7 +265,7 @@ mod tests {
     #[test]
     fn diagnose_output_validates_against_v2_schema() {
         let compiled = compile_v2_schema();
-        let out = diagnose("claude", "session-start");
+        let out = diagnose("claude", "session-start").unwrap();
         let v = serde_json::to_value(&out).unwrap();
         assert_validates(&compiled, &v);
         assert_eq!(v["schema_version"], 2);
@@ -278,7 +280,7 @@ mod tests {
     #[test]
     fn diagnose_output_for_unknown_cli_validates() {
         let compiled = compile_v2_schema();
-        let out = diagnose("cursor", "session-start");
+        let out = diagnose("cursor", "session-start").unwrap();
         let v = serde_json::to_value(&out).unwrap();
         assert_validates(&compiled, &v);
         assert_eq!(v["schema_version"], 2);
@@ -292,7 +294,7 @@ mod tests {
 
     #[test]
     fn schema_version_is_two() {
-        let d = diagnose("claude", "session-start");
+        let d = diagnose("claude", "session-start").unwrap();
         assert_eq!(d.schema_version, 2);
     }
 
@@ -300,11 +302,11 @@ mod tests {
     fn diagnose_reports_api_key_presence_and_401_remediation() {
         let home = tempfile::tempdir().unwrap();
         temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
-            let missing = diagnose("claude", "session-start");
+            let missing = diagnose("claude", "session-start").unwrap();
             assert!(!missing.api_key_present);
 
             std::fs::write(home.path().join("bootstrap.yaml"), "api_key: token\n").unwrap();
-            let present = diagnose("claude", "session-start");
+            let present = diagnose("claude", "session-start").unwrap();
             assert!(present.api_key_present);
             assert!(present.auth_401_remediation.contains("gobby auth login"));
         });

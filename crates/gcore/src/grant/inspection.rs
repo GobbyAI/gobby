@@ -62,9 +62,17 @@ pub fn inspect_cached_grant_at(
         }
     };
     let now = now.unwrap_or_else(unix_now);
-    let daemon_url = daemon_url
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(crate::daemon_url::daemon_url);
+    let daemon_url = match daemon_url {
+        Some(url) => url.to_owned(),
+        None => match crate::daemon_url::daemon_url() {
+            Ok(url) => url,
+            Err(error) => {
+                return CachedGrantInspection::Malformed {
+                    reason: error.to_string(),
+                };
+            }
+        },
+    };
     let token = load_binding(&home, &daemon_url)
         .map(|binding| binding.deployment_token)
         .or_else(|| {

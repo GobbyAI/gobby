@@ -90,7 +90,7 @@ pub fn daemon_mode_layers_at(
         let settings = (|| {
             let mut request = crate::grant::AcquireRequest::from_process_for_project_id(
                 &grant.principal.project_id,
-            );
+            )?;
             request.home = Some(gobby_home);
             request.daemon_url = Some(base_url.to_owned());
             request.deadline = Some(EFFECTIVE_CONFIG_TIMEOUT);
@@ -404,7 +404,15 @@ fn effective_config_state() -> &'static EffectiveConfigState {
                 reason: "Gobby home could not be resolved",
             });
         };
-        match daemon_mode_layers_at(&crate::daemon_url::daemon_url(), &gobby_home) {
+        let daemon_url = match crate::daemon_url::daemon_url() {
+            Ok(url) => url,
+            Err(_) => {
+                return EffectiveConfigState::Failed(EffectiveConfigError::LocalConfiguration {
+                    reason: "daemon_url must be a string",
+                });
+            }
+        };
+        match daemon_mode_layers_at(&daemon_url, &gobby_home) {
             Ok(layers) => EffectiveConfigState::Available(layers),
             Err(error) => EffectiveConfigState::Failed(error),
         }

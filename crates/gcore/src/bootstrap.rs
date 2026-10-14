@@ -148,12 +148,13 @@ pub fn bootstrap_path() -> Option<PathBuf> {
 
 /// Read the daemon endpoint from the default bootstrap path.
 ///
-/// Falls back to [`DaemonEndpoint::default`] on any failure — missing file,
-/// unreadable file, malformed YAML, missing fields, or no home directory.
-pub fn read_daemon_endpoint() -> DaemonEndpoint {
+/// Uses defaults for missing/unreadable files, malformed YAML, missing fields,
+/// or no home directory. A wrong-typed `daemon_url` is a configuration error;
+/// null and blank values are absent.
+pub fn read_daemon_endpoint() -> anyhow::Result<DaemonEndpoint> {
     match bootstrap_path() {
         Some(path) => read_daemon_endpoint_at(&path),
-        None => DaemonEndpoint::default(),
+        None => Ok(DaemonEndpoint::default()),
     }
 }
 
@@ -161,12 +162,12 @@ pub fn read_daemon_endpoint() -> DaemonEndpoint {
 ///
 /// Exposed for tests and for callers that know the path explicitly.
 /// Same fallback semantics as [`read_daemon_endpoint`].
-pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint {
+pub fn read_daemon_endpoint_at(path: &Path) -> anyhow::Result<DaemonEndpoint> {
     let Ok(contents) = std::fs::read_to_string(path) else {
-        return DaemonEndpoint::default();
+        return Ok(DaemonEndpoint::default());
     };
     let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents) else {
-        return DaemonEndpoint::default();
+        return Ok(DaemonEndpoint::default());
     };
 
     let port = yaml
@@ -181,16 +182,17 @@ pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint {
         .map(str::to_owned)
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
 
-    let daemon_url = yaml
-        .get("daemon_url")
-        .and_then(|v| v.as_str())
-        .and_then(non_empty_trimmed);
+    let daemon_url = match yaml.get("daemon_url") {
+        None | Some(serde_yaml::Value::Null) => None,
+        Some(serde_yaml::Value::String(value)) => non_empty_trimmed(value),
+        Some(_) => anyhow::bail!("daemon_url must be a string"),
+    };
 
-    DaemonEndpoint {
+    Ok(DaemonEndpoint {
         daemon_url,
         host,
         port,
-    }
+    })
 }
 
 pub fn read_hub_database_bootstrap_file(
@@ -435,7 +437,10 @@ mod tests {
     fn missing_file_returns_defaults() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("does-not-exist.yaml");
-        assert_eq!(read_daemon_endpoint_at(&path), DaemonEndpoint::default());
+        assert_eq!(
+            read_daemon_endpoint_at(&path).unwrap(),
+            DaemonEndpoint::default()
+        );
     }
 
     #[test]
@@ -443,7 +448,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, ": : not valid yaml ::\n\t").unwrap();
-        assert_eq!(read_daemon_endpoint_at(&path), DaemonEndpoint::default());
+        assert_eq!(
+            read_daemon_endpoint_at(&path).unwrap(),
+            DaemonEndpoint::default()
+        );
     }
 
     #[test]
@@ -451,7 +459,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "").unwrap();
-        assert_eq!(read_daemon_endpoint_at(&path), DaemonEndpoint::default());
+        assert_eq!(
+            read_daemon_endpoint_at(&path).unwrap(),
+            DaemonEndpoint::default()
+        );
     }
 
     #[test]
@@ -459,8 +470,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "other_field: value\n").unwrap();
-        assert_eq!(read_daemon_endpoint_at(&path), DaemonEndpoint::default());
-        assert_eq!(read_daemon_endpoint_at(&path).host, "127.0.0.1");
+        assert_eq!(
+            read_daemon_endpoint_at(&path).unwrap(),
+            DaemonEndpoint::default()
+        );
+        assert_eq!(read_daemon_endpoint_at(&path).unwrap().host, "127.0.0.1");
     }
 
     #[test]
@@ -468,7 +482,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "daemon_port: 61234\n").unwrap();
-        let ep = read_daemon_endpoint_at(&path);
+        let ep = read_daemon_endpoint_at(&path).unwrap();
         assert_eq!(ep.port, 61234);
         assert_eq!(ep.host, DEFAULT_BIND_HOST);
     }
@@ -483,7 +497,7 @@ mod tests {
         )
         .unwrap();
 
-        let ep = read_daemon_endpoint_at(&path);
+        let ep = read_daemon_endpoint_at(&path).unwrap();
 
         assert_eq!(ep.port, 61234);
         assert_eq!(ep.host, "127.0.0.1");
@@ -494,7 +508,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "daemon_port: 60887\nbind_host: 0.0.0.0\n").unwrap();
-        let ep = read_daemon_endpoint_at(&path);
+        let ep = read_daemon_endpoint_at(&path).unwrap();
         assert_eq!(ep.port, 60887);
         assert_eq!(ep.host, "0.0.0.0");
     }
@@ -510,7 +524,7 @@ mod tests {
              bind_host: 0.0.0.0\n",
         )
         .unwrap();
-        let ep = read_daemon_endpoint_at(&path);
+        let ep = read_daemon_endpoint_at(&path).unwrap();
         assert_eq!(
             ep.daemon_url.as_deref(),
             Some("http://gobby.example.test:62000/")
@@ -524,7 +538,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "daemon_port: 70000\n").unwrap();
-        assert_eq!(read_daemon_endpoint_at(&path).port, DEFAULT_DAEMON_PORT);
+        assert_eq!(
+            read_daemon_endpoint_at(&path).unwrap().port,
+            DEFAULT_DAEMON_PORT
+        );
     }
 
     #[test]
@@ -682,7 +699,7 @@ mod tests {
             Some(Path::new("/var/lib/gobby/files"))
         );
         assert_eq!(owner_view.hub_daemon_url, None);
-        let owner_endpoint = read_daemon_endpoint_at(&owner);
+        let owner_endpoint = read_daemon_endpoint_at(&owner).unwrap();
         assert_eq!(owner_endpoint.port, 61234);
 
         let remote = dir.path().join("remote.yaml");
@@ -702,7 +719,10 @@ mod tests {
         let missing_view = read_files_home_view_at(&missing).unwrap();
         assert_eq!(missing_view.files_home, None);
         assert_eq!(missing_view.hub_daemon_url, None);
-        assert_eq!(read_daemon_endpoint_at(&missing), DaemonEndpoint::default());
+        assert_eq!(
+            read_daemon_endpoint_at(&missing).unwrap(),
+            DaemonEndpoint::default()
+        );
 
         let relative = dir.path().join("relative.yaml");
         fs::write(&relative, "datastore_mode: local\nfiles_home: files\n").unwrap();

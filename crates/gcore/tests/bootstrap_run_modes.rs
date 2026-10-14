@@ -108,7 +108,7 @@ fn blank_daemon_url_falls_back_to_local_endpoint() -> Result<()> {
         }))?;
         std::fs::write(&path, yaml)?;
         assert_eq!(
-            gobby_core::daemon_url::daemon_url_at(&path),
+            gobby_core::daemon_url::daemon_url_at(&path)?,
             "http://127.0.0.1:61234",
             "blank daemon_url {value:?} must use the local endpoint"
         );

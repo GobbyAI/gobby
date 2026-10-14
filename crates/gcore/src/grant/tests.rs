@@ -228,7 +228,7 @@ fn acquire_with_ignores_process_environment() {
     assert_eq!(acquired.source, GrantSource::Cache);
     assert_eq!(acquired.bundle.principal.kind, PrincipalKind::Interactive);
 
-    let process = AcquireRequest::from_process(&harness.project_root);
+    let process = AcquireRequest::from_process(&harness.project_root).unwrap();
     assert_eq!(
         process.managed_bootstrap.as_deref(),
         Some(poison_path.as_path())
@@ -258,7 +258,7 @@ fn from_process_treats_blank_agent_token_as_absent() {
                 None => std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV),
             }
         }
-        let request = AcquireRequest::from_process(&harness.project_root);
+        let request = AcquireRequest::from_process(&harness.project_root).unwrap();
         assert_eq!(
             request.managed_envelope.as_deref(),
             expected,
@@ -283,7 +283,7 @@ fn acquire_with_explicit_project_id_needs_no_project_root() {
     assert_eq!(acquired.source, GrantSource::Cache);
     assert_eq!(acquired.bundle.principal.project_id, PROJECT);
 
-    let process = AcquireRequest::from_process_for_project_id(PROJECT);
+    let process = AcquireRequest::from_process_for_project_id(PROJECT).unwrap();
     assert_eq!(process.project_id.as_deref(), Some(PROJECT));
     assert!(process.project_root.as_os_str().is_empty());
 }

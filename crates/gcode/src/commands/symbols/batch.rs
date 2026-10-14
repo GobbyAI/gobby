@@ -131,7 +131,7 @@ pub fn symbols(
     let batch = prepare_symbol_batch(&ctx.project_root, ids, symbols)?;
 
     if batch.total_symbol_bytes > 0 && batch.total_file_bytes > batch.total_symbol_bytes {
-        let url = gobby_core::daemon_url::daemon_url();
+        let url = gobby_core::daemon_url::daemon_url()?;
         savings::report_savings(
             &url,
             batch.total_file_bytes,

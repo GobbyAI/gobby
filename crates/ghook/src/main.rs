@@ -90,7 +90,13 @@ fn run_diagnose(args: &Args) -> ExitCode {
         eprintln!("--diagnose requires --cli and --type");
         return ExitCode::from(2);
     };
-    let out = diagnose::diagnose(cli, hook_type);
+    let out = match diagnose::diagnose(cli, hook_type) {
+        Ok(out) => out,
+        Err(error) => {
+            eprintln!("diagnose configuration failed: {error}");
+            return ExitCode::from(2);
+        }
+    };
     match serde_json::to_string_pretty(&out) {
         Ok(s) => {
             let _ = output::stdout(format_args!("{s}\n"));

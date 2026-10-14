@@ -94,6 +94,40 @@ fn gobby_home_env_keeps_envelope_and_marker_under_same_root()
     Ok(())
 }
 
+#[test]
+fn wrong_typed_daemon_url_keeps_inbox_and_never_dials_fallback()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    listener.set_nonblocking(true)?;
+    fs::write(
+        gobby_home.path().join("bootstrap.yaml"),
+        format!(
+            "daemon_url: 123\ndaemon_port: {}\n",
+            listener.local_addr()?.port()
+        ),
+    )?;
+    let mut command = ghook_command(home.path(), "");
+    command
+        .env("GOBBY_HOME", gobby_home.path())
+        .env_remove("GOBBY_DAEMON_URL")
+        .env_remove("GOBBY_PORT")
+        .env_remove("GOBBY_DAEMON_PORT");
+    let output = run_ghook_command(command)?;
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)?.contains("daemon_url must be a string"));
+    assert_eq!(
+        fs::read_dir(gobby_home.path().join("hooks/inbox"))?.count(),
+        1
+    );
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    Ok(())
+}
+
 fn home_with_blocked_inbox() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let hooks_dir = home.path().join(".gobby").join("hooks");

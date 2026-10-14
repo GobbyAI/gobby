@@ -16,12 +16,14 @@ pub(crate) fn daemon_client() -> Result<Client, AiError> {
         .map_err(super::super::reqwest_error)
 }
 
-pub(crate) fn daemon_url(path: &str) -> String {
-    format!(
+pub(crate) fn daemon_url(path: &str) -> Result<String, AiError> {
+    Ok(format!(
         "{}{}",
-        crate::daemon_url::daemon_url().trim_end_matches('/'),
+        crate::daemon_url::daemon_url()
+            .map_err(|error| AiError::not_configured(None, error.to_string()))?
+            .trim_end_matches('/'),
         path
-    )
+    ))
 }
 
 pub(crate) fn read_api_key() -> Result<String, AiError> {
