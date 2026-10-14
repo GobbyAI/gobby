@@ -158,6 +158,20 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_sandbox_cargo_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the invoking reviewer's Cargo artifact routing outside test fixtures.
+
+    Tests that exercise configured or sandbox targets set these variables explicitly.
+    """
+    for name in (
+        "CARGO_TARGET_DIR",
+        "GOBBY_SANDBOX_CARGO_TARGET",
+        "GOBBY_SANDBOX_CARGO_WORKSPACE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_provider_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test without the runner's provider credentials.
 
