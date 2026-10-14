@@ -348,6 +348,21 @@ def classify_git_mutation(
             ):
                 return _ShellSegmentMetadata("execute")
     recovery = any(flag in arguments for flag in {"--quit", "--skip", "--continue", "--abort"})
+    options = arguments[: arguments.index("--")] if "--" in arguments else arguments
+    if (
+        operation == "restore"
+        and any(
+            argument == "--staged"
+            or (argument.startswith("-") and not argument.startswith("--") and "S" in argument[1:])
+            for argument in options
+        )
+        and not any(
+            argument == "--worktree"
+            or (argument.startswith("-") and not argument.startswith("--") and "W" in argument[1:])
+            for argument in options
+        )
+    ):
+        return _ShellSegmentMetadata("execute", repo_mutation=True)
     if operation == "apply":
         if any(flag in arguments for flag in {"--check", "--stat", "--numstat"}):
             return _ShellSegmentMetadata("execute")
@@ -379,7 +394,9 @@ def classify_git_mutation(
         paths = [
             word
             for word in candidates
-            if _looks_path_target(word) or _contains_unexpanded_shell_reference(word)
+            if "--" in arguments
+            or _looks_path_target(word)
+            or _contains_unexpanded_shell_reference(word)
         ]
         return _ShellSegmentMetadata(
             "execute" if operation == "add" else "write",

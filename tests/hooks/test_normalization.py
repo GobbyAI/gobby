@@ -3092,20 +3092,39 @@ class TestExternalNavigationScope:
         assert data["canonical_tool_confidence"] == "low"
         assert not data.get("canonical_repo_mutation")
 
-    def test_git_restore_pathspecs_without_separator_are_write_paths(self) -> None:
-        for command, expected in (
-            ("git restore --staged src/gobby/x.py", ["src/gobby/x.py"]),
-            ("git restore -s HEAD~1 --worktree a.md b.md", ["a.md", "b.md"]),
-            ("git restore --staged -- notes.md", ["notes.md"]),
-            ("git checkout main", []),
+    def test_git_restore_classifies_index_and_worktree_targets(self) -> None:
+        for command, kind, expected in (
+            ("git restore --staged src/gobby/x.py", "execute", []),
+            ("git restore -s HEAD~1 --worktree a.md b.md", "write", ["a.md", "b.md"]),
+            ("git restore --staged -- notes.md", "execute", []),
+            ("git checkout main", "write", []),
         ):
             data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
 
             normalize_tool_fields(data)
 
-            assert data["canonical_tool_kind"] == "write", command
+            assert data["canonical_tool_kind"] == kind, command
             assert data["canonical_repo_mutation"] is True, command
             assert data.get("canonical_file_paths", []) == expected, command
+
+    @pytest.mark.parametrize(
+        "command, kind, paths",
+        [
+            ("git restore -- -S", "write", ["-S"]),
+            ("git restore -- -SW", "write", ["-SW"]),
+            ("git restore --staged -- -W", "execute", []),
+            ("git restore -S -- -W", "execute", []),
+            ("git restore -SW foreign.txt", "write", ["foreign.txt"]),
+            ("git restore -S --worktree foreign.txt", "write", ["foreign.txt"]),
+        ],
+    )
+    def test_git_restore_respects_path_separator(
+        self, command: str, kind: str, paths: list[str]
+    ) -> None:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+        assert data["canonical_tool_kind"] == kind
+        assert data.get("canonical_file_paths", []) == paths
 
     def test_python_heredoc_literal_targets_become_write_paths(self) -> None:
         command = (

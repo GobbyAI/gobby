@@ -6,7 +6,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from gobby.workflows.commit_guard_shell import parse_git_commit_invocations
+from gobby.workflows.git_commit_parsing import parse_git_commit_invocations
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
