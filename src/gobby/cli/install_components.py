@@ -20,6 +20,7 @@ from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import bootstrap_path
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -210,7 +211,10 @@ def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
         "gclient": install_setup._install_gclient_from_submodule,
         "gterm": install_setup._install_gterm_from_submodule,
     }[name]
-    outcome = installer(bin_dir)
+    try:
+        outcome = installer(bin_dir)
+    except BinaryReleaseVersionError as exc:
+        raise click.ClickException(str(exc)) from exc
     if outcome:
         version = _workspace_client_version(name)
         if name == "gclient":
