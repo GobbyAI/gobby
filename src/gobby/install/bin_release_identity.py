@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 from dataclasses import asdict, dataclass
@@ -141,6 +143,29 @@ def release_identity_path(bin_dir: Path, name: str) -> Path:
     return bin_dir / f".{name}-release-identity.json"
 
 
+def _same_legacy_executable(source: Path, installed: Path) -> bool:
+    """Compare legacy executable bytes without modifying either signed original."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="gobby-release-identity-") as directory:
+            copies = [Path(directory) / "candidate", Path(directory) / "installed"]
+            for original, copy in zip((source, installed), copies, strict=True):
+                shutil.copyfile(original, copy)
+                # Signing can also adjust Mach-O link-edit load commands. Apply
+                # the same signing policy before stripping signature blobs.
+                for command in (
+                    ["codesign", "-f", "-s", "-", "-i", "gobby-release-comparison", str(copy)],
+                    ["codesign", "--remove-signature", str(copy)],
+                ):
+                    result = spawn.run(command, check=False, capture_output=True, timeout=30)
+                    if result.returncode != 0:
+                        return False
+            return copies[0].read_bytes() == copies[1].read_bytes()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def check_binary_release(
     name: str,
     source: Path,
@@ -198,6 +223,8 @@ def check_binary_release(
         same_source = candidate.artifact_sha256 == (
             prior_hash or hashlib.sha256(installed.read_bytes()).hexdigest()
         )
+        if not same_source and prior_hash is None:
+            same_source = _same_legacy_executable(source, installed)
         if same_source:
             # Exact legacy bytes establish artifact identity, never the current
             # checkout's tree: the artifact may predate edits in that checkout.
@@ -205,9 +232,13 @@ def check_binary_release(
                 version, f"artifact:{artifact_sha256}", artifact_sha256
             )
     if not same_source:
-        raise BinaryReleaseVersionError(
-            f"{name}: changed or unverified source under installed version {version}; "
+        remedy = (
             "bump its patch version before promotion"
+            if workspace_root is not None
+            else "the publisher must bump its patch version; install a newer published release"
+        )
+        raise BinaryReleaseVersionError(
+            f"{name}: changed or unverified source under installed version {version}; {remedy}"
         )
     return candidate
 

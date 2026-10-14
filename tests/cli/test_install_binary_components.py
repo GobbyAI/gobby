@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 
 from gobby.cli import install_components
@@ -27,8 +28,34 @@ from gobby.cli.install_setup import (
 )
 from gobby.cli.runtime import CliRuntime
 from gobby.install.bin_freshness_promotion import native_bin_predates_source
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.runner_pid_file import ProbeState
 from gobby.utils import deps
+
+
+@pytest.mark.parametrize("component", ["gclient", "gterm"])
+def test_component_release_refusal_is_a_cli_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, component: str
+) -> None:
+    destination = tmp_path / "bin" / component
+    destination.parent.mkdir()
+    destination.write_bytes(b"installed")
+    remedy = f"{component}: changed source; bump its patch version before promotion"
+
+    def refuse(_bin_dir: Path) -> str:
+        raise BinaryReleaseVersionError(remedy)
+
+    monkeypatch.setattr(f"gobby.cli.install_setup._install_{component}_from_submodule", refuse)
+    with pytest.raises(click.ClickException, match=remedy):
+        run_install_components(
+            (component,),
+            project_path=tmp_path,
+            no_interactive=True,
+            embedding=None,
+            runtime=cast(CliRuntime, SimpleNamespace()),
+            bin_dir=destination.parent,
+        )
+    assert destination.read_bytes() == b"installed"
 
 
 def test_binary_components_promote_while_a_daemon_singleton_is_live(

@@ -1,7 +1,10 @@
 """Workspace promotions cannot hide source changes behind an installed version."""
 
+import json
 import logging
+import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +15,8 @@ import pytest
 
 from gobby.cli import cutover, install_setup_gclient, install_setup_gterm
 from gobby.install import bin_freshness_promotion as promotion
+from gobby.install import bin_release_identity as release
+from gobby.install import bin_set_coherence as coherence
 from gobby.install.bin_release_identity import release_identity_path
 from gobby.install.bin_set_coherence import promote_workspace_binary_set
 
@@ -305,9 +310,74 @@ def test_component_archive_refuses_changed_bytes_under_installed_version(tmp_pat
     promote()
     original = (bin_dir / "gclient").read_bytes()
     source.write_text(source.read_text() + "# changed release source\n")
-    with pytest.raises(RuntimeError, match=r"gclient.*bump.*patch version"):
+    with pytest.raises(RuntimeError, match=r"gclient.*bump.*patch version") as refusal:
         promote()
+    assert "publisher must bump its patch version; install a newer published release" in str(
+        refusal.value
+    )
     assert (bin_dir / "gclient").read_bytes() == original
     binary(source, "1.0.1")
     promote()
     assert (bin_dir / "gclient").read_bytes() == source.read_bytes()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS signing changes installed bytes")
+def test_legacy_signed_coherent_set_accepts_only_identical_executable(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = ("gcode", "gdaemon", "ghook")
+    sources = {name: tmp_path / "artifacts" / name for name in members}
+    for source in sources.values():
+        source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile("/bin/echo", source)
+        source.chmod(0o755)
+    monkeypatch.setattr(release, "probe_native_bin_version", lambda _path: "1.0.0")
+    monkeypatch.setattr(
+        coherence,
+        "probe_set_member_identity",
+        lambda _path, _name: {"runner_protocol": 1, "assets_root_hash": "root"},
+    )
+    bin_dir = tmp_path / "bin"
+    promote_workspace_binary_set(sources, bin_dir=bin_dir, workspace_root=workspace)
+    installed = {name: (bin_dir / name).read_bytes() for name in members}
+    artifacts = {name: source.read_bytes() for name, source in sources.items()}
+    for name in members:
+        assert installed[name] != sources[name].read_bytes()
+        release_identity_path(bin_dir, name).unlink()
+        assert not (bin_dir / f".{name}-source-sha256").exists()
+
+    (workspace / "crates/gcore/src/lib.rs").write_text("pub fn changed() {}\n")
+    promote_workspace_binary_set(sources, bin_dir=bin_dir, workspace_root=workspace)
+    for name in members:
+        receipt = json.loads(release_identity_path(bin_dir, name).read_text())
+        assert receipt["source_identity"].startswith("artifact:")
+        assert (bin_dir / name).read_bytes() == installed[name]
+        assert sources[name].read_bytes() == artifacts[name]
+
+    shutil.copyfile("/bin/cat", sources["gcode"])
+    release_identity_path(bin_dir, "gcode").unlink()
+    with pytest.raises(RuntimeError, match=r"gcode.*bump.*patch version"):
+        promote_workspace_binary_set(sources, bin_dir=bin_dir, workspace_root=workspace)
+    assert {name: (bin_dir / name).read_bytes() for name in members} == installed
+
+
+def test_legacy_signature_comparison_failure_refuses_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = binary(tmp_path / "build" / "gcode")
+    installed = binary(tmp_path / "bin" / "gcode")
+    installed.write_bytes(installed.read_bytes() + b"# signed installed copy\n")
+    original = installed.read_bytes()
+    monkeypatch.setattr("gobby.install.bin_release_identity.sys.platform", "darwin")
+    monkeypatch.setattr(release, "probe_native_bin_version", lambda _path: "1.0.0")
+
+    def failed_codesign(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 1, b"", b"cannot normalize signature")
+
+    monkeypatch.setattr("gobby.install.bin_release_identity.spawn.run", failed_codesign)
+    with pytest.raises(release.BinaryReleaseVersionError, match="newer published release"):
+        release.check_binary_release("gcode", source, bin_dir=installed.parent, workspace_root=None)
+    assert installed.read_bytes() == original
+    assert not release_identity_path(installed.parent, "gcode").exists()
