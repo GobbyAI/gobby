@@ -176,7 +176,12 @@ def _report(message: str, *, error: bool = False) -> None:
     click.echo(message, err=error)
 
 
-def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
+def _stop_admission_refusal(
+    ctx: click.Context,
+    *,
+    wait: bool,
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
+) -> str | None:
     """Apply the restart's stop-time admissions before anything is promoted.
 
     A protected cron run or an unresolved session handoff refuses the stop, so
@@ -190,7 +195,9 @@ def _stop_admission_refusal(ctx: click.Context, *, wait: bool) -> str | None:
     ):
         return "a restart-protected cron run is active; re-run with --wait"
     try:
-        with protect_pending_handoffs(runtime, wait=wait, report=_report):
+        with protect_pending_handoffs(
+            runtime, wait=wait, report=_report, logged_stale_markers=logged_stale_markers
+        ):
             pass
     except HandoffShutdownBlocked as exc:
         return f"{exc}; re-run with --wait"
@@ -314,9 +321,16 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
             raise click.ClickException(refusal)
     root = _workspace_root(workspace)
     bin_dir = native_bin_dir()
+    logged_stale_markers: set[tuple[str, str | None, str]] = set()
 
     def stop_daemon() -> bool:
-        return _do_stop(ctx, False, shutdown_intent="restart", wait=True)
+        return _do_stop(
+            ctx,
+            False,
+            shutdown_intent="restart",
+            wait=True,
+            logged_stale_markers=logged_stale_markers,
+        )
 
     def start_daemon() -> None:
         try:
@@ -340,7 +354,9 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
             start_daemon=start_daemon,
             start_refusal=lambda candidate: (
                 restart_start_refusal(ctx, candidate, expected_identity=expected_identity)
-                or _stop_admission_refusal(ctx, wait=wait)
+                or _stop_admission_refusal(
+                    ctx, wait=wait, logged_stale_markers=logged_stale_markers
+                )
             ),
         )
     except CutoverError as exc:

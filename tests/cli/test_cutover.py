@@ -155,6 +155,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
 ) -> None:
     """Compile a stale candidate and use real native freshness against isolated60892."""
     repo = Path(__file__).resolve().parents[2]
+    # Reuse dependencies across temporary crate roots instead of cold-building each run.
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(cargo_release_dir(repo).parent / "catalog-fixture"))
     fixture = tmp_path / "candidate-core"
     fixture.mkdir()
     core = repo / "crates/gcore"
@@ -423,7 +425,9 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
         assert start_refusal(candidate) is None
 
     monkeypatch.setattr(cutover_module, "restart_start_refusal", restart_start_refusal)
-    monkeypatch.setattr(cutover_module, "_stop_admission_refusal", lambda _ctx, *, wait: None)
+    monkeypatch.setattr(
+        cutover_module, "_stop_admission_refusal", lambda _ctx, *, wait, logged_stale_markers: None
+    )
     result = _invoke_cli(tmp_path, monkeypatch, run_cutover, identity=expected)
 
     assert result.exit_code == 0, result.output
@@ -435,7 +439,14 @@ def test_cli_stops_before_starting_the_selected_workspace(
 ) -> None:
     events: list[str] = []
 
-    def stop(_ctx: click.Context, docker_flag: bool, *, shutdown_intent: str, wait: bool) -> bool:
+    def stop(
+        _ctx: click.Context,
+        docker_flag: bool,
+        *,
+        shutdown_intent: str,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+    ) -> bool:
         assert (docker_flag, shutdown_intent, wait) == (False, "restart", True)
         events.append("stop")
         return True
@@ -669,6 +680,7 @@ def test_cutover_waits_for_stop_before_promotion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     events: list[str] = []
+    warning_sets: list[set[tuple[str, str | None, str]]] = []
     real_run_cutover = cutover_module.run_cutover
     _stub_cutover_pipeline(monkeypatch, tmp_path, events)
 
@@ -678,13 +690,26 @@ def test_cutover_waits_for_stop_before_promotion(
 
     @contextmanager
     def protect_pending_handoffs(
-        _runtime: object, *, wait: bool, **_kwargs: object
+        _runtime: object,
+        *,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+        **_kwargs: object,
     ) -> Iterator[None]:
         events.append(f"handoffs wait={wait}")
+        warning_sets.append(logged_stale_markers)
         yield
 
-    def stop(_ctx: click.Context, _docker: bool, *, wait: bool, **_kwargs: object) -> bool:
+    def stop(
+        _ctx: click.Context,
+        _docker: bool,
+        *,
+        wait: bool,
+        logged_stale_markers: set[tuple[str, str | None, str]],
+        **_kwargs: object,
+    ) -> bool:
         events.append(f"stop wait={wait}")
+        warning_sets.append(logged_stale_markers)
         return True
 
     def restart(**_kwargs: object) -> None:
@@ -695,16 +720,26 @@ def test_cutover_waits_for_stop_before_promotion(
     monkeypatch.setattr(cutover_module, "clear_protected_runs", clear_protected_runs)
     monkeypatch.setattr(cutover_module, "protect_pending_handoffs", protect_pending_handoffs)
     monkeypatch.setattr(cutover_module, "start", restart)
-    result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover, extra_args=("--wait",))
-
-    assert result.exit_code == 0, result.output
-    assert events == [
-        "protected_runs wait=True",
-        "handoffs wait=True",
-        "stop wait=True",
-        "promote",
-        "start",
-    ]
+    for invocation in ("first", "second"):
+        result = _invoke_cli(
+            tmp_path / invocation, monkeypatch, real_run_cutover, extra_args=("--wait",)
+        )
+        assert result.exit_code == 0, result.output
+    assert (
+        events
+        == [
+            "protected_runs wait=True",
+            "handoffs wait=True",
+            "stop wait=True",
+            "promote",
+            "start",
+        ]
+        * 2
+    )
+    assert len(warning_sets) == 4
+    assert warning_sets[0] is warning_sets[1]
+    assert warning_sets[2] is warning_sets[3]
+    assert warning_sets[0] is not warning_sets[2]
 
 
 @pytest.mark.parametrize("status", [409, 401, 500])

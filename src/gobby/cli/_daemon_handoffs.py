@@ -11,7 +11,12 @@ from gobby.utils.machine_id import require_machine_id
 
 @contextmanager
 def protect_pending_handoffs(
-    runtime: CliRuntime, *, force: bool = False, wait: bool, report: Callable[[str], None]
+    runtime: CliRuntime,
+    *,
+    force: bool = False,
+    wait: bool,
+    report: Callable[[str], None],
+    logged_stale_markers: set[tuple[str, str | None, str]] | None = None,
 ) -> Iterator[None]:
     if force:
         yield
@@ -21,7 +26,8 @@ def protect_pending_handoffs(
     machine_id = require_machine_id()
     deadline = time.monotonic() + 600
     announced = False
-    logged_stale_markers: set[tuple[str, str | None, str]] = set()
+    if logged_stale_markers is None:
+        logged_stale_markers = set()
     with ExitStack() as stack:
         while True:
             try:
