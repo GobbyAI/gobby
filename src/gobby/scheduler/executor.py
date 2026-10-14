@@ -86,6 +86,22 @@ class CronExecutor:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
 
+    def reap_finished_cron_sessions(self, machine_id: str) -> int:
+        """Close cron parents after their run or dispatched child finishes."""
+        from gobby.storage.cron_children import finished_cron_session_ids
+        from gobby.storage.sessions import SessionManager
+
+        session_manager = getattr(self.services, "session_manager", None)
+        if session_manager is None and self.pipeline_executor is not None:
+            session_manager = self.pipeline_executor.session_manager
+        if session_manager is None:
+            session_manager = SessionManager(self.storage.db)
+        closed = 0
+        for session_id in finished_cron_session_ids(self.storage.db, machine_id):
+            session_manager.update_status(session_id, "deleted")
+            closed += 1
+        return closed
+
     def register_handler(self, name: str, handler: CronHandler) -> None:
         """Register a named handler for the 'handler' action type.
 
