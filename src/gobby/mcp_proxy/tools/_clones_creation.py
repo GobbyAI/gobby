@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.frozen_workspace import frozen_workspace_refusal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.git import run_to_completion
@@ -91,6 +92,14 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
             # Resolve task references before creating anything on disk. A bad task
             # reference must not leave a clone directory behind.
             resolved_task_id = ctx.resolve_task_id(task_id) if task_id else None
+            refusal = await asyncio.to_thread(
+                frozen_workspace_refusal,
+                ctx.clone_storage.db,
+                "create_clone",
+                task_id=resolved_task_id,
+            )
+            if refusal is not None:
+                return refusal
             if cancellation_requested is not None and cancellation_requested.is_set():
                 raise asyncio.CancelledError
 

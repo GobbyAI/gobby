@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.utils import project_context
 from gobby.utils.project_context import IsolationProjectJsonError
@@ -152,7 +153,7 @@ async def create_worktree(
             raise RuntimeError("A task resolver is required when task_id is provided")
         try:
             resolved_task_id = await asyncio.to_thread(resolve_task_id, task_id)
-        except ValueError as exc:
+        except (ValueError, TaskNotFoundError) as exc:
             await _cleanup_git_worktree(
                 git_manager,
                 worktree_path,

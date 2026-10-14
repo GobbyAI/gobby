@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.frozen_workspace import frozen_workspace_refusal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
@@ -117,6 +118,11 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         session_id = get_current_session_id()
         if not session_id:
             return {"success": False, "error": "No session context available"}
+        refusal = frozen_workspace_refusal(
+            ctx.clone_storage.db, "claim_clone", claimed_clone_id=clone_id
+        )
+        if refusal is not None:
+            return refusal
         updated = ctx.clone_storage.claim(clone_id, session_id)
         if not updated:
             clone = ctx.clone_storage.get(clone_id)
