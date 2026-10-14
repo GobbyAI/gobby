@@ -13,7 +13,7 @@ runners skip hub-only loops) and the run-modes slice
 (`.gobby/plans/completed/gdaemon-run-modes.md`). Josh approved decisions A-D on
 2026-10-12, and C put Python hub-side routing to remote nodes in this epic.
 
-When the active sections close:
+When every section closes:
 - A versioned hub-to-node command envelope and its loopback gdaemon route are a
   committed contract with a golden corpus.
 - The Python hub sends a spawn, a cancel, or a terminal write aimed at another
@@ -28,15 +28,20 @@ When the active sections close:
   project, and every machine's row in gclient carries its attention state.
 - Hub loops that touch local panes, processes, or files act only on their own
   machine's rows.
+- The hub lists, merges, and removes a node's finished worktrees and clones
+  through that node, and expiry cleanup reaches them (P4).
+- Selecting a machine in gclient switches the projects pane to that
+  machine's checkouts, with their branch and ahead/behind counts (P4).
+- A live test pairs an isolated hub with an isolated node and drives a
+  spawn, its hooks, a terminal write, an attention response, a cancel, a
+  merge and a removal end to end for each of the five providers (P5).
 
-Four sections are deferred. D1 holds finishing a remote workspace: merging
-and removing it. D2 builds the gdaemon route once #24090 (Node channel) lands. D3
-holds the machine-scoped project view. D4 is the live proof.
-Until D2 lands, the client refuses every remote request with
-`node_routing_unavailable`, and every test here drives a fake route or a fake
-node. The node handlers are #24148 (S2.7 node half: node-local agent spawn and
-worktrees in gdaemon). A node agent's hooks reach the hub through #24150 (S2.11
-node half: the node-local envelope ledger forwards each envelope to the hub).
+1.2 builds the gdaemon route on the node channel that #24090 (Node channel)
+landed. The node handlers are #24148 (S2.7 node half: node-local agent spawn
+and worktrees in gdaemon), planned in `.gobby/plans/node-halves.md`. A node
+agent's hooks reach the hub through #24150 (S2.11 node half: the node-local
+envelope ledger forwards each envelope to the hub), planned there too. P1 to
+P4 test against a fake route or a fake node, and P5 runs the real pair.
 #24149 (S2.7 hub half) later redoes the Python callers in Rust and reuses the
 envelope and the route.
 
@@ -59,7 +64,7 @@ Operator decisions (Josh, 2026-10-12, relayed by Orchestrator gobby#15977):
    Python callers live in the `src/gobby/hub/` package and are transitional.
 3. **Q2 a. Eligibility.** A machine is eligible for a project when a
    `project_checkouts` row exists for (project, machine) and the gdaemon registry
-   reports its channel live, read through the internal route (1.1 contract, D2).
+   reports its channel live, read through the internal route (1.1 contract, 1.2).
    A node registers its checkout rows through 1.4's route, and 1.3 reads them
    (Decision 18).
 4. **Q3 a. Target machine.** A spawn defaults to the requesting session's
@@ -107,17 +112,19 @@ Writer decisions:
     machine-scoped broadcasts and a refetch on every switch.
 
     Josh's ruling settles listing: the machine rows above are the machine list,
-    so no `/api/machines` consumer is added. The projects pane does not follow
-    the machine filter. Its cards show one checkout's branch and ahead/behind
-    counts from the daemon's project status, and no v1 command reports a node's
-    git state, so D3 holds that view for a planning pass.
+    so no `/api/machines` consumer is added. The projects pane follows the
+    machine filter too (4.7, 4.8). Its cards show one checkout's branch and
+    ahead/behind counts, and for a node's checkout the hub asks the node
+    (Decision 21).
 11. **Hub-originated runs.** Builds, cron runs, and pipelines execute on the hub
     runner. Their machine-local steps (integration workspace, merge, branch
     cleanup, pipeline exec steps) run on the hub's machine, so that is their
     origin machine. Cron runs already record it (`cron_runs.machine_id`). Their
     dispatched agents keep spawning locally, so this plan changes nothing for
-    them. A build whose integration runs on a node needs git transport and
-    node-side build steps; that is outside this plan.
+    them. Their integration stays on the hub's machine by design: a build's
+    integration workspace, merge, and branch cleanup run git in the project's
+    checkout on the machine that runs the build, and the hub runner runs every
+    build.
 12. **Python-to-gdaemon authentication.** gdaemon already gives its Python
     backend `GOBBY_FRONT_DOOR_SECRET` (`crates/gdaemon/src/state.rs`). The
     internal route admits a request only from a loopback peer that presents that
@@ -174,8 +181,13 @@ Writer decisions:
       repeats an exit until a report carrying it gets 200, so an agent that
       launches and exits between two health passes, or a hub restart after
       the 200, loses no row. A row exists only for a workspace that held a
-      launched agent, and the hub sends no workspace command in v1.
-    - Finishing a remote workspace, merging and removing it, is D1.
+      launched agent.
+    - The hub finishes a remote workspace through its node (P4). The node
+      merges the branch into its own checkout and removes the workspace, and
+      the hub updates or deletes the row only after the node answers
+      (Decision 20). The managers above stay this-machine-only, so
+      `src/gobby/hub/remote_workspaces.py` reads and writes node rows
+      directly, and the workspace tools route a node's row there.
 16. **Hook machine binding.** Q3 trusts `sessions.machine_id`, which comes from
     the hook envelope (`ClaudeCodeAdapter` reads `input_data["machine_id"]`).
     When a hook request carries a verified front-door identity, the hub rejects
@@ -185,15 +197,18 @@ Writer decisions:
     treats another machine's row as a miss, before any write (2.2). A local
     hook binds any row, as today. The envelope machine is the marker because it
     reaches every adapter's event and every replayed envelope.
-17. **#24090 dependency.** The gdaemon route extends the node channel's registry
-    and handler, which #24090 (Node channel: hub registers, heartbeats, replaces,
-    revokes) creates. Per the plan-coverage contract, work gated on another task
-    is a typed deferral, so the route is deferred section D2 (Orchestrator ruling,
-    2026-10-12). 1.1 specifies the route's HTTP contract, so 1.3 builds its client
-    against it and tests it against a fake route. Until D2 lands, the client
-    refuses every remote request with `node_routing_unavailable`, and no active
-    section claims a live hub-to-node path. D4 holds the live proof. 1.1 adds the
-    S4.2 ← #24090 edge to `ROADMAP.md`.
+17. **Every section is in scope (Josh's "No deferrals" ruling, memory
+    878d0c35, relayed by gobby#15977 on 2026-10-13).** The gdaemon route is
+    1.2: it extends the node channel's registry and handler, which #24090
+    (Node channel: hub registers, heartbeats, replaces, revokes) landed. 1.1
+    specifies the route's HTTP contract, so 1.3 builds its client against it
+    and tests it against a fake route. The client answers
+    `node_routing_unavailable` whenever the route answers 404, which includes
+    a standalone or node front door. The node half of every command is in
+    `.gobby/plans/node-halves.md` (#24148, #24150), and work this plan needs
+    from it is a cross-plan edge under Constraints, which the Orchestrator
+    sets at expansion. P5 is the live proof. 1.1 added the S4.2 ← #24090
+    edge to `ROADMAP.md`.
 18. **A node writes through key-bound hub routes, and the hub owns every
     row.** Josh asked of the stamped plan, verbatim: "I'm still wondering why
     the node can't access the hub api with an api key? Does it need database
@@ -225,6 +240,14 @@ Writer decisions:
     Each takes its machine and project from a terminal row the hub created
     under the first use, on the key's machine and naming the reported run, and
     the route inserts it directly without calling a guarded manager.
+
+    P4's remote workspace writes add no fourth use either. They act only on
+    `worktrees` and `clones` rows the report route created, keyed by the
+    row's own `machine_id`. The hub marks a row merged or deletes it only
+    after that machine's node answered the outcome over its channel, whose
+    key is the machine's (1.2). No P4 write reads the node's filesystem or
+    calls a guarded manager, and a user request names a row by id, never a
+    machine to write.
 
     The machine comes only from the verified key
     (`FrontDoorIdentity.machine_id`). No node-to-hub body carries a machine
@@ -271,6 +294,66 @@ Writer decisions:
       operator's policy, exact at admission.
     - `exits` is not a snapshot: the node sends at most 1,000 per report,
       oldest first, and the rest follow in later reports.
+20. **A node merges and removes its own workspaces (P4).** The branch, the
+    workspace, and the checkout it branched from all live on the node, so the
+    node merges into its own checkout, as a local merge lands in the local
+    checkout. No git transport or credential crosses machines, and the hub
+    may hold no checkout of the project. Rejected: moving the node's commits
+    to the hub by bundle or push, which lands the work in a different
+    checkout than it branched from and adds a transport.
+    - The node's merge is stricter than `_merge_worktree_impl`. It refuses
+      when the target checkout has staged entries or dirty paths that the
+      incoming change touches, it stashes nothing (the local merge stashes
+      `.gobby/`), and it gives no schema-identity cutover advisory, because a
+      node runs no Python daemon. On a conflict it aborts the merge and
+      restores the checkout's original branch.
+    - Expected refusals are ok results with an `outcome`, so callers branch
+      on data: `workspace.merge` answers `merged`, `already_merged`,
+      `conflict`, `target_dirty`, or `busy`, and `workspace.remove` answers
+      `removed`, `dirty`, `unmerged`, or `busy`. Error replies are only
+      `invalid_payload`, `not_found`, and `command_failed` with its stage.
+    - A workspace is `busy` while an accepted or live run, or a launched
+      workspace record whose exit no report has delivered yet, names its
+      path, or while another merge or removal holds its path or its
+      checkout. A launched record lasts until a report carrying the run's
+      exit gets 200 (1.1), so after a removal no report names the path again
+      and 1.4's route never re-inserts a removed row.
+    - The hub marks a row `merged` on `merged` or `already_merged`, with
+      `cleanup_after` now for a worktree and seven days on for a clone, as
+      the local tools do. It deletes the row on `removed`. It never clears
+      `agent_session_id` on a node's row, because node-halves 3.2's
+      `resumed_workspace` reads it.
+    - The gobby-worktrees and gobby-clones get, list, merge, and delete
+      tools, the REST list and delete routes, and the `gobby worktrees` and
+      `gobby clones` CLI, which posts to those tools, reach a node's row
+      through the hub module. Every other workspace tool keeps answering
+      `machine_ownership_mismatch` for a node's row by design: those tools
+      create, claim, release, link, sync, push, or reclassify a workspace on
+      the hub's machine, and a node's workspace changes only through its own
+      agents and the two commands above. Publishing a node's branch would
+      use the node's git credentials, which the hub never directs (ROADMAP
+      decision 17).
+21. **The hub asks a node for its checkout's git state on demand (P4).**
+    `checkout.status` runs the same `git for-each-ref` on the node that
+    `get_status` runs locally. The hub caches each machine and project's
+    answer for 30 s, as the local status is cached. When the node is offline
+    or the command fails, the status answers 200 with null git fields, so an
+    offline node's card shows no branch and never a stale one. Rejected: a
+    git-state field in the node's report. The inbox's `take` empties each
+    snapshot (1.4), so it needs a new store; the node would run git for every
+    checkout every 30 s whether or not anyone looks; and an offline node
+    would keep showing its last state.
+22. **The live proof pairs isolated daemons and fake providers (P5).** Every
+    spawn runs under managed SRT (`require_managed_srt`), so the live test
+    links the operator's installed SRT into both isolated homes, as
+    `tests/e2e/conftest.py::link_operator_srt` does, and skips when it is
+    absent. Each of the five providers is a fake script on the node's
+    `PATH` that the real launch path starts. Rejected: the real provider
+    CLIs, which need credentials, network access, and admission. The hub
+    and the node run as test instances with temporary `HOME` and
+    `GOBBY_HOME`, so the checkout, project, and rows the test registers live
+    only in the isolated hub's database, and nothing touches the operator's
+    hub or `~/.gobby` (memory 68359d5c's live-daemon gate does not apply).
 
 ## Constraints
 `kind: framing`
@@ -283,12 +366,36 @@ Writer decisions:
   `df008c8c76`) changed `front_door/mod.rs`, `serve.rs`, and `state.rs`;
   `FrontDoor::handle`, `plaintext_allowed`, and the `GOBBY_FRONT_DOOR_SECRET`
   hand-off are unchanged.
-- **Not landed:** `crates/gdaemon/src/nodes/` (#24090, #24089-#24092). Its design
-  is `.gobby/plans/gdaemon-node-channel.md` §1.4: `Registry`, `Slot`,
+- **Landed `nodes/` module:** #24090 (Node channel) and #24091 landed
+  `crates/gdaemon/src/nodes/`: `Registry`, `Slot`,
   `ChannelHandle { connection_id, close, live }`, `register`, `remove`,
-  `persist`, `mark_live`, `is_connected`, `connected_ids`, and Decision 9
-  ("Only hello, ack, and ping/pong exist in Stage 1; S2.7 and S2.8 add
-  commands").
+  `persist`, `mark_live`, `is_connected`, `connected_ids`, and the hub and
+  node channel loops. Only hello, ack, and ping/pong cross the channel
+  today (`.gobby/plans/gdaemon-node-channel.md`, Decision 9); 1.2 adds the
+  command frames. #24268 (1.1) landed the version 1 contract.
+- **Cross-plan edges with `.gobby/plans/node-halves.md`.** The Orchestrator
+  sets these at expansion; the coverage grammar carries no cross-plan
+  dependency.
+  - node-halves 3.1 blocks 1.2, 1.3, and 1.4, which build or check `v`
+    against the `CONTRACT_VERSION` it sets to 2. node-halves 2.1 also
+    blocks 1.2, because both declare a module in
+    `crates/gdaemon/src/nodes/mod.rs`.
+  - 1.2 blocks node-halves 2.7, because both change
+    `crates/gdaemon/src/nodes/channel.rs` (1.2 `hub_channel`, 2.7
+    `run_client`).
+  - node-halves 3.2 blocks 2.5, which calls its `build_spawn_payload`.
+  - 1.4 blocks node-halves 3.2, whose `resumed_workspace` orders a
+    session's workspace rows by the `updated_at` that 1.4 moves (1.4.7),
+    and node-halves 3.3, which adds one call to 1.4's report route.
+  - 2.3 and 2.4 block node-halves 3.4, whose runtime relies on 2.3's write
+    guard and calls 2.4's `remote_cancel`. 2.6 blocks node-halves 3.6, so a
+    run its terminate route kills settles through 2.6's reconciler.
+  - node-halves 3.1 blocks 4.1, which bumps the same contract to version 3
+    in the same files.
+  - node-halves 2.14, the last node agent leaf, blocks 4.2 and 4.6, which
+    add handlers to `crates/gdaemon/src/nodes/agents/commands.rs` and
+    `crates/gdaemon/src/nodes/agents/mod.rs`.
+  - Every node-halves leaf blocks 5.1, which runs the real node.
 - **Hooks from node agents.** A remote agent's hooks reach the hub's
   `POST /api/hooks/execute` only through #24150's node ledger (ROADMAP decision
   17: `ghook` posts through the local node).
@@ -328,9 +435,10 @@ durable cancel records, and its hook ledger (#24150).
 
 Two paths cross between machines:
 - **Commands, hub to node.** The Python hub calls gdaemon's loopback internal
-  route (D2), which sends a command frame over the node's channel (#24090)
-  and returns the node's reply. The v1 commands are `agent.spawn`,
-  `agent.cancel`, and `terminal.write`.
+  route (1.2), which sends a command frame over the node's channel (#24090)
+  and returns the node's reply. The commands are `agent.spawn`,
+  `agent.cancel`, and `terminal.write` (1.1), and `workspace.merge`,
+  `workspace.remove`, and `checkout.status` (4.1).
 - **HTTP, node to hub.** The node calls the hub's front door with its
   machine-bound API key: checkout registration, run reports, and forwarded
   hooks. gdaemon authenticates the key and passes the verified identity to
@@ -353,7 +461,7 @@ flowchart LR
   GC -- "HTTP with API key" --> FD
   FD -- "proxy with verified identity" --> PY
   PY --> DB
-  PY -- "internal route (D2): agent.spawn, agent.cancel, terminal.write" --> FD
+  PY -- "internal route (1.2): agent, terminal, workspace, and checkout commands" --> FD
   FD == "node channel, WebSocket (#24090)" ==> NG
   NG -- "API key: POST /api/nodes/checkouts, POST /api/nodes/report" --> FD
   GH -- "hook envelope" --> NG
@@ -387,8 +495,9 @@ sequenceDiagram
   N->>N: prepare the worktree, launch the agent
   N->>FD: POST /api/nodes/report listing the agent and its worktree
   FD->>PY: proxied with N's verified identity
+  PY->>DB: insert the worktree row, then answer 200
   Note over PY: the inbox keeps N's latest report
-  PY->>DB: next health pass inserts the worktree row and promotes the terminal
+  PY->>DB: next health pass promotes the terminal
   N->>FD: forwarded session-start hook
   FD->>PY: POST /api/hooks/execute
   PY->>DB: pre-created session found, run running
@@ -445,6 +554,30 @@ sequenceDiagram
   N->>FD: queued hooks forwarded
   N->>FD: POST /api/nodes/report with agents and exits
   PY->>DB: next pass settles reported exits and keeps live agents
+```
+
+**Story 4: merge and remove a node's worktree.** The agent on N finished.
+Josh asks the hub to merge its worktree; N merges the branch into its own
+checkout of P, and the hub marks the row merged. The hub's next expiry pass
+asks N to remove the worktree and deletes the row when N confirms.
+
+```mermaid
+sequenceDiagram
+  actor U as Josh
+  participant PY as Python hub
+  participant DB as Hub database
+  participant N as Node N gdaemon
+  U->>PY: merge_worktree with the row's id
+  PY->>DB: read the row, owned by N, and N's checkout of P
+  PY->>N: workspace.merge through the internal route
+  N->>N: merge the branch into its checkout of P
+  N-->>PY: outcome merged
+  PY->>DB: mark the row merged, cleanup now
+  Note over PY: next expiry pass
+  PY->>N: workspace.remove
+  N->>N: remove the worktree and its branch
+  N-->>PY: outcome removed
+  PY->>DB: delete the row
 ```
 
 ## P1: Hub-node interface
@@ -610,7 +743,7 @@ Targets:
         reports, a `stale_report` refusal, more than 1,000 pending exits, a
         spawn at 1,000 accepted and live runs, a failed removal, and a node
         daemon restart at each preparation and removal boundary.
-  - **Internal route (gdaemon, built in D2).**
+  - **Internal route (gdaemon, built in 1.2).**
     - `GET /api/internal/nodes/connected` returns `{"machine_ids":[...]}`, the
       machines with a live channel.
     - `POST /api/internal/nodes/{machine_id}/commands` takes
@@ -656,6 +789,97 @@ Verification planned:
 - 1.1.4 - In the Python models, a checkout or report body naming `machine_id`, an `agent.spawn` payload carrying `env` or `cwd`, and a report list of 1,001 entries all fail validation. test: `tests/hub/test_node_command_corpus.py::test_node_bodies_name_no_machine`.
 - 1.1.5 - `ROADMAP.md` shows S4.2 depending on #24090. file: `ROADMAP.md`.
 
+### 1.2 gdaemon internal node-command route over the node channel [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/nodes/registry.rs::Registry`
+- `crates/gdaemon/src/nodes/registry.rs::Registry::register`
+- `crates/gdaemon/src/nodes/registry.rs::ChannelHandle`
+- `crates/gdaemon/src/nodes/channel.rs::hub_channel`
+- `crates/gdaemon/src/nodes/internal_api.rs`
+- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: declares the new `internal_api` submodule
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gdaemon/tests/node_internal_route.rs`
+
+**Research context:**
+- #24090 (Node channel) and #24091 landed `crates/gdaemon/src/nodes/`:
+  - `registry.rs`: `Registry { slots }` maps each machine to a `Slot` whose
+    `current` is a private `ChannelHandle { connection_id, close, live }`.
+    `register(machine)` returns the connection id and the close receiver;
+    `remove`, `mark_live`, `is_connected`, `connected_ids`,
+    `connection_id` and `persist` complete it.
+  - `channel.rs::hub_channel(socket, nodes, machine, key)` runs hello,
+    register, heartbeat persist, key check and `send_ack`, then loops on
+    `select!` over the close receiver, the idle timer, the key rechecks and
+    `socket.recv()`, ignoring every frame except Close and Ping.
+  - `mod.rs` holds `HubNodes { db, registry, timing }` and
+    `NativeRoutes { Standalone, Hub(Arc<HubNodes>) }`.
+  - Nothing sends a command yet.
+- `FrontDoor::handle(request, peer, https)` (`crates/gdaemon/src/front_door/mod.rs`)
+  runs `backend_state.auth.authenticate` before it routes `/api/nodes/channel`
+  to `nodes::channel::handle` on a hub. `serve.rs::plaintext_allowed` shows
+  the loopback test (`peer.to_canonical().is_loopback()`), and
+  `front_door/auth.rs` holds `GOBBY_FRONT_DOOR_SECRET`, which `state.rs`
+  hands to Python.
+- 1.1's contract fixes the route: `GET /api/internal/nodes/connected` and
+  `POST /api/internal/nodes/{machine_id}/commands` with
+  `{command, payload, timeout_ms}`, the admission rule, the 404 rule, and
+  the stage of each gdaemon error.
+- node-halves 3.1 sets `CONTRACT_VERSION` to 2, and every handler refuses
+  another `v` (Constraints, Cross-plan edges).
+- The review of #24268 (session 16011, 2026-10-13) asked for three things
+  here: live proof of constant-time secret admission and of the 404 before
+  any frame; no authorization inferred from a successful parse, because
+  `prompt`, `provider_args`, `source_root` and `extra_write_paths` are
+  plain strings and the node applies its own SRT and credential
+  chokepoints; and malformed-input cases for every field the route reads.
+
+**Implementation:**
+- `registry.rs`: `ChannelHandle` gains `commands: mpsc::Sender<OutboundCommand>`,
+  where `OutboundCommand` is `{ frame: CommandFrame, reply: oneshot::Sender<ReplyFrame> }`
+  from 1.1's `node_commands.rs`. `register` also returns the command
+  receiver. `Registry::command_sender(machine_id)` returns the sender only
+  for a live handle.
+- `hub_channel` adds the command receiver to its `select!`. It writes each
+  frame and keeps `HashMap<Uuid, oneshot::Sender<ReplyFrame>>` keyed by
+  `request_id`. A text frame that parses as a reply resolves its entry, and
+  a reply with no entry is dropped and logged. On close or replacement it
+  answers every pending entry with `channel_closed`.
+- `internal_api.rs` (new) serves both routes:
+  - It admits a request only from a loopback peer whose
+    `X-Gobby-Backend-Secret` equals the front-door secret, compared in
+    constant time by an XOR fold over equal-length bytes (no crate in
+    `crates/gdaemon/Cargo.toml` provides one). Every other request,
+    and every request on a standalone or node front door, gets 404 before
+    any frame.
+  - The body parses with `deny_unknown_fields`. A missing `command`, a
+    non-object `payload`, an unknown field, or `timeout_ms` outside 1 to
+    600,000 answers 400 `invalid_request` before any frame. The payload
+    must parse as the named command's 1.1 type; that parse only rejects,
+    and it grants nothing.
+  - It mints `request_id`, sends through `command_sender`, and answers 200
+    with the reply frame. With no live channel it answers `node_offline`
+    with `stage: "none"`; past `timeout_ms` it answers `node_timeout` with
+    `stage: null` and removes the entry. A drop guard removes the entry when
+    the HTTP caller goes away, so a later reply is dropped and logged.
+  - `connected` answers `{"machine_ids": [...]}` from `connected_ids`.
+- `FrontDoor::handle` routes `/api/internal/nodes/` to
+  `nodes::internal_api::handle` on a hub after the runtime gates and before
+  `authenticate`, and answers 404 for that prefix on any other door.
+
+Verification planned:
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_internal_route) + binary(nodes) + binary(front_door)'`.
+
+**Acceptance:**
+
+- 1.2.1 - A fake node on a live channel receives the command frame, and its reply reaches the HTTP caller unchanged. test: `crates/gdaemon/tests/node_internal_route.rs::command_round_trips`.
+- 1.2.2 - With no live channel the route answers `node_offline` with `stage: "none"`, and a node that never replies yields `node_timeout` with `stage: null`. test: `crates/gdaemon/tests/node_internal_route.rs::offline_and_timeout`.
+- 1.2.3 - Closing or replacing the channel ends every pending command with `channel_closed`, and a reply after a timeout or a dropped caller is dropped and logged. test: `crates/gdaemon/tests/node_internal_route.rs::pending_commands_end_with_channel`.
+- 1.2.4 - A non-loopback peer, a missing or wrong secret, a secret differing only in its last byte, and a standalone or node front door each get 404, and the fake node receives no frame. test: `crates/gdaemon/tests/node_internal_route.rs::admission_is_loopback_and_secret`.
+- 1.2.5 - A missing `command`, a non-object `payload`, an unknown field, an out-of-range `timeout_ms`, and a payload that does not parse as its command's type each answer 400 `invalid_request` with no frame sent. test: `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`.
+- 1.2.6 - `connected` lists only machines with a live channel. test: `crates/gdaemon/tests/node_internal_route.rs::connected_lists_live_channels`.
+
 ### 1.3 Python node-command client and machine eligibility [category: code] (depends: 1.1)
 `kind: deliverable`
 
@@ -682,8 +906,8 @@ Targets:
 - No path writes a node's checkout row today: `gobby init` and hook ingress
   (`src/gobby/hooks/project_checkout_ingress.py`) bind this machine. 1.4's
   route adds that path; these tests seed the rows directly.
-- The internal route is built in D2. These tests drive a fake HTTP route, and
-  this section claims no live node delivery.
+- 1.2 builds the internal route. These tests drive a fake HTTP route, and
+  5.1 proves live node delivery.
 
 **Implementation:**
 - `node_client.py`:
@@ -698,8 +922,8 @@ Targets:
   - `send` uses `stage="none"` only when no command can have left the hub. It
     raises `NodeCommandError("node_routing_unavailable", stage="none")` without
     the secret (no request is made), on a failed connect, and on a 404, which
-    gdaemon sends only before any frame (1.1). Every request gets that 404
-    before D2 lands.
+    gdaemon sends only before any frame (1.1, 1.2), including on a
+    standalone or node front door.
   - Any other failure after the request is sent raises
     `NodeCommandError("node_reply_lost", stage=None)`. That covers a 5xx, a 200
     whose body is not a valid reply frame, a read timeout, and a connection
@@ -743,6 +967,14 @@ Targets:
 - `src/gobby/hub/node_reports.py`
 - `src/gobby/servers/_app_routes.py::register_routes`
 - `tests/servers/test_node_routes.py`
+
+**Granularity:** seven acceptance items across three production files, one
+outcome: a node's two key-bound routes. Both share the identity and body
+checks that 1.4.4 pins and one router. The report items (1.4.3, 1.4.5,
+1.4.6, 1.4.7) are one admission and recording sequence: the epoch and
+revision barrier decides whether the workspace rows are written, and the
+200 follows the write. Splitting registration from reports would leave the
+shared refusals pinned twice.
 
 **Research context:**
 - `server.auth_service.verified_front_door_identity(request)` returns
@@ -839,11 +1071,26 @@ Targets:
     `agents[].workspace` and `exits[].workspace` entry.
     - It skips and logs an entry unless its `terminal_id` row is on
       `machine_id` and names that `run_id`.
-    - Otherwise it inserts an `active` `worktrees` row (mode `worktree`) or
-      `clones` row (mode `clone`) with a new id, the terminal's project and
-      machine, the run's task, the run's child session as
-      `agent_session_id`, and the entry's path, `branch_name`, and
-      `base_branch`, with `ON CONFLICT DO NOTHING`. It sets no task artifact.
+    - It records `exits[]` entries before `agents[]` entries.
+    - For each entry it keeps, it first runs `UPDATE worktrees` (mode
+      `worktree`) or `UPDATE clones` (mode `clone`)
+      `SET updated_at = clock_timestamp() WHERE machine_id = %s AND worktree_path = %s`
+      (`clone_path` for clones). When that matches no row, it inserts an
+      `active` `worktrees` or `clones` row with a new id, the terminal's
+      project and machine, the run's task, the run's child session as
+      `agent_session_id`, the entry's path, `branch_name`, and
+      `base_branch`, and `updated_at = clock_timestamp()`, with
+      `ON CONFLICT DO NOTHING`. It sets no task artifact.
+    - So `updated_at` is the last time a report named the workspace: a
+      repeated path moves it, and within one report an exited run's
+      workspace is older than a live run's. node-halves 3.2's
+      `resumed_workspace` orders a session's rows by it (node-halves
+      adversary finding NH-12, requested by gobby#16767). The update runs
+      before the insert because `worktrees` has two unique indexes,
+      `idx_worktrees_path` and `idx_worktrees_branch`
+      (`crates/gcore/assets/schema/baseline.sql`). An
+      `ON CONFLICT (machine_id, worktree_path) DO UPDATE` would abort the
+      report's transaction on a branch conflict, which `DO NOTHING` skips.
   - The inbox lives in memory. A hub restart loses it, and the new process's
     epoch refuses every report built before the restart. Workspace rows are
     already durable, the next fresh report refills the snapshot, and a lost
@@ -868,6 +1115,7 @@ Verification planned:
 - 1.4.4 - Each route answers 403 `node_identity_required` without a verified identity, 403 `machine_is_local` for a key bound to the hub's machine, 422 for a body naming `machine_id`, and 422 `unsupported_version` for an unknown `v`, and none writes a row or an inbox entry. test: `tests/servers/test_node_routes.py::test_node_routes_refuse_unverified_and_local_identity`.
 - 1.4.5 - A report with a null epoch, or with the epoch of a replaced inbox standing in for a hub restart, answers 409 `stale_report` with the current epoch. So does a report whose revision is at or below the machine's high-water, whether it is a duplicate or arrives out of order. None of them writes a workspace row or touches the snapshot. When two admitted reports finish out of order, the higher revision's snapshot stays. In the intervening-take schedule, revisions r1 and r2 both pass `admit`, r2 commits and `put`s, `take` returns r2's snapshot, and r1 then commits and `put`s: r1's snapshot is never installed, its exits merge, the next `take` returns nothing for that machine, and after a report above r2 is `put` the next `take` returns that report's snapshot with r1's exits. test: `tests/servers/test_node_routes.py::test_report_order_and_epoch_barrier`.
 - 1.4.6 - Before the route answers 200, a live agent entry with a workspace and a `launched: true` exit with a workspace each insert one `worktrees` row, or a `clones` row in clone mode. Each row carries the key's machine, the path, the branch, the base branch, the run's task, and the child session. A repeated entry inserts nothing more. An entry whose terminal is on another machine or names another run inserts none. The row survives a replaced inbox, the task gains no artifact, and the hub's `list_worktrees()` does not return the row. test: `tests/servers/test_node_routes.py::test_reported_workspace_is_durable_before_200`.
+- 1.4.7 - A report naming a recorded path again moves that row's `updated_at` and inserts no row, and in one report carrying an exited run's workspace and a live run's, the live run's row has the later `updated_at`. test: `tests/servers/test_node_routes.py::test_reported_workspace_moves_updated_at`.
 
 ## P2: Machine-correct hub loops and remote callers
 `kind: framing`
@@ -1155,7 +1403,7 @@ Targets:
 - `tests/terminals/fakes.py::make_memory_terminal`, used by about fifty test
   files, gives every fake terminal a random `machine_id`. Under a local-machine
   check those terminals would all read as remote.
-- The tests drive a fake node client; live delivery waits on D2 and #24148.
+- The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
 - `_dispatch` records the composer-ledger observation as today. Then, when
@@ -1210,7 +1458,7 @@ Targets:
   `{"success": False, "error", "error_code"}` and leaves run status to its
   callers. Callers include the MCP and CLI `kill_agent`, the dispatcher, and the
   watchdog.
-- The tests drive a fake node client; live delivery waits on D2 and #24148.
+- The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
 - At the top of `kill_agent`, a run whose `machine_id` is set and not local
@@ -1271,11 +1519,11 @@ Targets:
 - `tests/hub/test_remote_spawn.py`
 - `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`
 
-**Granularity:** fourteen acceptance items and eight production files, one
+**Granularity:** fifteen acceptance items and eight production files, one
 outcome: every remote spawn ends in one owned state, accepted, failed, or in
 doubt. The items fall into three groups. Routing covers 2.5.3, 2.5.6, 2.5.8,
 and 2.5.9. The launch covers 2.5.1, 2.5.2, 2.5.7, 2.5.10, 2.5.11, 2.5.12,
-2.5.13, and 2.5.14. Settlement of its outcome covers 2.5.4 and 2.5.5. None
+2.5.13, 2.5.14, and 2.5.15. Settlement of its outcome covers 2.5.4 and 2.5.5. None
 closes alone:
 - Routing without the launch only adds refusals for remote targets.
 - A launch without settlement leaves runs and leases with no owner after a
@@ -1411,7 +1659,7 @@ it is already its own section, 2.6.
   until its process exits (1.1). So the hub's count can trail the node's by
   the agents still exiting, and only the node can bound its own lists
   exactly (1.1's 1,000-run refusal).
-- The tests drive a fake node client; live delivery waits on D2 and #24148.
+- The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
 - `AgentSpawnRequest` and the MCP `spawn_agent` tool each gain an optional
@@ -1484,7 +1732,22 @@ it is already its own section, 2.6.
      callers' per-project `reserve_agent_slot` still applies, so a remote
      spawn passes both the project cap and the machine ceiling. The hub's
      agy gate is not among these checks, because the node gates agy on its
-     own install (node-halves 2.6).
+     own install (node-halves 2.6). It then runs the resolvers whose
+     results step 4 sends:
+     - `resolve_spawn_generation_endpoint`
+       (`src/gobby/mcp_proxy/tools/spawn_agent/_generation_endpoint.py`);
+     - `resolve_spawn_reasoning` (`src/gobby/agents/reasoning.py`);
+     - `code_index_preflight_mode`
+       (`src/gobby/mcp_proxy/tools/spawn_agent/_code_index.py`);
+     - the sandbox:
+       `apply_write_grant(definition_sandbox_config(daemon_config, agent_body), write_grant)`
+       (`src/gobby/agents/external_write_grants.py`,
+       `src/gobby/agents/sandbox_network.py`). Unless that config is
+       enabled with backend `srt`, it returns `sandbox_required` with
+       `stage: "none"`, as `resolve_spawn_sandbox` does locally. It does
+       not call `resolve_spawn_sandbox`, whose `require_managed_srt` runs
+       `verify_srt_installation()` on the hub's machine; the node verifies
+       its own install (node-halves 2.5), as it gates agy.
   2. Machine ceiling (Decision 19). It takes a per-machine `asyncio.Lock`,
      keyed by `routed.machine_id` in a module-level dict in `remote_spawn.py`,
      and holds it through step 3's `create_pending`. Lock order is project
@@ -1841,6 +2104,7 @@ Verification planned:
 - 2.5.12 - With the target machine's pending, live, and orphaned terminal rows at `configured_max_active_agents()`, a remote spawn returns `machine_cap_reached` with `stage: "none"`, writes no session, run, or terminal row, sends nothing, and frees its lease; two concurrent spawns to a machine one below the ceiling admit exactly one; a spawn to another machine and a local spawn are unaffected. test: `tests/hub/test_remote_spawn.py::test_machine_ceiling_refuses_before_rows`.
 - 2.5.13 - `DaemonConfig(max_active_agents=1000)` validates, `DaemonConfig(max_active_agents=1001)` raises `ValidationError`, and the default stays 20. test: `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`.
 - 2.5.14 - The checked-in runtime config contract still equals the generator's output after the bound. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+- 2.5.15 - With `verify_srt_installation` failing on the hub, a remote spawn whose agent body resolves to enabled `srt` still sends `agent.spawn` with that sandbox, the resolved model, effort, and preflight mode; a body whose sandbox is disabled or `provider-native` returns `sandbox_required` with `stage: "none"` and sends nothing. test: `tests/hub/test_remote_spawn.py::test_remote_resolvers_skip_hub_srt_install`.
 
 ### 2.6 The hub settles remote runs from the node's reports [category: code] (depends: 1.3, 1.4, 2.1, 2.5)
 `kind: deliverable`
@@ -1913,7 +2177,7 @@ exits the terminal whose run the sweep settles after a hub restart.
   override), and a node reports right after each change. So a remote run
   turns live within one health pass, about 30 s, of its launch.
 - The tests feed the inbox directly and drive a fake node client; live
-  reports wait on D2 and #24148.
+  reports are proved in 5.1.
 
 **Implementation:**
 - `RemoteRunReconciler` takes the run manager, the terminal manager, a
@@ -2144,7 +2408,7 @@ Targets:
   `TerminalManager.get_live_for_session` or the run's `terminal_id`; neither is
   machine-filtered. Its `capture` snapshots through the local runtime.
 - 2.3 routes the write to the owning node. The tests drive a fake node client;
-  live delivery waits on D2 and #24148.
+  5.1 proves live delivery.
 
 **Implementation:**
 - `AttentionPane` gains `remote: bool = False`. For a row whose `machine_id` is
@@ -2183,121 +2447,639 @@ Verification planned:
 - 3.3.4 - A lost reply answers 502 `injection_indeterminate` and retires the entry, and a retry sends no second `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry`.
 - 3.3.5 - Two concurrent responses to one entry send one `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once`.
 
-## D1 Remote workspace lifecycle (depends: 1.4, 2.6)
-`kind: deferred`
+## P4: Remote workspaces and the machine-scoped project view
+`kind: framing`
 
-A remote workspace's hub row is a record that 1.4's report route inserts from
-the node's report before it answers 200 (Decision 15). The node removes a
-workspace only when its spawn
-fails before launch, so a finished remote workspace stays on the node, and its
-row stays `active` with its `agent_session_id`. No existing path finishes it:
-- `LocalWorktreeManager` and `LocalCloneManager` read and write only this
-  machine's rows, which keeps the hub's loops off node rows (2.1.5). So
-  `list_worktrees`, `delete_worktree`, expiry cleanup, and session-end release
-  never act on a node's row.
-- Merge and expiry cleanup run git in this machine's checkout. A node's branch
-  exists only on the node, and no v1 command moves its commits or merges
-  there.
-- Local cleanup removes a worktree after its merge, so removal follows the
-  merge design. A node command that removes a workspace returns with that
-  design, and the hub deletes the row when the node confirms.
+**Goal**: the hub lists, merges, removes, and expires a node's worktrees and
+clones through that node (Decision 20), and gclient's projects pane follows
+the machine filter with each checkout's git state (Decision 21).
 
-Acceptance item D1.1: the hub lists, merges, and removes finished remote
-workspaces through their owning node.
+### 4.1 Node-commands contract version 3: workspace and checkout commands [category: code] (depends: 1.1)
+`kind: deliverable`
 
-```yaml
-deferral:
-  task_ref: "TBD-remote-workspace-lifecycle"
-  reason: "needs-planning: merging a node's branch needs its commits moved between machines or a node-side merge, which no v1 command or design covers; listing and removal, including a node removal command, follow that design. Created at expansion per the plan-coverage contract."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D1.1
-```
+Targets:
+- `docs/contracts/node-commands.md`
+- `crates/gdaemon/src/node_commands.rs::*` — scope-reason: sets `CONTRACT_VERSION` to 3, adds the three commands' payload and result types, and makes every nullable field required
+- `src/gobby/hub/node_commands.py::*` — scope-reason: the same model changes on the Python side, `strict=True` on the base model, and `_PARSERS` entries
+- `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: every message changes to `v: 3`, the new commands gain messages, and an `invalid` list is added
+- `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`
+- `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`
+- `crates/gdaemon/tests/node_command_parity.rs`
+- `tests/hub/test_node_command_parity.py`
 
-## D2 gdaemon internal node-command route over the node channel (depends: 1.1)
-`kind: deferred`
+**Research context:**
+- node-halves 3.1 sets `CONTRACT_VERSION` to 2 in both models, and every
+  handler and route refuses another `v` (cross-plan edge under
+  Constraints). The corpus is `{"messages": [{name, kind, json}]}`, and
+  Python's `parse_message(kind, raw)` dispatches through `_PARSERS`.
+- The review of #24268 (session 16011, 2026-10-13) found three parity gaps:
+  Python's `NodeModel` lacks `strict=True`, so `"1"` parses as an integer
+  and `1` as a boolean; a Rust `Option` field accepts omission, because
+  serde treats a missing `Option` as `None`; and a Python nullable field
+  without a default is required. So a message omitting a nullable field
+  parses in Rust and fails in Python.
+- Decision 20 sets the merge and removal outcomes and Decision 21 the
+  status fields. `get_status` (`src/gobby/servers/routes/source_control.py`)
+  returns `current_branch`, `branch_count`, `ahead`, and `behind` from
+  `git for-each-ref` and `parse_upstream_track`.
+- A node's workspace path is `<home>/worktrees/<project_id>/<run_id>` or
+  `<home>/clones/<project_id>/<run_id>` (node-halves 2.3).
 
-The route extends `crates/gdaemon/src/nodes/` (`Registry`, `ChannelHandle`, and
-the hub channel handler), which #24090 creates and which has not landed. Its
-contract is 1.1's internal route. The design to carry into the task:
-- `ChannelHandle` gains `commands: mpsc::Sender<OutboundCommand>`, where
-  `OutboundCommand` is `{ frame: CommandFrame, reply: oneshot::Sender<ReplyFrame> }`.
-  `Registry::command_sender(machine_id)` returns the sender only for a live
-  handle.
-- The hub channel handler writes each command frame and keeps a
-  `HashMap<Uuid, oneshot::Sender<ReplyFrame>>`. It removes an entry on its
-  reply, its timeout, the channel's close or replacement, or a dropped HTTP
-  caller (a drop guard). It drops and logs a reply with no entry.
-- `FrontDoor::handle` (`crates/gdaemon/src/front_door/mod.rs`) routes
-  `/api/internal/nodes/` to `nodes::internal_api` on a hub, after the runtime
-  gates and before `auth.authenticate`. `serve.rs::plaintext_allowed` shows the
-  loopback test (`peer.to_canonical().is_loopback()`), and `auth.rs::AuthState`
-  holds the secret.
+**Implementation:**
+- Both sides set `CONTRACT_VERSION = 3`, and every corpus message carries
+  `v: 3`. The refusal rule for another `v` is unchanged.
+- New commands, hub to node:
+  - `workspace.merge`: `{project_id, mode: "worktree"|"clone", path, branch_name, target_branch, source_root}`
+    returns `{outcome: "merged"|"already_merged"|"conflict"|"target_dirty"|"busy", merge_sha, target_head_sha, conflicted_files, dirty_paths}`.
+    `merge_sha` is set only with `merged`, `target_head_sha` with `merged`
+    and `already_merged`, `conflicted_files` only with `conflict`, and
+    `dirty_paths` only with `target_dirty`; otherwise they are null or
+    empty.
+  - `workspace.remove`: `{project_id, mode, path, branch_name, source_root, force, force_delete_branch, merged_into}`
+    returns `{outcome: "removed"|"dirty"|"unmerged"|"busy"}`. `merged_into`
+    is a branch name or null.
+  - `checkout.status`: `{project_id, root_path}` returns
+    `{current_branch, branch_count, ahead, behind}`, where
+    `current_branch`, `ahead`, and `behind` may be null.
+- The contract states each command's node rules from 4.2 and 4.6: the path
+  and root checks, the `busy` rule, the merge and removal steps, and that
+  `checkout.status` is read-only, so every error it answers carries
+  `stage: "none"`.
+- Parity: the Python base model gains `strict=True`. Every Rust `Option`
+  field carries `#[serde(deserialize_with = "Option::deserialize")]`, so a
+  missing field fails and an explicit null parses, matching Python's
+  required nullable fields.
+- `corpus.json` gains each new command, each outcome's reply, and an
+  `invalid` list of `{name, kind, json}` messages that both sides must
+  refuse: a string for an integer, an integer for a boolean, an omitted
+  nullable field, an unknown field, and a `v` of 0.
 
-Original acceptance:
-- D2.1: a fake node on a live channel receives the command frame, and its reply reaches the caller unchanged.
-- D2.2: with no live channel the route answers `node_offline` with `stage: "none"`, and a node that never replies yields `node_timeout` with `stage: null`.
-- D2.3: closing or replacing the channel ends every pending command with `channel_closed`, and a reply after a timeout or a dropped caller is dropped and logged.
-- D2.4: a non-loopback peer, a missing or wrong secret, or a standalone or node front door gets 404.
-- D2.5: `connected` lists only machines with a live channel.
+Verification planned:
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity)'`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_node_command_corpus.py tests/hub/test_node_command_parity.py -v`.
 
-```yaml
-deferral:
-  task_ref: "TBD-node-command-route"
-  reason: "Extends the node channel registry and handler that #24090 creates, which has not landed; an external prerequisite is a typed deferral per the plan-coverage contract."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D2.1
-    - D2.2
-    - D2.3
-    - D2.4
-    - D2.5
-```
+**Acceptance:**
 
-## D3 Machine-scoped project view (depends: 3.2)
-`kind: deferred`
+- 4.1.1 - Every corpus message, including the three new commands and one reply per outcome, round-trips through the Rust models with `v` equal to `CONTRACT_VERSION`. test: `crates/gdaemon/tests/node_command_corpus.rs::corpus_round_trips`.
+- 4.1.2 - The same corpus round-trips through the Python models with `v` equal to `CONTRACT_VERSION`. test: `tests/hub/test_node_command_corpus.py::test_corpus_round_trips`.
+- 4.1.3 - The Rust models refuse every message in the corpus's `invalid` list. test: `crates/gdaemon/tests/node_command_parity.rs::invalid_messages_fail`.
+- 4.1.4 - The Python models refuse every message in the corpus's `invalid` list. test: `tests/hub/test_node_command_parity.py::test_invalid_messages_fail`.
+- 4.1.5 - The contract specifies version 3's three commands with their payloads, results, outcomes, node rules, and stage rule, and the strictness rule for nullable fields. file: `docs/contracts/node-commands.md`.
 
-Q4 says switching machines switches the projects, agents, and terminals view.
-3.1 and 3.2 attribute every roster entry to its machine and project, and 3.2
-defaults the agents view to the current machine. Josh's ruling (Decision 10)
-makes the existing machine rows the machine list. The projects pane does not
-follow the machine filter, and its cards show one checkout's branch and
-ahead/behind counts from the daemon's project status. A node's cards need the
-node's git state, which no v1 command reports. The terminals view per machine
-is #21549.
+### 4.2 Node workspace.merge and workspace.remove handlers [category: code] (depends: 4.1)
+`kind: deliverable`
 
-Original acceptance:
-- D3.1: selecting a machine limits the projects pane to projects with a checkout on that machine and shows that checkout's branch and ahead/behind counts.
+Targets:
+- `crates/gdaemon/src/nodes/agents/commands.rs`
+- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/workspace.rs`
+- `crates/gdaemon/src/nodes/agents/finish.rs`
+- `crates/gdaemon/tests/node_workspace_finish.rs`
 
-```yaml
-deferral:
-  task_ref: "TBD-q4-machine-view"
-  reason: "needs-planning: a node's project cards need its checkout's git state, which no v1 command reports; Josh's Q4 ruling (Decision 10) settled the default and the machine list."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D3.1
-```
+**Granularity:** one leaf with seven acceptance items. Merge and removal
+share one claim on a workspace's path and checkout (`finishing`) and one
+`busy` rule, and removal follows merge in every lifecycle. Splitting them
+would leave the claim with one user and a second leaf that must re-prove it.
 
-## D4 Live hub-to-node proof (depends: 2.5, 2.6, 3.3)
-`kind: deferred`
+**Research context:**
+- node-halves creates the three existing targets: 2.3 `workspace.rs`
+  (`plan_workspace`, `prepare`, `remove(record)`, `retry_removals`, and the
+  `existing` root check), 2.7 `commands.rs::dispatch` (it parses
+  `request_id`, `v`, and `command` first, and runs per-run queues), and 2.1
+  `mod.rs` (`NodeAgents` and its durable state, including the launched
+  workspace record kept until a report carrying the run's exit gets 200).
+  This leaf lands after node-halves 2.14 (Constraints).
+- The local merge oracle is `_merge_worktree_impl`
+  (`src/gobby/mcp_proxy/tools/worktrees/_sync.py`) and `_merge_clone_impl`
+  (`src/gobby/mcp_proxy/tools/_clones_operations.py`): the ref checks, the
+  already-merged check, the dirty and overlap check against
+  `git diff --name-only <target>...<source>`, `git merge --no-ff --no-edit`,
+  and, for a clone, a fetch into `refs/heads/clone-merge/<branch>` deleted
+  afterwards. Decision 20 states where the node is stricter.
+- A run with workspace mode `none` runs in `source_root` (1.1), so a merge
+  into that checkout would move files under a live agent.
+- The review of #24268 asked that no handler infer authorization from a
+  successful parse, so every path the hub names is checked against the
+  node's own roots.
 
-Every active section drives a fake route, a fake node, or reports fed to the
-inbox. The live path needs D2's route, #24148's node handlers (spawn,
-checkout registration, and reports), and #24150's hook forwarding.
+**Implementation:**
+- `dispatch` sends `workspace.merge` and `workspace.remove`, which name no
+  run, to `finish::merge` and `finish::remove` outside the per-run queues,
+  after its `v`, command, and payload checks.
+- Checks before any effect, each answering `invalid_payload` with
+  `stage: "none"`:
+  - `path` canonicalizes to a directory name directly under
+    `<home>/worktrees/<project_id>/` for `worktree` or
+    `<home>/clones/<project_id>/` for `clone`. `workspace.rs` exposes the
+    `existing` mode's root check as `owned_workspace_path`, and both use it.
+  - `source_root` is absolute and equals
+    `git -C <source_root> rev-parse --show-toplevel`.
+  - `branch_name`, `target_branch`, and `merged_into` pass
+    `git check-ref-format --branch`.
+- `NodeAgents` gains `finishing: Mutex<HashSet<PathBuf>>`. Under the agents'
+  state lock, a merge or removal answers `busy` when an accepted or live
+  run's workspace record or a launched workspace record names `path`, when
+  a run with mode `none` runs in `source_root`, or when `finishing` holds
+  `path` or `source_root`. Otherwise it inserts both, and a drop guard
+  removes them. `plan_workspace` fails an `existing` path that `finishing`
+  holds or a pending removal record names (`prepare_failed`, naming the
+  path), so a resume never starts in a workspace being finished.
+- `finish::merge`:
+  1. Clone mode fetches `git -C <source_root> fetch <path> <branch_name>:refs/heads/clone-merge/<branch_name>`
+     and merges that ref; worktree mode merges `branch_name`. A missing
+     branch or clone path answers `not_found`. The temporary ref is deleted
+     on every path after the fetch.
+  2. When the source is an ancestor of `target_branch`
+     (`git merge-base --is-ancestor`), it answers `already_merged`.
+  3. Staged entries in `source_root`, or unstaged and untracked paths that
+     `git diff --name-only <target_branch>...<source>` names, answer
+     `target_dirty` with those paths. `.gobby/` paths count too.
+  4. It records the current branch. A detached HEAD answers
+     `command_failed` with `stage: "none"`. When the current branch is not
+     `target_branch`, it checks out `target_branch`; a refusal answers
+     `command_failed` with `stage: "none"`.
+  5. `git merge --no-ff --no-edit <source>` lands `merged` with
+     `merge_sha` and `target_head_sha`. On a conflict it reads
+     `git diff --name-only --diff-filter=U`, runs `git merge --abort`, and
+     answers `conflict` with those files. Any other failure after step 4
+     aborts a merge in progress and answers `command_failed` with
+     `stage: "partial"`.
+  6. It checks out the recorded branch again in every case after step 4.
+- `finish::remove`:
+  1. A missing path answers `removed`; worktree mode also runs
+     `git worktree prune` and deletes a remaining branch.
+  2. Without `force`, `git -C <path> status --porcelain` output answers
+     `dirty`.
+  3. Without `force_delete_branch`, the branch head must be an ancestor of
+     `merged_into` in `source_root`, or with `merged_into` null, of another
+     local branch there (`git for-each-ref --contains`); else `unmerged`. A
+     clone's branch head that `source_root` does not hold is unmerged.
+  4. It commits a pending removal record for the path and branch, then
+     runs 2.3's `remove(record)`. Success deletes the record and answers
+     `removed`. A failure keeps the record for `retry_removals` and answers
+     `command_failed` with `stage: "partial"`.
 
-Original acceptance:
-- D4.1: a node registers its checkout through `POST /api/nodes/checkouts`; a spawn from a node session runs the agent on that node; the node's report promotes its run live and records its workspace row; and its hooks start and end its run on the hub.
-- D4.2: a cancel, a terminal write, and an attention response for that agent reach its node.
+Verification planned:
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_workspace_finish) + binary(node_agents)'`.
 
-```yaml
-deferral:
-  task_ref: "TBD-hub-node-live-proof"
-  reason: "Needs D2, #24148 (node-local spawn, checkout registration, and reports) and #24150 (node hook ledger), none landed; an external prerequisite is a typed deferral per the plan-coverage contract."
-  owner: "orchestrator"
-  original_acceptance_items:
-    - D4.1
-    - D4.2
-```
+**Acceptance:**
+
+- 4.2.1 - A worktree merge lands a `--no-ff` merge commit on the target in the node's checkout, restores the checkout's original branch, and answers `merged` with both shas. test: `crates/gdaemon/tests/node_workspace_finish.rs::merge_lands_in_node_checkout`.
+- 4.2.2 - A clone merge fetches into `refs/heads/clone-merge/<branch>`, merges it, and leaves no temporary ref, including after a conflict. test: `crates/gdaemon/tests/node_workspace_finish.rs::clone_merge_uses_temporary_ref`.
+- 4.2.3 - An already-merged branch answers `already_merged`, and staged entries or overlapping dirty paths answer `target_dirty` with those paths, each leaving the checkout's branch and files unchanged. test: `crates/gdaemon/tests/node_workspace_finish.rs::merge_refusals_change_nothing`.
+- 4.2.4 - A conflict answers `conflict` with the conflicted files, and the checkout ends clean on its original branch. test: `crates/gdaemon/tests/node_workspace_finish.rs::conflict_aborts_and_restores`.
+- 4.2.5 - A merge or removal answers `busy` while an accepted or live run or an unacknowledged launched record names the path, while a mode `none` run uses the checkout, or while another merge or removal holds either, and an `existing` spawn for a path being finished fails preparation. test: `crates/gdaemon/tests/node_workspace_finish.rs::busy_while_in_use`.
+- 4.2.6 - Removal answers `removed` for a clean merged worktree or clone and for a missing path, `dirty` and `unmerged` without the force flags, and `removed` with them; a failed removal keeps its record, answers `command_failed` with `stage: "partial"`, and the retry removes it. test: `crates/gdaemon/tests/node_workspace_finish.rs::remove_outcomes`.
+- 4.2.7 - A path outside the project's node roots, another project's root, a relative or non-top-level `source_root`, and an invalid branch name each answer `invalid_payload` with `stage: "none"` and touch nothing. test: `crates/gdaemon/tests/node_workspace_finish.rs::paths_outside_node_roots_refused`.
+
+### 4.3 Hub remote workspace module and tool routing [category: code] (depends: 1.3, 1.4, 4.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hub/remote_workspaces.py`
+- `src/gobby/mcp_proxy/tools/worktrees/_factory.py::create_worktrees_registry`
+- `src/gobby/mcp_proxy/tools/clones.py::create_clones_registry`
+- `src/gobby/mcp_proxy/tools/worktrees/_crud.py::create_crud_registry`
+- `src/gobby/mcp_proxy/tools/_clones_read.py::create_clone_read_registry`
+- `tests/hub/test_remote_workspaces.py`
+
+**Research context:**
+- `LocalWorktreeManager.get` and `LocalCloneManager.get` call
+  `get_owned_workspace_row` (`src/gobby/storage/workspace_machine_scope.py`),
+  which raises `MachineOwnershipMismatchError` for another machine's row.
+  `InternalToolRegistry.call` and `call_sync`
+  (`src/gobby/mcp_proxy/tools/internal.py`) return its `to_dict()`, and the
+  `gobby worktrees` and `gobby clones` CLI post to
+  `/api/mcp/<server>/tools/<tool>`, which reaches `call`.
+- `merge_worktree` (`worktrees/_sync.py`), `delete_worktree`
+  (`worktrees/_lifecycle.py`), `merge_clone`, and `delete_clone`
+  (`_clones_operations.py`) are async and check the git manager before the
+  row lookup (`_merge_clone_impl` first returns "Clone tools require a git
+  repository context"), so catching the ownership error is unreliable.
+  Ownership is resolved first.
+- `ctx.resolve_worktree_id` calls `LocalWorktreeManager.resolve_reference`,
+  which resolves an id prefix across all machines; clone tools take a full
+  id. `delete_worktree` and `delete_clone` also accept a path, which names
+  a path on this machine.
+- `InternalToolRegistry.get_tool_metadata(name)` returns the `InternalTool`
+  whose `func` `_prepare_call` inspects with `inspect.signature`, which
+  follows `functools.wraps`'s `__wrapped__`. `merge_clone` registers an
+  explicit `input_schema`; the others infer theirs.
+- The local tools mark a merged worktree with `mark_merged(cleanup_days=0)`
+  and a merged clone with `cleanup_after` seven days on. `worktrees` and
+  `clones` carry `status`, `merged_at`, `cleanup_after`, and `updated_at`
+  (`crates/gcore/assets/schema/baseline.sql`).
+- `LocalProjectCheckoutManager(db).get(machine_id, project_id)` reads a
+  node's checkout row (1.3), and `node_command_client()` sends commands
+  (1.3).
+
+**Implementation:**
+- `remote_workspaces.py` reads and writes `worktrees` and `clones` rows by
+  id with no machine guard (Decision 18):
+  - `owner_machine(db, kind, workspace_id)`, `get_remote(db, kind, id)`, and
+    `list_remote(db, kind, machine_id, project_id=None, status=None)`, which
+    return `Worktree` or `Clone` rows.
+  - `merge_remote(db, kind, row, *, target_branch, client)`: the target is
+    `target_branch`, else the row's `base_branch`; with neither it returns
+    `{"success": False, "error_code": "target_branch_required"}` before any
+    command. The node's checkout row gives `source_root`, and without one
+    it returns `checkout_unresolved`. It sends `workspace.merge`. On
+    `merged` or `already_merged` it sets `status = 'merged'`, `merged_at`,
+    and `cleanup_after` (now for a worktree, seven days on for a clone)
+    `WHERE id = %s AND machine_id = %s`, and returns the local tool's
+    success shape with `merge_sha`, `target_head_sha`, and `machine_id`.
+    `conflict` returns `has_conflicts` and `conflicted_files`,
+    `target_dirty` returns `dirty_paths`, and `busy` returns
+    `workspace_busy`; each keeps the row.
+  - `remove_remote(db, kind, row, *, force, force_delete_branch, merged_into, client)`
+    sends `workspace.remove` and deletes the row
+    `WHERE id = %s AND machine_id = %s` only on `removed`. `dirty`,
+    `unmerged`, and `busy` return their codes and keep the row.
+  - A `NodeCommandError` returns `{"success": False, "error_code", "stage"}`
+    and changes no row. No function clears `agent_session_id`.
+  - `route_node_workspace_tools(registry, *, kind, db, resolve_id)` wraps
+    `get_<kind>`, `merge_<kind>`, and `delete_<kind>`: it sets each tool's
+    `func` to an async wrapper made with `functools.wraps(original)`. The
+    wrapper resolves the id first; a row on another machine goes to the
+    remote function with the call's arguments, and everything else,
+    including a path-addressed call and an unresolved id, calls the original
+    unchanged. A remote `merge_worktree` with `push` or `prefer_remote` set,
+    or a `source_branch` other than the row's branch, returns
+    `remote_merge_option_unsupported` naming the option before any command
+    (Decision 20). `project_path` only selects a local checkout, so a
+    remote call ignores it.
+- `create_worktrees_registry` and `create_clones_registry` call
+  `route_node_workspace_tools` after merging their sub-registries.
+- `list_worktrees` (in `create_crud_registry`) and `list_clones` (in
+  `create_clone_read_registry`) gain `machine_id: str | None`, added to an
+  explicit `input_schema` where one exists. Null or this machine's id keeps
+  today's query; another machine reads `list_remote`.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspaces.py tests/mcp_proxy/tools/ -k "worktree or clone" -v`.
+
+**Acceptance:**
+
+- 4.3.1 - `merge_worktree` with a prefix of a node's row sends one `workspace.merge` with the row's path and branch, the target, and that machine's checkout root, and on `merged` marks the row merged with `cleanup_after` now; `merge_clone` does the same with `cleanup_after` seven days on. test: `tests/hub/test_remote_workspaces.py::test_remote_merge_marks_row_merged`.
+- 4.3.2 - `conflict`, `target_dirty`, and `busy` return their typed failures and keep the row, and a missing target, `push`, `prefer_remote`, or another `source_branch` is refused before any command. test: `tests/hub/test_remote_workspaces.py::test_remote_merge_refusals_keep_row`.
+- 4.3.3 - `delete_worktree` and `delete_clone` on a node's row send `workspace.remove` with the force flags and `merged_into`, delete the row only on `removed`, keep it on `dirty`, `unmerged`, `busy`, or a node error, and never clear `agent_session_id`. test: `tests/hub/test_remote_workspaces.py::test_remote_delete_follows_node_outcome`.
+- 4.3.4 - `get_worktree` and `get_clone` return a node's row, a local row and a path-addressed call reach the original tool unchanged, and every wrapped tool keeps its input schema. test: `tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged`.
+- 4.3.5 - `list_worktrees` and `list_clones` with a node's `machine_id` list only that machine's rows, and without it only this machine's. test: `tests/hub/test_remote_workspaces.py::test_list_tools_take_machine_id`.
+- 4.3.6 - An offline node returns `node_offline` with `stage: "none"` and changes no row, and `sync_worktree` and `release_worktree` on a node's row still return `machine_ownership_mismatch`. test: `tests/hub/test_remote_workspaces.py::test_offline_and_other_tools_refuse`.
+
+### 4.4 REST workspace routes list by machine and finish through the node [category: code] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/routes/source_control_worktrees.py::create_source_control_worktrees_router`
+- `tests/servers/test_remote_workspace_routes.py`
+
+**Research context:**
+- `create_source_control_worktrees_router` nests `list_worktrees` and
+  `list_clones`, which list this machine's rows; `delete_worktree`
+  (`DELETE /worktrees/{worktree_id}?merged_into=`), which answers 409 with
+  `MachineOwnershipMismatchError.to_dict()` for another machine's row; and
+  `run_clone_operation`, which serves `delete_clone` and `sync_clone`,
+  calls `clone_storage.get` first, and builds a clones registry from this
+  machine's checkout.
+- gclient removes a worktree through `DELETE /worktrees/{worktree_id}`
+  (`crates/gclient/src/daemon/rest.rs`), and 4.8 lists a node's worktrees.
+
+**Implementation:**
+- `GET /worktrees` and `GET /clones` take `machine_id`; another machine's id
+  reads 4.3's `list_remote`.
+- `delete_worktree` reads the row's owner first. A node's row goes to
+  `remove_remote(force=False, force_delete_branch=False, merged_into=merged_into)`:
+  `removed` answers 200 `{success: true, id, git_deleted: true}`, `dirty`,
+  `unmerged`, and `busy` answer 409 `{success: false, id, error_code}`,
+  `node_offline` answers 503, and any other `NodeCommandError` answers 502,
+  each with `{error_code, stage}`.
+- `run_clone_operation` reads the owner first. `delete_clone` on a node's
+  clone goes to `remove_remote` with the same mapping, and `sync_clone`
+  keeps its 409 (Decision 20).
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_remote_workspace_routes.py -v`.
+
+**Acceptance:**
+
+- 4.4.1 - `GET /worktrees` and `GET /clones` with a node's `machine_id` list that machine's rows, and without it this machine's. test: `tests/servers/test_remote_workspace_routes.py::test_list_routes_take_machine_id`.
+- 4.4.2 - `DELETE /worktrees/{id}` and the clone delete on a node's row remove through the node, answer 200 and delete the row on `removed`, and answer 409, 503, or 502 with the code and keep the row otherwise. test: `tests/servers/test_remote_workspace_routes.py::test_delete_routes_finish_through_node`.
+- 4.4.3 - The clone sync route on a node's clone answers 409 `machine_ownership_mismatch` and sends nothing. test: `tests/servers/test_remote_workspace_routes.py::test_sync_route_keeps_ownership_refusal`.
+
+### 4.5 Remote workspace expiry [category: code] (depends: 4.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/hub/remote_workspaces.py`
+- `src/gobby/runner_maintenance/isolation.py::cleanup_expired_isolation_loop`
+- `tests/hub/test_remote_workspace_expiry.py`
+
+**Research context:**
+- `cleanup_expired_isolation_loop` runs hourly on the Python daemon, which
+  runs only on a hub or a standalone machine (#24075). It reaps
+  `LocalWorktreeManager.find_expired` and `LocalCloneManager.find_expired`
+  rows: `status = 'merged'`, this machine, `agent_session_id IS NULL`,
+  `cleanup_after < now`, and `CLOSED_TASK_CLEANUP_PREDICATE`
+  (`src/gobby/storage/isolation_cleanup.py`).
+- A node's row keeps its `agent_session_id` (Decision 20), and the node's
+  `busy` rule guards a workspace in use (4.2).
+
+**Implementation:**
+- `expire_remote_workspaces(db, *, client, run_db)` selects up to 1,000
+  merged `worktrees` and `clones` rows on other machines whose
+  `cleanup_after` has passed, with `CLOSED_TASK_CLEANUP_PREDICATE` and no
+  `agent_session_id` predicate. For each it calls `remove_remote` with
+  `force=False`, `force_delete_branch=False`, and `merged_into=None`. A
+  non-`removed` outcome or a node error keeps the row for the next pass and
+  logs at debug, as the local reaper does.
+- `cleanup_expired_isolation_loop` calls it after the local clone reaping,
+  inside the same per-pass `try`.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspace_expiry.py tests/runner_maintenance/ -v`.
+
+**Acceptance:**
+
+- 4.5.1 - An expired merged node row of a closed task gets one `workspace.remove` without force and is deleted on `removed`, whatever its `agent_session_id`. test: `tests/hub/test_remote_workspace_expiry.py::test_expired_node_rows_removed_through_node`.
+- 4.5.2 - An unexpired, unmerged, or open-task row gets no command, and `busy`, `dirty`, `unmerged`, or an offline node keeps the row for the next pass. test: `tests/hub/test_remote_workspace_expiry.py::test_expiry_keeps_rows_the_node_refuses`.
+- 4.5.3 - The loop runs the remote step after local reaping in each pass. test: `tests/hub/test_remote_workspace_expiry.py::test_loop_runs_remote_step`.
+
+### 4.6 Node checkout.status handler [category: code] (depends: 4.1, 4.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/nodes/agents/commands.rs`
+- `crates/gdaemon/src/nodes/agents/mod.rs`
+- `crates/gdaemon/src/nodes/agents/checkout_status.rs`
+- `crates/gdaemon/tests/fixtures/node_commands/upstream_track.json`
+- `crates/gdaemon/tests/node_checkout_status.rs`
+- `tests/hub/test_upstream_track_golden.py`
+
+**Research context:**
+- `get_status` runs `git for-each-ref --format=%(HEAD)\t%(refname:short)\t%(upstream:short)\t%(upstream:track) refs/heads/`
+  with a 10-second timeout (`source_control_git.py::_run_git`), counts
+  branches, takes the `*` line as the current branch, and reads ahead and
+  behind with `parse_upstream_track` only when the branch has an upstream.
+- `parse_upstream_track` reads `[ahead N`, `behind N`, both, and `[gone]`,
+  and yields 0 for a count it cannot read.
+- 4.2 also edits `commands.rs` and `mod.rs`.
+
+**Implementation:**
+- `dispatch` sends `checkout.status` to `checkout_status::status` outside
+  the per-run queues. `root_path` must be absolute and equal its
+  `git rev-parse --show-toplevel`, else `invalid_payload`.
+- `status` runs the same `for-each-ref` with a 10-second deadline and
+  returns `{current_branch, branch_count, ahead, behind}` as `get_status`
+  computes them. A failed or late git answers `command_failed`; every error
+  carries `stage: "none"`.
+- `upstream_track.json` (new) lists track strings with their ahead and
+  behind counts. `test_upstream_track_golden.py` checks them against
+  `parse_upstream_track`, and the Rust parser must match every entry.
+
+Verification planned:
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_checkout_status)'`.
+- `GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_upstream_track_golden.py -v`.
+
+**Acceptance:**
+
+- 4.6.1 - For a checkout with three branches, the current one tracking an upstream two ahead and one behind, `checkout.status` answers `{current_branch, branch_count: 3, ahead: 2, behind: 1}`, and a branch with no upstream answers null counts. test: `crates/gdaemon/tests/node_checkout_status.rs::status_matches_local_fields`.
+- 4.6.2 - The Rust track parser matches every entry of the golden. test: `crates/gdaemon/tests/node_checkout_status.rs::track_parser_matches_golden`.
+- 4.6.3 - `parse_upstream_track` produces every entry of the golden. test: `tests/hub/test_upstream_track_golden.py::test_golden_matches_python_parser`.
+- 4.6.4 - A relative or non-top-level `root_path` answers `invalid_payload`, and a failing git answers `command_failed`, both with `stage: "none"`. test: `crates/gdaemon/tests/node_checkout_status.rs::status_refusals_change_nothing`.
+
+### 4.7 Hub projects and source-control status take machine_id [category: code] (depends: 1.3, 4.3)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/routes/projects.py::_projects_to_responses`
+- `src/gobby/servers/routes/projects.py::_build_project_response`
+- `src/gobby/servers/routes/projects.py::create_projects_router`
+- `src/gobby/servers/routes/source_control.py::create_source_control_router`
+- `tests/servers/test_machine_scoped_projects.py`
+
+**Research context:**
+- `list_projects` (in `create_projects_router`) calls
+  `_projects_to_responses(server, projects)`, which reads
+  `_local_checkouts` (this machine's `list_for_machine`) and calls
+  `_build_project_response`. That function reads approval rules and
+  validation detection from the checkout root on disk.
+  `src/gobby/servers/routes/files.py` calls `_projects_to_responses`
+  positionally.
+- `get_status` (in `create_source_control_router`) resolves this
+  machine's checkout through `_resolve_project`, caches git fields for
+  30 s with `_get_cached` and `_set_cached` (`_STATUS_TTL`), and counts
+  this machine's worktrees and clones.
+- Decision 21 rules the remote status.
+
+**Implementation:**
+- `_projects_to_responses` gains keyword-only `machine_id: str | None = None`.
+  Null or this machine keeps today's behavior. Another machine lists only
+  projects with a checkout row on that machine, read with
+  `LocalProjectCheckoutManager(db).list_for_machine(machine_id)`, each with
+  that checkout, and `_build_project_response(..., read_checkout_files=False)`
+  answers `approval_rules` `[]` and `validation_detection` null without
+  touching the path. `list_projects` takes the `machine_id` query parameter.
+- `get_status` takes `machine_id`. Another machine needs `project_id`
+  (422 `project_id_required`) and its checkout row (404
+  `checkout_unresolved`). Git fields come from the cache key
+  `remote-status:<machine_id>:<project_id>`, else from one
+  `checkout.status` with a 15-second timeout, cached only on success. A
+  `NodeCommandError` answers 200 with `current_branch`, `ahead`, and
+  `behind` null and `branch_count` 0. `worktree_count` and `clone_count`
+  come from 4.3's `list_remote`, and `repo_path` is the node's root.
+
+Consumers unchanged:
+- `src/gobby/servers/routes/files.py` — no-edit-reason: it calls `_projects_to_responses(server, visible)`, whose new keyword defaults to today's behavior.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_machine_scoped_projects.py tests/servers/routes/test_files.py -v`.
+
+**Acceptance:**
+
+- 4.7.1 - `/api/projects?machine_id=<node>` lists only projects with that node's checkout, each with the node's root, empty approval rules, and null validation detection, and reads no path. test: `tests/servers/test_machine_scoped_projects.py::test_projects_for_node_machine`.
+- 4.7.2 - `/api/source-control/status?machine_id=<node>&project_id=<p>` answers the node's git fields and that machine's worktree and clone counts, and a second call within 30 s sends no command. test: `tests/servers/test_machine_scoped_projects.py::test_remote_status_cached`.
+- 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
+- 4.7.4 - Without `machine_id`, both routes answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
+
+### 4.8 gclient projects pane follows the machine filter [category: code] (depends: 3.2, 4.4, 4.7)
+`kind: deliverable`
+
+Targets:
+- `crates/gclient/src/daemon/mod.rs::*` — scope-reason: three `Daemon` methods gain `machine`, and `ScriptedState` and `ScriptedDaemon` move to `scripted.rs`
+- `crates/gclient/src/daemon/scripted.rs`
+- `crates/gclient/src/daemon/live_connect.rs::LiveDaemon::projects`
+- `crates/gclient/src/daemon/live_connect.rs::LiveDaemon::source_status`
+- `crates/gclient/src/daemon/live_connect.rs::LiveDaemon::worktrees`
+- `crates/gclient/src/daemon/rest.rs::RestClient::projects`
+- `crates/gclient/src/daemon/rest.rs::RestClient::source_status`
+- `crates/gclient/src/daemon/rest.rs::RestClient::worktrees`
+- `crates/gclient/src/daemon/rest/tests.rs::one_deadline_spans_send_and_body`
+- `crates/gclient/src/app/mod.rs::*` — scope-reason: `Workspace` gains `project_scope`, `Workspace::scripted` sets it, and the worktree re-exports name `live_loop::worktrees`
+- `crates/gclient/src/app/live.rs::*` — scope-reason: `Workspace::live` sets `project_scope`
+- `crates/gclient/src/app/live_sidebar.rs::*` — scope-reason: the sidebar fetch carries the scope through `fetch_sidebar_rows`, `start_sidebar_refetch`, `apply_sidebar_fetch`, `SidebarFetch`, `SidebarRequest`, and `SidebarRequest::run`, and the file gains `scope_projects_to`
+- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: declares `worktrees`, and `run_live_loop` calls `scope_projects_to` each tick
+- `crates/gclient/src/app/live_loop/project_paths.rs::resolve_project`
+- `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: the worktree actions move to `worktrees.rs`
+- `crates/gclient/src/app/live_loop/worktrees.rs`
+- `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: imports the worktree actions from `worktrees`
+- `crates/gclient/src/app/live_loop/menu_dispatch.rs::*` — scope-reason: imports the worktree actions from `worktrees`
+- `crates/gclient/tests/client_loop.rs::ReconnectDaemon::projects`
+- `crates/gclient/tests/client_loop.rs::ReconnectDaemon::source_status`
+- `crates/gclient/tests/client_loop.rs::ReconnectDaemon::worktrees`
+- `crates/gclient/tests/teardown.rs::TraceDaemon::projects`
+- `crates/gclient/tests/teardown.rs::TraceDaemon::source_status`
+- `crates/gclient/tests/teardown.rs::TraceDaemon::worktrees`
+- `crates/gclient/tests/projects_machine_scope.rs`
+
+**Granularity:** one leaf with five acceptance items across eleven
+production files. The `Daemon` trait change, its four implementors, and its
+callers compile only together. The two splits are required by the line
+ceiling, not separate outcomes: `crates/gclient/src/daemon/mod.rs` is 926
+lines and `crates/gclient/src/app/live_loop/projects.rs` counts 875 before
+its `#[cfg(test)]`, both over the 850-line decomposition trigger.
+
+**Research context:**
+- `Daemon` (`crates/gclient/src/daemon/mod.rs`) declares `projects()`,
+  `source_status(project)`, and `worktrees(project)`. `LiveDaemon` calls
+  `RestClient`, and `ScriptedDaemon` (lines 399 to 926 with
+  `ScriptedState`), `ReconnectDaemon`, and `TraceDaemon` implement it too.
+- `fetch_sidebar_rows` and `SidebarRequest::run`
+  (`crates/gclient/src/app/live_sidebar.rs`) fetch projects, then each
+  checked-out project's status and worktrees; `apply_sidebar_fetch`
+  installs a fetch by its stamps. `resolve_project`
+  (`crates/gclient/src/app/live_loop/project_paths.rs`) reads `projects()` for the local path
+  dialogs.
+- `chrome.sidebar.machine_filter` is `None` for the local machine,
+  `ALL_MACHINES` for every machine, or a machine id (3.2 defaults it to
+  `None`). The client's own machine is `read_local_machine_id`
+  (`crates/gclient/src/views/mod.rs`).
+- `open_worktree` (`crates/gclient/src/app/live_loop/projects.rs`) starts a local shell at the
+  worktree's path, and `open_new_worktree_dialog` and `create_worktree`
+  create a worktree through the hub's REST create, which runs on the hub's
+  machine. Neither can act on a node's workspace (Decision 15).
+  `remove_worktree` calls `DELETE /worktrees/{id}`, which 4.4 routes
+  through the node.
+
+**Implementation:**
+- `projects`, `source_status`, and `worktrees` gain `machine: Option<&str>`
+  across the trait, `RestClient`, and every implementor. `RestClient` adds
+  `machine_id` to the query when it is set.
+- `ScriptedState` and `ScriptedDaemon` move to `crates/gclient/src/daemon/scripted.rs`, which
+  `mod.rs` declares and re-exports.
+- `Workspace` gains `project_scope: Option<String>`, null for the client's
+  own machine. `scope_projects_to(filter)` maps `None`, `ALL_MACHINES`, and
+  the local machine's id to null, and any other machine to itself. On a
+  change it clears projects, statuses, and worktrees, bumps every sidebar
+  stamp, and queues the projects and their rows. `run_live_loop` calls it
+  with `chrome.sidebar.machine_filter` each tick.
+- `SidebarRequest` and `SidebarFetch` carry the scope, every fetch passes
+  it, and `apply_sidebar_fetch` drops a fetch made for another scope.
+  `resolve_project` passes `None`, because its dialogs open local paths.
+- `crates/gclient/src/app/live_loop/worktrees.rs` (new) takes `open_worktree`,
+  `open_new_worktree_dialog`, `create_worktree`,
+  `open_open_worktree_dialog`, `open_remove_worktree_dialog`,
+  `remove_worktree`, and `worktree_entry` from `projects.rs`. With a
+  remote scope, `open_worktree`, `open_open_worktree_dialog`, and
+  `open_new_worktree_dialog` show `Toast::warning` naming the machine and
+  open nothing. `remove_worktree` works in every scope.
+
+Verification planned:
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-client`.
+
+**Acceptance:**
+
+- 4.8.1 - Selecting a node in the machine filter refetches projects, statuses, and worktrees with that node's `machine_id`, and the pane shows the node's projects with its branch and ahead/behind counts. test: `crates/gclient/tests/projects_machine_scope.rs::selecting_a_node_scopes_the_projects_pane`.
+- 4.8.2 - `None`, `ALL_MACHINES`, and the local machine's id scope the pane to the local machine. test: `crates/gclient/tests/projects_machine_scope.rs::local_and_all_scope_to_this_machine`.
+- 4.8.3 - A fetch started before a scope change does not replace the new scope's rows. test: `crates/gclient/tests/projects_machine_scope.rs::stale_scope_fetch_dropped`.
+- 4.8.4 - With a node scoped, opening a worktree or the new and open worktree dialogs shows a warning toast and starts no shell and no request, and removing a worktree sends `DELETE /worktrees/{id}`. test: `crates/gclient/tests/projects_machine_scope.rs::node_worktree_actions`.
+- 4.8.5 - A REST project, status, and worktree request carries `machine_id` only when a machine is given. test: `crates/gclient/src/daemon/rest/tests.rs::one_deadline_spans_send_and_body`.
+
+## P5: Live hub-to-node proof
+`kind: framing`
+
+**Goal**: a real hub and a real node, both isolated test instances, carry
+every command and report in this plan end to end (Decision 22).
+
+### 5.1 Live hub-to-node proof with isolated daemons and fake providers [category: test] (depends: 2.5, 2.6, 3.3, 4.4, 4.5, 4.7)
+`kind: deliverable`
+
+Targets:
+- `tests/e2e/test_hub_node_live.py`
+- `tests/e2e/fake_provider.py`
+
+**Research context:**
+- `tests/e2e/test_hub_node_pair.py` holds `pair_hub` (a hub-mode
+  `spawn_daemon_instance` with a self-signed certificate over the e2e
+  harness's isolated config and database) and `pair_node` (an enrolled bare
+  `gdaemon serve` with `GOBBY_HOME` in `tmp_path`, from
+  `prepare_daemon_env`'s native bin directory), with `_wait_listener` and
+  `_wait_connection`. `pair_node` sets `GOBBY_HOME` and not `HOME`.
+- `tests/e2e/conftest.py::link_operator_srt(home)` links the operator's
+  `~/.gobby/tools/srt/<version>` into an isolated home and skips when it is
+  absent; `e2e_srt_spawn_home` keeps `GOBBY_HOME` outside the workspace.
+  `tests/e2e/test_composer_live_proof.py` runs providers under SRT that
+  call `ghook`.
+- Every spawn runs under managed SRT, and the hub never sends a disabled
+  sandbox (2.5). node-halves 2.6 seeds `~/.claude.json` and
+  `~/.codex/config.toml` under `HOME`, so both daemons need a temporary
+  `HOME`.
+- Hook-driven attention: `handle_permission_request` calls
+  `_enter_turn_wait(event, "approval")`
+  (`src/gobby/hooks/event_handlers/_misc.py`). Grok and agy have no hook
+  directory (node-halves 2.3.3), so their runs settle through the node's
+  exit report (2.6). The node's agy gate needs version 1.1.18 (node-halves
+  2.6), and codex receives its prompt after the composer marker
+  (node-halves 2.10).
+- node-halves 2.9 registers a checkout on the first hook from its root.
+  A hook from an operator's own CLI on the node is refused at session
+  registration (Constraints), which the test expects.
+
+**Implementation:**
+- Setup: the test gives the hub and the node a temporary `HOME` and
+  `GOBBY_HOME` under `tmp_path`, links SRT and the native `ghook` into both
+  homes, and creates a git checkout of a test project on the node side. It
+  never touches the operator's hub, database, or `~/.gobby`, and teardown
+  stops both daemons and removes `tmp_path`.
+- `fake_provider.py` is one script that the test installs on the node's
+  `PATH` as `claude`, `codex`, `grok`, `droid`, and `agy`. It answers
+  `--version` (agy with 1.1.18). Otherwise it runs in its pane: codex
+  prints the composer marker from the pane-detection corpus and reads its
+  prompt; claude, codex, and droid pipe a session-start envelope into
+  `ghook --cli=<provider> --type=session-start` with the run's
+  `GOBBY_SESSION_ID`; claude can send a permission request and wait for a
+  line; each writes what it read to a file in its workspace, commits it,
+  sends its stop and session-end hooks where it has hooks, and exits.
+- Steps:
+  1. One `ghook` session-start from the checkout root registers the node's
+     checkout.
+  2. For each provider, `POST /api/agents/spawn` with `machine` set to the
+     node and worktree isolation; the report promotes the run live and
+     records the worktree row, and the run settles completed.
+  3. For claude: a terminal write reaches the pane, its permission request
+     raises an attention entry under the node's machine, and the respond
+     route types the answer into the pane.
+  4. A waiting grok run is cancelled through `kill_agent` and settles
+     cancelled.
+  5. `merge_worktree` on claude's worktree merges on the node, and
+     `delete_worktree` removes it and its row; `merge_clone` and
+     `delete_clone` do the same for a clone run.
+  6. `/api/projects?machine_id=<node>` and
+     `/api/source-control/status?machine_id=<node>` show the node's
+     checkout and branch, and after the node stops the status shows null
+     git fields.
+
+Verification planned:
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_live.py -v -m e2e`.
+
+**Acceptance:**
+
+- 5.1.1 - The node's first hook from its checkout root registers that checkout on the hub under the node's machine. test: `tests/e2e/test_hub_node_live.py::test_node_registers_checkout`.
+- 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed, through hooks for claude, codex, and droid and through the exit report for grok and agy. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
+- 5.1.3 - A terminal write reaches the claude fake's pane, and its permission request raises an attention entry on the node's machine whose response the fake receives. test: `tests/e2e/test_hub_node_live.py::test_terminal_write_and_attention_respond_reach_node`.
+- 5.1.4 - A cancel stops a waiting run on the node, and the run settles cancelled. test: `tests/e2e/test_hub_node_live.py::test_cancel_stops_node_agent`.
+- 5.1.5 - A worktree and a clone each merge into the node's checkout and are removed from the node, with the hub row marked merged and then deleted. test: `tests/e2e/test_hub_node_live.py::test_merge_and_remove_through_node`.
+- 5.1.6 - The projects view and status for the node's machine show its checkout and branch, and null git fields once the node stops. test: `tests/e2e/test_hub_node_live.py::test_projects_view_for_node_machine`.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -2404,6 +3186,19 @@ deferral:
   counts a resume reference as unresolved and takes the local path, and
   corrects the `test_spawn_agent_resume.py` no-edit reason to match
   (gobby#15977's finding for the 2.5 leaf).
+- 2026-10-14: Planned the four deferred sections in scope under Josh's "No
+  deferrals" ruling (memory 878d0c35), relayed by gobby#15977, which also
+  upheld Plan Adversary gobby#16491's HM-F19 to HM-F21. D2 is 1.2 again,
+  with the #24268 review's admission and malformed-input requirements. D1
+  and D3 are P4: a node merges and removes its own workspaces (Decision
+  20), and the hub asks it for its checkout's git state on demand
+  (Decision 21). D4 is P5's live proof with isolated daemons and fake
+  providers (Decision 22). 2.5 names the resolvers the remote flow runs
+  and stops verifying the hub's SRT install for a node run (2.5.15). 1.4
+  moves `updated_at` on each reported workspace for node-halves 3.2
+  (1.4.7, node-halves adversary finding NH-12, requested by gobby#16767).
+  Constraints lists the cross-plan edges with node-halves. The M1 manifest
+  is re-derived from this narrative.
 
 ## V2: Verification
 `kind: verification`
@@ -2412,8 +3207,9 @@ These are completion gates for the implementation. Except for plan validation,
 none has run yet. Each must pass after its leaves land and before #21575 closes.
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/ tests/agents/test_hub_local_loops.py tests/servers/test_node_routes.py tests/servers/test_hook_machine_binding.py tests/servers/test_attention_roster_machines.py tests/servers/test_attention_remote_respond.py -v
-cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus)'
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/ tests/agents/test_hub_local_loops.py tests/servers/test_node_routes.py tests/servers/test_hook_machine_binding.py tests/servers/test_attention_roster_machines.py tests/servers/test_attention_remote_respond.py tests/servers/test_remote_workspace_routes.py tests/servers/test_machine_scoped_projects.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_live.py -v -m e2e
+cargo nextest run -p gobby-daemon -E 'binary(node_command_corpus) + binary(node_command_parity) + binary(node_internal_route) + binary(node_workspace_finish) + binary(node_checkout_status)'
 cargo nextest run -p gobby-client
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby plans validate .gobby/plans/hub-mode.md -p .
@@ -2421,6 +3217,6 @@ uv run gobby plans validate .gobby/plans/hub-mode.md -p .
 
 - The plan validation command must pass at every revision; it is the only check
   that runs during planning.
-- These gates cover the active sections, which drive a fake route or a fake
-  node. D2's route checks and D4's live proof run in their own tasks.
+- P1 to P4 drive a fake route or a fake node; 5.1 runs a real isolated hub
+  and node.
 - Run these from the worktree root. Do not run the full pytest suite.
