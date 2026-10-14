@@ -76,6 +76,7 @@ class ReapChildProcesses(Protocol):
         *,
         preserve_agents: bool = False,
         preserved_agent_pids: set[int] | None = None,
+        preserve_srt_monitor: bool = False,
     ) -> None: ...
 
 
@@ -752,6 +753,7 @@ async def _run_async_shutdown_cleanup(
             lambda: reap_remaining_child_processes(
                 preserve_agents=True,
                 preserved_agent_pids=preserved_agent_pids,
+                preserve_srt_monitor=shutdown_intent is ShutdownIntent.RESTART,
             ),
             "Child process reap",
         )

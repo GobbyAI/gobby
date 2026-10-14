@@ -94,7 +94,7 @@ def test_mux_directory_refuses_preexisting_root_symlink(
     before = target.stat().st_mode
     (short_root if fallback else home_root).symlink_to(target, target_is_directory=True)
     monkeypatch.setattr(
-        srt_socket_paths, "private_srt_socket_roots", lambda: (home_root, short_root)
+        srt_socket_paths, "private_srt_socket_roots", lambda _home=None: (home_root, short_root)
     )
     monkeypatch.setattr(srt_socket_paths, "_SOCKET_DIRECTORY_BUDGET", 0 if fallback else 4096)
     with pytest.raises(OSError):
@@ -132,7 +132,9 @@ def test_mux_directory_secures_fallback_parent_and_child(
 ) -> None:
     parent = tmp_path / "private-sockets"
     directory = parent / "home-key"
-    monkeypatch.setattr(srt_socket_paths, "private_srt_socket_roots", lambda: (tmp_path, parent))
+    monkeypatch.setattr(
+        srt_socket_paths, "private_srt_socket_roots", lambda _home=None: (tmp_path, parent)
+    )
     monkeypatch.setattr(srt_socket_paths, "srt_socket_directory", lambda: directory)
     assert srt_socket_paths.srt_mux_tmpdir() == directory
     for path in (parent, directory):

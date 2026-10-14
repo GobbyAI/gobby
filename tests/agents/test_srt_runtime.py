@@ -708,7 +708,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert policy_path.parent == expected_parent / "assets"
     assert violation_path.parent == expected_parent / "logs"
     temp_path = Path(launch.provider_env[temp_env_name])
-    if allow_run_sockets and platform_name == "darwin":
+    if platform_name == "linux" or (allow_run_sockets and platform_name == "darwin"):
         assert temp_path.parent == tmp_path.resolve()
         assert (expected_parent / "tmp-path").read_text() == str(temp_path)
     else:
@@ -718,11 +718,14 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert Path(launch.provider_env["TMPDIR"]) == temp_path
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = tmp_path / "srt-sock"
-    assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
+    assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(
+        temp_path if platform_name == "linux" else mux_dir
+    )
     # This fixture has no cargo binary. Its PATH must still retain the ps shim.
     assert launch.provider_env["PATH"] == f"{ps_shim_path}{os.pathsep}{shim_dir}"
-    assert mux_dir.is_dir()
-    assert mux_dir.stat().st_mode & 0o777 == 0o700
+    if platform_name == "darwin":
+        assert mux_dir.is_dir()
+        assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
     sandbox_cache = gobby_home / "cache" / "sandbox"
     for name in unsandboxed_cargo:
@@ -743,6 +746,17 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert preflight_cwd == str(workspace)
     assert preflight_env == {**spawn_env, **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if platform_name == "linux":
+        # Pinned SRT binds its HTTP/SOCKS sockets before denyRead tmpfs masks.
+        # Neither a broker root nor any other read deny may mask their parent.
+        bridge_root = Path(launch.provider_env["GOBBY_SRT_TMPDIR"]).resolve()
+        for denied in policy["filesystem"]["denyRead"]:
+            assert not bridge_root.is_relative_to(Path(denied).resolve()), denied
+        from gobby.agents.srt_socket_paths import private_srt_socket_roots
+
+        for private_root in private_srt_socket_roots():
+            assert not bridge_root.is_relative_to(private_root.resolve())
+            assert not private_root.resolve().is_relative_to(bridge_root)
     if reviewer_auto_approve is not None:
         private = Path(launch.provider_env["CLAUDE_CONFIG_DIR"])
         seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))

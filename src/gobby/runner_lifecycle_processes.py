@@ -88,6 +88,7 @@ async def _reap_remaining_child_processes(
     *,
     preserve_agents: bool = False,
     preserved_agent_pids: set[int] | None = None,
+    preserve_srt_monitor: bool = False,
 ) -> None:
     """Terminate then force-kill child processes that survived graceful shutdown."""
     try:
@@ -100,16 +101,22 @@ async def _reap_remaining_child_processes(
             return
 
         if preserve_agents:
+            from gobby.agents.srt_monitor import live_monitor_identities
+
+            monitor_identities = (
+                await asyncio.to_thread(live_monitor_identities) if preserve_srt_monitor else {}
+            )
             preserved_pids = _expand_preserved_agent_processes(
                 psutil,
                 children,
-                preserved_agent_pids or set(),
+                (preserved_agent_pids or set()) | set(monitor_identities),
+                monitor_identities,
             )
             reapable_children = [child for child in children if child.pid not in preserved_pids]
             preserved_count = len(children) - len(reapable_children)
             if preserved_count:
                 logger.info(
-                    "Preserving %d terminal agent child process(es) during restart",
+                    "Preserving %d agent and monitor child process(es) during restart",
                     preserved_count,
                 )
             children = reapable_children
@@ -164,6 +171,7 @@ def _expand_preserved_agent_processes(
     psutil_module: Any,
     children: list[Any],
     root_pids: set[int],
+    identities: dict[int, float] | None = None,
 ) -> set[int]:
     """Include descendants and in-daemon ancestors for preserved agent pane PIDs."""
     preserved: set[int] = set()
@@ -179,6 +187,8 @@ def _expand_preserved_agent_processes(
             continue
         try:
             if process.create_time() != snapshotted_process.create_time():
+                continue
+            if identities and pid in identities and process.create_time() != identities[pid]:
                 continue
         except (psutil_module.NoSuchProcess, psutil_module.AccessDenied):
             continue

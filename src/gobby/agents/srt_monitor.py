@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO
 
+import psutil
+
 from gobby.agents.srt_socket_paths import srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.utils.dependency_requirements import SRT_RELEASE
@@ -21,11 +23,28 @@ from gobby.utils.spawn import run
 
 _lock = threading.Lock()
 _children: list[subprocess.Popen[bytes]] = []
+_child_started: dict[int, float] = {}
+
+
+def live_monitor_identities() -> dict[int, float]:
+    """Return only live brokers whose creation identity still matches our child."""
+    with _lock:
+        identities: dict[int, float] = {}
+        for child in _children:
+            if child.poll() is not None:
+                continue
+            started = _child_started.get(child.pid)
+            try:
+                if started is not None and psutil.Process(child.pid).create_time() == started:
+                    identities[child.pid] = started
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return identities
 
 
 def _connect(path: Path) -> None:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(6)
+        client.settimeout(30)
         client.connect(str(path))
         client.sendall(b'{"suffix":"_gobbyprobe_SBX"}\n')
         with client.makefile("rb") as stream:
@@ -38,7 +57,8 @@ def _start_monitor(
     *, node: Path, runner: Path, path: Path, ready_fd: int, env: Mapping[str, str], log: BinaryIO
 ) -> subprocess.Popen[bytes]:
     # One broker per runner identity needs a private readiness descriptor and
-    # its own session to survive daemon restarts. spawn.popen rejects pass_fds
+    # its own session. Restart reaping explicitly preserves its process identity;
+    # setsid alone does not remove daemon ancestry. spawn.popen rejects pass_fds
     # and start_new_session; keep this rare fork exception separate from recovery.
     return subprocess.Popen(
         [
@@ -147,13 +167,24 @@ def ensure_srt_monitor(
             )
             child_ready.close()
             _children[:] = [process for process in _children if process.poll() is None]
+            live_pids = {process.pid for process in _children}
+            for pid in list(_child_started):
+                if pid not in live_pids:
+                    del _child_started[pid]
             _children.append(child)
             try:
+                _child_started[child.pid] = psutil.Process(child.pid).create_time()
                 with parent.makefile("rb") as readiness:
                     if readiness.readline(16) != b"ready\n":
                         raise RuntimeError("Shared SRT monitor failed to become ready")
                 _connect(path)
-            except (OSError, ValueError, RuntimeError) as exc:
+            except (
+                OSError,
+                ValueError,
+                RuntimeError,
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+            ) as exc:
                 child.terminate()
                 try:
                     child.wait(timeout=5)

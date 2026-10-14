@@ -28,6 +28,7 @@ from gobby.agents.sandbox_policy import (
     retire_stale_pre_commit_store_spare,
 )
 from gobby.agents.srt_process_cleanup import reap_srt_runner_process_tree
+from gobby.agents.srt_socket_paths import srt_socket_directory
 from gobby.paths import get_gobby_home
 
 if TYPE_CHECKING:
@@ -153,7 +154,7 @@ def _retain_monitor_backlog(run_id: str, gobby_home: Path) -> Path | None:
     """
     if re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", run_id) is None:
         return None
-    source = gobby_home / "runtime" / "srt-sock" / f"{run_id}.srt-backlog.jsonl"
+    source = srt_socket_directory(gobby_home) / f"{run_id}.srt-backlog.jsonl"
     info = _lstat(source)
     if info is None:
         return None

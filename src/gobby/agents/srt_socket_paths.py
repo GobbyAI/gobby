@@ -12,21 +12,22 @@ from gobby.paths import get_gobby_home
 _SOCKET_DIRECTORY_BUDGET = 63
 
 
-def private_srt_socket_roots() -> tuple[Path, Path]:
+def private_srt_socket_roots(gobby_home: Path | None = None) -> tuple[Path, Path]:
     """Return both private roots, including other homes' UID-scoped sockets."""
     return (
-        get_gobby_home() / "runtime" / "srt-sock",
+        (gobby_home if gobby_home is not None else get_gobby_home()) / "runtime" / "srt-sock",
         Path("/tmp") / f"gobby-srt-{os.getuid()}",
     )
 
 
-def srt_socket_directory() -> Path:
+def srt_socket_directory(gobby_home: Path | None = None) -> Path:
     """Select a stable bounded directory without creating policy-side state."""
-    home_root, short_root = private_srt_socket_roots()
+    home = gobby_home if gobby_home is not None else get_gobby_home()
+    home_root, short_root = private_srt_socket_roots(home)
     home_root = home_root.parent.resolve() / home_root.name
     if len(os.fsencode(home_root)) <= _SOCKET_DIRECTORY_BUDGET:
         return home_root
-    home_key = hashlib.sha256(os.fsencode(get_gobby_home().resolve())).hexdigest()[:16]
+    home_key = hashlib.sha256(os.fsencode(home.resolve())).hexdigest()[:16]
     return short_root.parent.resolve() / short_root.name / home_key
 
 
