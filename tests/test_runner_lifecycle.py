@@ -2923,9 +2923,10 @@ class TestMainFunction:
                 assert exc_info.value.code == 1
 
     def test_main_exits_cleanly_when_daemon_already_running(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A contained backend returns cleanly when the native owner holds the PID lock."""
+        monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
         caplog.set_level(logging.INFO, logger="gobby.runner")
         with (
             patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,
@@ -2937,7 +2938,7 @@ class TestMainFunction:
         assert "Contained runner blocked by daemon; exiting cleanly" in caplog.text
         claim.assert_called_once()
         probe.assert_called_once_with(claim.call_args.args[0])
-        load_bootstrap.assert_not_called()
+        load_bootstrap.assert_called_once_with(None, resolve_database_url=True)
 
 
 class TestAgentEventBroadcasting:
@@ -4666,8 +4667,11 @@ class TestMainFunctionExtended:
             mock_asyncio_run.assert_called_once()
         assert mock_asyncio_run.call_count == 1
 
-    def test_main_exits_when_daemon_running(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_main_exits_when_daemon_running(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """PID ownership, rather than a public health probe, blocks duplicate backends."""
+        monkeypatch.delenv("GOBBY_SUPERVISOR_FD", raising=False)
         caplog.set_level(logging.INFO, logger="gobby.runner")
         with (
             patch("gobby.runner_pid_file.claim_pid_file", return_value=None) as claim,
@@ -4678,7 +4682,7 @@ class TestMainFunctionExtended:
         assert "Contained runner blocked by daemon; exiting cleanly" in caplog.text
         claim.assert_called_once()
         probe.assert_called_once_with(claim.call_args.args[0])
-        load_bootstrap.assert_not_called()
+        load_bootstrap.assert_called_once_with(None, resolve_database_url=True)
 
     def test_main_handles_keyboard_interrupt(self) -> None:
         """Test that main() handles KeyboardInterrupt gracefully."""
