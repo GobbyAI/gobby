@@ -99,7 +99,24 @@ def create_communications_registry(
         body = AgentDefinitionBody.model_validate({"name": row.name, **row.definition_json})
         if not body.operator_messaging:
             raise ValueError("Caller is not permitted to message the operator on this channel")
-        destination = communications_manager.resolve_operator_conversation(channel)
+        permitted_channels: list[str] = []
+        for configured in communications_manager.list_channels():
+            responder = configured.config_json.get("responder")
+            if (
+                configured.enabled
+                and configured.channel_type == "telegram"
+                and isinstance(responder, dict)
+                and responder.get("project_id") == caller.project_id
+            ):
+                permitted_channels.append(configured.name)
+        if len(permitted_channels) != 1:
+            raise ValueError(
+                "Operator messaging requires exactly one project-bound Telegram channel"
+            )
+        permitted_channel = permitted_channels[0]
+        if channel != permitted_channel:
+            raise ValueError("Caller is not permitted to message the operator on this channel")
+        destination = communications_manager.resolve_operator_conversation(permitted_channel)
         conversation = destination.get("conversation_id")
         if not isinstance(conversation, str) or not conversation.startswith("dm:"):
             raise ValueError("Operator has no recorded Telegram DM")

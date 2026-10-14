@@ -58,6 +58,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
     from gobby.workflows.state_manager import SessionVariableManager
 
     manager, channel, holder, adapter = operator_telegram
+    channel.config_json["responder"] = {"project_id": str(sample_project["id"])}
     if attachment:
         channel.config_json.pop("default_destination", None)
     caller = SessionManager(temp_db).register(

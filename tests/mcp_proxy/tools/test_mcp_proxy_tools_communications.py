@@ -98,6 +98,10 @@ def registry(mock_manager: MagicMock, tmp_path: Path) -> Any:
     ("permitted", "delivery_status"), [(True, "sent"), (False, "sent"), (True, "failed")]
 )
 @pytest.mark.parametrize("tool_name", ["send_operator_message", "send_operator_attachment"])
+@pytest.mark.parametrize(
+    "binding",
+    ["valid", "other-channel", "missing", "ambiguous", "disabled", "other-project", "unenrolled"],
+)
 async def test_send_operator_message_requires_installed_operator_grant(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -105,6 +109,7 @@ async def test_send_operator_message_requires_installed_operator_grant(
     permitted: bool,
     delivery_status: str,
     tool_name: str,
+    binding: str,
     tmp_path: Path,
 ) -> None:
     """An enrolled DM is targeted explicitly; unlisted agents cannot send to it."""
@@ -129,10 +134,44 @@ async def test_send_operator_message_requires_installed_operator_grant(
         agent_depth=1,
     )
     SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", agent_type)
+    channel_a = ChannelConfig(
+        id="channel-a",
+        channel_type="telegram",
+        name="operator-status",
+        enabled=binding != "disabled",
+        config_json={
+            "responder": {
+                "project_id": "other-project" if binding == "other-project" else caller.project_id
+            }
+        },
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    channel_b = ChannelConfig(
+        id="channel-b",
+        channel_type="telegram",
+        name="other-operator",
+        enabled=True,
+        config_json={
+            "responder": {
+                "project_id": caller.project_id if binding == "ambiguous" else "other-project"
+            }
+        },
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    mock_manager.list_channels.return_value = (
+        [channel_b] if binding == "missing" else [channel_a, channel_b]
+    )
+    requested_channel = "other-operator" if binding == "other-channel" else "operator-status"
     mock_manager.resolve_operator_conversation.return_value = {
         "conversation_id": "dm:42",
         "session_id": None,
     }
+    if binding == "unenrolled":
+        mock_manager.resolve_operator_conversation.side_effect = ValueError(
+            "No enrolled operator DM"
+        )
     delivery_error = "Telegram unavailable" if delivery_status == "failed" else None
     mock_manager.send_message.return_value = MagicMock(
         status=delivery_status, id="delivered", error=delivery_error
@@ -150,11 +189,11 @@ async def test_send_operator_message_requires_installed_operator_grant(
         "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
     ):
         if tool_name == "send_operator_attachment":
-            result = await handler(channel="operator-status", file_path=str(report))
+            result = await handler(channel=requested_channel, file_path=str(report))
         else:
-            result = await handler(channel="operator-status", content="**Systems nominal**")
+            result = await handler(channel=requested_channel, content="**Systems nominal**")
 
-    if permitted:
+    if permitted and binding == "valid":
         if tool_name == "send_operator_attachment":
             assert result["success"] is (delivery_status == "sent")
             mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
@@ -187,8 +226,16 @@ async def test_send_operator_message_requires_installed_operator_grant(
         )
     else:
         assert result["success"] is False
-        assert "not permitted" in result["error"]
-        mock_manager.resolve_operator_conversation.assert_not_called()
+        if not permitted or binding == "other-channel":
+            assert "not permitted" in result["error"]
+        elif binding == "unenrolled":
+            assert "No enrolled operator DM" in result["error"]
+        else:
+            assert "exactly one project-bound" in result["error"]
+        if permitted and binding == "unenrolled":
+            mock_manager.resolve_operator_conversation.assert_called_once_with("operator-status")
+        else:
+            mock_manager.resolve_operator_conversation.assert_not_called()
         mock_manager.send_message.assert_not_awaited()
         mock_manager.send_attachment.assert_not_awaited()
 
