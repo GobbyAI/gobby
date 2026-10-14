@@ -61,6 +61,8 @@ workflows:
       - "tag:memory-lifecycle"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:no-comms-attach"
   variables: {}
 
 step_workflow:
