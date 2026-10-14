@@ -261,7 +261,7 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
     result = subprocess.run(
         _runner_argv(launch, ["/bin/sh", "-c", command]),
         cwd=workspace,
-        env=os.environ.copy(),
+        env={**os.environ, **launch.provider_env},
         capture_output=True,
         text=True,
         check=False,
