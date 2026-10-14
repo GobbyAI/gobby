@@ -274,3 +274,27 @@ async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
 
     by_id = {item["terminal_id"]: item for item in page["items"]}
     assert by_id[promoted.id]["command"] == "zsh"
+
+
+@pytest.mark.asyncio
+async def test_terminal_list_exposes_backend(
+    server: WebSocketServer,
+    manager: TerminalManager,
+    sample_project: dict[str, Any],
+) -> None:
+    tmux_row = seed_pane(manager, sample_project["id"], "%3", "tmux-pane")
+    native = _create_pending(manager, sample_project["id"], backend="native")
+    promoted = manager.promote_to_live(
+        native.id,
+        locator={"host_terminal_id": "ht-3"},
+        locator_key="native:epoch-1:ht-3",
+        host_epoch="epoch-1",
+    )
+    assert promoted is not None
+    stored = {row.id: row.backend for row in (tmux_row, promoted)}
+    assert sorted(stored.values()) == ["native", "tmux"]
+
+    page = await listed(server, {"request_id": "backends"})
+
+    # Each terminal.list row names the backend its stored terminal row records.
+    assert {item["terminal_id"]: item["backend"] for item in page["items"]} == stored

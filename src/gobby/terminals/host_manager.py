@@ -18,11 +18,13 @@ from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import (
+    FAIL_CLOSED_HOST_REASONS,
     HelloResult,
     HostClient,
     HostCommandError,
     HostManagerStopped,
     HostUnavailableError,
+    HostUnavailableReason,
     PingResult,
 )
 from gobby.terminals.host_control import HostControlError
@@ -52,6 +54,22 @@ logger = logging.getLogger(__name__)
 Connector = Callable[[], Awaitable[Any]]
 EventConnector = Callable[[int | None], Awaitable[HostEventStream]]
 Spawner = Callable[[], Any]
+
+# How long a spawned host has to answer its control socket, and how long a spawn
+# waits on an undecided start, before either counts as host_start_timeout.
+HOST_READY_DEADLINE_SECONDS = 2.5
+
+
+class HostStartTimeoutError(ConnectionError):
+    """A spawned host never answered its control socket within the ready deadline."""
+
+
+def _start_failure_reason(exc: BaseException) -> HostUnavailableReason:
+    if isinstance(exc, FileNotFoundError):
+        return "gterm_missing"
+    if isinstance(exc, HostStartTimeoutError):
+        return "host_start_timeout"
+    return "other"
 
 
 class _Adopt(Enum):
@@ -128,6 +146,9 @@ class TerminalHostManager(HostShutdown):
         # pid identity disagreed). It stays alive and untouched; native launches
         # degrade until a health tick adopts it (#22002, #22337).
         self.host_mismatch: str | None = None
+        # Typed cause of the latest failed start or adoption; the spawn path
+        # reads this, never last_error. Cleared whenever a client is published.
+        self.failure_reason: HostUnavailableReason | None = None
         # Set once `stop(drain_host=True)` took the host down, so the child
         # reaper no longer holds its pid back.
         self.host_drained = False
@@ -169,6 +190,7 @@ class TerminalHostManager(HostShutdown):
             "orphaned_terminals": orphaned,
             "last_error": self.last_error,
             "host_mismatch": self.host_mismatch,
+            "failure_reason": self.failure_reason,
         }
 
     def ensure_control_token(self) -> str:
@@ -207,6 +229,17 @@ class TerminalHostManager(HostShutdown):
         # An in-place upgrade holds attaches the way a start does.
         return not self.upgrade.is_open
 
+    async def spawn_refusal(self) -> HostUnavailableReason | None:
+        """The fail-closed reason a spawn must refuse with now, or None to proceed."""
+        try:
+            await asyncio.wait_for(self._startup_settled.wait(), HOST_READY_DEADLINE_SECONDS)
+        except TimeoutError:
+            return "host_start_timeout"
+        if self._client is not None:
+            return None
+        reason = self.failure_reason
+        return reason if reason in FAIL_CLOSED_HOST_REASONS else None
+
     async def _start_host(self) -> None:
         if not self.enabled:
             self.native_available = False
@@ -222,6 +255,7 @@ class TerminalHostManager(HostShutdown):
                 # pidfile, ping, and live identity agree again (#22337).
                 self.running = False
                 self.native_available = False
+                self.failure_reason = "other"
                 self._arm_health()
                 return
             await self._spawn_and_connect()
@@ -235,6 +269,7 @@ class TerminalHostManager(HostShutdown):
             self.running = False
             self.native_available = False
             self.last_error = str(exc)
+            self.failure_reason = _start_failure_reason(exc)
             logger.warning("gterm host unavailable; native launches degraded: %s", exc)
             # A failed start is retried on the health interval instead of
             # staying degraded until the next daemon restart (#22425).
@@ -245,6 +280,7 @@ class TerminalHostManager(HostShutdown):
         self.native_available = True
         self.running = True
         self.last_error = None
+        self.failure_reason = None
         await self.reconcile()
         self._healthy_since = self._monotonic()
         arm_events(self)
@@ -262,6 +298,7 @@ class TerminalHostManager(HostShutdown):
                 await self._activate_adopted()
         except Exception as exc:
             self.last_error = str(exc)
+            self.failure_reason = "other"
 
     def begin_shutdown(self) -> None:
         """Fence new hosts immediately, keeping existing connections until stop()."""
@@ -339,6 +376,7 @@ class TerminalHostManager(HostShutdown):
                         self.config.restart_backoff_ceiling_seconds,
                     )
                     self.last_error = str(exc)
+                    self.failure_reason = _start_failure_reason(exc)
                     continue
 
                 client, hello, ping = candidate
@@ -657,6 +695,7 @@ class TerminalHostManager(HostShutdown):
         self.adopted = False
         self.spawned_this_construction = True
         self.restart_count += 1
+        self.failure_reason = None
         self._healthy_since = self._monotonic()
 
     def _installed_binary(self) -> str | None:
@@ -711,7 +750,7 @@ class TerminalHostManager(HostShutdown):
             )
 
     async def _wait_for_client(self) -> Any:
-        deadline = asyncio.get_running_loop().time() + 5.0
+        deadline = asyncio.get_running_loop().time() + HOST_READY_DEADLINE_SECONDS
         last_error: Exception | None = None
         while asyncio.get_running_loop().time() < deadline:
             try:
@@ -719,7 +758,7 @@ class TerminalHostManager(HostShutdown):
             except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(0.05)
-        raise ConnectionError(f"gterm control socket never appeared: {last_error}")
+        raise HostStartTimeoutError(f"gterm control socket never appeared: {last_error}")
 
     async def _connect(self) -> Any:
         if self._connector is not None:
@@ -790,6 +829,7 @@ class TerminalHostManager(HostShutdown):
         self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.capabilities = tuple(hello.capabilities)
+        self.failure_reason = None
         self._record_healthy_ping()
 
     async def _health_loop(self) -> None:

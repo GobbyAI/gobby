@@ -54,6 +54,7 @@ from gobby.storage.workspaces import (
 )
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.terminals.actor_scope import ActorScope, ActorScopeError, resolve_actor_scope
+from gobby.terminals.host_client import HostUnavailableReason
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.pane_io import TEXT_NOT_SUBMITTED_ERROR_CODE, _verified_submits
 from gobby.terminals.runtime import (
@@ -87,11 +88,16 @@ class _HostRuntime(FakeRuntime):
 
     backend: Literal["tmux", "native"] = "native"
     spawning: asyncio.Event = field(default_factory=asyncio.Event)
+    # The supervisor's typed fail-closed reason, as HostManagerControl reports it.
+    refusal: HostUnavailableReason | None = None
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.host_epoch = str(request.terminal_id)
         self.spawning.set()
         return await super().prepare_spawn(request)
+
+    async def spawn_refusal(self) -> HostUnavailableReason | None:
+        return self.refusal
 
 
 @dataclass
@@ -2034,7 +2040,7 @@ async def test_role_bound_pane_is_persistent_and_bare_pane_is_run(harness: _Harn
         bare_split = (await h.ops.pane_split(OPERATOR, bare.id, "vertical")).panes[0]
     assert lifetimes == ["run", "persistent_role", "persistent_role", "run"]
 
-    # Lifetime governs only fallback legality: every pane is still a native terminal.
+    # Lifetime never selects a backend: every pane is still a native terminal.
     for pane in (bare, bound, bound_split, bare_split):
         assert pane.terminal_id is not None
         terminal = h.terminals.get(pane.terminal_id)
@@ -2048,3 +2054,33 @@ async def test_role_bound_pane_is_persistent_and_bare_pane_is_run(harness: _Harn
         "run",
         "persistent_role",
     ]
+
+
+async def test_role_bound_pane_fails_closed_without_host(harness: _Harness) -> None:
+    h = harness
+    role = "persistent-reviewer"
+    workspace = await h.ops.workspace_create(OPERATOR)
+    bound = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=role)).panes[0]
+    layouts = {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)}
+    panes = {row.id for row in h.workspaces.list_panes(workspace.id)}
+    terminals = h.db.fetchall("SELECT id FROM terminals")
+    spawned = h.native.create_calls
+
+    h.native.refusal = "host_start_timeout"
+    split = await _raises(
+        "terminal_failed", h.ops.pane_split(OPERATOR, bound.id, "horizontal", role=role)
+    )
+    tab = await _raises(
+        "terminal_failed", h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=role)
+    )
+    expected = (
+        "Pane spawn failed: host_unavailable:host_start_timeout: "
+        "native terminals are unavailable (host_start_timeout)"
+    )
+    assert str(split) == str(tab) == expected
+    # The refused spawn minted nothing and the inserted pane rolled back.
+    assert h.db.fetchall("SELECT id FROM terminals") == terminals
+    assert h.native.create_calls == spawned
+    assert h.tmux.create_calls == 0
+    assert {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)} == layouts
+    assert {row.id for row in h.workspaces.list_panes(workspace.id)} == panes

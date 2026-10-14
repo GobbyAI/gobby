@@ -12,7 +12,10 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult, is_infrastructu
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import UnregisteredBackendError
-from gobby.terminals.native_runtime import classify_native_spawn_failure
+from gobby.terminals.native_runtime import (
+    classify_native_spawn_failure,
+    refuse_unavailable_host,
+)
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
     TerminalRuntime,
@@ -75,6 +78,19 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             child_session_id=plan.child_session_id,
             status="cancelled",
             error="cancelled",
+        )
+
+    # Fail closed before any row, reservation or process exists (#23213).
+    refusal = await refuse_unavailable_host(runtime)
+    if refusal is not None:
+        code, detail = refusal
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=code,
+            error_detail=detail,
         )
 
     existing: Terminal | None = None

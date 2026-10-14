@@ -17,8 +17,8 @@ use gobby_client::app::sidebar_model::{GIT_REFRESH_INTERVAL, ROSTER_REFRESH_INTE
 use gobby_client::app::{
     close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
     open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
-    remove_worktree, route_modal_key, run_live_loop, sync_live_chrome, AttachState, ModalOutcome,
-    HOST_GRANT_UNAVAILABLE,
+    remove_worktree, route_modal_key, run_live_loop, sync_live_chrome, AttachState, Backend,
+    ModalOutcome, HOST_GRANT_UNAVAILABLE,
 };
 use gobby_client::daemon::{
     Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LayoutAxis,
@@ -36,9 +36,12 @@ use gobby_client::prefs::{prefs_path, save_prefs};
 use gobby_client::startup::{initial_project, Ready};
 use gobby_client::teardown::{RecordingBackend, TerminalGuard};
 use gobby_client::ui::chrome::{Mode, RowState};
-use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, WorktreeChoice};
+use gobby_client::ui::dialogs::orphans::row_summary;
+use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
 use gobby_client::ui::keymap::{default_prefix, Keymap, HERDR_PREFIX};
+use gobby_client::ui::navigator::navigator_rows;
+use gobby_client::ui::pane_chrome::pane_address;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
 use gobby_client::ui::scrollbar::{
     scrollbar_offset_from_drag_row, scrollbar_offset_from_row, scrollbar_thumb_grab_offset,
@@ -14607,4 +14610,57 @@ async fn provider_error_shows_sanitized_warning_without_opening_response() {
         .await
         .expect("close daemon");
     mock.shutdown().await;
+}
+
+/// gobby-#23213 1.7.5: native is the unmarked default and a foreign backend is
+/// named. Pane chrome prints a native pane's bare address (`gclient` when it
+/// has none) and prefixes a tmux pane's with `tmux`; the navigator and the
+/// orphan dialog name the backend of every terminal.
+#[test]
+fn terminal_inventory_renders_each_backend() {
+    let mut ws = Workspace::scripted();
+    let native = ws
+        .open_terminal("term-native", "native", "epoch")
+        .expect("native pane");
+    let addressless = ws
+        .open_terminal("term-bare", "native", "epoch")
+        .expect("addressless native pane");
+    let tmux = ws
+        .open_terminal("term-tmux", "tmux", "epoch")
+        .expect("tmux pane");
+    ws.pane_mut(native).address = Some("0:1".to_owned());
+    ws.pane_mut(tmux).address = Some("%16".to_owned());
+
+    assert_eq!(pane_address(&ws, ws.pane(native)), "0:1");
+    assert_eq!(pane_address(&ws, ws.pane(addressless)), "gclient");
+    assert_eq!(pane_address(&ws, ws.pane(tmux)), "tmux %16");
+
+    let rows = navigator_rows(&ws, &Chrome::dark());
+    let detail = |terminal_id: &str| {
+        rows.iter()
+            .find(|row| row.title == terminal_id)
+            .map(|row| row.detail.clone())
+            .expect("navigator row for every terminal")
+    };
+    assert!(detail("term-native").contains("0:1 gclient "));
+    assert!(detail("term-bare").contains("· gclient "));
+    assert!(detail("term-tmux").contains("%16 tmux "));
+
+    let orphan = |backend: Backend, name: &str| {
+        row_summary(&OrphanRow {
+            terminal_id: name.to_owned(),
+            backend,
+            name: name.to_owned(),
+            owner: None,
+            last_seen: None,
+        })
+    };
+    assert_eq!(
+        orphan(Backend::Native, "agent"),
+        "agent · gclient · no session"
+    );
+    assert_eq!(
+        orphan(Backend::Tmux, "hand-started"),
+        "hand-started · tmux · no session"
+    );
 }
