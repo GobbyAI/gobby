@@ -24,6 +24,7 @@ from gobby.terminals.leases import (
     SizingDecision,
     TerminalLeaseRegistry,
 )
+from gobby.terminals.operator_lane import run_on_operator_lane
 from gobby.terminals.runtime import UnregisteredBackendError
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
@@ -198,7 +199,7 @@ class TerminalWsMixin(TerminalWriteMixin):
             log_slow("terminal_gone", None, started, started, started)
             return
         manager = getattr(self, "terminal_manager", None)
-        row = None if manager is None else await asyncio.to_thread(manager.get, terminal_id)
+        row = None if manager is None else await run_on_operator_lane(manager.get, terminal_id)
         row_loaded = time.monotonic()
         if row is None:
             await self._send_json(

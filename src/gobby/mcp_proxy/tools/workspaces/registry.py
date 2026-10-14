@@ -27,6 +27,7 @@ from gobby.storage.workspaces import (
     WorkspaceTab,
 )
 from gobby.terminals.actor_scope import OPERATOR_ACTOR, SESSION_ACTOR_PREFIX
+from gobby.terminals.operator_lane import run_on_operator_lane, run_on_workspace_inventory_lane
 from gobby.terminals.workspace_contract import WorkspaceOpError, storage_errors
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
@@ -113,7 +114,7 @@ def create_workspaces_registry(
         read_only=True,
     )
     async def list_nodes(node: str | None = None) -> dict[str, Any]:
-        async def work(_actor: str) -> dict[str, Any]:
+        def read() -> dict[str, Any]:
             with storage_errors():
                 local = workspace_manager.resolve_node()
                 machines = (
@@ -130,17 +131,29 @@ def create_workspaces_registry(
                 ]
             }
 
+        async def work(actor: str) -> dict[str, Any]:
+            lane = (
+                run_on_operator_lane if actor == OPERATOR_ACTOR else run_on_workspace_inventory_lane
+            )
+            return await lane(read)
+
         return await _run(work, allow_managed_read=True)
 
     @registry.tool(
         description=f"List a node's workspaces (this node by default). {_NODE}", read_only=True
     )
     async def list_workspaces(node: str | None = None) -> dict[str, Any]:
-        async def work(_actor: str) -> dict[str, Any]:
+        def read() -> dict[str, Any]:
             with storage_errors():
                 machine = workspace_manager.resolve_node(node)
                 rows = workspace_manager.list_for_node(machine.id)
             return {"node_ref": machine.ref, "workspaces": _json(rows)}
+
+        async def work(actor: str) -> dict[str, Any]:
+            lane = (
+                run_on_operator_lane if actor == OPERATOR_ACTOR else run_on_workspace_inventory_lane
+            )
+            return await lane(read)
 
         return await _run(work, allow_managed_read=True)
 

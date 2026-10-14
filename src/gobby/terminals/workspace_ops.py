@@ -42,7 +42,9 @@ from gobby.storage.workspaces import (
     mint_pane_id,
 )
 from gobby.telemetry.query_timing import observe_queries
+from gobby.terminals.actor_scope import OPERATOR_ACTOR
 from gobby.terminals.lifetime import lifetime_for_role
+from gobby.terminals.operator_lane import run_on_operator_lane, run_on_workspace_inventory_lane
 from gobby.terminals.runtime import (
     TerminalRuntimeRegistry,
 )
@@ -130,7 +132,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
     async def workspace_list(self, actor: str, *, node: str | None = None) -> tuple[Workspace, ...]:
         """Every workspace on the node, lowest ref first."""
         del actor
-        return await asyncio.to_thread(self._list_workspaces, node)
+        return await run_on_operator_lane(self._list_workspaces, node)
 
     def _list_workspaces(self, node: str | None) -> tuple[Workspace, ...]:
         with storage_errors():
@@ -146,7 +148,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         self, actor: str, workspace: str, name: str, *, node: str | None = None
     ) -> Workspace:
         target = _workspace_of(await self._enter(workspace, node), workspace)
-        renamed = await asyncio.to_thread(self._rename_workspace, target.id, name)
+        renamed = await run_on_operator_lane(self._rename_workspace, target.id, name)
         await self._emit("workspace.renamed", renamed.id, workspace=renamed)
         return renamed
 
@@ -288,7 +290,12 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             storage_timing: dict[str, float] = {}
             async with self._publish_fence:
                 fence_acquired = time.monotonic()
-                snapshot, change = await self._db(
+                read = (
+                    run_on_workspace_inventory_lane
+                    if actor != OPERATOR_ACTOR and not sweep_dead_panes
+                    else self._db
+                )
+                snapshot, change = await read(
                     self._snapshot_storage,
                     workspace,
                     node,
@@ -612,7 +619,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
 
     async def _db(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
         """Run one blocking call off the event-loop thread."""
-        return await asyncio.to_thread(fn, *args, **kwargs)
+        return await run_on_operator_lane(fn, *args, **kwargs)
 
     async def _db_guarded(self, fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
         """Run one storage call off the loop and translate storage failures."""
@@ -624,7 +631,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 except WorkspaceBusyError as exc:
                     raise WorkspaceOpError("busy", str(exc)) from exc
 
-        return await asyncio.to_thread(run)
+        return await run_on_operator_lane(run)
 
     def _resolve(self, reference: str, node: str | None) -> WorkspaceTarget:
         """Resolve a row this node may act on, refusing another node's before any sweep."""
@@ -635,13 +642,13 @@ class WorkspaceOps(WorkspacePaneIOMixin):
 
     async def _enter(self, reference: str, node: str | None) -> WorkspaceTarget:
         """Resolve ``reference`` and sweep its workspace, re-resolving after a prune."""
-        target = await asyncio.to_thread(self._resolve, reference, node)
+        target = await run_on_operator_lane(self._resolve, reference, node)
         if (await self._sweep(target.workspace.id)).removed_panes:
-            target = await asyncio.to_thread(self._resolve, reference, node)
+            target = await run_on_operator_lane(self._resolve, reference, node)
         return target
 
     async def _sweep(self, workspace_id: str) -> LayoutChange:
-        change = await asyncio.to_thread(self._sweep_storage, workspace_id)
+        change = await run_on_operator_lane(self._sweep_storage, workspace_id)
         await self._publish_removal(workspace_id, change)
         return change
 

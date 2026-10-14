@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import SizingDecision, TerminalLeaseRegistry
+from gobby.terminals.operator_lane import run_on_operator_lane
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class TerminalSizingMixin:
         manager = self.terminal_manager
         if manager is None:
             return
-        row = await asyncio.to_thread(manager.get, terminal_id)
+        row = await run_on_operator_lane(manager.get, terminal_id)
         if row is None:
             return
         runtime = self._runtime_for(row.backend)
@@ -103,7 +103,7 @@ class TerminalSizingMixin:
                 exc.error,
             )
             return
-        await asyncio.to_thread(manager.set_dims, row.id, rows, cols)
+        await run_on_operator_lane(manager.set_dims, row.id, rows, cols)
 
     async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")

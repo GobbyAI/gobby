@@ -434,7 +434,7 @@ async def test_code_reviewer_failed_verdict_send_keeps_unit(
     report = "EVENT=CANDIDATE_VERDICT TASK=#101 SHA=abc VERDICT=BOUNCE NOTE=HIGH finding"
     failure: dict[str, Any] = {
         "success": False,
-        "error": "health check did not respond within 2s",
+        "error": "health check could not connect within 2s or got an unhealthy answer",
         "code": "DAEMON_UNAVAILABLE",
     }
     output = failure

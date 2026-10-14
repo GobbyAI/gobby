@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.terminals.host_client import HostCommandError, HostEpochChangedError
+from gobby.terminals.operator_lane import run_on_operator_lane
 from gobby.terminals.runtime import TerminalWriteError
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ async def sync_host_input_grant(
             logger.log(level, "revoke_input for terminal %s failed: %s", terminal.id, exc)
         else:
             if manager is not None:
-                await asyncio.to_thread(manager.clear_native_input_handoff, terminal.id)
+                await run_on_operator_lane(manager.clear_native_input_handoff, terminal.id)
         return None
     try:
         await runtime.grant_input(terminal, holder.attachment_id)
@@ -97,7 +98,7 @@ async def sync_host_input_grant(
         )
         return False
     if manager is not None:
-        await asyncio.to_thread(manager.clear_native_input_handoff, terminal.id)
+        await run_on_operator_lane(manager.clear_native_input_handoff, terminal.id)
     return True
 
 

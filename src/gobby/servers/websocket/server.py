@@ -38,7 +38,7 @@ from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.voice import VoiceMixin
-from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceWsMixin
+from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceAttachKey, WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
@@ -46,6 +46,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.host_events import InputActivityEvent
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+from gobby.terminals.workspace_contract import WorkspaceSnapshot
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
@@ -58,23 +59,34 @@ logger = logging.getLogger(__name__)
 SLOW_WEBSOCKET_HANDLER_SECONDS = 1.0
 # These handlers do their slow work off the read loop. Later frames on the
 # same socket are read while they run. Frames for one terminal stay in
-# arrival order; another terminal's frames do not wait (#22709).
+# arrival order; another terminal's frames do not wait (#22709). Workspace
+# reads, listings, spawns and kills are here too, so the operator's keystrokes
+# never wait behind them (#23080).
 _OFF_LOOP_MESSAGE_TYPES = frozenset(
     {
         "terminal_attach",
+        "terminal_create",
         "terminal_detach",
         "terminal_input",
+        "terminal_kill",
+        "terminal_list",
         "terminal_paste",
         "terminal_release_control",
         "terminal_resize",
         "terminal_take_control",
+        "workspace_attach",
         "workspace_op",
+        "workspace_snapshot",
     }
 )
+# A workspace read keeps its place among the socket's workspace mutations.
+_WORKSPACE_CHAIN_TYPES = frozenset({"workspace_attach", "workspace_op", "workspace_snapshot"})
 # Reads and waits are cancelled with the socket. Mutations stay alive so a
-# committed close still publishes its removal and reaps the shell.
+# committed close still publishes its removal and reaps the shell, and a spawn
+# or kill already under way is not abandoned halfway.
 _READ_WORKSPACE_OPS = frozenset({"workspace.list", "pane.read", "pane.wait_for_output"})
 _DURABLE_WORKSPACE_OPS = frozenset(WORKSPACE_OPS) - _READ_WORKSPACE_OPS
+_DURABLE_TERMINAL_TYPES = frozenset({"terminal_create", "terminal_kill"})
 _DURABLE_OFF_LOOP_STOP_SECONDS = 2.0
 
 
@@ -90,13 +102,17 @@ def _message_leaves_the_read_loop(message: str) -> bool:
     return isinstance(message_type, str) and message_type in _OFF_LOOP_MESSAGE_TYPES
 
 
-def _workspace_op_survives_disconnect(message: str) -> bool:
-    """True when this workspace_op must finish after the socket drops."""
+def _survives_disconnect(message: str) -> bool:
+    """True when this off-loop frame must finish after the socket drops."""
     try:
         data = json.loads(message)
     except json.JSONDecodeError:
         return False
-    if not isinstance(data, dict) or data.get("type") != "workspace_op":
+    if not isinstance(data, dict):
+        return False
+    if data.get("type") in _DURABLE_TERMINAL_TYPES:
+        return True
+    if data.get("type") != "workspace_op":
         return False
     op = data.get("op")
     return isinstance(op, str) and op in _DURABLE_WORKSPACE_OPS
@@ -111,7 +127,7 @@ def _off_loop_chain_key(message: str) -> str:
     if not isinstance(data, dict):
         return ""
     message_type = data.get("type")
-    if message_type == "workspace_op":
+    if message_type in _WORKSPACE_CHAIN_TYPES:
         return "workspace_op"
     for field in ("terminal_id", "attachment_id"):
         value = data.get(field)
@@ -231,6 +247,8 @@ class WebSocketServer(
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
+        self._workspace_attach_reads: dict[WorkspaceAttachKey, asyncio.Task[WorkspaceSnapshot]] = {}
+        self._workspace_attach_waiters: dict[WorkspaceAttachKey, set[Any]] = {}
         self.agent_pane_reserver: AgentPaneReserver | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
@@ -244,6 +262,7 @@ class WebSocketServer(
         self.clients: dict[Any, dict[str, Any]] = {}
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
         self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
+        self._off_loop_durable_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
         self._off_loop_durable: set[asyncio.Task[None]] = set()
 
         self.web_chat_session_registry = (
@@ -593,7 +612,9 @@ class WebSocketServer(
         key = (websocket, _off_loop_chain_key(message))
         previous = self._off_loop_tail.get(key)
         task = asyncio.create_task(
-            self._run_off_loop_message(websocket, message, previous),
+            self._run_off_loop_message(
+                websocket, message, previous, self._off_loop_durable_tail.get(key)
+            ),
             name="ws-off-loop",
         )
         self._off_loop_tail[key] = task
@@ -604,7 +625,8 @@ class WebSocketServer(
             self._forget_off_loop_tail(key, done)
 
         task.add_done_callback(forget)
-        if _workspace_op_survives_disconnect(message):
+        if _survives_disconnect(message):
+            self._off_loop_durable_tail[key] = task
             self._off_loop_durable.add(task)
             task.add_done_callback(self._off_loop_durable.discard)
 
@@ -613,16 +635,16 @@ class WebSocketServer(
         websocket: Any,
         message: str,
         previous: asyncio.Task[None] | None,
+        durable_previous: asyncio.Task[None] | None = None,
     ) -> None:
-        if previous is not None:
-            try:
-                await previous
-            except asyncio.CancelledError:
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    raise
-            except Exception:
-                pass
+        # Cancellation belongs to this waiter. A cancelled intermediate read
+        # must also not let the next mutation pass a still-running mutation.
+        predecessors = {task for task in (previous, durable_previous) if task is not None}
+        if predecessors:
+            done, _pending = await asyncio.wait(predecessors)
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
         try:
             await self._handle_message(websocket, message, blocks_connection=False)
         except ConnectionClosed:
@@ -641,6 +663,8 @@ class WebSocketServer(
     def _forget_off_loop_tail(self, key: tuple[Any, str], task: asyncio.Task[None]) -> None:
         if self._off_loop_tail.get(key) is task:
             self._off_loop_tail.pop(key, None)
+        if self._off_loop_durable_tail.get(key) is task:
+            self._off_loop_durable_tail.pop(key, None)
 
     async def _cancel_off_loop(self, websocket: Any) -> None:
         for key in [key for key in self._off_loop_tail if key[0] is websocket]:
@@ -755,6 +779,7 @@ class WebSocketServer(
         finally:
             self._server = None
             await self._finish_durable_off_loop()
+            await self._cancel_workspace_attaches()
             await self.lease_registry.shutdown_lifecycle_publication()
         logger.debug("WebSocket server stopped")
 
