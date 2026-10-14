@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 import yaml
+from click.testing import CliRunner
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.cli import cli
+from gobby.cli.communications import attach_cmd
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
@@ -56,6 +60,14 @@ def rule_row() -> RuleDefinitionRow:
     "command",
     [
         "gobby comms attach channel excerpt.txt",
+        "gobby -- comms attach channel excerpt.txt",
+        "gobby comms -- attach channel excerpt.txt",
+        "gobby -- comms -- attach channel excerpt.txt",
+        "gobby --config config.yaml -- comms -- attach channel excerpt.txt",
+        "uv run --no-sync gobby -- comms -- attach channel excerpt.txt",
+        "uv run python -m gobby.cli -- comms attach channel excerpt.txt",
+        "uv run python -m gobby.cli comms -- attach channel excerpt.txt",
+        "uv run python -m gobby.cli -- comms -- attach channel excerpt.txt",
         "gobby comms attach --caption 'redacted lines' channel excerpt.txt",
         "gobby comms attach channel excerpt.txt --caption 'redacted lines'",
         "uv run gobby comms attach channel excerpt.log",
@@ -92,11 +104,39 @@ def test_blocks_attachment_invocations(rule_row: RuleDefinitionRow, command: str
         "gobby comms attachment channel excerpt.txt",
         "other-gobby comms attach channel excerpt.txt",
         "gobby --config 'comms attach' comms status",
+        "gobby --config '-- comms -- attach' -- comms status",
+        "gobby -- comms -- send channel 'gobby -- comms -- attach'",
+        "echo 'gobby -- comms -- attach channel excerpt.txt'",
+        "cat <<'EOF'\ngobby -- comms -- attach channel excerpt.txt\nEOF",
+        "gobby -- comms -- attachment channel excerpt.txt",
     ],
 )
 def test_allows_other_commands_and_literal_data(rule_row: RuleDefinitionRow, command: str) -> None:
     effect = RuleDefinitionBody.model_validate(rule_row.definition_json).resolved_effects[0]
     assert not command_patterns_match(command, pattern=effect.command_pattern)
+
+
+@pytest.mark.parametrize(
+    "group_args",
+    [
+        ["--", "comms", "attach"],
+        ["comms", "--", "attach"],
+        ["--", "comms", "--", "attach"],
+    ],
+)
+@pytest.mark.parametrize("with_config", [False, True])
+def test_click_terminators_dispatch_attachment_without_delivery(
+    tmp_path: Path, group_args: list[str], with_config: bool
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("{}\n")
+    args = ["--config", str(config)] if with_config else []
+    args.extend([*group_args, "channel", "excerpt.txt"])
+    callback = Mock()
+    with patch.object(attach_cmd, "callback", callback):
+        result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    callback.assert_called_once_with(channel_name="channel", filename="excerpt.txt", caption="")
 
 
 @pytest.mark.parametrize("path", AGENT_PATHS, ids=lambda path: path.stem)
@@ -146,6 +186,15 @@ def test_assistant_routes_whole_files_and_cited_logs() -> None:
     assert "Log Monitor through `gobby-agents:send_message`" in prompt
     assert "ask the Log Monitor to deliver cited log lines redacted" in prompt
     assert "never the log lines or a path" in prompt
+
+
+def test_log_monitor_delivers_requested_cited_lines() -> None:
+    data = yaml.safe_load((get_bundled_agents_path() / "log-monitor.yaml").read_text())
+    prompt: str = data["prompts"]["agent"]
+    assert "The one exception: deliver cited log lines a seat asks for." in prompt
+    assert 'gobby comms attach --caption "cited log lines, redacted"' in prompt
+    assert "during a tick" in prompt
+    assert "Reply to the asker with the outcome." in prompt
 
 
 def test_attachment_reference_explains_seat_exemptions() -> None:
