@@ -217,7 +217,7 @@ def _executable_wrapper_reason(parsed: ParsedShellCommand) -> str | None:
     if executable == "nohup":
         return "nohup wrapper"
     if executable in _SHELL_COMMAND_WRAPPERS:
-        if not arguments or arguments[0].startswith("-"):
+        if not arguments or arguments[0].startswith(("-", "+")):
             return "subshell wrapper"
     if executable == "js_repl":
         return "js_repl wrapper"
