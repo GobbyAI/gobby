@@ -69,13 +69,20 @@ SET_MEMBERS = ("gcode", "gdaemon", "ghook")
 VERSION = "0.5.0"
 _PROVE_CATALOG_FRESHNESS = cutover_module._prove_catalog_freshness
 _NATIVE_CARGO_TARGET_DIR = os.environ.get("CARGO_TARGET_DIR")
+_NATIVE_SANDBOX_CARGO_TARGET = os.environ.get("GOBBY_SANDBOX_CARGO_TARGET")
+_NATIVE_SANDBOX_CARGO_WORKSPACE = os.environ.get("GOBBY_SANDBOX_CARGO_WORKSPACE")
 
 
 @pytest.fixture
 def native_cargo_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Restore the real build target after CLI unit fixtures clear it."""
-    if _NATIVE_CARGO_TARGET_DIR:
-        monkeypatch.setenv("CARGO_TARGET_DIR", _NATIVE_CARGO_TARGET_DIR)
+    """Restore the real build route after ordinary unit fixtures clear it."""
+    for name, value in (
+        ("CARGO_TARGET_DIR", _NATIVE_CARGO_TARGET_DIR),
+        ("GOBBY_SANDBOX_CARGO_TARGET", _NATIVE_SANDBOX_CARGO_TARGET),
+        ("GOBBY_SANDBOX_CARGO_WORKSPACE", _NATIVE_SANDBOX_CARGO_WORKSPACE),
+    ):
+        if value:
+            monkeypatch.setenv(name, value)
 
 
 @pytest.fixture(autouse=True)
@@ -187,6 +194,7 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         timeout=600,
     )
     candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
+    assert candidate.is_file(), "the native fixture build must produce its routed catalog candidate"
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
     monkeypatch.setattr(
         cutover_module,
