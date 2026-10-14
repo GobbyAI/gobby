@@ -19,6 +19,7 @@ from gobby.agents.isolation_models import (
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
+from gobby.worktrees.base_branch import select_worktree_base
 
 logger = logging.getLogger("gobby.agents.isolation")
 
@@ -64,10 +65,9 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         branch_name = generate_branch_name(config)
         partial_state["branch"] = branch_name
-        base_branch = config.base_branch
-        current_branch = await self._git_manager.get_current_branch()
-        if current_branch and base_branch == "main" and current_branch != "main":
-            base_branch = current_branch
+        base_branch, base_commit_sha = await select_worktree_base(
+            self._git_manager, config.base_branch
+        )
 
         # Check if worktree already exists for this branch
         existing = await asyncio.to_thread(
@@ -84,6 +84,7 @@ class WorktreeIsolationHandler(IsolationHandler):
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,
                     base_branch=base_branch,
+                    base_commit_sha=base_commit_sha,
                 )
                 await repair_isolation_environment(
                     main_repo_path=str(self._git_manager.repo_path),
@@ -92,10 +93,23 @@ class WorktreeIsolationHandler(IsolationHandler):
                     phase_timings_ms=config.phase_timings_ms,
                 )
                 await asyncio.to_thread(self._worktree_storage.touch, existing.id)
-                extra = {"main_repo_path": str(self._git_manager.repo_path)}
-                existing_base_commit_sha = getattr(sync_result, "base_commit_sha", None)
-                if isinstance(existing_base_commit_sha, str) and existing_base_commit_sha:
-                    extra["base_commit_sha"] = existing_base_commit_sha
+                await asyncio.to_thread(
+                    self._worktree_storage.update, existing.id, base_branch=base_branch
+                )
+                if config.task_id is not None:
+                    await asyncio.to_thread(
+                        TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
+                        config.task_id,
+                        worktree_path=existing.worktree_path,
+                        worktree_id=existing.id,
+                        base_commit_sha=base_commit_sha,
+                        clone_path=None,
+                        clone_id=None,
+                    )
+                extra = {
+                    "main_repo_path": str(self._git_manager.repo_path),
+                    "base_commit_sha": sync_result.base_commit_sha,
+                }
                 # Use existing worktree
                 self._partial_worktrees.pop(state_key, None)
                 return IsolationContext(
@@ -118,20 +132,6 @@ class WorktreeIsolationHandler(IsolationHandler):
                     existing,
                 )
 
-        use_local = False
-
-        # Check for unpushed commits on the base branch
-        has_unpushed, unpushed_count = await self._git_manager.has_unpushed_commits(base_branch)
-        if has_unpushed:
-            # Use local branch ref to preserve unpushed commits
-            use_local = True
-
-            logger.info(
-                "Using local branch '%s' for worktree (%s unpushed commits)",
-                base_branch,
-                unpushed_count,
-            )
-
         # Generate worktree path
         project_name = Path(self._git_manager.repo_path).name
         worktree_path = self._generate_worktree_path(branch_name, project_name)
@@ -142,7 +142,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             branch_name=branch_name,
             base_branch=base_branch,
             create_branch=True,
-            use_local=use_local,
+            base_commit_sha=base_commit_sha,
         )
 
         if not result.success:
@@ -164,20 +164,15 @@ class WorktreeIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         partial_state["id"] = worktree.id
 
-        created_base_commit_sha: str | None = None
         if config.task_id is not None:
-            created_base_commit_sha = await worktree_reuse.capture_worktree_base_commit_sha(
-                git_manager=self._git_manager,
-                worktree_path=worktree_path,
-                base_branch=base_branch,
-                use_local=use_local,
-            )
             await asyncio.to_thread(
                 TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
                 config.task_id,
                 worktree_path=worktree_path,
                 worktree_id=worktree.id,
-                base_commit_sha=created_base_commit_sha,
+                base_commit_sha=base_commit_sha,
+                clone_path=None,
+                clone_id=None,
             )
 
         await repair_isolation_environment(
@@ -194,7 +189,7 @@ class WorktreeIsolationHandler(IsolationHandler):
             isolation_type="worktree",
             extra={
                 "main_repo_path": str(self._git_manager.repo_path),
-                **({"base_commit_sha": created_base_commit_sha} if created_base_commit_sha else {}),
+                "base_commit_sha": base_commit_sha,
             },
         )
 

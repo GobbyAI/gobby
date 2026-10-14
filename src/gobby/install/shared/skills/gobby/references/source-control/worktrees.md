@@ -10,8 +10,12 @@ task artifacts and current ownership before creating another workspace.
    branch isolation; they share Git objects/remotes but have their own index/HEAD.
 2. Use `create_worktree` with the intended branch and project context. Optional
    `worktree_path` overrides the generated path under
-   `~/.gobby/worktrees/<project>/<safe-branch>`. Remote-style base names are refused.
-3. `use_local` controls base selection; its default detects unpushed local work.
+   `~/.gobby/worktrees/<project>/<safe-branch>`. Omit `base_branch` to fork the
+   project checkout's current local HEAD. Detached HEAD requires an explicit base.
+3. Explicit bare names and `refs/heads/<name>` select local branches. Explicit
+   `origin/<name>` and `refs/remotes/origin/<name>` fetch only that remote ref.
+   Creation uses the captured commit even if the selected branch later advances;
+   an existing destination branch at a different commit is refused.
    `provider` optionally installs hooks. Check the returned creation result,
    including existing-worktree diagnostics, before assuming a new row was created.
 4. Claim with `claim_worktree`; use `link_task_to_worktree` for an existing row.

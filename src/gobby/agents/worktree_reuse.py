@@ -17,6 +17,7 @@ from gobby.agents.isolation_git_hygiene import (
     is_generated_isolation_project_json,
 )
 from gobby.utils.project_context import IsolationProjectJsonError, ensure_project_json_for_isolation
+from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ async def sync_reused_worktree_to_base(
     *,
     git_manager: Any,
     worktree_path: str,
-    base_branch: str,
+    base_branch: str | None,
+    base_commit_sha: str | None = None,
 ) -> ReusedWorktreeSyncResult:
     """Rebase a clean reused worktree onto the current local base branch."""
 
@@ -66,31 +68,8 @@ async def sync_reused_worktree_to_base(
         git_manager,
         worktree_path,
         base_branch,
+        base_commit_sha,
     )
-
-
-async def capture_worktree_base_commit_sha(
-    *,
-    git_manager: Any,
-    worktree_path: str,
-    base_branch: str,
-    use_local: bool,
-) -> str:
-    local_ref = (
-        base_branch if base_branch.startswith("refs/heads/") else f"refs/heads/{base_branch}"
-    )
-    branch_name = local_ref.removeprefix("refs/heads/")
-    base_ref = local_ref if use_local else f"refs/remotes/origin/{branch_name}"
-    resolved = await _run_git(git_manager, ["show-ref", "--verify", "--hash", base_ref])
-    if resolved.returncode != 0:
-        raise RuntimeError(f"Failed to resolve base branch {base_ref}: {_detail(resolved)}")
-    result = await _run_git(
-        git_manager, ["merge-base", resolved.stdout.strip(), "HEAD"], cwd=Path(worktree_path)
-    )
-    if result.returncode != 0:
-        detail = _detail(result)
-        raise RuntimeError(f"Failed to capture base_commit_sha from {base_ref}: {detail}")
-    return result.stdout.strip()
 
 
 async def cleanup_stale_worktree_registration(
@@ -133,13 +112,17 @@ async def cleanup_stale_worktree_registration(
 async def _sync_reused_worktree_to_base(
     git_manager: Any,
     worktree_path: str,
-    base_branch: str,
+    base_branch: str | None,
+    base_commit_sha: str | None = None,
 ) -> ReusedWorktreeSyncResult:
     path = Path(worktree_path)
     if not path.is_dir():
         raise RuntimeError(f"Cannot sync reused worktree; path does not exist: {worktree_path}")
 
-    base_ref, base_sha = await _resolve_base_ref(git_manager, base_branch)
+    if base_commit_sha is None:
+        base_ref, base_sha = await _resolve_base_ref(git_manager, base_branch)
+    else:
+        base_ref, base_sha = base_branch or "HEAD", base_commit_sha
     await _ensure_clean_worktree(git_manager, path)
 
     ancestor = await _run_git(
@@ -174,26 +157,11 @@ async def _sync_reused_worktree_to_base(
     return ReusedWorktreeSyncResult("rebased", base_ref, base_sha)
 
 
-async def _resolve_base_ref(git_manager: Any, base_branch: str) -> tuple[str, str]:
-    local_ref = (
-        base_branch if base_branch.startswith("refs/heads/") else f"refs/heads/{base_branch}"
-    )
-    branch_name = local_ref.removeprefix("refs/heads/")
-    local = await _run_git(git_manager, ["show-ref", "--verify", "--hash", local_ref])
-    if local.returncode == 0:
-        return local_ref, local.stdout.strip()
-
-    fetch = await _run_git(git_manager, ["fetch", "origin", branch_name], timeout=60)
-    if fetch.returncode != 0:
-        detail = _detail(fetch) or _detail(local)
-        raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
-
-    remote_ref = f"refs/remotes/origin/{branch_name}"
-    remote = await _run_git(git_manager, ["show-ref", "--verify", "--hash", remote_ref])
-    if remote.returncode != 0:
-        detail = _detail(remote)
-        raise RuntimeError(f"Failed to resolve base branch {base_branch}: {detail}")
-    return remote_ref, remote.stdout.strip()
+async def _resolve_base_ref(git_manager: Any, base_branch: str | None) -> tuple[str, str]:
+    branch, commit = await select_worktree_base(git_manager, base_branch)
+    remote = base_branch is not None and base_branch.startswith(("origin/", "refs/remotes/origin/"))
+    ref = f"refs/remotes/origin/{branch}" if remote else f"refs/heads/{branch}"
+    return ref, commit
 
 
 async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:

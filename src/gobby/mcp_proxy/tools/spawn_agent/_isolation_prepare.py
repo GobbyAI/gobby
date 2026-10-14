@@ -11,6 +11,12 @@ from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 logger = logging.getLogger(__name__)
 
 
+def requested_base_branch(explicit: str | None, definition_default: str | None) -> str | None:
+    """Preserve omission until the target checkout's isolation handler runs."""
+    requested = explicit if explicit is not None else definition_default
+    return None if requested == "inherit" else requested
+
+
 async def prepare_spawn_isolation(
     handler: IsolationHandler, config: SpawnConfig
 ) -> tuple[IsolationContext | None, dict[str, Any] | None]:

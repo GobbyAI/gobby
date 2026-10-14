@@ -245,7 +245,7 @@ class TestWorktreeGitManagerCreateWorktree:
         git("remote", "add", "origin", str(repo))
         path = tmp_path / "created"
 
-        result = await WorktreeGitManager(repo).create_worktree(path, "feature", "main")
+        result = await WorktreeGitManager(repo).create_worktree(path, "feature", "main", base_tip)
 
         assert result.success, result.message
         assert (
@@ -265,14 +265,14 @@ class TestWorktreeGitManagerCreateWorktree:
         existing_path = tmp_path / "existing"
         existing_path.mkdir()
 
-        result = await manager.create_worktree(existing_path, "feature/test")
+        result = await manager.create_worktree(existing_path, "feature/test", "main", "a" * 40)
 
         assert result.success is False
         assert "already exists" in result.message
 
     @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_create_rejects_remote_base_before_side_effects(
+    async def test_create_consumes_selected_commit_without_fetch(
         self,
         mock_run: MagicMock,
         manager: WorktreeGitManager,
@@ -280,31 +280,40 @@ class TestWorktreeGitManagerCreateWorktree:
         base_branch: str,
     ) -> None:
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, "a" * 40, ""),
+            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, "Preparing worktree", ""),
+            subprocess.CompletedProcess([], 0, "a" * 40, ""),
+        ]
 
         result = await manager.create_worktree(
             worktree_path,
             "feature/test",
             base_branch=base_branch,
+            base_commit_sha="a" * 40,
         )
 
-        assert result.success is False
-        assert result.error == "remote_base_branch_not_allowed"
-        assert not worktree_path.parent.exists()
-        mock_run.assert_not_called()
+        assert result.success
+        assert all(call.args[0][0] != "fetch" for call in mock_run.call_args_list)
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_create_with_new_branch(self, mock_run, manager, tmp_path) -> None:
         """Create worktree with new branch."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["worktree", "add"],
-            returncode=0,
-            stdout="Preparing worktree",
-            stderr="",
-        )
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, "a" * 40, ""),
+            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, "Preparing worktree", ""),
+            subprocess.CompletedProcess([], 0, "a" * 40, ""),
+        ]
 
         result = await manager.create_worktree(
-            worktree_path, "feature/test", base_branch="main", create_branch=True
+            worktree_path,
+            "feature/test",
+            base_branch="main",
+            base_commit_sha="a" * 40,
+            create_branch=True,
         )
 
         assert result.success is True
@@ -317,11 +326,13 @@ class TestWorktreeGitManagerCreateWorktree:
         mock_run.return_value = subprocess.CompletedProcess(
             args=["worktree", "add"],
             returncode=0,
-            stdout="Preparing worktree",
+            stdout="a" * 40,
             stderr="",
         )
 
-        result = await manager.create_worktree(worktree_path, "feature/test", create_branch=False)
+        result = await manager.create_worktree(
+            worktree_path, "feature/test", "main", "a" * 40, create_branch=False
+        )
 
         assert result.success is True
 
@@ -329,18 +340,18 @@ class TestWorktreeGitManagerCreateWorktree:
     async def test_create_handles_git_failure(self, mock_run, manager, tmp_path) -> None:
         """Create handles git command failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
-        # Fetch and exact remote ref lookup succeed; worktree add fails.
+        # Selected commit exists and the destination branch is absent; add fails.
         mock_run.side_effect = [
             subprocess.CompletedProcess(
                 args=["fetch"],
                 returncode=0,
-                stdout="",
+                stdout="a" * 40,
                 stderr="",
             ),
             subprocess.CompletedProcess(
                 args=["show-ref"],
-                returncode=0,
-                stdout="a" * 40,
+                returncode=1,
+                stdout="",
                 stderr="",
             ),
             subprocess.CompletedProcess(
@@ -351,7 +362,7 @@ class TestWorktreeGitManagerCreateWorktree:
             ),
         ]
 
-        result = await manager.create_worktree(worktree_path, "feature/test")
+        result = await manager.create_worktree(worktree_path, "feature/test", "main", "a" * 40)
 
         assert result.success is False
         assert "Failed to create" in result.message
@@ -366,17 +377,11 @@ class TestWorktreeGitManagerCreateWorktree:
             subprocess.CompletedProcess(
                 args=["rev-parse"],
                 returncode=0,
-                stdout="",
+                stdout="b" * 40,
                 stderr="",
             ),
             subprocess.CompletedProcess(
                 args=["worktree", "add"],
-                returncode=128,
-                stdout="",
-                stderr="fatal: a branch named 'feature/test' already exists",
-            ),
-            subprocess.CompletedProcess(
-                args=["rev-parse"],
                 returncode=0,
                 stdout="a" * 40 + "\n",
                 stderr="",
@@ -388,17 +393,16 @@ class TestWorktreeGitManagerCreateWorktree:
             "feature/test",
             base_branch="integration-branch",
             create_branch=True,
-            use_local=True,
+            base_commit_sha="b" * 40,
         )
 
         assert result.success is False
         assert "feature/test" in result.message
         assert "a" * 40 in result.message
-        assert "integration-branch" in result.message
+        assert "b" * 40 in result.message
         assert [call.args[0][:2] for call in mock_run.call_args_list] == [
-            ["show-ref", "--verify"],
-            ["worktree", "add"],
-            ["show-ref", "--verify"],
+            ["rev-parse", "--verify"],
+            ["rev-parse", "--verify"],
         ]
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
@@ -412,7 +416,7 @@ class TestWorktreeGitManagerCreateWorktree:
             stderr=b"post-checkout still running\n",
         )
 
-        result = await manager.create_worktree(worktree_path, "feature/test")
+        result = await manager.create_worktree(worktree_path, "feature/test", "main", "a" * 40)
 
         assert result.success is False
         assert "timed out" in result.message
@@ -1211,8 +1215,8 @@ class TestWorktreeGitManagerRunGitCalledProcessError:
             (await manager._run_git(["status"], check=True))
 
 
-class TestWorktreeGitManagerCreateWorktreeFetchFailure:
-    """Tests for create_worktree fetch failure scenarios."""
+class TestWorktreeGitManagerCreateWorktreeCommitFailure:
+    """Tests for selected commit validation failures."""
 
     @pytest.fixture
     def manager(self, tmp_path):
@@ -1220,8 +1224,8 @@ class TestWorktreeGitManagerCreateWorktreeFetchFailure:
         return WorktreeGitManager(tmp_path)
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
-    async def test_create_worktree_fetch_failure(self, mock_run, manager, tmp_path) -> None:
-        """Create worktree fails when fetch fails."""
+    async def test_create_worktree_commit_missing(self, mock_run, manager, tmp_path) -> None:
+        """An unavailable selected commit fails before creation."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
 
         mock_run.return_value = subprocess.CompletedProcess(
@@ -1232,12 +1236,16 @@ class TestWorktreeGitManagerCreateWorktreeFetchFailure:
         )
 
         result = await manager.create_worktree(
-            worktree_path, "feature/test", base_branch="main", create_branch=True
+            worktree_path,
+            "feature/test",
+            base_branch="main",
+            base_commit_sha="a" * 40,
+            create_branch=True,
         )
 
         assert result.success is False
-        assert "Failed to fetch" in result.message
-        assert result.error == "fatal: could not fetch origin/main"
+        assert result.error == "invalid_fork_commit"
+        assert not worktree_path.parent.exists()
 
     @patch("gobby.worktrees.git._runner.daemon_git.run", new_callable=AsyncMock)
     async def test_create_worktree_generic_exception(self, mock_run, manager, tmp_path) -> None:
@@ -1247,7 +1255,11 @@ class TestWorktreeGitManagerCreateWorktreeFetchFailure:
         mock_run.side_effect = Exception("Unexpected git error")
 
         result = await manager.create_worktree(
-            worktree_path, "feature/test", base_branch="main", create_branch=True
+            worktree_path,
+            "feature/test",
+            base_branch="main",
+            base_commit_sha="a" * 40,
+            create_branch=True,
         )
 
         assert result.success is False

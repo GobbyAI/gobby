@@ -48,7 +48,7 @@ class SpawnConfig:
     task_seq_num: int | None
     branch_name: str | None
     branch_prefix: str | None
-    base_branch: str
+    base_branch: str | None
     project_id: str
     project_path: str
     provider: str
@@ -62,7 +62,7 @@ type SpawnStateKey = tuple[
     int | None,
     str | None,
     str | None,
-    str,
+    str | None,
     str,
     str,
     str,

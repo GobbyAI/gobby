@@ -205,12 +205,17 @@ class _WorkspaceServices:
             )
 
         branch_exists = await _branch_exists(self.repo_path, branch_name)
+        selected_commit = await self.git_manager.get_local_commit(
+            f"refs/heads/{branch_name if branch_exists else base_branch}^{{commit}}"
+        )
+        if selected_commit is None:
+            raise BuildWorkspaceError(f"Cannot resolve integration fork for {base_branch}")
         result = await self.git_manager.create_worktree(
             worktree_path=path,
             branch_name=branch_name,
             base_branch=base_branch,
             create_branch=not branch_exists,
-            use_local=True,
+            base_commit_sha=selected_commit,
         )
         if not result.success:
             raise BuildWorkspaceError(result.error or result.message)

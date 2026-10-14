@@ -15,7 +15,7 @@ from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.utils import project_context
 from gobby.utils.project_context import IsolationProjectJsonError
 from gobby.worktrees import events
-from gobby.worktrees.base_branch import rejects_unreferenced_sha_base
+from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
 from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
@@ -61,11 +61,10 @@ async def create_worktree(
     worktree_storage: LocalWorktreeManager,
     project_id: str,
     branch_name: str,
-    base_branch: str = "main",
+    base_branch: str | None = None,
     task_id: str | None = None,
     worktree_path: str | None = None,
     create_branch: bool = True,
-    use_local: bool | None = None,
     workspace_role: str = "task",
     provider: Provider | None = None,
     resolve_task_id: Callable[[str], str] | None = None,
@@ -75,24 +74,13 @@ async def create_worktree(
     event_emitter: EventEmitter | None = None,
 ) -> WorktreeCreationResult:
     """Create, persist, initialize, and announce a worktree."""
-    if base_branch.startswith(("origin/", "refs/remotes/")):
-        return WorktreeCreationResult(
-            success=False,
-            error=f"Remote-style base branch is not allowed: {base_branch}",
-            error_code="remote_base_branch_not_allowed",
-        )
     try:
-        if await rejects_unreferenced_sha_base(git_manager, base_branch):
-            return WorktreeCreationResult(
-                success=False,
-                error=f"base_branch must be a branch name, not a commit sha: {base_branch}",
-                error_code="base_branch_is_commit_sha",
-            )
+        base_branch, base_commit_sha = await select_worktree_base(git_manager, base_branch)
+    except WorktreeBaseError as exc:
+        return WorktreeCreationResult(success=False, error=str(exc), error_code=exc.code)
     except RuntimeError as exc:
         return WorktreeCreationResult(
-            success=False,
-            error=f"Unable to verify base_branch '{base_branch}': {exc}",
-            error_code="base_branch_refs_unavailable",
+            success=False, error=str(exc), error_code="base_branch_refs_unavailable"
         )
 
     existing = await asyncio.to_thread(worktree_storage.get_by_branch, project_id, branch_name)
@@ -113,32 +101,12 @@ async def create_worktree(
     # Overlay grants and index identities use the canonical checkout root.
     worktree_path = str(Path(worktree_path).expanduser().resolve())
 
-    resolved_use_local = use_local
-    if resolved_use_local is None and create_branch:
-        try:
-            has_unpushed, unpushed_count = await git_manager.has_unpushed_commits(base_branch)
-            if has_unpushed:
-                resolved_use_local = True
-                logger.info(
-                    "Auto-detected %s unpushed commit(s) on '%s', using local branch ref",
-                    unpushed_count,
-                    base_branch,
-                )
-        except Exception as exc:
-            return WorktreeCreationResult(
-                success=False,
-                error=f"Unable to safely select worktree base for '{base_branch}': {exc}",
-                error_code="branch_divergence_unavailable",
-            )
-    if resolved_use_local is None:
-        resolved_use_local = False
-
     git_result = await git_manager.create_worktree(
         worktree_path=worktree_path,
         branch_name=branch_name,
         base_branch=base_branch,
         create_branch=create_branch,
-        use_local=resolved_use_local,
+        base_commit_sha=base_commit_sha,
     )
     if not git_result.success:
         return WorktreeCreationResult(

@@ -452,6 +452,9 @@ class TestSpawnAgentImplErrorBranches:
         )
         worktree_storage = MagicMock(db=temp_db)
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         spawn_config = SpawnConfig(
             prompt="test",
             task_id=task.id,
@@ -499,6 +502,7 @@ class TestSpawnAgentImplErrorBranches:
             git_manager=git_manager,
             worktree_path=str(worktree_path),
             base_branch="main",
+            base_commit_sha="base-sha",
         )
         repair.assert_awaited_once_with(
             main_repo_path=str(tmp_path / "repo"),
@@ -527,6 +531,9 @@ class TestSpawnAgentImplErrorBranches:
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         git_manager.get_current_branch = AsyncMock(return_value="main")
 
         with (
@@ -587,6 +594,7 @@ class TestSpawnAgentImplErrorBranches:
             git_manager=git_manager,
             worktree_path=str(worktree_path),
             base_branch="main",
+            base_commit_sha="base-sha",
         )
         mock_execute.assert_awaited_once()
         assert mock_execute.await_args is not None
@@ -722,6 +730,9 @@ test"""
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
+        git_manager.get_current_branch = AsyncMock(return_value="main")
         conflict = ReusedWorktreeRebaseConflict(
             "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted",
             worktree_path=str(old_path),
@@ -782,6 +793,7 @@ test"""
             git_manager=git_manager,
             worktree_path=str(old_path),
             base_branch="main",
+            base_commit_sha="base-sha",
         )
         repair.assert_not_awaited()
         isolation_handler.assert_not_called()
@@ -810,6 +822,9 @@ test"""
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         git_manager.get_current_branch = AsyncMock(return_value="main")
         events: list[str] = []
 
@@ -902,6 +917,9 @@ test"""
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         git_manager.get_current_branch = AsyncMock(return_value="main")
         task = SimpleNamespace(
             title="docs task",
@@ -1006,6 +1024,9 @@ test"""
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
         git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
+        git_manager.get_current_branch = AsyncMock(return_value="main")
         spawn_result = SimpleNamespace(
             success=True,
             child_session_id="child-1",
@@ -1098,6 +1119,9 @@ test"""
         worktree_storage = MagicMock()
         worktree_storage.get.return_value = worktree
         git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         git_manager.get_current_branch = AsyncMock(return_value="main")
 
         with (
@@ -1282,6 +1306,9 @@ async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
     )
     git_manager = MagicMock()
     git_manager.get_current_branch = AsyncMock(return_value="main")
+    git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+    git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
+    git_manager.get_current_branch = AsyncMock(return_value="main")
 
     with (
         patch(
@@ -1316,4 +1343,5 @@ async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
         git_manager=git_manager,
         worktree_path=str(worktree_path),
         base_branch="main",
+        base_commit_sha="base-sha",
     )
