@@ -1298,9 +1298,17 @@ async fn machines_api_requires_a_key() -> Result<()> {
 }
 
 async fn warm_channel_pool(pool: &Pool) -> Result<()> {
-    // Create both connections before starting the channel's timed proof. A held
-    // heartbeat must leave a ready connection for the independent key check.
-    let (first, second) = tokio::try_join!(pool.get(), pool.get())?;
+    // Create connections sequentially before starting the channel's timed proof
+    // so cold creation does not contend. Hold both so the second checkout cannot
+    // reuse the first; a held heartbeat needs an independent key-check connection.
+    let first = pool
+        .get()
+        .await
+        .context("warming first channel connection")?;
+    let second = pool
+        .get()
+        .await
+        .context("warming second channel connection")?;
     drop((first, second));
     assert!(pool.status().available >= 2);
     Ok(())
