@@ -562,7 +562,7 @@ class TestCheckDaemonHttpHealth:
         port = server.sockets[0].getsockname()[1]
         try:
             healthy = await check_daemon_http_health(
-                port, timeout=0.2, base_url=f"http://127.0.0.1:{port}"
+                port, timeout=0.2, base_url=f"http://127.0.0.1:{port}", tolerate_busy=True
             )
         finally:
             release.set()
@@ -598,6 +598,36 @@ class TestCreateStdioMcpServer:
         assert mcp is not None
         tool_names = {tool.name for tool in await mcp.list_tools()}
         assert "list_mcp_servers" in tool_names
+
+
+async def test_new_daemon_readiness_retries_read_timeouts_until_http_200() -> None:
+    """An accepted connection cannot prove that a newly started daemon is ready."""
+    from gobby.mcp_proxy.stdio_daemon import DaemonStartupDependencies, ensure_daemon_running
+
+    client = AsyncMock()
+    response = MagicMock(status_code=200)
+    client.get.side_effect = [httpx.ReadTimeout("busy"), httpx.ReadTimeout("busy"), response]
+    client.__aenter__.return_value = client
+    start = AsyncMock(return_value={"success": True})
+    logger = MagicMock()
+    deps = DaemonStartupDependencies(
+        bootstrap=BootstrapConfig(daemon_port=60887, websocket_port=60888),
+        is_daemon_running=lambda: False,
+        check_daemon_http_health=check_daemon_http_health,
+        start_daemon_process=start,
+        get_daemon_pid=lambda: 123,
+        logger=logger,
+    )
+    with (
+        patch("gobby.mcp_proxy.daemon_control.httpx.AsyncClient", return_value=client),
+        patch("gobby.mcp_proxy.stdio_daemon.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        await ensure_daemon_running(deps=deps)
+
+    start.assert_awaited_once_with()
+    assert client.get.await_count == 3
+    assert sleep.await_count == 2
+    logger.error.assert_not_called()
 
 
 class TestEnsureDaemonRunning:
@@ -993,6 +1023,7 @@ class TestDaemonProxy:
             60887,
             timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
             base_url="http://127.0.0.1:60887",
+            tolerate_busy=True,
         )
         mock_client.request.assert_awaited_once()
         assert mock_client.request.await_args is not None

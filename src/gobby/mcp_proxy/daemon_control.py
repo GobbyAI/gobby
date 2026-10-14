@@ -30,13 +30,13 @@ async def check_daemon_http_health(
     timeout: float = 5.0,
     *,
     base_url: str | None = None,
+    tolerate_busy: bool = False,
 ) -> bool:
     """Check whether the daemon is up via HTTP.
 
-    A daemon that accepted the connection but has not answered within
-    ``timeout`` is up and busy: under fleet load ``/api/health`` takes seconds
-    while tool calls still succeed, so only a refused or unanswered connect or
-    a non-200 answer reports it down (#23080).
+    Startup readiness requires HTTP 200. Proxy preflight may explicitly accept
+    a read timeout: under fleet load the daemon can be up and busy while its
+    health endpoint takes seconds to answer (#23080).
     """
     url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/health"
     try:
@@ -44,7 +44,7 @@ async def check_daemon_http_health(
             resp = await client.get(url, timeout=timeout)
             return resp.status_code == 200
     except httpx.ReadTimeout:
-        return True
+        return tolerate_busy
     except Exception:
         return False
 

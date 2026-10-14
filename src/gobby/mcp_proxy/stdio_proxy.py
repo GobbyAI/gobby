@@ -52,6 +52,7 @@ class CheckDaemonHealth(Protocol):
         timeout: float = 5.0,
         *,
         base_url: str | None = None,
+        tolerate_busy: bool = False,
     ) -> Awaitable[bool]: ...
 
 
@@ -207,6 +208,7 @@ class DaemonProxy:
                     self.port,
                     timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
                     base_url=self.base_url,
+                    tolerate_busy=True,
                 ):
                     return _daemon_unavailable_result(
                         self.port,

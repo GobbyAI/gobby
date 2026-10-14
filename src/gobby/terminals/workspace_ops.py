@@ -42,8 +42,9 @@ from gobby.storage.workspaces import (
     mint_pane_id,
 )
 from gobby.telemetry.query_timing import observe_queries
+from gobby.terminals.actor_scope import OPERATOR_ACTOR
 from gobby.terminals.lifetime import lifetime_for_role
-from gobby.terminals.operator_lane import run_on_operator_lane
+from gobby.terminals.operator_lane import run_on_operator_lane, run_on_workspace_inventory_lane
 from gobby.terminals.runtime import (
     TerminalRuntimeRegistry,
 )
@@ -289,7 +290,12 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             storage_timing: dict[str, float] = {}
             async with self._publish_fence:
                 fence_acquired = time.monotonic()
-                snapshot, change = await self._db(
+                read = (
+                    run_on_workspace_inventory_lane
+                    if actor != OPERATOR_ACTOR and not sweep_dead_panes
+                    else self._db
+                )
+                snapshot, change = await read(
                     self._snapshot_storage,
                     workspace,
                     node,

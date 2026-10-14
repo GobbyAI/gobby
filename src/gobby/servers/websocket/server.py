@@ -38,7 +38,7 @@ from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.servers.websocket.voice import VoiceMixin
-from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceWsMixin
+from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceAttachKey, WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.attention import AttentionStateManager
@@ -46,6 +46,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.host_events import InputActivityEvent
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+from gobby.terminals.workspace_contract import WorkspaceSnapshot
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
@@ -246,6 +247,7 @@ class WebSocketServer(
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
+        self._workspace_attach_reads: dict[WorkspaceAttachKey, asyncio.Task[WorkspaceSnapshot]] = {}
         self.agent_pane_reserver: AgentPaneReserver | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
@@ -259,6 +261,7 @@ class WebSocketServer(
         self.clients: dict[Any, dict[str, Any]] = {}
         self._off_loop_tasks: dict[Any, set[asyncio.Task[None]]] = {}
         self._off_loop_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
+        self._off_loop_durable_tail: dict[tuple[Any, str], asyncio.Task[None]] = {}
         self._off_loop_durable: set[asyncio.Task[None]] = set()
 
         self.web_chat_session_registry = (
@@ -608,7 +611,9 @@ class WebSocketServer(
         key = (websocket, _off_loop_chain_key(message))
         previous = self._off_loop_tail.get(key)
         task = asyncio.create_task(
-            self._run_off_loop_message(websocket, message, previous),
+            self._run_off_loop_message(
+                websocket, message, previous, self._off_loop_durable_tail.get(key)
+            ),
             name="ws-off-loop",
         )
         self._off_loop_tail[key] = task
@@ -620,6 +625,7 @@ class WebSocketServer(
 
         task.add_done_callback(forget)
         if _survives_disconnect(message):
+            self._off_loop_durable_tail[key] = task
             self._off_loop_durable.add(task)
             task.add_done_callback(self._off_loop_durable.discard)
 
@@ -628,16 +634,16 @@ class WebSocketServer(
         websocket: Any,
         message: str,
         previous: asyncio.Task[None] | None,
+        durable_previous: asyncio.Task[None] | None = None,
     ) -> None:
-        if previous is not None:
-            try:
-                await previous
-            except asyncio.CancelledError:
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    raise
-            except Exception:
-                pass
+        # Cancellation belongs to this waiter. A cancelled intermediate read
+        # must also not let the next mutation pass a still-running mutation.
+        predecessors = {task for task in (previous, durable_previous) if task is not None}
+        if predecessors:
+            done, _pending = await asyncio.wait(predecessors)
+            for task in done:
+                if not task.cancelled():
+                    task.exception()
         try:
             await self._handle_message(websocket, message, blocks_connection=False)
         except ConnectionClosed:
@@ -656,6 +662,8 @@ class WebSocketServer(
     def _forget_off_loop_tail(self, key: tuple[Any, str], task: asyncio.Task[None]) -> None:
         if self._off_loop_tail.get(key) is task:
             self._off_loop_tail.pop(key, None)
+        if self._off_loop_durable_tail.get(key) is task:
+            self._off_loop_durable_tail.pop(key, None)
 
     async def _cancel_off_loop(self, websocket: Any) -> None:
         for key in [key for key in self._off_loop_tail if key[0] is websocket]:
@@ -770,6 +778,7 @@ class WebSocketServer(
         finally:
             self._server = None
             await self._finish_durable_off_loop()
+            await self._cancel_workspace_attaches()
             await self.lease_registry.shutdown_lifecycle_publication()
         logger.debug("WebSocket server stopped")
 

@@ -10,7 +10,7 @@ import json
 import tracemalloc
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -322,6 +322,7 @@ async def test_slow_failed_workspace_attach_logs_snapshot_and_error_send(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     server = _bare_server()
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch=DAEMON_EPOCH)
     server.shutdown_in_progress = lambda: False
     websocket = MockWebSocket()
     server.clients[websocket] = {"id": "client-1"}
@@ -710,3 +711,192 @@ async def test_workspace_attach_allocation_bound(
     reply_byte_bound = (len(pane_ids) + tab_count) * 512 + 4 * 1024
     assert max(reply_bytes) < reply_byte_bound
     assert reply_byte_bound < 2 * max(reply_bytes)
+
+
+@pytest.mark.parametrize("cancel_first", [False, True])
+async def test_concurrent_attaches_share_snapshot_and_survive_client_cancellation(
+    stack: _Stack, cancel_first: bool
+) -> None:
+    snapshot = await stack.server._read_workspace({})
+    expected_seq = (
+        snapshot.lifecycle_seq
+        if snapshot.lifecycle_seq is not None
+        else stack.server._leases().lifecycle_snapshot()["seq"]
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    clients = [_client(stack, set()) for _ in range(5)]
+    send_json = stack.server._send_json
+    sent = 0
+
+    async def send(client: Any, payload: dict[str, Any]) -> None:
+        nonlocal sent
+        await send_json(client, payload)
+        sent += 1
+        if sent == 1:
+            # Another publication between replies must not advance the shared
+            # rows' watermark for the remaining clients.
+            leases = stack.server._leases()
+            watermark = leases.lifecycle_snapshot()
+            leases._commit_lifecycle(
+                cast(str, watermark["daemon_epoch"]), cast(int, watermark["seq"]) + 1
+            )
+
+    async def read(*_args: Any, **_kwargs: Any) -> WorkspaceSnapshot:
+        started.set()
+        await release.wait()
+        return snapshot
+
+    with (
+        patch.object(stack.server.workspace_ops, "workspace_snapshot", side_effect=read) as reader,
+        patch.object(stack.server, "_send_json", side_effect=send),
+    ):
+        requests = [
+            asyncio.create_task(
+                stack.server._handle_workspace_attach(
+                    client, {"workspace": snapshot.workspace.id, "request_id": f"attach-{index}"}
+                )
+            )
+            for index, client in enumerate(clients)
+        ]
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            await asyncio.sleep(0)
+            assert reader.call_count == 1
+            if cancel_first:
+                requests[0].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await requests[0]
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*requests[1:]), timeout=1)
+            if not cancel_first:
+                await requests[0]
+        finally:
+            release.set()
+            await asyncio.gather(*requests, return_exceptions=True)
+
+        assert reader.call_count == 1
+        assert stack.server._workspace_attach_reads == {}
+        for index, client in enumerate(clients):
+            if cancel_first and index == 0:
+                assert client.sent_messages == []
+                continue
+            reply = json.loads(client.sent_messages[-1])
+            assert reply["request_id"] == f"attach-{index}"
+            assert reply["workspace"]["id"] == snapshot.workspace.id
+            assert reply["snapshot"]["seq"] == expected_seq
+            assert f"workspace_event:workspace_id={snapshot.workspace.id}" in client.subscriptions
+
+        # Coalescing ends with completion; a later attach must get fresh rows.
+        await stack.server._handle_workspace_attach(
+            clients[-1], {"workspace": snapshot.workspace.id}
+        )
+        assert reader.call_count == 2
+
+
+async def test_shared_attach_error_reaches_every_client_and_allows_retry(stack: _Stack) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    clients = [_client(stack, set()) for _ in range(3)]
+
+    async def fail(*_args: Any, **_kwargs: Any) -> WorkspaceSnapshot:
+        entered.set()
+        await release.wait()
+        raise WorkspaceOpError("not_found", "Workspace disappeared")
+
+    with patch.object(stack.server.workspace_ops, "workspace_snapshot", side_effect=fail) as reader:
+        requests = [
+            asyncio.create_task(
+                stack.server._handle_workspace_attach(client, {"workspace": "ws-1"})
+            )
+            for client in clients
+        ]
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await asyncio.sleep(0)
+            assert reader.call_count == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*requests), timeout=1)
+        assert stack.server._workspace_attach_reads == {}
+        for client in clients:
+            reply = json.loads(client.sent_messages[-1])
+            assert reply["type"] == "workspace_error"
+            assert reply["code"] == "not_found"
+        await stack.server._handle_workspace_attach(clients[0], {"workspace": "ws-1"})
+        assert reader.call_count == 2
+
+
+async def test_published_change_prevents_joining_an_older_attach(stack: _Stack) -> None:
+    snapshot = await stack.server._read_workspace({})
+    release = asyncio.Event()
+    entered = asyncio.Queue[None]()
+    clients = [_client(stack, set()) for _ in range(2)]
+
+    async def read(*_args: Any, **_kwargs: Any) -> WorkspaceSnapshot:
+        seq = cast(int, stack.server._leases().lifecycle_snapshot()["seq"])
+        entered.put_nowait(None)
+        await release.wait()
+        return replace(snapshot, lifecycle_seq=seq)
+
+    with patch.object(stack.server.workspace_ops, "workspace_snapshot", side_effect=read) as reader:
+        first = asyncio.create_task(
+            stack.server._handle_workspace_attach(clients[0], {"workspace": snapshot.workspace.id})
+        )
+        requests = [first]
+        try:
+            await asyncio.wait_for(entered.get(), timeout=1)
+            leases = stack.server._leases()
+            watermark = leases.lifecycle_snapshot()
+            leases._commit_lifecycle(
+                cast(str, watermark["daemon_epoch"]), cast(int, watermark["seq"]) + 1
+            )
+            requests.append(
+                asyncio.create_task(
+                    stack.server._handle_workspace_attach(
+                        clients[1], {"workspace": snapshot.workspace.id}
+                    )
+                )
+            )
+            await asyncio.wait_for(entered.get(), timeout=1)
+            assert reader.call_count == 2
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*requests), timeout=1)
+    assert stack.server._workspace_attach_reads == {}
+    assert all(
+        json.loads(client.sent_messages[-1])["type"] == "workspace_snapshot" for client in clients
+    )
+    assert json.loads(clients[0].sent_messages[-1])["snapshot"]["seq"] == watermark["seq"]
+    assert (
+        json.loads(clients[1].sent_messages[-1])["snapshot"]["seq"]
+        == cast(int, watermark["seq"]) + 1
+    )
+
+
+async def test_shutdown_cancels_shared_attach_reads(stack: _Stack) -> None:
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+    client = _client(stack, set())
+
+    async def read(*_args: Any, **_kwargs: Any) -> WorkspaceSnapshot:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+        raise AssertionError("The snapshot must be cancelled during shutdown")
+
+    with patch.object(stack.server.workspace_ops, "workspace_snapshot", side_effect=read):
+        request = asyncio.create_task(stack.server._handle_workspace_attach(client, {}))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            await asyncio.wait_for(stack.server._cancel_workspace_attaches(), timeout=1)
+            with pytest.raises(asyncio.CancelledError):
+                await request
+        finally:
+            await stack.server._cancel_workspace_attaches()
+            await asyncio.gather(request, return_exceptions=True)
+    assert stopped.is_set()
+    assert stack.server._workspace_attach_reads == {}
+    assert client.sent_messages == []

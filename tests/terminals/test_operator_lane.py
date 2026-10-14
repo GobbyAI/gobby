@@ -18,11 +18,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.workspaces.registry import create_workspaces_registry
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.storage.terminals import Terminal
 from gobby.terminals.input_grants import sync_host_input_grant
 from gobby.terminals.leases import SizingDecision, TerminalLeaseRegistry
-from gobby.terminals.operator_lane import OPERATOR_LANE_THREAD_PREFIX
+from gobby.terminals.operator_lane import (
+    OPERATOR_LANE_THREAD_PREFIX,
+    WORKSPACE_INVENTORY_THREAD_PREFIX,
+    run_on_operator_lane,
+)
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import (
     UnresolvedWriteStore,
@@ -37,6 +42,41 @@ from tests.terminals.fakes import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+async def test_agent_inventory_cannot_fill_operator_workers() -> None:
+    """Eight blocked agent reads leave operator storage work runnable."""
+    loop = asyncio.get_running_loop()
+    started = asyncio.Queue[str]()
+    release = threading.Event()
+    manager = MagicMock()
+    manager.list_for_node.return_value = []
+    machine = SimpleNamespace(id="machine-1", ref=1)
+
+    def resolve(_node: str | None) -> object:
+        loop.call_soon_threadsafe(started.put_nowait, threading.current_thread().name)
+        if not release.wait(timeout=5):
+            raise TimeoutError("Agent inventory was never released")
+        return machine
+
+    manager.resolve_node.side_effect = resolve
+    registry = create_workspaces_registry(manager, lambda: None)
+    with patch(
+        "gobby.mcp_proxy.tools.workspaces.registry.current_actor", return_value="session:agent-1"
+    ):
+        reads = [asyncio.create_task(registry.call("list_workspaces", {})) for _ in range(8)]
+        try:
+            threads = [await asyncio.wait_for(started.get(), timeout=1) for _ in reads]
+            answer = await asyncio.wait_for(
+                run_on_operator_lane(lambda: threading.current_thread().name), timeout=1
+            )
+            assert answer.startswith(OPERATOR_LANE_THREAD_PREFIX)
+            assert all(name.startswith(WORKSPACE_INVENTORY_THREAD_PREFIX) for name in threads)
+            assert all(not read.done() for read in reads)
+        finally:
+            release.set()
+            results = await asyncio.gather(*reads, return_exceptions=True)
+    assert results == [{"success": True, "node_ref": 1, "workspaces": []}] * 8
 
 
 # Far below the 2 s take-control and 5 s request deadlines gclient enforces.
@@ -81,8 +121,17 @@ def _recording(threads: list[str], value: object = None) -> Any:
     return record
 
 
-def test_default_workspace_attach_answers_while_the_default_executor_is_held() -> None:
-    """gclient's attach (no workspace, no project) resolves, sweeps and reads on the lane."""
+@pytest.mark.parametrize(
+    "actor,workspace_id,sweep,prefix,count",
+    [
+        ("operator", None, True, OPERATOR_LANE_THREAD_PREFIX, 8),
+        ("session:agent-1", "ws-1", False, WORKSPACE_INVENTORY_THREAD_PREFIX, 4),
+    ],
+)
+def test_workspace_snapshot_uses_caller_lane_while_default_executor_is_held(
+    actor: str, workspace_id: str | None, sweep: bool, prefix: str, count: int
+) -> None:
+    """Operator attaches and agent inventory reads use their own reserved lane."""
     threads: list[str] = []
     machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
     workspace = SimpleNamespace(id="ws-1")
@@ -106,13 +155,15 @@ def test_default_workspace_attach_answers_while_the_default_executor_is_held() -
     )
 
     with patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"):
-        snapshot = _run_while_default_executor_held(ops.workspace_snapshot("operator"))
+        snapshot = _run_while_default_executor_held(
+            ops.workspace_snapshot(actor, workspace_id, sweep_dead_panes=sweep)
+        )
 
     assert snapshot.workspace.id == "ws-1"
     assert snapshot.tabs == ()
     assert snapshot.panes == ()
-    assert len(threads) == 8
-    assert all(name.startswith(OPERATOR_LANE_THREAD_PREFIX) for name in threads)
+    assert len(threads) == count
+    assert all(name.startswith(prefix) for name in threads)
 
 
 def test_operator_keystroke_answers_while_the_default_executor_is_held() -> None:

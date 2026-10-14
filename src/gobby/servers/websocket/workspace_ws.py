@@ -10,13 +10,14 @@ own signature, so this surface cannot drift from the ops module.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from types import NoneType, UnionType
-from typing import TYPE_CHECKING, Any, Final, get_args, get_type_hints
+from typing import TYPE_CHECKING, Any, Final, cast, get_args, get_type_hints
 
 from gobby.servers.websocket.terminal_ws_create import _bounded_code
 from gobby.storage.workspaces import Workspace, WorkspacePane
@@ -108,10 +109,14 @@ def _result(value: object) -> Any:
     return value
 
 
+type WorkspaceAttachKey = tuple[str | None, str | None, str | None, bool, int]
+
+
 class WorkspaceWsMixin:
     """Serve ``workspace_attach``, ``workspace_snapshot``, and ``workspace_op``."""
 
     workspace_ops: WorkspaceOps | None
+    _workspace_attach_reads: dict[WorkspaceAttachKey, asyncio.Task[WorkspaceSnapshot]]
     shutdown_in_progress: Callable[[], bool]
 
     if TYPE_CHECKING:
@@ -144,7 +149,7 @@ class WorkspaceWsMixin:
 
         try:
             self._ensure_workspace_requests_open()
-            snapshot = await self._read_workspace(data)
+            snapshot = await self._read_shared_attach(data)
         except LifecyclePublicationError:
             if not self.shutdown_in_progress():
                 raise
@@ -219,6 +224,51 @@ class WorkspaceWsMixin:
     @staticmethod
     def _shutdown_error() -> WorkspaceOpError:
         return WorkspaceOpError("shutdown_in_progress", "Daemon is shutting down")
+
+    async def _read_shared_attach(self, data: dict[str, Any]) -> WorkspaceSnapshot:
+        arguments = _arguments("workspace_snapshot", data, _ENVELOPE)
+        # Sharing is bounded to one in-flight read and one lifecycle watermark.
+        # A published mutation makes subsequent attaches read fresh rows.
+        key: WorkspaceAttachKey = (
+            arguments.get("workspace"),
+            arguments.get("node"),
+            arguments.get("project_id"),
+            arguments.get("sweep_dead_panes", True),
+            cast(int, self._leases().lifecycle_snapshot()["seq"]),
+        )
+        task = self._workspace_attach_reads.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(
+                self._read_attach_snapshot(dict(data)),
+                name="ws-workspace-attach",
+            )
+            self._workspace_attach_reads[key] = task
+
+            def forget(done: asyncio.Task[WorkspaceSnapshot]) -> None:
+                if self._workspace_attach_reads.get(key) is done:
+                    self._workspace_attach_reads.pop(key, None)
+                # All clients may have disconnected. Reap any unobserved error.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(forget)
+        return await asyncio.shield(task)
+
+    async def _read_attach_snapshot(self, data: dict[str, Any]) -> WorkspaceSnapshot:
+        snapshot = await self._read_workspace(data)
+        # Capture before this task yields its result to clients. This includes
+        # default workspace creation while preventing a later reply's live
+        # watermark from hiding changes published after the rows were read.
+        if snapshot.lifecycle_seq is None:
+            seq = cast(int, self._leases().lifecycle_snapshot()["seq"])
+            return replace(snapshot, lifecycle_seq=seq)
+        return snapshot
+
+    async def _cancel_workspace_attaches(self) -> None:
+        pending = list(self._workspace_attach_reads.values())
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
     async def _read_workspace(self, data: dict[str, Any]) -> WorkspaceSnapshot:
         arguments = _arguments("workspace_snapshot", data, _ENVELOPE)

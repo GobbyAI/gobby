@@ -20,10 +20,15 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 OPERATOR_LANE_THREAD_PREFIX = "operator-lane"
+WORKSPACE_INVENTORY_THREAD_PREFIX = "workspace-inventory"
 
 _OPERATOR_EXECUTOR = ThreadPoolExecutor(
     max_workers=8,
     thread_name_prefix=OPERATOR_LANE_THREAD_PREFIX,
+)
+_WORKSPACE_INVENTORY_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8,
+    thread_name_prefix=WORKSPACE_INVENTORY_THREAD_PREFIX,
 )
 
 
@@ -39,4 +44,19 @@ async def run_on_operator_lane(func: Callable[P, R], /, *args: P.args, **kwargs:
     return await loop.run_in_executor(_OPERATOR_EXECUTOR, call)
 
 
-__all__ = ["OPERATOR_LANE_THREAD_PREFIX", "run_on_operator_lane"]
+async def run_on_workspace_inventory_lane(
+    func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs
+) -> R:
+    """Keep agent inventory reads off the operator's reserved workers."""
+    loop = get_running_loop()
+    ctx = contextvars.copy_context()
+    call = functools.partial(ctx.run, func, *args, **kwargs)
+    return await loop.run_in_executor(_WORKSPACE_INVENTORY_EXECUTOR, call)
+
+
+__all__ = [
+    "OPERATOR_LANE_THREAD_PREFIX",
+    "WORKSPACE_INVENTORY_THREAD_PREFIX",
+    "run_on_operator_lane",
+    "run_on_workspace_inventory_lane",
+]
