@@ -29,6 +29,7 @@ async def test_spawn_records_the_shell_basename_in_process() -> None:
     )
 
     assert result.success is True
+    assert result.terminal_id is not None
     row = manager.get(result.terminal_id)
     assert row is not None
     assert row.process is not None

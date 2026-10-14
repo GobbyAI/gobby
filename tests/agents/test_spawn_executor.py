@@ -7,6 +7,7 @@ import os
 import signal
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
@@ -46,10 +47,23 @@ from gobby.agents.spawn_executor_support import (
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawn_timing import SPAWN_PHASES
+from gobby.config.terminal_host import TerminalHostConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals import host_manager as host_manager_module
+from gobby.terminals.host_client import (
+    CommitTransportError,
+    HostCommandError,
+    HostConnectionLost,
+    HostNotAdoptedError,
+    HostUnavailableError,
+    HostUnavailableReason,
+)
+from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND
+from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND, TerminalLifetime
+from gobby.terminals.native_runtime import HostManagerControl
 from gobby.terminals.runtime import Delivered, SnapshotMode, SnapshotResult
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.prepared_spawn import prepared_spawn
@@ -58,6 +72,7 @@ from tests.terminals.fakes import (
     MemoryTerminalStore,
     runtime_registry,
 )
+from tests.terminals.host_fakes import FakeControlClient, FakeHostProcess
 
 pytestmark = pytest.mark.unit
 
@@ -3856,6 +3871,7 @@ async def test_delayed_kill_refuses_reused_host_id_after_respawn() -> None:
         command=["echo", "hi"],
         timeout_seconds=0.001,
     )
+    assert web_result.terminal_id is not None
     web_old = web_manager.get(web_result.terminal_id)
     assert web_old is not None
     assert web_runtime.spawn_hold is not None
@@ -3921,6 +3937,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
         command=["echo", "hi"],
         timeout_seconds=0.001,
     )
+    assert web_result.terminal_id is not None
     web_row = web_manager.get(web_result.terminal_id)
     assert web_row is not None
     web_newer = web_manager.bump_attempt_generation(web_row.id)
@@ -3978,3 +3995,259 @@ async def test_spawn_failure_keeps_typed_infrastructure_provenance(
     result = await execute_spawn(request)
     assert result.success is False
     assert result.retryable_infrastructure is expected
+
+
+@dataclass
+class _HostBackedRuntime(FakeRuntime):
+    """FakeRuntime whose spawn refusal comes from a real TerminalHostManager."""
+
+    control: HostManagerControl | None = None
+
+    async def spawn_refusal(self) -> HostUnavailableReason | None:
+        assert self.control is not None
+        return await self.control.spawn_refusal()
+
+
+async def _refused_connect() -> FakeControlClient:
+    raise ConnectionRefusedError("no control socket")
+
+
+def _missing_gterm() -> FakeHostProcess:
+    raise FileNotFoundError("gterm")
+
+
+def _host_manager(
+    tmp_path: Path,
+    *,
+    connector: Callable[[], Any],
+    spawner: Callable[[], Any],
+    pid_ok: bool = True,
+) -> TerminalHostManager:
+    return TerminalHostManager(
+        config=TerminalHostConfig(
+            enabled=True,
+            socket_dir=str(tmp_path),
+            shutdown_grace_seconds=0.2,
+            health_interval_seconds=3600.0,
+        ),
+        terminal_config=TerminalConfig(),
+        connector=connector,
+        spawner=spawner,
+        pid_identity=lambda _pid: pid_ok,
+    )
+
+
+async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
+    """A started manager whose latest start or adoption ended in ``state``."""
+    if state == "gterm_missing":
+        host = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+    elif state == "host_start_timeout":
+        host = _host_manager(
+            tmp_path, connector=_refused_connect, spawner=lambda: FakeHostProcess(pid=4242)
+        )
+    elif state == "epoch_refused":
+        host = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+    elif state == "pid":
+        client = FakeControlClient()
+        host = _host_manager(
+            tmp_path, connector=_connector(client), spawner=_missing_gterm, pid_ok=False
+        )
+    elif state == "token":
+        client = FakeControlClient(hello_error="invalid_token")
+        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+    elif state == "protocol":
+        client = FakeControlClient(protocol_version=99)
+        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+    else:
+        assert state == "healthy"
+        client = FakeControlClient()
+        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+    await host.start()
+    if state == "epoch_refused":
+        # Only the Rust host's epoch-adoption matrix emits this reason; the
+        # Python supervisor records it as given and the spawn path reads it.
+        host.failure_reason = "epoch_refused"
+    elif state != "healthy":
+        # A misleading free-text error must never steer the spawn path.
+        host.last_error = "host_start_timeout gterm_missing epoch_refused"
+    return host
+
+
+def _connector(client: FakeControlClient) -> Callable[[], Any]:
+    async def connect() -> FakeControlClient:
+        return client
+
+    return connect
+
+
+def _host_backed_request(
+    host: TerminalHostManager, *, lifetime: TerminalLifetime = "run"
+) -> tuple[SpawnRequest, _HostBackedRuntime, FakeRuntime, MemoryTerminalStore]:
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        prepared_spawn=prepared_spawn(),
+        terminal_lifetime=lifetime,
+    )
+    manager = _manager_of(request)
+    native = _HostBackedRuntime(backend="native", control=HostManagerControl(host))
+    tmux = FakeRuntime(backend="tmux")
+    registry = runtime_registry(native, tmux)
+    request.terminal_runtime_registry = registry
+    request.write_coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, manager),
+        registry,
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
+    )
+    return request, native, tmux, manager
+
+
+@pytest.fixture
+def short_host_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_manager_module, "HOST_READY_DEADLINE_SECONDS", 0.05)
+
+
+_FAIL_CLOSED = ("host_start_timeout", "epoch_refused", "gterm_missing")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+@pytest.mark.parametrize(
+    ("state", "stage", "error", "expected"),
+    [
+        *[(reason, None, None, f"host_unavailable:{reason}") for reason in _FAIL_CLOSED],
+        ("token", "prepare", HostUnavailableError(), "host_unreachable"),
+        ("pid", "prepare", HostNotAdoptedError(), "host_not_adopted"),
+        ("protocol", "prepare", HostUnavailableError(), "host_unreachable"),
+        ("healthy", "prepare", HostCommandError("unauthorized"), "unauthorized"),
+        ("healthy", "prepare", HostConnectionLost("control closed"), "host_unreachable"),
+        (
+            "healthy",
+            "prepare",
+            HostCommandError("capacity", stage="reserve"),
+            "host_refused:capacity",
+        ),
+        (
+            "healthy",
+            "prepare",
+            HostCommandError("exec_failed", code="ENOENT"),
+            "exec_failed:ENOENT",
+        ),
+        (
+            "healthy",
+            "commit",
+            CommitTransportError("dropped", request_written=False),
+            "commit_not_sent",
+        ),
+        (
+            "healthy",
+            "prepare",
+            RuntimeError("arbitrary native failure"),
+            "arbitrary native failure",
+        ),
+        ("healthy", None, None, None),
+    ],
+)
+async def test_host_unavailable_reasons_fail_closed_with_typed_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    stage: str | None,
+    error: BaseException | None,
+    expected: str | None,
+) -> None:
+    host = await _host_in_state(tmp_path, state)
+    request, native, tmux, manager = _host_backed_request(host)
+    if stage is not None:
+        monkeypatch.setattr(native, f"{stage}_spawn", AsyncMock(side_effect=error))
+    try:
+        result = await execute_spawn(request)
+    finally:
+        await host.stop()
+
+    assert tmux.create_calls == 0
+    if expected is None:
+        assert result.success is True
+        assert result.backend == "native"
+        assert manager.rows[str(result.terminal_id)].backend == "native"
+        return
+    assert result.success is False
+    assert result.error == expected
+    if state in _FAIL_CLOSED:
+        assert result.error_detail == f"native terminals are unavailable ({state})"
+        assert result.terminal_id is None
+        assert native.create_calls == 0
+        assert manager.rows == {}
+    else:
+        assert result.terminal_id is not None
+        assert manager.rows[result.terminal_id].state != "live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+@pytest.mark.parametrize("lifetime", ["run", "persistent_role"])
+async def test_every_lifetime_fails_closed_without_host(
+    tmp_path: Path, lifetime: TerminalLifetime
+) -> None:
+    host = await _host_in_state(tmp_path, "gterm_missing")
+    request, native, tmux, manager = _host_backed_request(host, lifetime=lifetime)
+    try:
+        result = await execute_spawn(request)
+    finally:
+        await host.stop()
+
+    assert result.success is False
+    assert result.error == "host_unavailable:gterm_missing"
+    assert result.error_detail == "native terminals are unavailable (gterm_missing)"
+    assert (native.create_calls, tmux.create_calls, manager.rows) == (0, 0, {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+async def test_fail_closed_spawn_has_no_side_effects(tmp_path: Path) -> None:
+    # A start that never settles misses the ready deadline the same way.
+    undecided = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+    request, native, tmux, manager = _host_backed_request(undecided)
+    result = await execute_spawn(request)
+
+    assert result.error == "host_unavailable:host_start_timeout"
+    assert result.terminal_id is None
+    assert manager.rows == {}
+    # Nothing reached either backend: no reservation, no process, no tmux session.
+    assert (native.last_request, native.create_calls, native.live_keys) == (None, 0, set())
+    assert (tmux.last_request, tmux.create_calls) == (None, 0)
+    assert undecided.health_state()["failure_reason"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+async def test_spawn_recovers_after_host_readoption(tmp_path: Path) -> None:
+    host = await _host_in_state(tmp_path, "host_start_timeout")
+    try:
+        refused, _native, _tmux, refused_rows = _host_backed_request(host)
+        first = await execute_spawn(refused)
+        assert first.error == "host_unavailable:host_start_timeout"
+        assert refused_rows.rows == {}
+
+        # One health-loop tick for a host that never started: re-probe and adopt.
+        host._connector = _connector(FakeControlClient())
+        await host._start_host()
+        assert host.health_state()["failure_reason"] is None
+
+        request, native, tmux, manager = _host_backed_request(host)
+        result = await execute_spawn(request)
+    finally:
+        await host.stop()
+
+    assert result.success is True
+    assert result.backend == "native"
+    assert native.create_calls == 1
+    assert tmux.create_calls == 0
+    assert manager.rows[str(result.terminal_id)].backend == "native"

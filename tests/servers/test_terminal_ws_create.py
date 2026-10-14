@@ -33,6 +33,8 @@ async def test_web_create_uses_row_owning_primitive(
     manager = _manager(temp_db)
     runtime = MagicMock()
     runtime.backend = "native"
+    # A healthy host: spawn_refusal names no fail-closed reason.
+    runtime.spawn_refusal = AsyncMock(return_value=None)
     runtime.reserve_observer = AsyncMock(
         return_value={"reservation_id": "rsv-1", "reserve_key": "reserve-1"}
     )
@@ -64,6 +66,7 @@ async def test_web_create_uses_row_owning_primitive(
         command=["zsh"],
     )
     assert result.success is True
+    assert result.terminal_id is not None
     row = manager.get(result.terminal_id)
     assert row is not None
     assert row.ownership == "gobby"
@@ -87,6 +90,7 @@ async def test_web_create_uses_row_owning_primitive(
         command=["zsh"],
     )
     assert failed.success is False
+    assert failed.terminal_id is not None
     failed_row = manager.get(failed.terminal_id)
     assert failed_row is not None
     assert failed_row.state == "exited"
@@ -158,6 +162,7 @@ async def test_native_create_saturates_then_expires(
             command=["zsh"],
         )
         assert result.success is True
+        assert result.terminal_id is not None
         held.append(result.terminal_id)
     overflow = await spawn_web_terminal(
         manager=manager,
