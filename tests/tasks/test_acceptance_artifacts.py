@@ -848,8 +848,9 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("declaring_file", ["render.rs", "render/mod.rs"])
 @pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("wrapped", [False, True])
 def test_rust_validation_runs_match_committed_path_module(
-    tmp_path: Path, declaring_file: str, inline: bool
+    tmp_path: Path, declaring_file: str, inline: bool, wrapped: bool
 ) -> None:
     repo = _init_repo(tmp_path)
     source_dir = repo / "crates/example/src/commands"
@@ -871,10 +872,11 @@ def test_rust_validation_runs_match_committed_path_module(
         f'// #[path = "{relative_path}"] mod fake;\n'
         f'#[cfg(test)]\n#[path = "{relative_path}"]\nmod tests;\n'
     )
-    declaration.write_text(
-        f"mod nested {{\n{declaration_body}}}\n" if inline else declaration_body,
-        encoding="utf-8",
-    )
+    if inline:
+        declaration_body = f"mod nested {{\n{declaration_body}}}\n"
+    if wrapped:
+        declaration_body = f"cfg_if::cfg_if! {{\nif #[cfg(test)] {{\n{declaration_body}}}\n}}\n"
+    declaration.write_text(declaration_body, encoding="utf-8")
     linked_sha = _commit(repo, "Rust path module acceptance fixture")
     declaration.write_text("mod unrelated;\n", encoding="utf-8")
 

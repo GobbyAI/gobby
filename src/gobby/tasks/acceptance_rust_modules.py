@@ -80,7 +80,8 @@ def _collect_declarations(
         if name is not None:
             if match.group("delimiter") == "{":
                 if path is None:
-                    directory = (stack[-1][1] if stack else inline_root) / name
+                    has_inline_module = any(part is not None for part, _ in stack)
+                    directory = (directory if has_inline_module else inline_root) / name
                 else:
                     directory = directory / path
                 stack.append((name, directory))
@@ -89,7 +90,7 @@ def _collect_declarations(
                 inline_names = tuple(part for part, _ in stack if part is not None)
                 declarations.setdefault(target, set()).add((declaring_path, (*inline_names, name)))
         elif match.group("brace") == "{":
-            stack.append((None, stack[-1][1] if stack else inline_root))
+            stack.append((None, directory))
         elif match.group("brace") == "}" and stack:
             stack.pop()
 
