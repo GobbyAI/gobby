@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1097. Unclassified: 1094.
+Public surfaces and evidence gates: 1097. Unclassified: 1030.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -177,16 +177,16 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `CLI gobby pipelines runs show` | **unclassified** |  |
 | `CLI gobby pipelines search` | **unclassified** |  |
 | `CLI gobby pipelines show` | **unclassified** |  |
-| `CLI gobby plan` | **unclassified** |  |
-| `CLI gobby plan coverage` | **unclassified** |  |
-| `CLI gobby plans` | **unclassified** |  |
-| `CLI gobby plans archive` | **unclassified** |  |
-| `CLI gobby plans list` | **unclassified** |  |
-| `CLI gobby plans register` | **unclassified** |  |
-| `CLI gobby plans review-evidence` | **unclassified** |  |
-| `CLI gobby plans review-runs` | **unclassified** |  |
-| `CLI gobby plans show` | **unclassified** |  |
-| `CLI gobby plans validate` | **unclassified** |  |
+| `CLI gobby plan` | proxied | Python src/gobby/cli/plan.py::plan; blocked on a Rust plan-coverage CLI dispatcher. Owner: #21568 Remaining route families. |
+| `CLI gobby plan coverage` | proxied | Python src/gobby/cli/plan.py::coverage; blocked on Rust coverage evaluation, evidence validation and manifest writing with matching exit codes. Owner: #21568 Remaining route families. |
+| `CLI gobby plans` | proxied | Python src/gobby/cli/plans.py::plans; blocked on a Rust plan-registry CLI dispatcher. Owner: #21568 Remaining route families. |
+| `CLI gobby plans archive` | proxied | Python src/gobby/cli/plans.py::archive_plan_command; blocked on Rust plan archival, file movement and coverage-manifest removal. Owner: #21568 Remaining route families. |
+| `CLI gobby plans list` | proxied | Python src/gobby/cli/plans.py::list_plans_command; blocked on Rust project-scoped plan listing with state/kind filters and CLI output. Owner: #21568 Remaining route families. |
+| `CLI gobby plans register` | proxied | Python src/gobby/cli/plans.py::register_plan_command; blocked on Rust plan registration/reactivation and initial coverage-manifest generation. Owner: #21568 Remaining route families. |
+| `CLI gobby plans review-evidence` | proxied | Python src/gobby/cli/plans.py::review_evidence_command; blocked on Rust review-evidence queries and table/JSON rendering. Owner: #21568 Remaining route families. |
+| `CLI gobby plans review-runs` | proxied | Python src/gobby/cli/plans.py::review_runs_command prints an expansion-QA MCP handoff; blocked on Rust rendering of that CLI handoff. Owner: #21568 Remaining route families. |
+| `CLI gobby plans show` | proxied | Python src/gobby/cli/plans.py::show_plan_command; blocked on Rust project-scoped plan/ref resolution and detail rendering. Owner: #21568 Remaining route families. |
+| `CLI gobby plans validate` | proxied | Python src/gobby/cli/plans.py::validate_plan_command; blocked on Rust plan-contract, project-checkout and symbol validation with CLI exit codes. Owner: #21568 Remaining route families. |
 | `CLI gobby postgres` | **unclassified** |  |
 | `CLI gobby postgres backup` | **unclassified** |  |
 | `CLI gobby postgres force-revoke-run` | **unclassified** |  |
@@ -195,15 +195,15 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `CLI gobby postgres restore` | **unclassified** |  |
 | `CLI gobby postgres scoped-roles` | **unclassified** |  |
 | `CLI gobby postgres status` | **unclassified** |  |
-| `CLI gobby projects` | **unclassified** |  |
-| `CLI gobby projects delete` | **unclassified** |  |
-| `CLI gobby projects list` | **unclassified** |  |
-| `CLI gobby projects purge` | **unclassified** |  |
-| `CLI gobby projects rebind` | **unclassified** |  |
-| `CLI gobby projects refresh-verification` | **unclassified** |  |
-| `CLI gobby projects rename` | **unclassified** |  |
-| `CLI gobby projects repair` | **unclassified** |  |
-| `CLI gobby projects show` | **unclassified** |  |
+| `CLI gobby projects` | proxied | Python src/gobby/cli/projects.py::projects; blocked on a Rust project-management CLI dispatcher. Owner: #21568 Remaining route families. |
+| `CLI gobby projects delete` | proxied | Python src/gobby/cli/projects.py::delete_project; blocked on Rust project soft deletion with name confirmation and protected-project guards. Owner: #21568 Remaining route families. |
+| `CLI gobby projects list` | proxied | Python src/gobby/cli/projects.py::list_projects; blocked on Rust project/checkout listing, system-project filtering and text/JSON rendering. Owner: #21568 Remaining route families. |
+| `CLI gobby projects purge` | proxied | Python src/gobby/cli/projects.py::purge_project; blocked on Rust confirmed project purge and dependent-resource cleanup. Owner: #21568 Remaining route families. |
+| `CLI gobby projects rebind` | proxied | Python src/gobby/cli/projects.py::rebind_project; blocked on Rust machine-scoped checkout rebind, marker validation and conflict handling. Owner: #21568 Remaining route families. |
+| `CLI gobby projects refresh-verification` | proxied | Python src/gobby/cli/projects.py::refresh_verification; blocked on Rust project verification-command synthesis, deterministic fallback and explicit file updates. Owner: #21568 Remaining route families. |
+| `CLI gobby projects rename` | proxied | Python src/gobby/cli/projects.py::rename_project; blocked on Rust project rename with uniqueness and sentinel guards. Owner: #21568 Remaining route families. |
+| `CLI gobby projects repair` | proxied | Python src/gobby/cli/projects.py::repair_project; blocked on Rust checkout/marker drift diagnostics and guarded missing-checkout registration. Owner: #21568 Remaining route families. |
+| `CLI gobby projects show` | proxied | Python src/gobby/cli/projects.py::show_project; blocked on Rust project/ref resolution and checkout-aware detail rendering. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant` | **unclassified** |  |
 | `CLI gobby qdrant install` | **unclassified** |  |
 | `CLI gobby qdrant status` | **unclassified** |  |
@@ -261,13 +261,13 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `CLI gobby skills show` | **unclassified** |  |
 | `CLI gobby skills update` | **unclassified** |  |
 | `CLI gobby skills validate` | **unclassified** |  |
-| `CLI gobby stages` | **unclassified** |  |
-| `CLI gobby stages defaults` | **unclassified** |  |
-| `CLI gobby stages delete` | **unclassified** |  |
-| `CLI gobby stages list` | **unclassified** |  |
-| `CLI gobby stages restore` | **unclassified** |  |
-| `CLI gobby stages show` | **unclassified** |  |
-| `CLI gobby stages update` | **unclassified** |  |
+| `CLI gobby stages` | proxied | Python src/gobby/cli/stages.py::stages; blocked on a Rust stage-registry CLI dispatcher. Owner: #21568 Remaining route families. |
+| `CLI gobby stages defaults` | proxied | Python src/gobby/cli/stages.py::defaults; blocked on Rust task-type default-stage listing/replacement and ordered stage parsing. Owner: #21568 Remaining route families. |
+| `CLI gobby stages delete` | proxied | Python src/gobby/cli/stages.py::delete_stage; blocked on Rust guarded stage-registry deletion and CLI error rendering. Owner: #21568 Remaining route families. |
+| `CLI gobby stages list` | proxied | Python src/gobby/cli/stages.py::list_stages; blocked on Rust stage-registry listing including deleted entries. Owner: #21568 Remaining route families. |
+| `CLI gobby stages restore` | proxied | Python src/gobby/cli/stages.py::restore_stage; blocked on Rust stage-registry restoration and CLI error rendering. Owner: #21568 Remaining route families. |
+| `CLI gobby stages show` | proxied | Python src/gobby/cli/stages.py::show_stage; blocked on Rust stage lookup with deleted-entry visibility and not-found handling. Owner: #21568 Remaining route families. |
+| `CLI gobby stages update` | proxied | Python src/gobby/cli/stages.py::update_stage; blocked on Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families. |
 | `CLI gobby start` | **unclassified** |  |
 | `CLI gobby status` | **unclassified** |  |
 | `CLI gobby stop` | **unclassified** |  |
@@ -377,13 +377,13 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP DELETE /api/mcp/servers/{name}` | **unclassified** |  |
 | `HTTP DELETE /api/memories/{memory_id}` | **unclassified** |  |
 | `HTTP DELETE /api/pipelines/definitions/{definition_id}` | **unclassified** |  |
-| `HTTP DELETE /api/projects/{project_id}` | **unclassified** |  |
+| `HTTP DELETE /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::delete_project via gdaemon front-door fallback; blocked on a native Rust project deletion route and guards. Owner: #21568 Remaining route families. |
 | `HTTP DELETE /api/rules/{name}` | **unclassified** |  |
 | `HTTP DELETE /api/sessions/{session_id}/stop` | **unclassified** |  |
 | `HTTP DELETE /api/skills/{skill_id}` | **unclassified** |  |
 | `HTTP DELETE /api/source-control/clones/{clone_id}` | **unclassified** |  |
 | `HTTP DELETE /api/source-control/worktrees/{worktree_id}` | **unclassified** |  |
-| `HTTP DELETE /api/stages/registry/{name}` | **unclassified** |  |
+| `HTTP DELETE /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21568 Remaining route families. |
 | `HTTP DELETE /api/tasks/{task_id}` | **unclassified** |  |
 | `HTTP DELETE /api/tasks/{task_id}/comments/{comment_id}` | **unclassified** |  |
 | `HTTP DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}` | **unclassified** |  |
@@ -478,9 +478,9 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP GET /api/pipelines/executions` | **unclassified** |  |
 | `HTTP GET /api/pipelines/executions/search` | **unclassified** |  |
 | `HTTP GET /api/pipelines/{execution_id}` | **unclassified** |  |
-| `HTTP GET /api/projects` | **unclassified** |  |
-| `HTTP GET /api/projects/{project_id}` | **unclassified** |  |
-| `HTTP GET /api/projects/{project_id}/checkouts` | **unclassified** |  |
+| `HTTP GET /api/projects` | proxied | Python src/gobby/servers/routes/projects.py::list_projects via gdaemon front-door fallback; blocked on native Rust project listing with statistics and local checkouts. Owner: #21568 Remaining route families. |
+| `HTTP GET /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::get_project via gdaemon front-door fallback; blocked on a native Rust checkout-aware project detail route. Owner: #21568 Remaining route families. |
+| `HTTP GET /api/projects/{project_id}/checkouts` | proxied | Python src/gobby/servers/routes/projects.py::get_checkout via gdaemon front-door fallback; blocked on a native Rust machine-scoped checkout lookup route. Owner: #21568 Remaining route families. |
 | `HTTP GET /api/providers` | **unclassified** |  |
 | `HTTP GET /api/providers/models` | **unclassified** |  |
 | `HTTP GET /api/providers/{provider}/usage` | **unclassified** |  |
@@ -515,7 +515,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP GET /api/source-control/status` | **unclassified** |  |
 | `HTTP GET /api/source-control/worktrees` | **unclassified** |  |
 | `HTTP GET /api/source-control/worktrees/stats` | **unclassified** |  |
-| `HTTP GET /api/stages/registry` | **unclassified** |  |
+| `HTTP GET /api/stages/registry` | proxied | Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21568 Remaining route families. |
 | `HTTP GET /api/task-types/{task_type}/default-stages` | **unclassified** |  |
 | `HTTP GET /api/tasks` | proxied |  |
 | `HTTP GET /api/tasks/{task_id}` | **unclassified** |  |
@@ -544,7 +544,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP PATCH /api/config/values` | **unclassified** |  |
 | `HTTP PATCH /api/cron/jobs/{job_id}` | **unclassified** |  |
 | `HTTP PATCH /api/mcp/servers/{name}` | **unclassified** |  |
-| `HTTP PATCH /api/projects/{project_id}` | **unclassified** |  |
+| `HTTP PATCH /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::update_project via gdaemon front-door fallback; blocked on native Rust project partial updates and checkout-scoped approval/validation config writes. Owner: #21568 Remaining route families. |
 | `HTTP PATCH /api/tasks/{task_id}` | **unclassified** |  |
 | `HTTP PATCH /api/tasks/{task_id}/stages/{stage_name}` | **unclassified** |  |
 | `HTTP POST /api/admin/lease/handoff` | **unclassified** |  |
@@ -626,10 +626,10 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP POST /api/pipelines/definitions/{definition_id}/restore-from-template` | **unclassified** |  |
 | `HTTP POST /api/pipelines/reject/{token}` | **unclassified** |  |
 | `HTTP POST /api/pipelines/run` | **unclassified** |  |
-| `HTTP POST /api/projects/init` | **unclassified** |  |
-| `HTTP POST /api/projects/{project_id}/checkouts` | **unclassified** |  |
-| `HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind` | **unclassified** |  |
-| `HTTP POST /api/projects/{project_id}/purge` | **unclassified** |  |
+| `HTTP POST /api/projects/init` | proxied | Python src/gobby/servers/routes/projects.py::init_project via gdaemon front-door fallback; blocked on native Rust directory initialization, checkout registration and event broadcasts. Owner: #21568 Remaining route families. |
+| `HTTP POST /api/projects/{project_id}/checkouts` | proxied | Python src/gobby/servers/routes/projects.py::register_checkout via gdaemon front-door fallback; blocked on native Rust checkout registration with machine/marker conflicts and creation status. Owner: #21568 Remaining route families. |
+| `HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind` | proxied | Python src/gobby/servers/routes/projects.py::rebind_checkout via gdaemon front-door fallback; blocked on native Rust checkout rebind with machine scope, root validation and event broadcasts. Owner: #21568 Remaining route families. |
+| `HTTP POST /api/projects/{project_id}/purge` | proxied | Python src/gobby/servers/routes/projects.py::purge_project via gdaemon front-door fallback; blocked on native Rust project purge and dependent-resource cleanup. Owner: #21568 Remaining route families. |
 | `HTTP POST /api/rules` | **unclassified** |  |
 | `HTTP POST /api/runtime/handshake` | **unclassified** |  |
 | `HTTP POST /api/runtime/handshake/challenge` | **unclassified** |  |
@@ -664,7 +664,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP POST /api/source-control/worktrees` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees/cleanup` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees/{worktree_id}/sync` | **unclassified** |  |
-| `HTTP POST /api/stages/registry/{name}/restore` | **unclassified** |  |
+| `HTTP POST /api/stages/registry/{name}/restore` | proxied | Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21568 Remaining route families. |
 | `HTTP POST /api/tasks` | **unclassified** |  |
 | `HTTP POST /api/tasks/{task_id}/claim` | **unclassified** |  |
 | `HTTP POST /api/tasks/{task_id}/close` | **unclassified** |  |
@@ -690,13 +690,13 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `HTTP PUT /api/memories/{memory_id}` | **unclassified** |  |
 | `HTTP PUT /api/pipelines/definitions/{definition_id}` | **unclassified** |  |
 | `HTTP PUT /api/pipelines/definitions/{definition_id}/toggle` | **unclassified** |  |
-| `HTTP PUT /api/projects/{project_id}` | **unclassified** |  |
+| `HTTP PUT /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::update_project via gdaemon front-door fallback; blocked on native Rust project updates and checkout-scoped approval/validation config writes. Owner: #21568 Remaining route families. |
 | `HTTP PUT /api/rules/bulk-toggle` | **unclassified** |  |
 | `HTTP PUT /api/rules/{name}` | **unclassified** |  |
 | `HTTP PUT /api/rules/{name}/toggle` | **unclassified** |  |
 | `HTTP PUT /api/skills/{skill_id}` | **unclassified** |  |
 | `HTTP PUT /api/skills/{skill_id}/files/{file_path:path}` | **unclassified** |  |
-| `HTTP PUT /api/stages/registry/{name}` | **unclassified** |  |
+| `HTTP PUT /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families. |
 | `HTTP PUT /api/task-types/{task_type}/default-stages` | **unclassified** |  |
 | `HTTP PUT /api/variables/{ref}` | **unclassified** |  |
 | `HTTP PUT /api/variables/{ref}/toggle` | **unclassified** |  |
@@ -841,30 +841,30 @@ Public surfaces and evidence gates: 1097. Unclassified: 1094.
 | `MCP gobby-metrics:get_usage_report` | **unclassified** |  |
 | `MCP gobby-metrics:reset_metrics` | **unclassified** |  |
 | `MCP gobby-metrics:reset_tool_metrics` | **unclassified** |  |
-| `MCP gobby-plans:append_plan_changelog_round` | **unclassified** |  |
-| `MCP gobby-plans:apply_plan_handoff_manifest` | **unclassified** |  |
-| `MCP gobby-plans:apply_plan_review_manifest` | **unclassified** |  |
-| `MCP gobby-plans:apply_plan_review_repairs` | **unclassified** |  |
-| `MCP gobby-plans:archive_plan` | **unclassified** |  |
-| `MCP gobby-plans:bind_evidence_run` | **unclassified** |  |
-| `MCP gobby-plans:bind_static_review_seats` | **unclassified** |  |
-| `MCP gobby-plans:checkpoint_plan_review_lesson_mint` | **unclassified** |  |
-| `MCP gobby-plans:create_plan` | **unclassified** |  |
-| `MCP gobby-plans:delete_plan` | **unclassified** |  |
-| `MCP gobby-plans:derive_plan_handoff_manifest` | **unclassified** |  |
-| `MCP gobby-plans:derive_plan_review_manifest` | **unclassified** |  |
-| `MCP gobby-plans:expire_plan_review_evidence` | **unclassified** |  |
-| `MCP gobby-plans:finalize_plan_review_evidence` | **unclassified** |  |
-| `MCP gobby-plans:get_plan` | **unclassified** |  |
-| `MCP gobby-plans:get_plan_review_snapshot` | **unclassified** |  |
-| `MCP gobby-plans:list_plans` | **unclassified** |  |
-| `MCP gobby-plans:prepare_plan_review_round` | **unclassified** |  |
-| `MCP gobby-plans:regenerate_coverage_manifest` | **unclassified** |  |
-| `MCP gobby-plans:render_plan_changelog_round` | **unclassified** |  |
-| `MCP gobby-plans:update_plan_hash` | **unclassified** |  |
-| `MCP gobby-plans:validate_plan` | **unclassified** |  |
-| `MCP gobby-plans:validate_plan_review_coverage` | **unclassified** |  |
-| `MCP gobby-plans:verify_plan_unchanged` | **unclassified** |  |
+| `MCP gobby-plans:append_plan_changelog_round` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::append_plan_changelog_round; blocked on Rust hash-bound changelog append and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:apply_plan_handoff_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::apply_plan_handoff_manifest; blocked on Rust hash/digest-bound routing-manifest application and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:apply_plan_review_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::apply_plan_review_manifest; blocked on Rust caller/run-bound review-manifest application and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:apply_plan_review_repairs` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::apply_plan_review_repairs; blocked on Rust guarded review-repair application and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:archive_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::archive_plan; blocked on Rust project-scoped archival, file movement and manifest removal and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:bind_evidence_run` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::bind_evidence_run; blocked on Rust review-evidence/run ownership binding and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:bind_static_review_seats` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::bind_static_review_seats; blocked on Rust static-review seat binding and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:checkpoint_plan_review_lesson_mint` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::checkpoint_plan_review_lesson_mint; blocked on Rust guarded lesson-mint checkpointing and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:create_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::create_plan; blocked on Rust project-scoped plan registration/reactivation and coverage generation and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:delete_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::delete_plan; blocked on Rust project-scoped plan deletion and manifest removal and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:derive_plan_handoff_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::derive_plan_handoff_manifest; blocked on Rust hash-bound routing-manifest derivation and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:derive_plan_review_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::derive_plan_review_manifest; blocked on Rust review-manifest derivation from bound evidence and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:expire_plan_review_evidence` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::expire_plan_review_evidence; blocked on Rust evidence expiration with run/caller guards and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:finalize_plan_review_evidence` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::finalize_plan_review_evidence; blocked on Rust review-evidence finalization with ownership/acceptance guards and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:get_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::get_plan; blocked on Rust project-scoped plan/ref resolution and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:get_plan_review_snapshot` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::get_plan_review_snapshot; blocked on Rust bound review-evidence snapshot reads and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:list_plans` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::list_plans; blocked on Rust project-scoped plan queries with state/kind filters and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:prepare_plan_review_round` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::prepare_plan_review_round; blocked on Rust round snapshot creation and evidence ownership and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:regenerate_coverage_manifest` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::regenerate_coverage_manifest; blocked on Rust project-scoped coverage evaluation/manifest generation and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:render_plan_changelog_round` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::render_plan_changelog_round; blocked on Rust review-round changelog rendering and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:update_plan_hash` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::update_plan_hash; blocked on Rust project-scoped hash refresh and conditional coverage regeneration and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:validate_plan` | proxied | Python src/gobby/mcp_proxy/tools/plans/__init__.py::validate_plan; blocked on Rust plan-contract, checkout-overlay and symbol validation and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:validate_plan_review_coverage` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::validate_plan_review_coverage; blocked on Rust bound review-coverage validation and MCP registration. Owner: #21568 Remaining route families. |
+| `MCP gobby-plans:verify_plan_unchanged` | proxied | Python src/gobby/mcp_proxy/tools/plans/review_evidence.py::verify_plan_unchanged; blocked on Rust bound plan-hash verification and MCP registration. Owner: #21568 Remaining route families. |
 | `MCP gobby-results:get_tool_result` | **unclassified** |  |
 | `MCP gobby-results:search_tool_result` | **unclassified** |  |
 | `MCP gobby-review-learning:list_check_keys` | **unclassified** |  |
