@@ -15,8 +15,10 @@ front door's `Compare` backend real. Compare mode records outcomes durably, and
 `gdaemon compare-report` turns a soak window into a pass/fail verdict.
 
 At close, interactive `gcode` handshakes, grant presentation and effective-config
-reads are served by Rust. Managed principals (agent runs, tool chat, maintenance)
-still go to Python. The three exit criteria in #21559 become this template:
+reads are served by Rust. `native` is the built-in default for the `runtime` family,
+the operator's daemon runs on that default, and `proxy` is the documented fallback.
+Managed principals (agent runs, tool chat, maintenance) still go to Python. The
+three exit criteria in #21559 become this template:
 
 1. A compare soak with zero mismatches over a representative window.
 2. Killing the Python backend leaves the delegated routes serving.
@@ -99,6 +101,23 @@ under stage2-plan:now.
 - **Flip mechanics.** Routes are read once at gdaemon start. Flip and rollback are a
   bootstrap edit plus a gdaemon restart with the same binaries, which needs no
   redeploy. Rejected: hot reload of the route table, since nothing requires it.
+- **Q1, end state (operator, 2026-10-13).** `native` becomes the built-in default
+  for `runtime`, and the operator's daemon is on native at close. `proxy` stays as
+  the rollback setting, documented as the fallback.
+  - Each family declares its default with `RouteFamily::default_backend()`
+    (default `Proxy`). A `front_door.routes` entry overrides it.
+  - `RuntimeFamily` returns `Native` (3.6). A machine that registers no runtime
+    family, such as a node, keeps proxying.
+  - 3.6 lands with the live bootstrap set to `runtime: compare`, so the cutover
+    that activates it starts the soak and does not go native unsoaked. Clearing
+    the entry after the soak passes is the close. Rollback is `runtime: proxy`
+    plus a gdaemon restart.
+  - No agent reads or edits `~/.gobby/bootstrap.yaml`. The operator runs the
+    route commands in E1, and Orchestrator #15977 coordinates them with the
+    operator at each cutover or restart.
+- **Q2, soak window (operator, 2026-10-13).** At least 24 hours, at least one
+  config read and one interactive handshake per active project, and no pending
+  config activation.
 - **Process-lifetime family.** gdaemon builds the runtime family once in
   `serve::run`, on the shared pool, and leaks it with `Box::leak`. It then has the
   same `'static` lifetime as `FAMILIES`, and `RouteTable::new` keeps its signature
@@ -108,7 +127,7 @@ under stage2-plan:now.
   `_initialize_envelope` does with an insert-if-absent race. Without this, a fresh
   install whose backend never started could not issue.
 
-**Granularity:** Eleven deliverables, one per independently testable outcome:
+**Granularity:** Twelve deliverables, one per independently testable outcome:
 
 - seam (1.1);
 - pool (1.2);
@@ -118,12 +137,13 @@ under stage2-plan:now.
 - secret store (3.3);
 - handshake (3.4);
 - proxied-grant check (3.5);
+- native default (3.6);
 - corpus (4.1);
 - e2e (4.2);
 - docs (4.3).
 
 Shared Targets force a linear order. `serve.rs` is shared by 1.2, 2.1 and 3.1;
-`crates/gruntime/src/lib.rs` is shared by 3.1 through 3.5. Deliverables 3.1 and
+`crates/gruntime/src/lib.rs` is shared by 3.1 through 3.6. Deliverables 3.1 and
 3.4 exceed six target files because a new crate's manifest, module root and tests
 land together. Splitting them would leave an unbuildable crate between leaves.
 
@@ -158,6 +178,8 @@ pub trait RouteFamily<S>: Send + Sync {
     fn name(&self) -> &'static str;
     fn prefixes(&self) -> &'static [&'static str];
     fn router(&self) -> axum::Router<S>;
+    /// The backend used when `front_door.routes` has no entry for this family.
+    fn default_backend(&self) -> crate::bootstrap::RouteBackend { crate::bootstrap::RouteBackend::Proxy }
     /// False sends the request to the proxy unchanged, whatever the backend.
     fn claims(&self, _parts: &axum::http::request::Parts) -> bool { true }
     /// Compare mode, claimed non-GET/HEAD request: check the proxied response against
@@ -177,6 +199,10 @@ for any `S`. This works because axum 0.8's `with_state` yields `Router<S2>`.
 - `FAMILIES` becomes `&[&'static dyn RouteFamily<FrontDoorState>]`.
 - `RouteTable::new` takes `&[&'static dyn RouteFamily<FrontDoorState>]`. Existing
   callers pass `FAMILIES`.
+- `RouteTable::new` resolves each entry's backend as
+  `routes.get(family.name()).copied().unwrap_or_else(|| family.default_backend())`
+  in place of today's hard-coded `unwrap_or(RouteBackend::Proxy)`. Every existing
+  family keeps the `Proxy` default, so routing is unchanged until 3.6.
 - `Entry` stores the `&'static dyn` family next to its compiled router.
 - `RouteTable::dispatch`, for `Native` and `Compare`, splits the request into parts
   and calls `entry.family.claims(&parts)`. `false` goes to `proxy::forward`
@@ -212,10 +238,11 @@ Research context:
 
 **Acceptance:**
 
-- 1.1.1 - gcore exposes `RouteFamily<S>` and `ProxiedCheck` behind `route-family`, with defaults `claims = true` and `check_proxied = Skipped`, and `cargo tree -p gobby-hooks -i axum` is empty. file: `crates/gcore/src/route_family.rs`.
+- 1.1.1 - gcore exposes `RouteFamily<S>` and `ProxiedCheck` behind `route-family`, with defaults `default_backend = Proxy`, `claims = true` and `check_proxied = Skipped`, and `cargo tree -p gobby-hooks -i axum` is empty. file: `crates/gcore/src/route_family.rs`.
 - 1.1.2 - Under a `Native` or `Compare` backend, a request the family does not claim reaches the proxy unchanged and never the family router. test: `crates/gdaemon/src/front_door/routes.rs::unclaimed_requests_are_proxied_under_every_backend`.
 - 1.1.3 - The existing routing behaviors still hold. test: `crates/gdaemon/src/front_door/routes.rs::health_family_honors_proxy_native_and_compare`.
 - 1.1.4 - The corpus parity precheck compiles against the generic trait and passes. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+- 1.1.5 - A family with no `front_door.routes` entry takes its `default_backend()`, and an entry overrides it. test: `crates/gdaemon/src/front_door/routes.rs::absent_route_takes_the_family_default`.
 
 ### 1.2 One gdaemon pool for key resolution, the lease and hub node routes [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -687,7 +714,10 @@ unchanged. `claims` for `POST /api/runtime/handshake` is true only when the requ
 `src/gobby/runtime_grants/handshake.py::HandshakeService.issue_for_operator`:
 
 1. Parse `{machine_id, project_id, session_id?, code_overlay_project_id?}` and reject
-   unknown fields. An invalid body returns 422 `{"detail": "invalid handshake request"}`.
+   unknown fields. As in `runtime_handshake.py::HandshakeRequest`, `machine_id` and
+   `project_id` are required strings, and the two optional fields may be absent or
+   `null` (`tests/e2e/test_hub_node_pair.py` sends `"session_id": null`). An invalid
+   body returns 422 `{"detail": "invalid handshake request"}`.
    This is a documented divergence from FastAPI's validation list; gcore never sends
    such a body.
 2. Require `machine_id` to equal the `x-gobby-machine-id` identity header.
@@ -816,10 +846,61 @@ Research context:
 - 3.5.1 - A Python-issued grant for the request records `verified`. test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
 - 3.5.2 - A tampered capability, a wrong epoch, a bad signature or a principal mismatch records `mismatch` with the field pointer and no values. test: `crates/gruntime/tests/verify.rs::mismatches_name_the_field_without_values`.
 
+### 3.6 `runtime` defaults to native [category: code] (depends: 3.5)
+`kind: deliverable`
+
+Targets:
+- `crates/gruntime/src/lib.rs`
+- `crates/gruntime/tests/family.rs`
+- `crates/gcore/src/bootstrap/front_door.rs::*` — scope-reason: the `FrontDoorBootstrap` doc comment says absent families are proxied; it becomes "take their family's default"
+
+This resolves Q1 in the Decision Record. `RuntimeFamily` overrides
+`default_backend()` to return `RouteBackend::Native`. With no
+`front_door.routes.runtime` entry, `RouteTable::new` (1.1) then serves the family
+natively. `routes.runtime: proxy` or `compare` still overrides it.
+
+Rewrite the `FrontDoorBootstrap` doc comment in gcore to say absent families take
+their family's default: `proxy` for every family except `runtime`, which defaults to
+`native`. `docs/guides/configuration.md` changes in 4.3. Python's
+`src/gobby/config/bootstrap.py::FrontDoorConfig` docstring ("Families absent from
+the map are proxied") is not targeted: any target on that file requires the runtime
+config contract's derived carriers, and its parser behavior is unchanged (an absent
+`routes` still parses to an empty map). The configuration guide is the
+authoritative statement of the default.
+
+Landing constraint: leaves cut over as they land, so the cutover that activates
+3.6 would put the operator's daemon on native before the soak. Before that
+cutover, Orchestrator #15977 coordinates with the operator, who runs E1's
+"set compare" command. The cutover's gdaemon start then begins the E1 soak.
+
+Research context:
+- Today `routes.rs::RouteTable::new` resolves an absent family to
+  `RouteBackend::Proxy` inline; 1.1 moves that default onto the trait.
+- `crates/gdaemon/src/serve.rs::run` registers `RuntimeFamily` only when the shared
+  pool exists (3.1). A node builds no pool, so it registers no runtime family and
+  keeps proxying. `unimplemented_families` checks only explicit route entries, so
+  a default needs no change there.
+- `src/gobby/runner_init/terminal_wiring.py` reads only `routes.get("terminal_ws")`,
+  so Python's consumers are unaffected.
+- Consumers that become native-path coverage under the default, with no edits:
+  `tests/e2e/test_runtime_boundary.py` and `tests/e2e/test_hub_node_pair.py`.
+  Both handshake with the bootstrap API key, so the family claims them.
+- Planned check: `cargo nextest run -p gobby-runtime --test family`.
+
+Consumers unchanged:
+- `tests/e2e/test_runtime_boundary.py` — no-edit-reason: its operator handshakes and grant presentations reach the native family by default and must pass unchanged; E1 runs it.
+- `tests/e2e/test_hub_node_pair.py` — no-edit-reason: its node-key handshake reaches the native family on the hub by default and must pass unchanged; E1 runs it.
+- `tests/config/test_bootstrap.py` — no-edit-reason: parsing is unchanged, and an absent `routes` still parses to an empty map.
+
+**Acceptance:**
+
+- 3.6.1 - `RuntimeFamily::default_backend()` returns `Native`. 1.1.5 proves an absent entry takes the default and an entry overrides it, and 4.2 proves it end to end. test: `crates/gruntime/tests/family.rs::runtime_defaults_to_native`.
+- 3.6.2 - The gcore `FrontDoorBootstrap` doc states that absent families take their family default. file: `crates/gcore/src/bootstrap/front_door.rs`.
+
 ## P4: Parity evidence and the template docs
 `kind: framing`
 
-### 4.1 Corpus: `runtime` family cases replayed natively [category: test] (depends: 3.5)
+### 4.1 Corpus: `runtime` family cases replayed natively [category: test] (depends: 3.6)
 `kind: deliverable`
 
 Targets:
@@ -849,9 +930,11 @@ Commit the recorded bytes, with `runtime_config` masking `config_revision` the w
 `runtime_handshake` masks its epoch.
 
 `e2e_pre_daemon_setup` also takes `e2e_home_dir` and `e2e_config`, so it runs after
-the bootstrap exists. Unless `GOBBY_RECORD_HTTP_CONTRACTS=1` is set, it appends
-`routes: {runtime: native}` under `front_door` in `<home>/bootstrap.yaml`. Every case
-then replays against the native family on the real e2e database.
+the bootstrap exists. When `GOBBY_RECORD_HTTP_CONTRACTS=1` is set, it appends
+`routes: {runtime: proxy}` under `front_door` in the isolated test home's
+`<home>/bootstrap.yaml`, so recording captures Python. Otherwise it adds nothing:
+under 3.6's native default, every case replays against the native family on the
+real e2e database.
 
 In the Rust harness, `parity_violations` takes the registered families as `FAMILIES`
 plus a `gobby_runtime::RuntimeFamily::new(Pool::build(<valid unreachable URL>)?, tmp)`.
@@ -865,7 +948,8 @@ Research context:
 - The Rust harness's `replay_in_declared_backend_state` sets
   `routes = {family: parity}` and calls `serve`, which composes only `FAMILIES`.
 - The e2e bootstrap (`tests/e2e/conftest.py::e2e_config`) writes
-  `front_door: enabled: true` with no routes, so every family is proxied today.
+  `front_door: enabled: true` with no routes. Every family is proxied today, and
+  after 3.6 `runtime` is native there with no fixture change.
 - Planned checks:
   - `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/ -v`;
   - `cargo nextest run -p gobby-daemon --test http_contracts`.
@@ -874,7 +958,7 @@ Research context:
 
 - 4.1.1 - The manifest declares `runtime` native with origin python, owns the handshake, config and new cases, and no longer lists `config` or `runtime_handshake`. file: `tests/contracts/http/manifest.json`.
 - 4.1.2 - `runtime_config` is recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
-- 4.1.3 - Every corpus case replays equal against the e2e daemon with `runtime: native`. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+- 4.1.3 - Every corpus case replays equal against the e2e daemon on the default `runtime` backend (native). test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 4.1.4 - The Rust parity precheck passes with `runtime` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
 - 4.1.5 - `config_effective` is recorded from Python and committed. file: `tests/contracts/http/config_effective.json`.
 
@@ -885,10 +969,10 @@ Targets:
 - `tests/e2e/test_runtime_family.py`
 
 The new e2e module uses `daemon_instance` and an operator client, authenticated with
-the bootstrap API key the way `test_http_corpus._credentials` is. Each phase sets
-`front_door.routes.runtime` in the instance's `bootstrap.yaml`, then calls
-`stop()` and `restart()`. Each restart runs the same gdaemon command, so no rebuild
-occurs.
+the bootstrap API key the way `test_http_corpus._credentials` is. Each phase sets or
+clears `front_door.routes.runtime` in the isolated instance's `bootstrap.yaml` (a
+temporary test home, never `~/.gobby`), then calls `stop()` and `restart()`. Each
+restart runs the same gdaemon command, so no rebuild occurs.
 
 1. **Compare.**
    1. With `compare` set, run an operator handshake, `GET /api/runtime/config` with
@@ -897,16 +981,19 @@ occurs.
       a `verified` record for the handshake, and no `diff`, `native_error` or
       `mismatch` records.
    3. `gdaemon compare-report` (`instance.command[0]` with `GOBBY_HOME`) exits 0.
-2. **Backend kill.**
-   1. With `native` set, SIGKILL the Python backend child
+2. **Backend kill on the default.**
+   1. Clear the `runtime` entry so the family runs on its native default, restart,
+      then SIGKILL the Python backend child
       (`psutil.Process(instance.pid).children()`).
    2. While `/api/health` reports the backend not running, the three runtime routes
       return 200.
    3. `GET /api/config/schema` returns the typed 503.
-3. **Rollback.**
+3. **Rollback to the proxy fallback.**
    1. Set `proxy` and restart.
    2. The same kill makes the handshake return the typed 503, which proves the route
       is proxied again.
+4. **Return to the default.** Clear the entry and restart; the handshake returns 200
+   while the backend is killed again.
 
 Research context:
 - `tests/e2e/conftest.py::DaemonInstance.restart` re-launches the original command
@@ -920,8 +1007,8 @@ Research context:
 **Acceptance:**
 
 - 4.2.1 - Compare mode serves Python's responses and records `match` and `verified` outcomes with zero mismatches, and `compare-report` exits 0. test: `tests/e2e/test_runtime_family.py::test_compare_mode_records_zero_mismatches`.
-- 4.2.2 - With `runtime: native`, the runtime routes serve 200 while the backend is killed, and proxied routes return the typed 503. test: `tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill`.
-- 4.2.3 - Flip and rollback take only a bootstrap edit and a gdaemon restart with the same binaries. test: `tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy`.
+- 4.2.2 - With no `runtime` entry (the native default), the runtime routes serve 200 while the backend is killed, and proxied routes return the typed 503. test: `tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill`.
+- 4.2.3 - Rollback to `proxy` and return to the default take only a bootstrap edit and a gdaemon restart with the same binaries. test: `tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy`.
 
 ### 4.3 Docs: family-crate template and the flip runbook [category: docs] (depends: 4.2)
 `kind: deliverable`
@@ -937,22 +1024,27 @@ built:
 - a family as a process-lifetime value built in `serve::run` on the shared pool;
 - `claims` for header-level delegation;
 - `check_proxied` for non-idempotent routes;
+- `default_backend` for each family's default when `front_door.routes` has no entry;
 - the compare-log outcomes;
 - the corpus split between the Rust stub replay and the Python native replay.
 
-In `docs/guides/configuration.md`, document `front_door.routes.runtime` and the
-operator runbook:
+In `docs/guides/configuration.md`:
 
-1. Set `compare` and restart gdaemon with an announcement.
-2. Soak.
-3. Run `gdaemon compare-report --since <start>`.
-4. Flip to `native`.
-5. Roll back by setting `proxy`.
+- Replace "absent = proxy" in the `front_door` example and prose: an absent family
+  takes its family's default, which is `proxy` for every family except `runtime`,
+  whose default is `native`.
+- Document `front_door.routes.runtime` and the operator runbook, with E1's route
+  commands:
+  1. Set `compare` and restart gdaemon with an announcement.
+  2. Soak.
+  3. Run `gdaemon compare-report --since <start>`.
+  4. Clear the entry to return to the native default.
+  5. Fallback: set `proxy` and restart gdaemon when the native family misbehaves.
 
 **Acceptance:**
 
 - 4.3.1 - "Daemon family crates" documents the seam, the claims and proxied-check hooks, the compare log and the corpus split. file: `crates/AGENTS.md`.
-- 4.3.2 - The configuration guide documents the `runtime` route values and the compare, soak, flip and rollback runbook with `compare-report`. file: `docs/guides/configuration.md`.
+- 4.3.2 - The configuration guide states the per-family default (native for `runtime`) and documents the compare, soak, clear-to-default and `proxy` fallback runbook with `compare-report` and the route commands. file: `docs/guides/configuration.md`.
 
 ## D1 Managed-principal handshake and grant presentation in Rust (depends: 3.4)
 `kind: deferred`
@@ -1014,26 +1106,52 @@ installed binaries:
    - `cargo nextest run -p gobby-runtime`;
    - `cargo nextest run -p gobby-daemon`, including `compare`, `http_contracts`,
      `lease` and `nodes`.
-2. **Corpus and e2e.** `GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/ tests/e2e/test_runtime_family.py tests/storage/test_secret_seal_vector.py tests/runtime_grants/test_capability_vectors.py`
-   passes against the isolated test hub.
-3. **Soak (exit criterion 1).**
-   1. On the operator's daemon, announce and restart with
-      `front_door.routes.runtime: compare`.
-   2. Run ordinary `gcode` and agent traffic over a representative window: at least
-      24 hours, at least one config read and one interactive handshake per active
-      project, and no pending config activation.
+2. **Corpus and e2e.** `GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/ tests/e2e/test_runtime_family.py tests/e2e/test_runtime_boundary.py tests/e2e/test_hub_node_pair.py tests/storage/test_secret_seal_vector.py tests/runtime_grants/test_capability_vectors.py`
+   passes against the isolated test hub. The two existing e2e modules now run their
+   handshakes on the native default.
+3. **Route commands.** No agent reads or edits `~/.gobby/bootstrap.yaml`. The
+   operator runs these from the main checkout. They go through the existing locked,
+   atomic writer `src/gobby/config/bootstrap_io.py::update_bootstrap_yaml`, so no
+   new CLI is added:
+   - Set `runtime` to `compare` (or `proxy` for rollback):
+
+     ```bash
+     uv run python -c 'import sys; from gobby.config.bootstrap_io import bootstrap_path, update_bootstrap_yaml; update_bootstrap_yaml(bootstrap_path(), lambda d: d.update(front_door={**(d.get("front_door") or {}), "routes": {**((d.get("front_door") or {}).get("routes") or {}), "runtime": sys.argv[1]}}))' compare
+     ```
+
+   - Clear the entry so `runtime` takes its native default:
+
+     ```bash
+     uv run python -c 'from gobby.config.bootstrap_io import bootstrap_path, update_bootstrap_yaml; update_bootstrap_yaml(bootstrap_path(), lambda d: ((d.get("front_door") or {}).get("routes") or {}).pop("runtime", None))'
+     ```
+
+   Orchestrator #15977 coordinates each command with the operator at the cutover or
+   restart that applies it. gdaemon reads routes only at start.
+4. **Soak (exit criterion 1).**
+   1. Before the cutover that activates 3.6, the operator runs the set command with
+      `compare`. That cutover's gdaemon start begins the soak. If 3.6 is already
+      live, the operator sets `compare` and the Orchestrator restarts gdaemon with a
+      `global` announcement.
+   2. Run ordinary `gcode` and agent traffic over the operator's soak window (Q2):
+      at least 24 hours, at least one config read and one interactive handshake per
+      active project, and no pending config activation.
    3. Then `gdaemon compare-report --since <window start>` exits 0, with nonzero
       `match` and `verified` counts.
-4. **Backend kill (exit criterion 2).**
-   1. With `runtime: native` live, send a `global` announcement, wait for a quiet
-      window with no live spawned worker or close validator, as for a restart, then
-      kill the Python backend.
+5. **Flip to the native default (exit criterion 3, live flip).** The operator runs
+   the clear command, and the Orchestrator restarts gdaemon with a `global`
+   announcement and the same binaries. The live daemon now serves `runtime` on its
+   native default, which is the close state (Q1).
+6. **Backend kill (exit criterion 2).**
+   1. On the native default, send a `global` announcement, wait for a quiet window
+      with no live spawned worker or close validator, as for a restart, then kill
+      the Python backend.
    2. `gcode` still handshakes and reads effective config until the supervisor
       restarts the backend.
-5. **Flip and rollback (exit criterion 3).** `runtime: native` and then
-   `runtime: proxy`, each with only a gdaemon restart, behave as 4.2 shows, with no
-   cutover in between.
-6. **Repo gates.**
+7. **Rollback (exit criterion 3, rollback).** 4.2.3 demonstrates rollback to `proxy`
+   and return to the default with the same binaries on an isolated daemon. The
+   live daemon is not rolled back at close. In operation, the fallback is the set
+   command with `proxy` plus a gdaemon restart, as 4.3 documents.
+8. **Repo gates.**
    - `uv run ruff format src/ && uv run ruff check src/ && uv run mypy src/` pass.
    - `cargo fmt --check` passes, and `cargo clippy` passes for `gobby-core`
      (with `route-family`), `gobby-runtime` and `gobby-daemon`.
@@ -1054,275 +1172,3 @@ installed binaries:
   `TBD-at-expansion` ledgers with their own items D1.1, D1.2 and D2.1 (PA-5); and
   4.1.5 names `config_effective.json` (PA-6). No enhancer edits were received
   before consensus.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: '`RouteFamily` seam in gcore with per-request claims'
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck` behind
-    `route-family`, with defaults `claims = true` and `check_proxied = Skipped`, and
-    `cargo tree -p gobby-hooks -i axum` is empty. file: `crates/gcore/src/route_family.rs`.
-
-    1.1.2: Under a `Native` or `Compare` backend, a request the family does not claim
-    reaches the proxy unchanged and never the family router. test: `crates/gdaemon/src/front_door/routes.rs::unclaimed_requests_are_proxied_under_every_backend`.
-
-    1.1.3: The existing routing behaviors still hold. test: `crates/gdaemon/src/front_door/routes.rs::health_family_honors_proxy_native_and_compare`.
-
-    1.1.4: The corpus parity precheck compiles against the generic trait and passes.
-    test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.'
-  labels:
-  - covers:gdaemon-runtime-family:1.1:1.1.1
-  - covers:gdaemon-runtime-family:1.1:1.1.2
-  - covers:gdaemon-runtime-family:1.1:1.1.3
-  - covers:gdaemon-runtime-family:1.1:1.1.4
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: One gdaemon pool for key resolution, the lease and hub node routes
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.2.1: `serve::run` builds exactly one pool, used by the resolver,
-    the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs` calls
-    `Pool::build`. file: `crates/gdaemon/src/serve.rs`.
-
-    1.2.2: The lease still holds a dedicated advisory-lock session that drop and failed
-    transactions release. test: `crates/gdaemon/tests/lease.rs::failed_transaction_and_drop_release_the_dedicated_session`.
-
-    1.2.3: Epoch and signing secret still rotate together on acquisition. test: `crates/gdaemon/tests/lease.rs::epoch_and_secret_rotate_together`.
-
-    1.2.4: A resolver on an unreachable pool fails closed. test: `crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed`.'
-  labels:
-  - covers:gdaemon-runtime-family:1.2:1.2.1
-  - covers:gdaemon-runtime-family:1.2:1.2.2
-  - covers:gdaemon-runtime-family:1.2:1.2.3
-  - covers:gdaemon-runtime-family:1.2:1.2.4
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Compare policy, compare log and `gdaemon compare-report`
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '2.1.1: A claimed GET in Compare mode returns the proxied response
-    and records `match`, or `diff` with a pointer and no values. test: `crates/gdaemon/tests/compare.rs::get_compare_records_match_and_diff_without_values`.
-
-    2.1.2: JSON bodies that differ only in key order record `match`. test: `crates/gdaemon/tests/compare.rs::json_bodies_compare_by_value`.
-
-    2.1.3: A claimed POST in Compare mode never reaches the native router, the backend
-    and `check_proxied` both receive the original request bytes, and the family check''s
-    outcome is recorded. test: `crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg`.
-
-    2.1.4: A failing native leg records `native_error` and the caller still receives
-    the proxied response. test: `crates/gdaemon/tests/compare.rs::native_failure_returns_the_proxied_response`.
-
-    2.1.5: The report counts per family within `--since` and fails on any diff, native_error
-    or mismatch, and on an empty window. test: `crates/gdaemon/tests/compare.rs::report_fails_on_mismatch_and_empty_window`.'
-  labels:
-  - covers:gdaemon-runtime-family:2.1:2.1.1
-  - covers:gdaemon-runtime-family:2.1:2.1.2
-  - covers:gdaemon-runtime-family:2.1:2.1.3
-  - covers:gdaemon-runtime-family:2.1:2.1.4
-  - covers:gdaemon-runtime-family:2.1:2.1.5
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: '`gobby-runtime` crate and native `GET /api/config/effective`'
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: "3.1.1: `crates/gruntime` builds as workspace member `gobby-runtime`\
-    \ (publish false, workspace version) and gdaemon links it. file: `crates/gruntime/Cargo.toml`.\n\
-    3.1.2: `GET /api/config/effective` with an API-key identity returns Python's projection\
-    \ of the desired configuration with `no-store`. test: `crates/gruntime/tests/config.rs::effective_config_matches_python_projection`.\n\
-    3.1.3: Under `/api/config` the family claims only identified `GET /api/config/effective`;\
-    \ every other `/api/config` path or method, and an unidentified caller on any\
-    \ path, is forwarded. test: `crates/gruntime/tests/config.rs::only_identified_effective_reads_are_claimed`.\n\
-    3.1.5: With an empty `config_store` the snapshot is the revision plus contract\
-    \ defaults, and a missing `config_state` row returns 500. test: `crates/gruntime/tests/config.rs::empty_store_serves_defaults_and_missing_state_fails`.\n\
-    3.1.4: Values that still hold `$secret:` or `${\u2026}` after expansion are omitted.\
-    \ test: `crates/gruntime/tests/config.rs::unresolved_values_are_omitted`."
-  labels:
-  - covers:gdaemon-runtime-family:3.1:3.1.1
-  - covers:gdaemon-runtime-family:3.1:3.1.2
-  - covers:gdaemon-runtime-family:3.1:3.1.3
-  - covers:gdaemon-runtime-family:3.1:3.1.5
-  - covers:gdaemon-runtime-family:3.1:3.1.4
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Grant signing and presentation in gcore; native `GET /api/runtime/config`
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: `sign_grant` reproduces a Python-signed grant''s checksum
-    and signature byte for byte, and `signature_matches` accepts it. test: `crates/gcore/src/grant/presentation/tests.rs::signature_matches_python_vector`.
-
-    3.2.2: Each rejection code maps to its status and `{code, error, message}` body.
-    test: `crates/gcore/src/grant/presentation/tests.rs::rejection_matrix_maps_codes_to_statuses`.
-
-    3.2.3: `verify_static` reports the first failing check in Python''s order. test:
-    `crates/gcore/src/grant/presentation/tests.rs::checks_run_in_python_order`.
-
-    3.2.4: `GET /api/runtime/config` with a valid interactive grant returns `{config_revision,
-    settings}`, a stale epoch returns 409, and a revoked generation returns 403 `revoked`.
-    test: `crates/gruntime/tests/grant.rs::runtime_config_presents_interactive_grants`.
-
-    3.2.5: Managed-principal grants, undecodable headers and missing headers are not
-    claimed. test: `crates/gruntime/tests/grant.rs::managed_and_malformed_grants_are_not_claimed`.'
-  labels:
-  - covers:gdaemon-runtime-family:3.2:3.2.1
-  - covers:gdaemon-runtime-family:3.2:3.2.2
-  - covers:gdaemon-runtime-family:3.2:3.2.3
-  - covers:gdaemon-runtime-family:3.2:3.2.4
-  - covers:gdaemon-runtime-family:3.2:3.2.5
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: 'Secret-store port: envelope, secret reads and credential sealing'
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.2'
-  validation_criteria: '3.3.1: Rust opens the Python-sealed token and decrypts the
-    Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_python_sealed_vector`.
-
-    3.3.2: Python opens the Rust-sealed token from the committed vector. test: `tests/storage/test_secret_seal_vector.py::test_python_opens_rust_sealed_vector`.
-
-    3.3.3: DEK unwrap works for the key-file and scrypt postures against Python-written
-    rows. test: `crates/gruntime/tests/secrets.rs::unwraps_both_postures`.
-
-    3.3.4: Two concurrent key-file initializations converge on one DEK and a 0600
-    KEK file. test: `crates/gruntime/tests/secrets.rs::concurrent_envelope_initialization_converges`.
-
-    3.3.5: A wrong AAD or a truncated token fails to open. test: `crates/gruntime/tests/secrets.rs::open_rejects_wrong_aad_and_truncation`.'
-  labels:
-  - covers:gdaemon-runtime-family:3.3:3.3.1
-  - covers:gdaemon-runtime-family:3.3:3.3.2
-  - covers:gdaemon-runtime-family:3.3:3.3.3
-  - covers:gdaemon-runtime-family:3.3:3.3.4
-  - covers:gdaemon-runtime-family:3.3:3.3.5
-  tdd: true
-  source_section: '3.3'
-  implementation_domain: backend
-- title: Native interactive handshake and grant capabilities
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.3'
-  validation_criteria: '3.4.1: An identified operator handshake returns a signed interactive
-    grant whose payload fields equal Python''s for the same database state. test:
-    `crates/gruntime/tests/handshake.rs::interactive_handshake_issues_signed_grant`.
-
-    3.4.2: A repeat handshake reuses the principal and returns the stored password,
-    and a fresh issuance stores material that Python opens. test: `crates/gruntime/tests/handshake.rs::reused_principal_returns_the_sealed_password`.
-
-    3.4.3: A machine mismatch, an unadmitted project and a bad overlay return 403
-    `claims_mismatch`, and other issuance failures return 403 `credential_issuance_failed`.
-    test: `crates/gruntime/tests/handshake.rs::handshake_rejections_match_python_codes`.
-
-    3.4.4: Agent-bearer, cookie-only and unauthenticated handshakes and the managed
-    challenge are not claimed and reach Python unchanged. test: `crates/gruntime/tests/handshake.rs::non_operator_handshakes_are_not_claimed`.
-
-    3.4.5: The Rust capability port matches every Python-generated vector. test: `crates/gruntime/tests/capabilities.rs::capabilities_match_python_vectors`.
-
-    3.4.6: The committed vectors still match Python''s `capabilities_from_snapshot`.
-    test: `tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities`.'
-  labels:
-  - covers:gdaemon-runtime-family:3.4:3.4.1
-  - covers:gdaemon-runtime-family:3.4:3.4.2
-  - covers:gdaemon-runtime-family:3.4:3.4.3
-  - covers:gdaemon-runtime-family:3.4:3.4.4
-  - covers:gdaemon-runtime-family:3.4:3.4.5
-  - covers:gdaemon-runtime-family:3.4:3.4.6
-  tdd: true
-  source_section: '3.4'
-  implementation_domain: backend
-- title: Compare check for proxied handshake grants
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.4'
-  validation_criteria: '3.5.1: A Python-issued grant for the request records `verified`.
-    test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
-
-    3.5.2: A tampered capability, a wrong epoch, a bad signature or a principal mismatch
-    records `mismatch` with the field pointer and no values. test: `crates/gruntime/tests/verify.rs::mismatches_name_the_field_without_values`.'
-  labels:
-  - covers:gdaemon-runtime-family:3.5:3.5.1
-  - covers:gdaemon-runtime-family:3.5:3.5.2
-  tdd: true
-  source_section: '3.5'
-  implementation_domain: backend
-- title: 'Corpus: `runtime` family cases replayed natively'
-  category: test
-  task_type: feature
-  depends_on:
-  - '3.5'
-  validation_criteria: '4.1.1: The manifest declares `runtime` native with origin
-    python, owns the handshake, config and new cases, and no longer lists `config`
-    or `runtime_handshake`. file: `tests/contracts/http/manifest.json`.
-
-    4.1.2: `runtime_config` is recorded from Python and committed. file: `tests/contracts/http/runtime_config.json`.
-
-    4.1.3: Every corpus case replays equal against the e2e daemon with `runtime: native`.
-    test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
-
-    4.1.4: The Rust parity precheck passes with `runtime` registered. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
-
-    4.1.5: `config_effective` is recorded from Python and committed. file: `tests/contracts/http/config_effective.json`.'
-  labels:
-  - covers:gdaemon-runtime-family:4.1:4.1.1
-  - covers:gdaemon-runtime-family:4.1:4.1.2
-  - covers:gdaemon-runtime-family:4.1:4.1.3
-  - covers:gdaemon-runtime-family:4.1:4.1.4
-  - covers:gdaemon-runtime-family:4.1:4.1.5
-  tdd: false
-  source_section: '4.1'
-  assigned_agent: developer
-- title: 'E2E: compare smoke, backend-kill fallback, flip and rollback'
-  category: test
-  task_type: feature
-  depends_on:
-  - '4.1'
-  validation_criteria: '4.2.1: Compare mode serves Python''s responses and records
-    `match` and `verified` outcomes with zero mismatches, and `compare-report` exits
-    0. test: `tests/e2e/test_runtime_family.py::test_compare_mode_records_zero_mismatches`.
-
-    4.2.2: With `runtime: native`, the runtime routes serve 200 while the backend
-    is killed, and proxied routes return the typed 503. test: `tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill`.
-
-    4.2.3: Flip and rollback take only a bootstrap edit and a gdaemon restart with
-    the same binaries. test: `tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy`.'
-  labels:
-  - covers:gdaemon-runtime-family:4.2:4.2.1
-  - covers:gdaemon-runtime-family:4.2:4.2.2
-  - covers:gdaemon-runtime-family:4.2:4.2.3
-  tdd: false
-  source_section: '4.2'
-  assigned_agent: developer
-- title: 'Docs: family-crate template and the flip runbook'
-  category: docs
-  task_type: feature
-  depends_on:
-  - '4.2'
-  validation_criteria: '4.3.1: "Daemon family crates" documents the seam, the claims
-    and proxied-check hooks, the compare log and the corpus split. file: `crates/AGENTS.md`.
-
-    4.3.2: The configuration guide documents the `runtime` route values and the compare,
-    soak, flip and rollback runbook with `compare-report`. file: `docs/guides/configuration.md`.'
-  labels:
-  - covers:gdaemon-runtime-family:4.3:4.3.1
-  - covers:gdaemon-runtime-family:4.3:4.3.2
-  tdd: false
-  source_section: '4.3'
-  assigned_agent: tech-writer
-```
