@@ -159,12 +159,11 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _clear_sandbox_cargo_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the invoking reviewer's Cargo artifact routing outside test fixtures.
+    """Clear the invoking reviewer's Gobby sandbox routing while preserving its Cargo target.
 
-    Tests that exercise configured or sandbox targets set these variables explicitly.
+    Tests that exercise Gobby sandbox routing set these variables explicitly.
     """
     for name in (
-        "CARGO_TARGET_DIR",
         "GOBBY_SANDBOX_CARGO_TARGET",
         "GOBBY_SANDBOX_CARGO_WORKSPACE",
     ):
