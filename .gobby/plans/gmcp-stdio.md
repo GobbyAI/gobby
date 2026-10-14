@@ -900,10 +900,10 @@ Targets:
   `config.toml`.
 - `provider_mcp_config_error` requires the `gmcp` entry.
 - `clients.md` describes `gmcp` as the stdio transport. It keeps the
-  wrapper's claim that the transport can start the daemon, which 1.9 ports:
-  `gmcp` starts a stopped local daemon through the command `gobby install`
-  records, and otherwise reports `DAEMON_UNAVAILABLE` with `gobby start`
-  guidance.
+  wrapper's claim that the transport can start the daemon, which 1.9 ports,
+  in this sentence: "`gmcp` starts a stopped local daemon with the start
+  command that `gobby install` records, and otherwise reports
+  `DAEMON_UNAVAILABLE` with `gobby start` guidance."
 - **Landing gate.** This leaf's Lane Manager holds its landing until
   Activation step 1 confirms that `~/.gobby/bin/gmcp` is promoted on the hub.
 
@@ -926,7 +926,7 @@ Consumers unchanged:
 - 1.6.2 - In JSON and TOML configs, the repair rewrites `uv run gobby mcp-server`, `uv run --directory X gobby mcp-server`, `uv run --project X gobby mcp-server`, `uv run --no-sync --project X gobby mcp-server`, and `gobby mcp-server` entries (bare or at any path) to `gmcp`. It keeps each entry's `env` and timeouts and leaves other servers alone. test: `tests/cli/installers/test_cli_installers_mcp_config.py::test_repair_rewrites_wrapper_entries_to_gmcp`, parameterized over every shape and both formats.
 - 1.6.3 - Spawned Codex agents get `gmcp` through `-c` overrides with the same timeouts, environment forwarding, and approvals. test: `tests/agents/test_spawn_executor_support.py::test_codex_overrides_launch_gmcp`.
 - 1.6.4 - Isolated agents get a `gmcp` `.mcp.json`, re-patching a workspace that holds the `uv run --project` entry replaces it, and the preflight accepts the `gmcp` entry and rejects a `uv` entry. test: `tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry`.
-- 1.6.5 - The chat SDK entry and the clients reference name `gmcp`. behavior: "gmcp" in `src/gobby/install/shared/skills/gobby/references/admin/clients.md`.
+- 1.6.5 - The chat SDK entry and the clients reference name `gmcp`, and the clients reference states the auto-start sentence, naming both the recorded start command and the `DAEMON_UNAVAILABLE` guidance. behavior: "`gmcp` starts a stopped local daemon with the start command that `gobby install` records, and otherwise reports `DAEMON_UNAVAILABLE` with `gobby start` guidance" in `src/gobby/install/shared/skills/gobby/references/admin/clients.md`.
 - 1.6.6 - A managed Grok run's `config.toml` declares `gobby` as the managed `gmcp` path with no arguments, replacing an operator `gobby` entry and keeping other servers. test: `tests/agents/test_grok_sandbox_home.py::test_operator_gobby_mcp_server_is_replaced_and_others_kept`.
 
 ### 1.7 The Python wrapper and its setting are gone [category: code] (depends: 1.5, 1.6, 1.9)
