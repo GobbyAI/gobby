@@ -129,8 +129,8 @@ Design decisions (writer, from the code):
     jobs before it starts.
 13. **Fake hub in tests.** Every node test drives a fake hub (an axum server on
     `127.0.0.1:0` that records requests and returns scripted responses). The
-    live hub-to-node proof belongs to hub-mode D4 (#24283 Live hub-to-node
-    proof), Decision 20.
+    live hub-to-node proof belongs to hub-mode 5.1 (Live hub-to-node proof
+    with isolated daemons and fake providers), Decision 20.
 14. **Node agent state is one JSON file.** Accepted runs, preparation and
     workspace records, pending removals, cancel records, exits, the report
     revision, the adopted `hub_epoch` and the host epoch counter live in
@@ -168,17 +168,20 @@ Design decisions (writer, from the code):
 Josh's rulings on the no-deferrals return (2026-10-13, relayed by
 gobby#15977):
 
-20. **Live proof.** hub-mode D4 owns the live hub-to-node proof. This plan
-    carries no proof leaf.
+20. **Live proof.** hub-mode 5.1 owns the live hub-to-node proof, and every
+    leaf of this plan blocks it. This plan carries no proof leaf.
 21. **Node code-index preflight.** The node runs the managed code-index
     preflight in its own leaf (2.11), planned against the hub code-index
     routes that #21586 (Migrate code-index orchestration and shared
     dependencies) adds. 2.11 is blocked at expansion by #21586's route
     leaves; the edge is set then, because the coverage grammar has no
     cross-plan dependency.
-22. **v2 sandbox.** The payload's `sandbox` is the hub's fully resolved
-    `SandboxConfig` (`resolve_spawn_sandbox`), and v1's `network` key is
-    dropped. The node adds only node-local spawn-time paths (2.4).
+22. **v2 sandbox.** The payload's `sandbox` is the hub's resolved
+    `SandboxConfig`: hub-mode 2.5 builds
+    `apply_write_grant(definition_sandbox_config(daemon_config, agent_body), write_grant)`,
+    the config `resolve_spawn_sandbox` returns locally, without that
+    function's hub-side SRT install check, because the node verifies its own
+    install (2.5). v1's `network` key is dropped. The node adds only node-local spawn-time paths (2.4).
 23. **Remote resume.** A resume is routed automatically to the resumed
     session's machine, overriding `machine` and the origin (hub-mode 2.5).
     As a local resume returns to its worktree, a remote resume runs in the
@@ -282,9 +285,16 @@ Writer decisions for the no-deferrals revision:
   - #21586 (Migrate code-index orchestration and shared dependencies) blocks
     2.11 (Decision 21). It has no leaves yet; the edge sits on the epic until
     its gcode gateway leaves exist.
-  - 3.1 blocks hub-mode 1.3 (#24269 Python node-command client), 1.4 (#24270
-    Node routes) and D2 (#24281 gdaemon internal node-command route), which
-    build or check `v` against `CONTRACT_VERSION`.
+  - 3.1 blocks hub-mode 1.2 (gdaemon internal node-command route over the
+    node channel), 1.3 (#24269 Python node-command client) and 1.4 (#24270
+    Node routes), which build or check `v` against `CONTRACT_VERSION`.
+  - 2.1 blocks hub-mode 1.2, because both declare a module in
+    `crates/gdaemon/src/nodes/mod.rs`. The same edge orders 1.5's change to
+    `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, which hub-mode
+    1.2 also edits, because 2.1 follows 1.5 through 1.6.
+  - hub-mode 1.2 blocks 2.7, because both change
+    `crates/gdaemon/src/nodes/channel.rs` (hub-mode 1.2 `hub_channel`, 2.7
+    `run_client`).
   - 3.2 blocks hub-mode 2.5 (#24275 Remote spawn goes through the node),
     which calls `build_spawn_payload`.
   - hub-mode 1.4 (#24270 Node routes) blocks 3.2 and 3.3. 3.2's
@@ -298,7 +308,17 @@ Writer decisions for the no-deferrals revision:
   - hub-mode 2.6 (#24276 The hub settles remote runs from the node's
     reports) blocks 3.6, so a run the terminate route kills settles through
     2.6's reconciler when the node's exit arrives.
-  - hub-mode D4 (#24283 Live hub-to-node proof) proves this plan's sections
+  - 3.1 blocks hub-mode 4.1 (Node-commands contract version 3: workspace and
+    checkout commands), which bumps the same contract to version 3 in the
+    same files.
+  - 2.14, the last node agent leaf, blocks hub-mode 4.2 (Node
+    workspace.merge and workspace.remove handlers) and 4.6 (Node
+    checkout.status handler), which add handlers to
+    `crates/gdaemon/src/nodes/agents/commands.rs` and
+    `crates/gdaemon/src/nodes/agents/mod.rs`; 4.2 also edits 2.3's
+    `workspace.rs`.
+  - Every leaf of this plan blocks hub-mode 5.1 (Live hub-to-node proof with
+    isolated daemons and fake providers), which proves this plan's sections
     on a live hub and node (Decision 20).
 - **`render_srt_settings` lives in `srt_settings.py`.** gmcp-stdio 1.8
   (`.gobby/plans/gmcp-stdio.md`) moves `render_srt_settings` from
@@ -2429,8 +2449,8 @@ change in one commit, because the shared corpus fails on either side alone.
   - `cwd`, `project_path`, `worktree_id` and `clone_id`: the node computes
     its workspace from `source_root` and `workspace` (2.3), and a resume
     names its earlier workspace by `workspace.path` (3.2). The hub's
-    worktree and clone rows belong to hub-mode D1 (Remote workspace
-    lifecycle).
+    worktree and clone rows belong to hub-mode P4 (Remote workspaces and
+    the machine-scoped project view).
   - `agent_run_id` equals `run_id`. `workflow` is `workflow_name`.
     `branch_name` is inside `workspace`. `retry_terminal_id` is the
     payload's `terminal_id`, which a hub retry repeats.
@@ -2488,7 +2508,9 @@ produce a valid payload, so no field group ships alone.
   `resolve_spawn_generation_endpoint` gives `model`, `is_local`,
   `codex_oss_provider`, `codex_config_overrides`, `api_base`, `api_token`
   and `child_env`; `resolve_spawn_reasoning` gives the effective effort;
-  `resolve_spawn_sandbox` gives the `SandboxConfig`;
+  `apply_write_grant(definition_sandbox_config(daemon_config, agent_body), write_grant)`
+  gives the `SandboxConfig`, refused unless it is enabled `srt`, without
+  `resolve_spawn_sandbox`'s hub-side install check;
   `code_index_preflight_mode` gives the preflight mode; the resume metadata
   gives the provider session id (only with `resume_existing_session`) and
   `execution_mode`; and the agent body gives `agent_name`, `droid_mode` and
@@ -3024,6 +3046,16 @@ Verification planned:
   with submit under `loop-dismiss:<run_id>`, once per pane, at most once per
   60 seconds per run), the null checkpoint for a run without a valid task id,
   and the 2,000-character tail (2.14.2, 2.14.4, 2.14.6).
+- 2026-10-14: hub-mode writer gobby#16490 committed the 1.4 amendment
+  (hub-mode 1.4.7, at 09cd20cba2) and planned its D1 to D4 in scope. This
+  plan's references follow: hub-mode D2 is now 1.2, D1 is P4 and D4 is 5.1
+  (Decisions 13 and 20, Constraints, 3.1, V2). The cross-plan edges match
+  hub-mode's list: 2.1 and 3.1 block hub-mode 1.2, hub-mode 1.2 blocks 2.7,
+  3.1 blocks hub-mode 4.1, 2.14 blocks hub-mode 4.2 and 4.6, and every leaf
+  blocks hub-mode 5.1. Decision 22 and 3.2's research name hub-mode 2.5's
+  sandbox build,
+  `apply_write_grant(definition_sandbox_config(daemon_config, agent_body), write_grant)`,
+  in place of `resolve_spawn_sandbox`.
 
 ## V2: Verification
 `kind: verification`
@@ -3051,7 +3083,8 @@ uv run gobby plans validate .gobby/plans/node-halves.md -p .
   check that runs during planning.
 - These gates must pass against a fake hub and a fake terminal host
   (Decision 13). The live hub-to-node proof of these sections must pass in
-  hub-mode D4 (#24283 Live hub-to-node proof), which owns it (Decision 20).
+  hub-mode 5.1 (Live hub-to-node proof with isolated daemons and fake
+  providers), which owns it (Decision 20).
 - Every cargo run is a heavy command and must hold the Release Manager's
   grant. These gates must run from the worktree root, and the full pytest
   suite must never run.
