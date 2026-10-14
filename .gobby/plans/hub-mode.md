@@ -1876,7 +1876,6 @@ Consumers unchanged:
 - `src/gobby/llm/factory.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/llm/service.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/mcp_proxy/importer.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `src/gobby/mcp_proxy/registries.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/mcp_proxy/server.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/mcp_proxy/services/server_mgmt.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `src/gobby/mcp_proxy/tools/agents_context.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -2637,8 +2636,7 @@ Verification planned:
 
 Targets:
 - `src/gobby/hub/remote_workspaces.py`
-- `src/gobby/mcp_proxy/tools/worktrees/_factory.py::create_worktrees_registry`
-- `src/gobby/mcp_proxy/tools/clones.py::create_clones_registry`
+- `src/gobby/mcp_proxy/registries.py::setup_internal_registries`
 - `src/gobby/mcp_proxy/tools/worktrees/_crud.py::create_crud_registry`
 - `src/gobby/mcp_proxy/tools/_clones_read.py::create_clone_read_registry`
 - `tests/hub/test_remote_workspaces.py`
@@ -2657,10 +2655,25 @@ Targets:
   row lookup (`_merge_clone_impl` first returns "Clone tools require a git
   repository context"), so catching the ownership error is unreliable.
   Ownership is resolved first.
-- `ctx.resolve_worktree_id` calls `LocalWorktreeManager.resolve_reference`,
-  which resolves an id prefix across all machines; clone tools take a full
-  id. `delete_worktree` and `delete_clone` also accept a path, which names
-  a path on this machine.
+- `ctx.resolve_worktree_id` calls `LocalWorktreeManager.resolve_reference`
+  (`src/gobby/storage/worktrees.py`), which returns a full UUID unread and
+  matches a hex prefix with `id::text LIKE` (`_UUID_TEXT_PREFIX_RE`,
+  `_escape_like_prefix`, `LIMIT 2`) across all machines; clone tools take a
+  full id. `delete_worktree` and `delete_clone` also accept a path, which
+  names a path on this machine.
+- Three tests pin how often the tools reach the storage manager:
+  `tests/mcp_proxy/tools/test_worktrees_reference_resolution.py::test_every_worktree_id_tool_resolves_before_storage_lookup`
+  allows one `resolve_worktree_id` call,
+  `tests/mcp_proxy/tools/test_merge_landscape.py::test_ref_taking_tools_resolve_before_storage_lookup`
+  asserts one `resolve_reference` and one `get`, and
+  `tests/mcp_proxy/tools/test_mcp_proxy_tools_clones.py` asserts one `get`
+  for `get_clone`. Their storages are mocks and they build registries with
+  no database, so an ownership check made through the storage manager
+  would break them.
+- `setup_internal_registries` (`src/gobby/mcp_proxy/registries.py`, 601
+  lines) builds both registries and receives the hub database as `db`;
+  `src/gobby/servers/http.py` passes it. Every other caller of the
+  factories passes no database.
 - `InternalToolRegistry.get_tool_metadata(name)` returns the `InternalTool`
   whose `func` `_prepare_call` inspects with `inspect.signature`, which
   follows `functools.wraps`'s `__wrapped__`. `merge_clone` registers an
@@ -2697,33 +2710,60 @@ Targets:
     `unmerged`, and `busy` return their codes and keep the row.
   - A `NodeCommandError` returns `{"success": False, "error_code", "stage"}`
     and changes no row. No function clears `agent_session_id`.
-  - `route_node_workspace_tools(registry, *, kind, db, resolve_id)` wraps
+  - `owner_machine(db, kind, ref)` returns `(full_id, machine_id)` or
+    `None` with one query on `db`. A full UUID is read by id. A worktree
+    prefix uses `resolve_reference`'s match, importing
+    `_UUID_TEXT_PREFIX_RE` and `_escape_like_prefix` from
+    `src/gobby/storage/worktrees.py`, and returns a row only when exactly
+    one matches. A clone needs a full UUID.
+  - `route_node_workspace_tools(registry, *, kind, db)` wraps
     `get_<kind>`, `merge_<kind>`, and `delete_<kind>`: it sets each tool's
     `func` to an async wrapper made with `functools.wraps(original)`. The
-    wrapper resolves the id first; a row on another machine goes to the
-    remote function with the call's arguments, and everything else,
-    including a path-addressed call and an unresolved id, calls the original
-    unchanged. A remote `merge_worktree` with `push` or `prefer_remote` set,
+    wrapper reads `owner_machine` from `db` and never calls the storage
+    manager or the registry context. Exactly one row on another machine
+    goes to the remote function with its full id and the call's arguments.
+    Everything else, including a path-addressed call, a local row, and an
+    unmatched or ambiguous prefix, calls the original with its arguments
+    untouched, so the original resolves and reads the row exactly as today.
+    A remote `merge_worktree` with `push` or `prefer_remote` set,
     or a `source_branch` other than the row's branch, returns
     `remote_merge_option_unsupported` naming the option before any command
     (Decision 20). `project_path` only selects a local checkout, so a
     remote call ignores it.
-- `create_worktrees_registry` and `create_clones_registry` call
-  `route_node_workspace_tools` after merging their sub-registries.
+- `setup_internal_registries` calls `route_node_workspace_tools` on the
+  worktrees and clones registries after adding each, only when `db` is not
+  `None`. The factories stay unchanged, so a registry built without the
+  hub database carries no wrapper.
 - `list_worktrees` (in `create_crud_registry`) and `list_clones` (in
   `create_clone_read_registry`) gain `machine_id: str | None`, added to an
   explicit `input_schema` where one exists. Null or this machine's id keeps
   today's query; another machine reads `list_remote`.
 
+Consumers unchanged:
+- `src/gobby/servers/http.py` — no-edit-reason: it already passes `db` with both storages, so its registries gain the wrapper through the unchanged call.
+- `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: it passes `db` but no worktree or clone storage, so no workspace registry is built or wrapped.
+- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: it passes only `config_resolver` and `db`, so no workspace registry is built.
+- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: it passes `db` and both storages and reads only registry and tool names, which the `functools.wraps` wrapper keeps; re-run as verification.
+- `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: it passes no `db` and no workspace storage.
+- `tests/mcp_proxy/test_registries.py` — no-edit-reason: the calls that pass a worktree or clone storage pass no `db`, and the calls that pass `db` pass no workspace storage, so nothing is wrapped; re-run as verification.
+- `tests/mcp_proxy/test_registries_startup.py` — no-edit-reason: it passes `db` and a communications manager but no workspace storage.
+- `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: it passes only the workspace manager and ops resolver, which build the separate workspaces registry.
+- `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: it passes no `db` and no workspace storage.
+- `tests/mcp_proxy/tools/test_review_learning.py` — no-edit-reason: it passes no workspace storage.
+- `tests/skills/reference_library_helpers.py` — no-edit-reason: its dependencies carry `db` but no worktree or clone storage.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: it passes `db` and a session manager but no workspace storage, and asserts registry names only.
+- `src/gobby/mcp_proxy/tools/worktrees/_factory.py` — no-edit-reason: it calls `create_crud_registry(ctx)`, whose signature is unchanged.
+- `src/gobby/mcp_proxy/tools/clones.py` — no-edit-reason: it calls `create_clone_read_registry(ctx)`, whose signature is unchanged.
+
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspaces.py tests/mcp_proxy/tools/ -k "worktree or clone" -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspaces.py tests/mcp_proxy/test_registries.py tests/dispatch/test_bundled_agent_contract.py tests/mcp_proxy/tools/ -k "worktree or clone or registries or bundled" -v`.
 
 **Acceptance:**
 
 - 4.3.1 - `merge_worktree` with a prefix of a node's row sends one `workspace.merge` with the row's path and branch, the target, and that machine's checkout root, and on `merged` marks the row merged with `cleanup_after` now; `merge_clone` does the same with `cleanup_after` seven days on. test: `tests/hub/test_remote_workspaces.py::test_remote_merge_marks_row_merged`.
 - 4.3.2 - `conflict`, `target_dirty`, and `busy` return their typed failures and keep the row, and a missing target, `push`, `prefer_remote`, or another `source_branch` is refused before any command. test: `tests/hub/test_remote_workspaces.py::test_remote_merge_refusals_keep_row`.
 - 4.3.3 - `delete_worktree` and `delete_clone` on a node's row send `workspace.remove` with the force flags and `merged_into`, delete the row only on `removed`, keep it on `dirty`, `unmerged`, `busy`, or a node error, and never clear `agent_session_id`. test: `tests/hub/test_remote_workspaces.py::test_remote_delete_follows_node_outcome`.
-- 4.3.4 - `get_worktree` and `get_clone` return a node's row, a local row and a path-addressed call reach the original tool unchanged, and every wrapped tool keeps its input schema. test: `tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged`.
+- 4.3.4 - `get_worktree` and `get_clone` return a node's row; for a local row, a path-addressed call, and an unmatched or ambiguous prefix, the wrapper calls neither `resolve_reference` nor `get` and the original runs with its arguments untouched; every wrapped tool keeps its input schema; and `setup_internal_registries` without `db` installs no wrapper. test: `tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged`.
 - 4.3.5 - `list_worktrees` and `list_clones` with a node's `machine_id` list only that machine's rows, and without it only this machine's. test: `tests/hub/test_remote_workspaces.py::test_list_tools_take_machine_id`.
 - 4.3.6 - An offline node returns `node_offline` with `stage: "none"` and changes no row, and `sync_worktree` and `release_worktree` on a node's row still return `machine_ownership_mismatch`. test: `tests/hub/test_remote_workspaces.py::test_offline_and_other_tools_refuse`.
 
@@ -2786,24 +2826,31 @@ Targets:
   `busy` rule guards a workspace in use (4.2).
 
 **Implementation:**
-- `expire_remote_workspaces(db, *, client, run_db)` selects up to 1,000
+- `expire_remote_workspaces(db, *, run_db)` selects up to 1,000
   merged `worktrees` and `clones` rows on other machines whose
   `cleanup_after` has passed, with `CLOSED_TASK_CLEANUP_PREDICATE` and no
-  `agent_session_id` predicate. For each it calls `remove_remote` with
+  `agent_session_id` predicate, through `run_db`. It calls
+  `node_command_client()` only when it selected a row, so a pass with no
+  node rows builds no client and sends nothing. For each row it calls
+  `remove_remote` with
   `force=False`, `force_delete_branch=False`, and `merged_into=None`. A
   non-`removed` outcome or a node error keeps the row for the next pass and
   logs at debug, as the local reaper does.
 - `cleanup_expired_isolation_loop` calls it after the local clone reaping,
   inside the same per-pass `try`.
 
+Consumers unchanged:
+- `src/gobby/runner_maintenance/__init__.py` — no-edit-reason: it re-exports `cleanup_expired_isolation_loop` by name, and the signature is unchanged.
+- `tests/test_runner_maintenance_isolation.py` — no-edit-reason: its loop tests create every row on this machine, so the remote step selects nothing, builds no client, and sends nothing; its `run_db` counts stay balanced because the select goes through the same runner; re-run as verification.
+
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspace_expiry.py tests/runner_maintenance/ -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_workspace_expiry.py tests/test_runner_maintenance_isolation.py tests/runner_maintenance/ -v`.
 
 **Acceptance:**
 
 - 4.5.1 - An expired merged node row of a closed task gets one `workspace.remove` without force and is deleted on `removed`, whatever its `agent_session_id`. test: `tests/hub/test_remote_workspace_expiry.py::test_expired_node_rows_removed_through_node`.
 - 4.5.2 - An unexpired, unmerged, or open-task row gets no command, and `busy`, `dirty`, `unmerged`, or an offline node keeps the row for the next pass. test: `tests/hub/test_remote_workspace_expiry.py::test_expiry_keeps_rows_the_node_refuses`.
-- 4.5.3 - The loop runs the remote step after local reaping in each pass. test: `tests/hub/test_remote_workspace_expiry.py::test_loop_runs_remote_step`.
+- 4.5.3 - The loop runs the remote step after local reaping in each pass, and a pass with no node rows builds no client. test: `tests/hub/test_remote_workspace_expiry.py::test_loop_runs_remote_step`.
 
 ### 4.6 Node checkout.status handler [category: code] (depends: 4.1, 4.2)
 `kind: deliverable`
@@ -2891,9 +2938,11 @@ Targets:
 
 Consumers unchanged:
 - `src/gobby/servers/routes/files.py` — no-edit-reason: it calls `_projects_to_responses(server, visible)`, whose new keyword defaults to today's behavior.
+- `src/gobby/servers/routes/__init__.py` — no-edit-reason: it re-exports `create_projects_router` and `create_source_control_router` by name, and both signatures are unchanged.
+- `tests/servers/routes/test_source_control_routes.py` — no-edit-reason: its requests omit `machine_id`, so every route takes the unchanged local path; re-run as verification.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_machine_scoped_projects.py tests/servers/routes/test_files.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_machine_scoped_projects.py tests/servers/routes/test_files.py tests/servers/routes/test_source_control_routes.py -v`.
 
 **Acceptance:**
 
