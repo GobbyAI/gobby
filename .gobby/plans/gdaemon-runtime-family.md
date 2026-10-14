@@ -6751,6 +6751,10 @@ Research context:
 - `ui_settings.planPendingVariant` is a public `str | None` registry key
   (`src/gobby/config/registry.py::_supplemental_key_specs`) that only the web client
   reads, so the PATCH pair changes no daemon behavior.
+- A failed step leaves nothing to restore: the instance runs on a temporary home
+  that `tests/e2e/conftest.py::e2e_config` deletes and a test-hub schema that
+  `tests/fixtures/postgres.py::postgres_schema` drops at teardown. E1 4.3's
+  probe restores in `finally` because it writes the live daemon.
 - The document requests and the activation are witnessed by 422 answers that write
   nothing and, for the activation, start no probe. The 200 branches of their checks
   are proved by 5.12.5 and 5.14.4.
@@ -6894,17 +6898,18 @@ freshly built and installed binaries, before #21559 closes.
       traffic, with at least one config read and one interactive handshake per
       active project and managed handshakes from ordinary agent runs. It must hold
       no pending config activation, which includes the interval between a config
-      commit and Python's reconcile of it. The one exception is the soak probe's
-      PATCH pair (step 3), whose activations the probe itself waits out: each
-      PATCH answers 200 only after Python's reconcile publishes its revision
-      (Write wait), and a `reconcile_failed` answer fails the probe's status
-      assertion. A backend restart inside the window is allowed, because requests
-      that cannot reach Python record `skipped` (2.1).
+      commit and Python's reconcile of it. The one exception is each soak probe
+      run's PATCH pair (step 3), whose activations the probe itself waits out:
+      Python answers each PATCH only after its reconcile of that commit, and the
+      probe fails on any `apply_status` other than `applied`. That includes
+      `reconcile_failed`, which `ConfigValuesService.patch_flat` answers with HTTP
+      200 and `committed: true`. A backend restart inside the window is allowed,
+      because requests that cannot reach Python record `skipped` (2.1).
    3. Write evidence uses an API-key client (Orchestrator #15977, 2026-10-14). Once
       inside the window, the operator must run this soak probe from the main
-      checkout, and it must print `soak probe passed`. `DaemonClient` reads the
-      bootstrap API key in the operator's own process. The probe exercises every P5
-      route and changes nothing it does not restore:
+      checkout. `DaemonClient` reads the bootstrap API key in the operator's own
+      process. The probe exercises every P5 route and changes nothing it does not
+      restore:
       - it deletes only the scratch secret and the override it creates, and it
         overrides only a prompt that has no override, with that prompt's current
         content;
@@ -6913,70 +6918,167 @@ freshly built and installed binaries, before #21559 closes.
       - its document and activation requests are rejected with 422 before any
         write, and the activation before any probe.
 
+      Restoration must not depend on the probe reaching the line after a write
+      (RF-F11):
+      - Before sending each write, the probe records the state its cleanup restores
+        and registers that cleanup in `pending`. A write that commits and then
+        fails, such as a PATCH answered with `reconcile_failed`, still owes its
+        cleanup.
+      - Each cleanup undoes only the probe's own change. The secret DELETE accepts
+        404. The override is deleted only while it holds the content the probe
+        wrote. The variant is restored at the current revision, and only while it
+        still holds `runtime-family-probe`. A run that finds that value already set
+        stops before its PATCH.
+      - A cleanup leaves `pending` only after it succeeds. When the probe fails,
+        `finally` runs every cleanup still pending, each in its own `try`, and
+        prints `restored <route>` or an `UNRESOLVED CLEANUP` line naming the route,
+        the state left behind and a recovery command. The original failure still
+        propagates. The prompt's and the variant's recovery commands repeat their
+        cleanup's check; the prompt's compares the override with
+        `bundled_content`, which the probe's override equals.
+      - The probe prints `soak probe passed` only after every check and every
+        cleanup has succeeded.
+
+      The operator must first run the probe once with each value of
+      `RUNTIME_FAMILY_PROBE_FAIL`: `secret`, `prompt` and `patch`. The probe then
+      raises right after the named write answers, when that write has committed.
+      For `patch`, that is the state a committed PATCH answered with
+      `reconcile_failed` leaves. Each forced run must exit nonzero with
+      `forced failure after` in its traceback, print `restored` with the named
+      write's cleanup route, and print no `UNRESOLVED CLEANUP` line. The operator
+      must then run the probe without the variable, and it must print
+      `soak probe passed`.
+
       ```bash
       uv run python - <<'EOF'
-      import json, time
+      import json, os, shlex, time
       from gobby.paths import get_gobby_home
       from gobby.utils.daemon_client import DaemonClient
 
       client = DaemonClient(timeout=90)
       start = int(time.time())
+      fail = os.environ.get("RUNTIME_FAMILY_PROBE_FAIL")  # secret, prompt or patch
+      key, marker = "ui_settings.planPendingVariant", "runtime-family-probe"
+      pending = {}  # label -> (route, state, cleanup, recovery), registered before its write is sent
 
-      def call(method, path, body=None, status=200):
+      def call(method, path, body=None, status=200, label=None):
           response = client.call_http_api(path, method, body)
+          if label is not None and label == fail:
+              raise RuntimeError(f"forced failure after {method} {path} answered {response.status_code}")
           assert response.status_code == status, (method, path, response.status_code, response.text)
           return response
 
-      def revision():
-          return call("GET", "/api/config/values").json()["revision"]
+      def values():
+          body = call("GET", "/api/config/values").json()
+          return body["revision"], (body["desired"].get("ui_settings") or {}).get("planPendingVariant")
 
-      reads = [
-          "/api/config/schema", "/api/config/secrets", "/api/config/prompts", "/api/config/template",
-          "/api/config/values", "/api/config/ui-settings", "/api/config/tool-approvals/global",
-      ]
-      for path in reads:
-          call("GET", path)
-      name = "runtime_family_soak_probe"
-      assert all(s["name"] != name for s in call("GET", "/api/config/secrets").json()["secrets"])
-      call("POST", "/api/config/secrets", {"name": name, "value": "probe"})
-      call("DELETE", f"/api/config/secrets/{name}")
-      prompt = next(p["path"] for p in call("GET", "/api/config/prompts").json()["prompts"] if not p["has_override"])
-      detail = f"/api/config/prompts/{prompt}"
-      call("PUT", detail, {"content": call("GET", detail).json()["content"]})
-      call("DELETE", detail)
-      call("POST", "/api/config/export")
-      key = "ui_settings.planPendingVariant"
-      values = call("GET", "/api/config/values").json()
-      previous = (values["desired"].get("ui_settings") or {}).get("planPendingVariant")
-      probe = {"ui_settings": {"planPendingVariant": "runtime-family-probe"}}
-      call("PATCH", "/api/config/values", {"expected_revision": values["revision"], "values": probe})
-      restore = {"unset": [key]} if previous is None else {"values": {"ui_settings": {"planPendingVariant": previous}}}
-      call("PATCH", "/api/config/values", {"expected_revision": revision(), **restore})
-      for method, path in [("PUT", "/api/config/template"), ("POST", "/api/config/import")]:
-          call(method, path, {"expected_revision": revision(), "content": "a: [\n"}, status=422)
-      activate = "/api/config/generation-endpoints/runtime_family_soak_probe/activate"
-      endpoint = {"wire_api": "responses", "api_base": "http://127.0.0.1:9/v1", "model": "probe"}
-      call("PUT", activate, {"expected_revision": revision(), **endpoint}, status=422)
-      call("POST", "/api/config/validation-detection/preview", {"command": "uv run pytest"})
-      log = get_gobby_home() / "logs" / "front-door-compare.jsonl"
-      records = [json.loads(line) for line in log.read_text().splitlines()]
-      seen = {(r["method"], r["path"], r["outcome"]) for r in records if r["ts"] >= start}
-      writes = [
-          ("POST", "/api/config/secrets"),
-          ("DELETE", f"/api/config/secrets/{name}"),
-          ("PUT", detail),
-          ("DELETE", detail),
-          ("POST", "/api/config/export"),
-          ("PATCH", "/api/config/values"),
-          ("PUT", "/api/config/template"),
-          ("POST", "/api/config/import"),
-          ("PUT", activate),
-          ("POST", "/api/config/validation-detection/preview"),
-      ]
-      want = {("GET", path, "match") for path in [*reads, detail]} | {
-          (method, path, "verified") for method, path in writes
-      }
-      assert want <= seen, sorted(want - seen)
+      def patch(revision, change, label=None):
+          body = call("PATCH", "/api/config/values", {"expected_revision": revision, **change}, label=label).json()
+          assert body["apply_status"] == "applied", body
+
+      def recovery(code):
+          prefix = "from gobby.utils.daemon_client import DaemonClient; c = DaemonClient(timeout=90); "
+          return "uv run python -c " + shlex.quote(prefix + code + "; print(r.status_code, r.text)")
+
+      def settle(label):
+          pending[label][2]()
+          del pending[label]
+
+      def probe():
+          reads = [
+              "/api/config/schema", "/api/config/secrets", "/api/config/prompts", "/api/config/template",
+              "/api/config/values", "/api/config/ui-settings", "/api/config/tool-approvals/global",
+          ]
+          for path in reads:
+              call("GET", path)
+          name = "runtime_family_soak_probe"
+          secret = f"/api/config/secrets/{name}"
+          assert all(s["name"] != name for s in call("GET", "/api/config/secrets").json()["secrets"])
+
+          def drop_secret():
+              response = client.call_http_api(secret, "DELETE")
+              assert response.status_code in (200, 404), (response.status_code, response.text)
+
+          pending["secret"] = (
+              f"DELETE {secret}", "the scratch secret may exist", drop_secret,
+              recovery(f'r = c.call_http_api("{secret}", "DELETE")'),
+          )
+          call("POST", "/api/config/secrets", {"name": name, "value": "probe"}, label="secret")
+          settle("secret")
+          prompt = next(p["path"] for p in call("GET", "/api/config/prompts").json()["prompts"] if not p["has_override"])
+          detail = f"/api/config/prompts/{prompt}"
+          content = call("GET", detail).json()["content"]
+
+          def drop_override():
+              current = call("GET", detail).json()
+              if current["has_override"] and current["content"] == content:
+                  call("DELETE", detail)
+
+          pending["prompt"] = (
+              f"DELETE {detail}", "an override holding the bundled content may exist", drop_override,
+              recovery(
+                  f'd = c.call_http_api("{detail}", "GET").json(); '
+                  'assert d["has_override"] and d["content"] == d["bundled_content"], d; '
+                  f'r = c.call_http_api("{detail}", "DELETE")'
+              ),
+          )
+          call("PUT", detail, {"content": content}, label="prompt")
+          settle("prompt")
+          call("POST", "/api/config/export")
+          revision, previous = values()
+          assert previous != marker, f"{key} still holds {marker!r} from an earlier probe"
+          restore = {"unset": [key]} if previous is None else {"values": {"ui_settings": {"planPendingVariant": previous}}}
+
+          def restore_variant():
+              current_revision, current = values()
+              if current == marker:
+                  patch(current_revision, restore)
+
+          pending["patch"] = (
+              "PATCH /api/config/values", f"{key} may hold {marker!r} instead of {previous!r}", restore_variant,
+              recovery(
+                  'v = c.call_http_api("/api/config/values", "GET").json(); '
+                  f'assert (v["desired"].get("ui_settings") or {{}}).get("planPendingVariant") == "{marker}", v; '
+                  f'r = c.call_http_api("/api/config/values", "PATCH", {{"expected_revision": v["revision"], **{json.dumps(restore)}}})'
+              ),
+          )
+          patch(revision, {"values": {"ui_settings": {"planPendingVariant": marker}}}, label="patch")
+          settle("patch")
+          for method, path in [("PUT", "/api/config/template"), ("POST", "/api/config/import")]:
+              call(method, path, {"expected_revision": values()[0], "content": "a: [\n"}, status=422)
+          activate = "/api/config/generation-endpoints/runtime_family_soak_probe/activate"
+          endpoint = {"wire_api": "responses", "api_base": "http://127.0.0.1:9/v1", "model": "probe"}
+          call("PUT", activate, {"expected_revision": values()[0], **endpoint}, status=422)
+          call("POST", "/api/config/validation-detection/preview", {"command": "uv run pytest"})
+          log = get_gobby_home() / "logs" / "front-door-compare.jsonl"
+          records = [json.loads(line) for line in log.read_text().splitlines()]
+          seen = {(r["method"], r["path"], r["outcome"]) for r in records if r["ts"] >= start}
+          writes = [
+              ("POST", "/api/config/secrets"),
+              ("DELETE", secret),
+              ("PUT", detail),
+              ("DELETE", detail),
+              ("POST", "/api/config/export"),
+              ("PATCH", "/api/config/values"),
+              ("PUT", "/api/config/template"),
+              ("POST", "/api/config/import"),
+              ("PUT", activate),
+              ("POST", "/api/config/validation-detection/preview"),
+          ]
+          want = {("GET", path, "match") for path in [*reads, detail]} | {
+              (method, path, "verified") for method, path in writes
+          }
+          assert want <= seen, sorted(want - seen)
+
+      try:
+          probe()
+      finally:
+          for label, (route, state, cleanup, command) in list(pending.items()):
+              try:
+                  cleanup()
+                  print("restored", route)
+              except Exception as exc:
+                  print(f"UNRESOLVED CLEANUP {route}: {state}; cleanup failed with {exc!r}; recover with: {command}")
       print("soak probe passed")
       EOF
       ```
