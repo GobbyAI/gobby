@@ -16,6 +16,7 @@ import httpx
 import pytest
 from click.testing import CliRunner, Result
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli import cli, daemon_lifecycle
 from gobby.install import bin_set_coherence
 from gobby.runner_pid_file import ProbeState
@@ -136,8 +137,7 @@ def test_catalog_freshness_refuses_a_zero_test_success(
 @pytest.mark.integration
 def test_catalog_freshness_accepts_matching_checkout_candidate(native_cargo_target: None) -> None:
     repo = Path(__file__).resolve().parents[2]
-    target = Path(os.environ.get("CARGO_TARGET_DIR", str(repo / "target")))
-    candidate = target / "debug/gdaemon"
+    candidate = cargo_release_dir(repo).parent / "debug/gdaemon"
     assert candidate.is_file(), "build the checkout's debug gdaemon before native proof"
     _PROVE_CATALOG_FRESHNESS(repo, candidate)
 
@@ -186,8 +186,7 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
         text=True,
         timeout=600,
     )
-    target = Path(os.environ.get("CARGO_TARGET_DIR", str(fixture / "target")))
-    candidate = target / "debug/examples/catalog_candidate_24042"
+    candidate = cargo_release_dir(fixture).parent / "debug/examples/catalog_candidate_24042"
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
     monkeypatch.setattr(
         cutover_module,

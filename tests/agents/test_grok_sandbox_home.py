@@ -135,6 +135,8 @@ async def test_launch_uses_private_grok_home_and_protects_host_controls(
     grok_source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth_exists: bool
 ) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
+    srt_tmpdir = tmp_path / "srt-sock"
+    monkeypatch.setattr(srt_runtime, "srt_mux_tmpdir", lambda: srt_tmpdir)
     if not auth_exists:
         (grok_source / "auth.json").unlink()
     workspace = tmp_path / "workspace"
@@ -149,6 +151,7 @@ async def test_launch_uses_private_grok_home_and_protects_host_controls(
 
     async def preflight(launch: SandboxLaunch, cwd: str, env: dict[str, str]) -> None:
         assert env["GROK_HOME"] == launch.provider_env["GROK_HOME"]
+        assert env["GOBBY_SRT_TMPDIR"] == str(srt_tmpdir)
 
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", installation)
     monkeypatch.setattr(srt_runtime, "_preflight_srt", preflight)
