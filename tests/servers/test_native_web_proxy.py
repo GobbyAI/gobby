@@ -1772,12 +1772,17 @@ async def test_relay_finalizes_when_reconnect_is_not_possible(
         attachment = await _attach(harness, ws, harness.native_row, request_id=label)
         frame = harness.frame_list[-1]
         opened = len(harness.frame_list)
+        waits = host.upgrade.waits
         if window is not None:
             host.upgrade.open(window)
         await frame.queue.put(None)
+        if window is not None:
+            # The relay took the reconnect path and is holding for the window.
+            await _until(lambda waits=waits: host.upgrade.waits == waits + 1)
         step()
 
         await _until(lambda ws=ws: ws.messages_of_type("terminal_attachment_finalized"))
+        assert host.upgrade.waits == waits + (0 if window is None else 1), label
         finalized = ws.messages_of_type("terminal_attachment_finalized")[-1]
         assert (finalized["reason"], finalized["attachment_id"]) == (
             "proxy_frame_eof",
