@@ -3714,6 +3714,14 @@ Verification planned:
     consumer list says it re-runs.
   - 2.15 commits an exit's record before it reaps the run's roots, and a
     replay keeps it (new 2.15.7).
+- 2026-10-14: Consensus with Plan Adversary gobby#16491 on 712f75279a. Its
+  re-review found NH-F15 to NH-F17 and the 2.15 commit order resolved, and
+  its lifecycle sweeps found nothing further. gobby#15977 moved this stamp
+  from the frozen gobby#16791 to gobby#16491. Security gobby#16011 landed
+  B1 to B3. Routing for derivation, which gobby#15977 accepted: all 30
+  leaves are `code` with `implementation_domain: backend`, 1.1 takes
+  `tdd: false` because its tests pin an existing route, every other leaf
+  takes `tdd: true`, and every leaf is `task_type: feature`.
 
 ## V2: Verification
 `kind: verification`
