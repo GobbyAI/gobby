@@ -1279,7 +1279,7 @@ Targets:
 - `src/gobby/servers/websocket/server.py::WebSocketServer.handle_connection`
 - `tests/servers/conftest.py::authenticate_test_server`
 - `tests/servers/conftest.py::authenticated_http_requests`
-- `tests/servers/test_ws_asgi_endpoint.py::*` — scope-reason: its fake auth services (`_AuthService`, the `SimpleNamespace` services, `DelayedAuthServer.run_db`) answer `authenticate` with an `AuthDecision` in place of a bool, and `_WebSocketServer.handle_connection` takes the decision
+- `tests/servers/test_ws_asgi_endpoint.py::*` — scope-reason: its fake auth services (`_AuthService`, the `SimpleNamespace` services, `DelayedAuthServer.run_db`) answer `authenticate` with an `AuthDecision` in place of a bool, and `_WebSocketServer.handle_connection` takes the decision and the `database` keyword
 - `tests/hub/test_caller_scope.py`
 - `tests/servers/test_caller_scope_binding.py`
 
@@ -1417,20 +1417,23 @@ credential path unchecked, and 1.5.5 tests them together.
   They carry no credential. A webhook handler checks its channel's
   signature and then acts as hub-internal work, the system principal of
   ROADMAP decision 17. The other public paths reach no guarded action.
-- `WebSocketServer.handle_connection(websocket, decision: AuthDecision | None = None)`
-  binds before it runs `_handle_connection` and resets the token in
-  `finally`. The ASGI endpoint passes its decision, bound through
-  `bind_decision` with `require_hub_database(server.services.database)`.
-  A native server connection passes none and binds `websocket.user_id`,
-  which `AuthMixin._authenticate` set from the verified front-door identity,
-  with `self.terminal_services.manager.db` when terminal services are
-  attached and `None` otherwise. Messages handled off the loop
+- `WebSocketServer.handle_connection(websocket, decision: AuthDecision | None = None, *, database: HubDatabase | None = None)`
+  is the only place that binds and resets a WebSocket caller: it binds
+  before it runs `_handle_connection` and resets the token in `finally`.
+  The ASGI endpoint passes its decision and
+  `database=require_hub_database(server.services.database)`, bound through
+  `bind_decision(decision, database)`. A native server connection passes
+  neither and binds `websocket.user_id`, which `AuthMixin._authenticate`
+  set from the verified front-door identity, with
+  `self.terminal_services.manager.db` when terminal services are attached
+  and `None` otherwise, which `require_machine_owned` refuses. Messages handled off the loop
   (`_start_off_loop`) run in tasks created inside the handler, so they
   inherit the binding.
 - `_mount_ws_endpoint`'s `/ws` endpoint calls `server.auth_service.authenticate`
   through `run_db` in place of `is_request_authenticated`. It closes with
-  4401 when the decision is refused, as today, and passes the decision to
-  `handle_connection`. The adapter keeps its `local-web-<hex>` label as the
+  4401 when the decision is refused, as today, and passes the decision and
+  `database=require_hub_database(server.services.database)` to
+  `handle_connection`. It binds nothing itself. The adapter keeps its `local-web-<hex>` label as the
   client's `user_id`; the binding carries the owner, the label does not.
 - `tests/servers/conftest.py`: `authenticate_test_server` and
   `authenticated_http_requests` return `AuthDecision(allowed=True, break_glass=True)`,
@@ -1439,7 +1442,8 @@ credential path unchecked, and 1.5.5 tests them together.
   2.5's `le=1000` changes nothing it uses.
 - `tests/servers/test_ws_asgi_endpoint.py`: its fake auth services answer
   `authenticate` with an `AuthDecision`, allowed or refused as the old bool
-  was, and its fake server's `handle_connection` takes the decision.
+  was, and its fake server's `handle_connection` takes the decision and the
+  `database` keyword.
 - 2.3, 2.4, 2.5, 3.3, 4.3, 4.4, and 4.7 each call `require_machine_owned` where
   the action names its machine and map the refusal to their own error.
 
@@ -1478,7 +1482,7 @@ Verification planned:
 - 1.5.3 - `authenticate` sets `user_id` on legacy and grant-route decisions alike: the front-door identity's user; for a managed bearer, the owner of its claims' machine; for a cookie, the session's user. A managed bearer whose machine has no row, and a lookup that raises, give an allowed decision with no user. A break-glass request gives no user and `break_glass=True`. test: `tests/servers/test_caller_scope_binding.py::test_authenticate_resolves_caller_user`.
 - 1.5.4 - An allowed HTTP request runs its endpoint with its decision's user bound, a request with no resolved owner runs bound with no user, a break-glass request and a public path run unbound, and no binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_resolved_user`.
 - 1.5.5 - Through the real `AuthMiddleware` and `AuthService`, a test route at a path `_AGENT_CAPABILITY_MATRIX` allows (`POST /api/mcp/tools/call`) that calls `require_machine_owned(machine_id)` answers `machine_not_owned` for a cookie request and for a managed-bearer request whose user does not own the named machine, for the hub's own machine and for a remote one. Each credential's owner proceeds on both machines. A break-glass request and an unbound call outside any request proceed. test: `tests/servers/test_caller_scope_binding.py::test_http_ownership_matrix`.
-- 1.5.6 - Each message on a native WebSocket connection runs with the front-door user bound, each message on an ASGI `/ws` connection runs with its decision's user bound (a cookie's session user), and the binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
+- 1.5.6 - Each message on a native WebSocket connection runs with the front-door user bound, each message on an ASGI `/ws` connection runs with its decision's user bound (a cookie's session user), and a message handled off the loop sees the same binding. On an ASGI connection whose decision resolved no owner, a message that calls `require_machine_owned` for the hub's machine or a remote one gets `machine_not_owned`, on the loop and off it, while the cookie owner's connection proceeds for both machines. The binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
 
 ## P2: Machine-correct hub loops and remote callers
 `kind: framing`
