@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.agents.frozen_workspace import frozen_workspace_refusal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.git import run_to_completion
@@ -47,6 +48,10 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
         Returns:
             Dict with clone info or error
         """
+        refusal = frozen_workspace_refusal(ctx.clone_storage.db, "create_clone")
+        if refusal is not None:
+            return refusal
+
         # Expand ~ before any filesystem operations (subprocess.run doesn't expand tildes)
         clone_path = str(Path(clone_path).expanduser())
 
