@@ -182,3 +182,81 @@ pub(crate) async fn settle(
         .await?
         == 1)
 }
+
+const HANDOFF_KEY: &str = "native_input_handoff";
+
+/// A daemon-shutdown input grant kept for the adopting daemon in `process`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct InputHandoff {
+    pub attachment_id: Uuid,
+    pub host_epoch: String,
+    pub host_terminal_id: String,
+}
+
+impl InputHandoff {
+    pub fn of(terminal: &Terminal) -> Option<Self> {
+        serde_json::from_value(terminal.process.as_ref()?.get(HANDOFF_KEY)?.clone()).ok()
+    }
+}
+
+pub async fn record_input_handoff(
+    tx: &Transaction<'_>,
+    terminal: Uuid,
+    machine: Uuid,
+    handoff: &InputHandoff,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET process = COALESCE(process, '{}'::jsonb)
+             || jsonb_build_object('native_input_handoff', $1::text::jsonb), updated_at = now()
+             WHERE id=$2::text::uuid AND machine_id=$3::text::uuid
+             AND backend='native' AND state='live'
+             AND host_epoch=$4 AND locator->>'host_terminal_id'=$5",
+            &[
+                &serde_json::to_string(handoff)?,
+                &terminal.to_string(),
+                &machine.to_string(),
+                &handoff.host_epoch,
+                &handoff.host_terminal_id,
+            ],
+        )
+        .await?
+        == 1)
+}
+
+pub async fn list_input_handoffs(
+    tx: &Transaction<'_>,
+    machine: Uuid,
+) -> Result<Vec<Terminal>, RepositoryError> {
+    // Rows settled since preservation stay listed until their record is retired.
+    tx.query(
+        "SELECT to_jsonb(t)::text AS terminal FROM terminals t
+         WHERE machine_id=$1::text::uuid AND backend='native'
+         AND process ? 'native_input_handoff' ORDER BY created_at,id",
+        &[&machine.to_string()],
+    )
+    .await?
+    .into_iter()
+    .map(|row| {
+        let encoded: String = row.try_get("terminal").map_err(TransactionError::from)?;
+        Ok(serde_json::from_str(&encoded)?)
+    })
+    .collect()
+}
+
+pub async fn clear_input_handoff(
+    tx: &Transaction<'_>,
+    terminal: Uuid,
+    expected: Option<&InputHandoff>,
+) -> Result<bool, RepositoryError> {
+    let expected = expected.map(serde_json::to_string).transpose()?;
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET process = process - 'native_input_handoff', updated_at = now()
+             WHERE id=$1::text::uuid AND backend='native' AND process ? 'native_input_handoff'
+             AND ($2::text IS NULL OR process->'native_input_handoff' = $2::text::jsonb)",
+            &[&terminal.to_string(), &expected],
+        )
+        .await?
+        == 1)
+}
