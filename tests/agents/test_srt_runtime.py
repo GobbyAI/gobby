@@ -559,12 +559,15 @@ async def test_network_capabilities_are_preserved_without_a_provider(tmp_path: P
         ("codex", "TMPDIR", "darwin", None),
         ("codex", "TMPDIR", "linux", None),
         ("grok", "TMPDIR", "darwin", None),
+        ("droid", "TMPDIR", "darwin", None),
+        ("agy", "TMPDIR", "darwin", None),
         ("claude", "CLAUDE_CODE_TMPDIR", "darwin", True),
         ("claude", "CLAUDE_CODE_TMPDIR", "linux", False),
     ],
 )
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow_run_sockets", [False, True])
+@pytest.mark.parametrize("cargo_present", [False, True])
 async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_writable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -573,6 +576,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     platform_name: str,
     allow_run_sockets: bool,
     reviewer_auto_approve: bool | None,
+    cargo_present: bool,
 ) -> None:
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
     monkeypatch.setattr(srt_runtime, "sys", SimpleNamespace(platform=platform_name))
@@ -625,6 +629,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     shim_dir.mkdir()
     provider_shim = shim_dir / provider
     provider_shim.symlink_to(provider_target)
+    if cargo_present:
+        cargo = shim_dir / "cargo"
+        cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        cargo.chmod(0o700)
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     hook_inbox = gobby_home / "hooks" / "inbox"
     hook_inbox.mkdir(parents=True)
@@ -649,6 +657,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         return {"PATH": f"{ps_shim_path}{os.pathsep}{env['PATH']}"}
 
     monkeypatch.setattr(srt_runtime, "ps_shim_path_env", fake_ps_environment)
+    monkeypatch.setattr(srt_runtime, "droid_ps_shim_dir", lambda: None)
     original_which = shutil.which
     provider_lookups = 0
 
@@ -699,6 +708,9 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     expected_parent = gobby_home / "run" / "sandbox" / "rununsafeid"
     assert launch.backend == "srt"
     assert launch.enforced is True
+    assert launch.provider_args == (
+        ["-c", "features.shell_snapshot=false"] if provider == "codex" else []
+    )
     assert launch.provider_executable == str(provider_target.resolve())
     assert launch.runtime_version == SRT_RELEASE.version
     assert policy_path.parent == expected_parent / "assets"
@@ -715,8 +727,13 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = gobby_home / "runtime" / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
-    # This fixture has no cargo binary. Its PATH must still retain the ps shim.
-    assert launch.provider_env["PATH"] == f"{ps_shim_path}{os.pathsep}{shim_dir}"
+    expected_path = f"{ps_shim_path}{os.pathsep}{shim_dir}"
+    if cargo_present:
+        cargo_bin = expected_parent / "assets" / "cargo-bin"
+        expected_path = f"{cargo_bin}{os.pathsep}{expected_path}"
+        assert Path(launch.provider_env["BASH_ENV"]).is_relative_to(expected_parent / "assets")
+        assert Path(launch.provider_env["ZDOTDIR"]).is_relative_to(expected_parent / "assets")
+    assert launch.provider_env["PATH"] == expected_path
     assert mux_dir.is_dir()
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
