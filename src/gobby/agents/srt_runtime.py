@@ -877,6 +877,8 @@ async def prepare_sandbox_launch(
     launch = SandboxLaunch(
         backend="srt",
         enforced=True,
+        # A snapshot can restore a stale PATH after this run's shell startup.
+        provider_args=["-c", "features.shell_snapshot=false"] if provider == "codex" else [],
         runtime_version=SRT_RELEASE.version,
         policy_schema_version=SRT_POLICY_SCHEMA_VERSION,
         policy_hash=policy_hash,

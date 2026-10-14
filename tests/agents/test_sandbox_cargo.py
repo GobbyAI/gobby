@@ -231,6 +231,160 @@ def test_build_target_override_preserves_cargo_target_precedence(launcher: Cargo
     assert cargo_release_dir(reviewed, env=launcher.env) == launcher.target / "release"
 
 
+@pytest.mark.parametrize(
+    ("shell", "flags"),
+    [("bash", "-c"), ("bash", "-lc"), ("zsh", "-c"), ("zsh", "-lc"), ("zsh", "-lic")],
+)
+def test_shell_startup_restores_cargo_launcher(
+    launcher: CargoLauncher, tmp_path: Path, shell: str, flags: str
+) -> None:
+    executable = shutil.which(shell)
+    if executable is None:
+        pytest.skip(f"{shell} is not installed")
+    home = tmp_path / "shell home"
+    home.mkdir()
+    original_bash = home / "bash-env"
+    original_bash.write_text(
+        'export STARTUP_SEEN=bash\nexport PATH="$HOME/../bin:/usr/bin:/bin"\n',
+        encoding="utf-8",
+    )
+    for name in (".zshenv", ".zprofile", ".zshrc", ".zlogin", ".bash_profile"):
+        (home / name).write_text(
+            'export STARTUP_SEEN=zsh\nexport PATH="$HOME/../bin:/usr/bin:/bin"\n',
+            encoding="utf-8",
+        )
+    env = {
+        "HOME": str(home),
+        "PATH": launcher.env["PATH"],
+        "BASH_ENV": str(original_bash),
+        "ZDOTDIR": str(home),
+    }
+    command = [executable, flags, 'command -v cargo; printf "%s\\n" "$STARTUP_SEEN"']
+    before = subprocess.run(
+        command, env=env, text=True, capture_output=True, check=False, timeout=10
+    )
+    assert before.returncode == 0, before.stderr
+    assert before.stdout.splitlines() == [str(home / ".." / "bin" / "cargo"), shell]
+    overlay = sandbox_cargo_environment(
+        assets=launcher.assets,
+        node=launcher.node,
+        workspace=launcher.workspace,
+        target=launcher.target,
+        env=env,
+    )
+    # Model resume with the previous protected overlay still in the environment.
+    assets = tmp_path / "resumed assets"
+    assets.mkdir()
+    resumed = sandbox_cargo_environment(
+        assets=assets,
+        node=launcher.node,
+        workspace=launcher.workspace,
+        target=launcher.target,
+        env={**env, **overlay},
+    )
+    result = subprocess.run(
+        command,
+        env={**env, **resumed},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(assets / "cargo-bin" / "cargo"), shell]
+    assert resumed["GOBBY_CARGO_ORIGINAL_BASH_ENV"] == str(original_bash)
+    assert resumed["GOBBY_CARGO_ORIGINAL_ZDOTDIR"] == str(home)
+    assert all(path.stat().st_mode & 0o222 == 0 for path in (assets / "cargo-shell").iterdir())
+
+
+@pytest.mark.parametrize("flags", ["-lc", "-lic"])
+def test_zsh_startup_can_redirect_later_files(
+    launcher: CargoLauncher, tmp_path: Path, flags: str
+) -> None:
+    zsh = shutil.which("zsh")
+    if zsh is None:
+        pytest.skip("zsh is not installed")
+    home = tmp_path / "home"
+    custom = home / "custom"
+    custom.mkdir(parents=True)
+    (home / ".zshenv").write_text('export ZDOTDIR="$HOME/custom"\n', encoding="utf-8")
+    for name in (".zprofile", ".zshrc", ".zlogin"):
+        (custom / name).write_text(
+            'export PATH="$HOME/../bin:/usr/bin:/bin"\nexport CUSTOM_STARTUP=yes\n',
+            encoding="utf-8",
+        )
+    base_env = {"HOME": str(home), "PATH": launcher.env["PATH"]}
+    shell_env = sandbox_cargo_environment(
+        assets=launcher.assets,
+        node=launcher.node,
+        workspace=launcher.workspace,
+        target=launcher.target,
+        env=base_env,
+    )
+    result = subprocess.run(
+        [zsh, flags, 'command -v cargo; printf "%s\\n" "$CUSTOM_STARTUP"'],
+        env={**base_env, **shell_env},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(launcher.assets / "cargo-bin" / "cargo"), "yes"]
+
+
+@pytest.mark.parametrize("startup_dir", ["home", "custom", "redirected"])
+@pytest.mark.parametrize("flags", ["-c", "-lc", "-lic"])
+def test_zsh_logout_forwards_original_directory(
+    launcher: CargoLauncher, tmp_path: Path, startup_dir: str, flags: str
+) -> None:
+    zsh = shutil.which("zsh")
+    if zsh is None:
+        pytest.skip("zsh is not installed")
+    home = tmp_path / "logout home"
+    home.mkdir()
+    original = home
+    env = {"HOME": str(home), "PATH": launcher.env["PATH"]}
+    if startup_dir != "home":
+        original = home / "custom"
+        original.mkdir()
+        if startup_dir == "custom":
+            env["ZDOTDIR"] = str(original)
+        else:
+            (home / ".zshenv").write_text('export ZDOTDIR="$HOME/custom"\n', encoding="utf-8")
+    (original / ".zlogout").write_text(
+        'printf "logout:%s\\n" "${ZDOTDIR:-$HOME}"\n', encoding="utf-8"
+    )
+    command = [zsh, flags, "exit 0"]
+    before = subprocess.run(
+        command, env=env, text=True, capture_output=True, check=False, timeout=10
+    )
+    assert before.returncode == 0, before.stderr
+    if flags == "-lic":
+        assert before.stdout.splitlines() == [f"logout:{original}"]
+    elif flags == "-c":
+        assert before.stdout == ""
+    env.update(
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=launcher.node,
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=env,
+        )
+    )
+    result = subprocess.run(
+        command,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == before.stdout
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)

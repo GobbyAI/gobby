@@ -1,0 +1,729 @@
+header:
+  plan_id: gmcp-stdio
+  plan_hash: 979af5f1184b34ba07a94d80633cf6c0ba53e36268ff00185e6884d635986156
+  root_task_ref: '23275'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-14T04:12:27Z'
+  task_tree_source: db
+  task_tree_source_hash: 15fa37b6c45b7a52fb0dbf9e78775a05b09b770ecf799532e07ac6c1ceb0aff9
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 62b1bcaa395c5e276304f0035efd7ad89097732d2ab3a3c733e7e0aee1abb98c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::request_headers_match_python_wrapper
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 07493a0b7063a53e2e0ec488e189178c9e64401c514c7b98ed900bc7c882b226
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::unauthorized_rereads_credential_and_retries_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 1f498545cfcab138fec075ddd3ab0effff69f073f22da0b55470ffc172c76b40
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::conflict_and_error_statuses_match_wrapper
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: ccbe8155891d31f9c889c2eb76282e8fe6d9d0b3e15cd2cd117ac5d947a9b492
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::unavailable_and_timeout_results_are_typed
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 501a721c9d9084a9c09625b44c02949331d1905ea4d243295bafe09369a990a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::dialer_survives_daemon_restart
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: cbf79d1ce20c762f8f1bfcddf23fdae78d65b285f4d274f5d778bdca3634a102
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/src/terminal_context.rs::capture_matches_python_wrapper_rules
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: 3a791bfdac29506f1a4bf9bcf62a2387bf827058a94935728542b219db800de0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: tests/mcp_proxy/test_gmcp_contracts.py::test_wrapper_contract_matches_python_constants
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.8
+  plan_node_hash: 6cc9de97c24a866588d4b7fbd5e5beb55dd89dbcda4694de723f9de9613e52ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24350'
+    validation_criteria_snippet: '1.1.1: Requests carry the protocol header `1`, and
+      the target and caller project headers follow the wrapper''s rules. The session
+      header comes from `GOBBY_SESSI...'
+    matched_artifact_ref: crates/gmcp/tests/dialer.rs::managed_envelope_credential_is_reread_per_request
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 57913930fef0da76f9c2703824d26fc70ff68391dbd6f1bfad26c9ae6f80728f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: crates/gmcp/tests/server.rs::initialize_does_no_io
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 05128f5db0355b576264f9bfe2fc62a2eedb052e187d62318fa57624a2631887
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: tests/mcp_proxy/test_gmcp_parity.py::test_fixture_matches_python_wrapper
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 6fd7379c74cf8432987ec70791d060595111c16846b572606268d20f2228e19d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: crates/gmcp/tests/server.rs::tools_forward_like_python_wrapper
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 31add5b8413d9c0c625f5751f0f8f065a1ed6c7846fc727e5a280333a441bd63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: crates/gmcp/tests/server.rs::bridge_ready_follows_wrapper_schedule
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 9cb405747c57638d8a5092aad6a1ff707ffdc7e1dcc2ccfe71a0b565106b3783
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: tests/mcp_proxy/test_gmcp_contracts.py::test_instructions_copy_matches_bundled_prompt
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 659bada26f9104246cd867cbfef7e13e01a0be8c06066b99eed9738c5b028d7b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24351'
+    validation_criteria_snippet: '1.2.1: `initialize` succeeds with the stub daemon
+      closed and its listener never touched, and returns the embedded instructions.
+      test: `crates/gmcp/tests/server...'
+    matched_artifact_ref: crates/gmcp/tests/server.rs::binary_version_and_clean_exit
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: ce6a0f4f32c275ab9caa2d8d2d985ffa0e394aab5bb5a2556a9d28e403ec824f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_cases
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 11d719f33e8179aca4d135f674d0bbc7d467709f76cf2ef4ae9b4b3de0860d45
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::wait_tool_timeout_is_capped_with_metadata
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: e3804f9da030ae6543b0eed6f3d65aa4922b4c7603769af57d07af82845c2be6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::heartbeat_reports_progress_while_waiting
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 088c014ab87baf00e81172aab6eefe52761e8a5516a5c1d562445a99ac4596e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::guard_timeout_returns_background_result
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 4591635c9e5fe20178de78f9a353d29a573a4fc288f6ad727d4c994f42a65566
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::ordinary_and_extended_tools_use_wrapper_routes
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: 87220f0a12d4902bab31c40911aeeed81b304ef6b73d2f60cceb04fc43ea3180
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24352'
+    validation_criteria_snippet: '1.3.1: Every shared canonicalization case gives
+      the same result in Rust and in Python. test: `crates/gmcp/tests/call_tool.rs::canonicalization_matches_shared_c...'
+    matched_artifact_ref: crates/gmcp/tests/call_tool.rs::ordinary_call_completes_during_wait
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 8cd18be6c49c151d895dedbf27632c6a19c135899d3185a5c5de141eefed7111
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: tests/cli/test_install_setup_gmcp.py::test_submodule_install_promotes_and_stamps
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 47ffc31c544d59981b3246d9bfe17205cfcd90dd7b83563e47648369ed1a84bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: tests/cli/test_install_setup.py::test_managed_native_binaries_include_gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 4ceeda6af731647d3884daaf754b2774c9eac1906ebe8eb8e429311279ff4c24
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: tests/cli/test_install_components.py::test_gmcp_component_promotes_client_binary
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: 6d1fd447ba1d0137fad615fc84c0d8c5315fe0fc88b323db6905376cbcdb2b73
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: tests/install/test_bin_freshness.py::test_gmcp_tracks_gmcp_and_gcore
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: e166dd7a7a4f090b149a7612a42ecc6ec2868bc1253a52eda1fb0b80d78eb349
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: gmcp-v
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.6
+  plan_node_hash: b6a195d8f500abaf7753c5f38c87261e2cbf7b866558795729a03a2f98ec7168
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24353'
+    validation_criteria_snippet: '1.4.1: In a checkout, the gmcp installer builds
+      `gobby-mcp`, promotes `gmcp` through a new inode with the lock held, and writes
+      the version stamp and source ha...'
+    matched_artifact_ref: tests/cli/test_install_setup_gmcp.py::test_promotion_records_daemon_start_command
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: 29036d1c36f8586c1eddeb5de14d41b435fd87db7e9069c9a9953797939b2db5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24354'
+    validation_criteria_snippet: '1.5.1: Through `gmcp`, the ambient session follows
+      `/clear`, the schema lease binds to the child identity, and a hookless terminal
+      gets `SESSION_REQUIRED`. tes...'
+    matched_artifact_ref: tests/e2e/test_stateless_ambient_session.py::test_ambient_proxy_follows_clear_and_attributes_schema_lease
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 22fb7c0af375b418085f33026a98837d18847c539abeaad1c7be09b3e57b335a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24354'
+    validation_criteria_snippet: '1.5.1: Through `gmcp`, the ambient session follows
+      `/clear`, the schema lease binds to the child identity, and a hookless terminal
+      gets `SESSION_REQUIRED`. tes...'
+    matched_artifact_ref: tests/e2e/test_stateless_ambient_session.py::test_same_proxy_resolves_existing_session_after_daemon_restart
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: 50b8c73335d62c11506afb452fb21f5894b1c927e364705fa2e411621d13a1aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24354'
+    validation_criteria_snippet: '1.5.1: Through `gmcp`, the ambient session follows
+      `/clear`, the schema lease binds to the child identity, and a hookless terminal
+      gets `SESSION_REQUIRED`. tes...'
+    matched_artifact_ref: tests/servers/test_mcp_execution_context.py::test_run_identity_transport_chain
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: fa7562f193381e65ef667dbfdf0bfe4f5914541cfcbc206f84dc706cf1678335
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24354'
+    validation_criteria_snippet: '1.5.1: Through `gmcp`, the ambient session follows
+      `/clear`, the schema lease binds to the child identity, and a hookless terminal
+      gets `SESSION_REQUIRED`. tes...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_scrubbed_child_env_reaches_daemon_proxy_identity
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: 0cbc72b22d5e9594c838449bf9ac78653d481e7a71815bb318f37c7e6eed388b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24354'
+    validation_criteria_snippet: '1.5.1: Through `gmcp`, the ambient session follows
+      `/clear`, the schema lease binds to the child identity, and a hookless terminal
+      gets `SESSION_REQUIRED`. tes...'
+    matched_artifact_ref: tests/e2e/test_hub_node_pair.py::test_gmcp_on_node_reaches_hub_through_relay
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 29c615521473d574af096aacce404fe133594fad819de026c60bdc6b40b78ba6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: tests/cli/installers/test_cli_installers_mcp_config.py::test_fresh_install_writes_gmcp_entry
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: c781dfcd52f712202827217c3fc61eed45e7e1295ecb7d44b40b02e3aa6d8501
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: tests/cli/installers/test_cli_installers_mcp_config.py::test_repair_rewrites_wrapper_entries_to_gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: afa48bd6ff96a53154c91eb5e2991231f147b365614d3b9dc061bfab8f205d4d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: tests/agents/test_spawn_executor_support.py::test_codex_overrides_launch_gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: 2b985b5e8c6cfaf6f1a573b1c6f7c478b20b7f7eafb72d0aa6de1e72c7984b77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: tests/agents/test_isolation.py::test_isolation_writes_and_accepts_gmcp_entry
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.5
+  plan_node_hash: 5fe402ce2939d66bcf757e64305cfaa5ef4a26b4f4791df7ab40a2681f04acbc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: '`gmcp` starts a stopped local daemon with the start command
+      that `gobby install` records, and otherwise reports `DAEMON_UNAVAILABLE` with
+      `gobby start` guidance'
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.6
+  plan_node_hash: 57e1271efff84e0aae798b607ae1a4dcfb6cd45c1f5e87e21c80a1920255a8f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24355'
+    validation_criteria_snippet: '1.6.1: Fresh JSON and TOML installs write the managed
+      `gmcp` path with no arguments, and Codex keeps `required`, both timeouts, and
+      the approval mode. test: `t...'
+    matched_artifact_ref: tests/agents/test_grok_sandbox_home.py::test_operator_gobby_mcp_server_is_replaced_and_others_kept
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.1
+  plan_node_hash: 9499c532679a08defc78457deffe8c14d1c70967427ed369f8efac13fb5cbcad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/cli/test_cli.py::test_mcp_server_command_is_absent
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.2
+  plan_node_hash: 285102ab7d7d75f927e27140df2de3593d5b98e62e85636bfd4795312b7002aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/mcp_proxy/test_gmcp_contracts.py::test_wrapper_contract_matches_python_constants
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.3
+  plan_node_hash: ce4390fd5d0b099ead9d2ad251851cd784244bc7c2d398d97c7d14767104d5f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.4
+  plan_node_hash: 7255f0d44c2f93bd8089f014a5c26dbd615c523356718f0a8957b7f471672d12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.5
+  plan_node_hash: 1810285aa17c69db1d98fa79bcbc7e9844892acc739c82193caef6b066bf5e1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.6
+  plan_node_hash: 9a4f426fbbc6c53595352e2f87cee1354c22fe10400efc9127647619a8251dd5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: web/src/components/settings/sections/__tests__/McpToolsSection.test.tsx::omitsRetiredPerToolTimeoutsEditor
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.7
+  plan_node_hash: 6fca8d1ada2863098ab57d2ce9c67d0d420559784f828318d78668e8ae596f36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/servers/routes/mcp_endpoints/test_bridge.py::test_router_registers_bridge_routes
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.8
+  plan_node_hash: 156511e4848594a58d6ab653072ad9e50ca92c55175d1fe053c6e8dcfcb75741
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.9
+  plan_node_hash: c02bce960c0f54450c69aadf8016fc1974dae58a866ea2ea4ab64bd1ed030e46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24356'
+    validation_criteria_snippet: '1.7.1: No module under `src/` or `tests/` imports
+      the stdio modules or `daemon_control`, and the eight files are gone. test: `tests/cli/test_cli.py::test_mcp_s...'
+    matched_artifact_ref: tests/skills/test_reference_library.py::test_reference_contract_3_2_1
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.1
+  plan_node_hash: 3c1ec1c1d07a6e442b7e82bad35e7a952045a73713350b600b921b02334125d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24357'
+    validation_criteria_snippet: '1.8.1: An isolated workspace whose `.mcp.json` holds
+      the `gmcp` entry gets no main-repo read root, and `mcp_config_read_exceptions`
+      no longer exists. test: `te...'
+    matched_artifact_ref: tests/agents/test_sandbox.py::test_isolated_gmcp_entry_adds_no_project_read_root
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.2
+  plan_node_hash: 94d48636e97a83eb0bfe35e549c4e2a3996d056ea6e6ccc51ef085cfff748613
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24357'
+    validation_criteria_snippet: '1.8.1: An isolated workspace whose `.mcp.json` holds
+      the `gmcp` entry gets no main-repo read root, and `mcp_config_read_exceptions`
+      no longer exists. test: `te...'
+    matched_artifact_ref: tests/agents/test_srt_runtime.py::test_render_settings_uses_srt_credential_schema
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.3
+  plan_node_hash: af208f2b806ab6fb290c6129f2abb1ec00991fb0687ff20ef975e617b1329426
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24357'
+    validation_criteria_snippet: '1.8.1: An isolated workspace whose `.mcp.json` holds
+      the `gmcp` entry gets no main-repo read root, and `mcp_config_read_exceptions`
+      no longer exists. test: `te...'
+    matched_artifact_ref: tests/agents/test_sandbox.py::test_package_installs_use_explicit_per_run_cache_paths
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.4
+  plan_node_hash: 0c779fe350482b5e7e635f3e842bc794eda1525fb080b6bb65c5ed6bcfb6a395
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24357'
+    validation_criteria_snippet: '1.8.1: An isolated workspace whose `.mcp.json` holds
+      the `gmcp` entry gets no main-repo read root, and `mcp_config_read_exceptions`
+      no longer exists. test: `te...'
+    matched_artifact_ref: gmcp
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.1
+  plan_node_hash: 4a5a8996d5a6bf5cbb3e3b08cb43fff06b4b7a18971403757c88f8b20056e20b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24358'
+    validation_criteria_snippet: '1.9.1: With a local dial target that refuses connections,
+      no `GOBBY_AGENT_RUN_ID`, and a record in `GOBBY_HOME`, `gmcp` runs the recorded
+      command once at launc...'
+    matched_artifact_ref: crates/gmcp/tests/daemon_start.rs::recorded_command_starts_unreachable_local_daemon
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.2
+  plan_node_hash: 433c6ae3932fa95fbe2c067a29e25706238a95771f0d3a58a0656f576a96d38f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24358'
+    validation_criteria_snippet: '1.9.1: With a local dial target that refuses connections,
+      no `GOBBY_AGENT_RUN_ID`, and a record in `GOBBY_HOME`, `gmcp` runs the recorded
+      command once at launc...'
+    matched_artifact_ref: crates/gmcp/tests/daemon_start.rs::no_start_without_cause
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.3
+  plan_node_hash: 98e4e89205f26743ca2db38df8fca73e12dc6cade3335f6805f69bbd9b483742
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24358'
+    validation_criteria_snippet: '1.9.1: With a local dial target that refuses connections,
+      no `GOBBY_AGENT_RUN_ID`, and a record in `GOBBY_HOME`, `gmcp` runs the recorded
+      command once at launc...'
+    matched_artifact_ref: crates/gmcp/src/daemon_start.rs::failed_start_logs_tail_and_timeout_terminates
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.4
+  plan_node_hash: 41a272d1c2ccdade004fb50408ea74fdede7ac158d79b9199c5011a7718e3d14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24358'
+    validation_criteria_snippet: '1.9.1: With a local dial target that refuses connections,
+      no `GOBBY_AGENT_RUN_ID`, and a record in `GOBBY_HOME`, `gmcp` runs the recorded
+      command once at launc...'
+    matched_artifact_ref: crates/gmcp/tests/daemon_start.rs::stdin_close_leaves_start_running
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.5
+  plan_node_hash: 0bcf6469c49beeee8ef4aa3a647d4f44b856c1a3041d24c42cb62c46ee6af48a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24358'
+    validation_criteria_snippet: '1.9.1: With a local dial target that refuses connections,
+      no `GOBBY_AGENT_RUN_ID`, and a record in `GOBBY_HOME`, `gmcp` runs the recorded
+      command once at launc...'
+    matched_artifact_ref: tests/e2e/test_daemon_lifecycle.py::TestBridgeAutoStart::test_gmcp_starts_a_stopped_daemon
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.1
+  plan_node_hash: 128a37bba5767a4660954cb467fa5a8a45bd4b22757ae29d1f0a4897e86b8074
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24359'
+    validation_criteria_snippet: '1.10.1: `is_published("gmcp")` is true, and `gterm`
+      and `gclient` stay unpublished. test: `tests/install/test_version_pins.py::test_published_state_is_explicit...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_published_state_is_explicit_for_managed_binaries
+  deferral_target: null
+  detail: ''
+- section_id: '1.10'
+  item_id: 1.10.2
+  plan_node_hash: d3fa41d6feac3122f4008773d3992b05a9e3d835e16dad4be2333900d231167f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24359'
+    validation_criteria_snippet: '1.10.1: `is_published("gmcp")` is true, and `gterm`
+      and `gclient` stay unpublished. test: `tests/install/test_version_pins.py::test_published_state_is_explicit...'
+    matched_artifact_ref: tests/install/test_distribution.py::test_homebrew_helper_detection_fails_with_brew_guidance_when_missing
+  deferral_target: null
+  detail: ''
+- section_id: D2
+  item_id: D2.1
+  plan_node_hash: 0184a39128cf3ad2b07b249a41af9cbe4b2162b7a9de55a15d8162c065d1b1cc
+  status: deferred
+  leaves: []
+  deferral_target: '#21570'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.2
+  plan_node_hash: 669cfee5a301927a0c8f184713fa751d941068ea275e7fdd3e068e2f15e47663
+  status: deferred
+  leaves: []
+  deferral_target: '#21570'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.1
+  plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
+  status: deferred
+  leaves: []
+  deferral_target: '#24360'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.2
+  plan_node_hash: df7ad1bc7f16119677686a033e33988d0e83b4680f777bc798b818b30a764650
+  status: deferred
+  leaves: []
+  deferral_target: '#24360'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.3
+  plan_node_hash: 3101cedb4425c8e2ba149f62621bb1dd975d4d69a654445a49540008db88cf81
+  status: deferred
+  leaves: []
+  deferral_target: '#24360'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.4
+  plan_node_hash: 4f0cc0dd3f80e624cea3017193f192d2b7aef1cc9ebed4377b25cbef40207317
+  status: deferred
+  leaves: []
+  deferral_target: '#24360'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D3.5
+  plan_node_hash: 5121b4112e7eaaafbdd714bb6faac85344d7abb76ce43e13408d4cc7ab15e569
+  status: deferred
+  leaves: []
+  deferral_target: '#24360'
+  detail: deferral is valid

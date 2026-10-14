@@ -19,7 +19,16 @@ before building buttons; do not present a button as approval already granted.
 Proactive delivery depends on adapter support; Teams requires a previously
 received conversation reference. Unsupported proactive delivery fails.
 
+For an authorized operator update, fetch
+`gobby-communications:send_operator_message` and supply `channel` and Markdown
+`content`. The caller's installed agent definition must explicitly grant
+`operator_messaging`. The tool targets the enrolled operator's Telegram DM,
+accepts no destination, and preserves the conversation's attached session.
+Check `success`, `message_id`, and `error` before retrying.
+
 Operator `gobby comms send CHANNEL_NAME MESSAGE` and authenticated HTTP
 `POST /api/comms/send` provide delivery interfaces. HTTP accepts adapter
 metadata, while `GET /api/comms/messages` supports offset pagination.
 See [MCP tools and HTTP](../../../../../../../../docs/guides/comm-integrations.md#manage-channels).
+
+_Last verified: 2026-10-13_

@@ -83,6 +83,39 @@ def test_adversary_stamps_only_after_consensus() -> None:
     )
 
 
+def test_adversary_rejects_open_questions_before_stamping() -> None:
+    body = _load("plan-adversary")
+    prompts = body.prompts
+    workflow = body.step_workflow
+    assert prompts is not None
+    assert workflow is not None
+    steps = {step.name: step for step in workflow.steps}
+    for text in (
+        prompts.persona,
+        prompts.agent,
+        steps["review"].status_message,
+        steps["stamp"].status_message,
+    ):
+        instructions = flat(text or "")
+        assert "Reject any plan with unresolved questions" in instructions
+        assert "do not stamp, approve, or expand it" in instructions
+
+    instructions = flat(prompts.agent or "")
+    for unresolved in (
+        "Open Questions section",
+        "TBD",
+        "to-decide",
+        "unchosen either/or",
+        "choice left to the implementer",
+    ):
+        assert unresolved in instructions
+    assert "Bounce the plan to the writer" in instructions
+    assert "each open question to the operator" in instructions
+    assert "options and a recommendation" in instructions
+    assert "resolves every question in the plan text" in instructions
+    assert "re-review the corrected plan before consensus or stamping" in instructions
+
+
 def test_adversary_blocks_all_evidence_round_tools() -> None:
     tools = {
         "prepare_plan_review_round",

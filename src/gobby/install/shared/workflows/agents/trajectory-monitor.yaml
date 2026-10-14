@@ -58,6 +58,8 @@ workflows:
       - "tag:default"
       - "tag:worker-safety"
       - "name:no-send-keys"
+    exclude:
+      - "name:no-comms-attach"
 step_workflow:
   variables:
     task_claimed: false

@@ -156,11 +156,11 @@ def test_merge_worker_allows_read_only_preflight_tools_without_prompting_them() 
     assert "gobby-worktrees:get_worktree_by_task" in tools
 
 
-def test_merge_worker_default_provider_is_reliable_for_unattended_merges() -> None:
+def test_merge_worker_inherits_launch_provider_and_model() -> None:
     agent = _agent("merge-worker")
 
-    assert agent["provider"] == "claude"
-    assert agent["model"] == "sonnet"
+    assert agent["provider"] == "inherit"
+    assert "model" not in agent
 
 
 def test_merge_worker_retry_cap_tracks_conflict_ids_not_total_calls() -> None:

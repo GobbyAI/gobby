@@ -50,6 +50,8 @@ def test_literal_stdin_shell_mutation(tmp_path: Path, command: str) -> None:
     "command",
     [
         "cat file | bash",
+        "cat file |& bash",
+        "cat file |& sh",
         'echo "$BODY" | sh',
         'bash <<< "$BODY"',
         "bash < script.sh",

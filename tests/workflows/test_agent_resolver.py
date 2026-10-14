@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from gobby.agents.sync import sync_bundled_agents
 from gobby.dispatch.skill_composition import inspect_skill_composition
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+    resolve_spawn_provider,
+    spawning_session_provider,
+)
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -18,10 +25,69 @@ from gobby.workflows.agent_resolver import resolve_agent, resolve_agent_with_row
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.pipeline_models import PipelineDefinition
+from gobby.workflows.templates import TemplateEngine
 
 pytest_plugins = ["tests.storage.definitions.conftest"]
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("parent_source,expected", [("codex", "codex"), ("pipeline", "claude")])
+def test_team_lane_developer_inherits_live_provider_or_resolver_fallback(
+    definition_db: PostgresHubDatabase, parent_source: str, expected: str
+) -> None:
+    """Regression for team-lane d6a9f756 with developer_provider unset."""
+    workflows = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
+    definition = PipelineDefinition.model_validate(
+        yaml.safe_load((workflows / "pipelines/team-lane.yaml").read_text())
+    )
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(lane="example", lane_epic="", first_job="")
+    assert inputs["developer_provider"] is None
+    step = next(step for step in definition.steps if step.id == "developer")
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        step.mcp.arguments,
+        {
+            "inputs": inputs,
+            "steps": {
+                "guard": {
+                    "output": {
+                        "worktree": "test-worktree",
+                        "report_to": "test-manager",
+                        "lane_pane": "test-pane",
+                        "lane_columns": 2,
+                        "lane_rows": 2,
+                    }
+                }
+            },
+            "invocation_id": "d6a9f756",
+        },
+        drop_none=True,
+    )
+    assert "provider" not in arguments
+    sessions = {
+        "d6a9f756": SimpleNamespace(source="pipeline"),
+        "launcher": SimpleNamespace(source=parent_source),
+    }
+    inherited = spawning_session_provider(
+        SimpleNamespace(get=sessions.__getitem__),
+        caller_session_id="d6a9f756",
+        parent_session_id="launcher",
+    )
+    body = yaml.safe_load((workflows / "agents/developer.yaml").read_text())
+    _create_agent(definition_db, "developer", body=body)
+    agent = resolve_agent(arguments["agent"], definition_db, cli_source=inherited)
+    assert agent is not None
+    provider = resolve_spawn_provider(
+        explicit_provider=arguments.get("provider"),
+        agent_provider=agent.provider,
+        default_provider=inherited,
+    )
+    assert provider == expected
+
 
 _STEP_WORKFLOW: dict[str, Any] = {
     "variables": {"required_skills": ["tdd"], "goal": "ship"},

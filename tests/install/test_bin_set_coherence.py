@@ -10,6 +10,7 @@ import pytest
 from gobby.cli import install_setup
 from gobby.cli.install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from gobby.install import bin_freshness_promotion
+from gobby.install.bin_release_identity import BinaryReleaseIdentity
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
     promote_workspace_binary_set,
@@ -33,7 +34,12 @@ def _identity(version: int) -> dict[str, int | str]:
 
 def _write_stub(path: Path, identity: dict[str, int | str]) -> None:
     payload = json.dumps(identity, separators=(",", ":"), sort_keys=True)
-    path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{payload}'\n", encoding="utf-8")
+    path.write_text(
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then\n'
+        f"printf '%s\\n' '{path.name} {identity['latest_version']}.0.0'\nelse\n"
+        f"printf '%s\\n' '{payload}'\nfi\n",
+        encoding="utf-8",
+    )
     path.chmod(0o755)
 
 
@@ -82,7 +88,7 @@ def test_complete_set_coherent_members_promote_and_rewrite_pin(tmp_path: Path) -
     _write_pin(bin_dir, _identity(1))
     candidates = _candidate_set(source_dir, _identity(2))
     for name in SET_MEMBERS:
-        (bin_dir / name).write_text(f"old-{name}", encoding="utf-8")
+        _write_stub(bin_dir / name, _identity(1))
 
     promote_workspace_binary_set(candidates, bin_dir=bin_dir)
 
@@ -101,7 +107,7 @@ def test_partial_agreeing_member_promotes(tmp_path: Path) -> None:
     candidate = source_dir / "gcode"
     _write_stub(candidate, identity)
     installed = bin_dir / "gcode"
-    installed.write_text("old-gcode", encoding="utf-8")
+    _write_stub(installed, identity)
 
     promote_workspace_binary_set({"gcode": candidate}, bin_dir=bin_dir)
 
@@ -170,7 +176,8 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
     _write_pin(bin_dir, installed_identity)
     candidates = _candidate_set(source_dir, _identity(2))
     for name in SET_MEMBERS:
-        (bin_dir / name).write_text(f"old-{name}", encoding="utf-8")
+        _write_stub(bin_dir / name, installed_identity)
+    old_ghook = (bin_dir / "ghook").read_bytes()
     real_promote = bin_freshness_promotion.stage_and_promote_binary_file
 
     def fail_on_ghook(
@@ -178,10 +185,18 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
         *,
         destination: Path,
         prepare_staged: Callable[[Path], None] | None = None,
+        workspace_root: Path | None = None,
+        identity: BinaryReleaseIdentity | None = None,
     ) -> None:
         if destination.name == "ghook":
             raise OSError("synthetic promote failure")
-        real_promote(source, destination=destination, prepare_staged=prepare_staged)
+        real_promote(
+            source,
+            destination=destination,
+            prepare_staged=prepare_staged,
+            workspace_root=workspace_root,
+            identity=identity,
+        )
 
     monkeypatch.setattr(bin_freshness_promotion, "stage_and_promote_binary_file", fail_on_ghook)
 
@@ -194,7 +209,7 @@ def test_mid_set_failure_reports_promoted_and_unpromoted_members(
     assert "restored prior install" not in message
     assert (bin_dir / "gcode").read_bytes() == candidates["gcode"].read_bytes()
     assert (bin_dir / "gdaemon").read_bytes() == candidates["gdaemon"].read_bytes()
-    assert (bin_dir / "ghook").read_text(encoding="utf-8") == "old-ghook"
+    assert (bin_dir / "ghook").read_bytes() == old_ghook
     assert json.loads((bin_dir / PIN_NAME).read_text(encoding="utf-8")) == installed_identity
 
 
