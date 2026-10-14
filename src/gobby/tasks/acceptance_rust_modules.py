@@ -15,9 +15,26 @@ _MODULE_TOKEN_RE = re.compile(
     r'|(?:#\s*\[\s*path\s*=\s*"(?P<path>[^"\n]+)"\s*\]'
     r"\s*(?:#\s*\[[^\]]*\]\s*)*)?(?:pub(?:\([^)]*\))?\s+)?"
     r"\bmod\s+(?P<module>[A-Za-z_]\w*)\s*(?P<delimiter>[{;])"
-    r"|(?P<brace>[{}])",
+    r"|\bfn\s+(?P<function>[A-Za-z_]\w*)|(?P<brace>[{}])",
     re.DOTALL,
 )
+
+
+def rust_inline_test_module(source: str, symbol: str) -> tuple[str, ...]:
+    """Find the enclosing inline modules of the uniquely resolved test function."""
+    name = symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+    stack: list[str | None] = []
+    for match in _MODULE_TOKEN_RE.finditer(source):
+        if match.group("function") == name:
+            return tuple(part for part in stack if part is not None)
+        if match.group("module") is not None and match.group("delimiter") == "{":
+            stack.append(match.group("module"))
+        elif match.group("brace") == "{":
+            stack.append(None)
+        elif match.group("brace") == "}" and stack:
+            stack.pop()
+    return ()
+
 
 type RustModuleDeclarations = dict[str, set[tuple[str, tuple[str, ...]]]]
 type RustModuleCache = dict[tuple[str, str], RustModuleDeclarations]
@@ -124,3 +141,39 @@ async def resolve_rust_module(
         return (*owner_module, *suffix)
 
     return module_for(path, frozenset())
+
+
+def rust_evidence_names_test(
+    evidence: str, path: str, symbol: str, rust_module: tuple[str, ...] | None
+) -> bool:
+    """Return whether one evidence line names a Rust test under its source module."""
+    if PurePosixPath(path).suffix != ".rs":
+        return False
+
+    path_parts = rust_module if rust_module is not None else rust_source_module(path)
+    source_parts = PurePosixPath(path).parts
+    source_parts = source_parts[2:] if source_parts[:1] == ("crates",) else source_parts
+    is_integration_test = bool(source_parts and source_parts[0] == "tests")
+    if not path_parts:
+        return False
+
+    module_prefix = "::".join(re.escape(part) for part in path_parts)
+    symbol = re.escape(symbol)
+    module_test = re.compile(
+        rf"(?<![\w:]){module_prefix}::{symbol}\b"
+        if is_integration_test and rust_module is not None
+        else rf"(?<![\w:]){module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b"
+    )
+    integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(path).stem)}\b")
+    symbol_word = re.compile(rf"\b{symbol}\b")
+
+    return any(
+        module_test.search(line)
+        or (
+            is_integration_test
+            and len(source_parts) == 2
+            and integration_stem.search(line)
+            and symbol_word.search(line)
+        )
+        for line in evidence.splitlines()
+    )

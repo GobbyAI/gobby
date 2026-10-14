@@ -14,7 +14,8 @@ from urllib.parse import urlparse
 from gobby.tasks.acceptance_rust_modules import (
     RustModuleCache,
     resolve_rust_module,
-    rust_source_module,
+    rust_evidence_names_test,
+    rust_inline_test_module,
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 
@@ -254,6 +255,7 @@ async def resolve_acceptance_tests_async(
     """Resolve every named acceptance test from one authoritative close candidate."""
     tests: list[AcceptanceTest] = []
     rust_module_cache: RustModuleCache = {}
+    source_cache: dict[str, str] = {}
     findings = list(malformed_test_reference_findings(criteria))
     candidate = _close_candidate(commit_shas, candidate_commit_sha)
     for reference in extract_artifact_references(criteria, "test"):
@@ -272,12 +274,16 @@ async def resolve_acceptance_tests_async(
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
-            body, helpers = await _resolve_test_body(path, symbol, repo_path, candidate)
+            body, helpers = await _resolve_test_body(
+                path, symbol, repo_path, candidate, source_cache=source_cache
+            )
             rust_module = (
                 await resolve_rust_module(path, candidate, repo_path, cache=rust_module_cache)
                 if _is_rust(path)
                 else None
             )
+            if rust_module is not None:
+                rust_module += rust_inline_test_module(source_cache.get(path, ""), symbol)
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
@@ -359,36 +365,7 @@ def validation_run_covers_test(
 
 def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
     """Return whether one evidence line names a Rust test under its source module."""
-    if Path(test.path).suffix != ".rs":
-        return False
-
-    path_parts = test.rust_module if test.rust_module is not None else rust_source_module(test.path)
-    source_parts = PurePosixPath(test.path).parts
-    source_parts = source_parts[2:] if source_parts[:1] == ("crates",) else source_parts
-    is_integration_test = bool(source_parts and source_parts[0] == "tests")
-    if not path_parts:
-        return False
-
-    module_prefix = "::".join(re.escape(part) for part in path_parts)
-    symbol = re.escape(test.symbol)
-    module_test = re.compile(
-        rf"(?<![\w:]){module_prefix}::{symbol}\b"
-        if is_integration_test and test.rust_module is not None
-        else rf"\b{module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b"
-    )
-    integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(test.path).stem)}\b")
-    symbol_word = re.compile(rf"\b{symbol}\b")
-
-    return any(
-        module_test.search(line)
-        or (
-            is_integration_test
-            and len(source_parts) == 2
-            and integration_stem.search(line)
-            and symbol_word.search(line)
-        )
-        for line in evidence.splitlines()
-    )
+    return rust_evidence_names_test(evidence, test.path, test.symbol, test.rust_module)
 
 
 def _line_contains_word(value: str, word: str) -> bool:
@@ -489,9 +466,18 @@ def parse_test_reference(reference: str) -> tuple[str, str] | None:
 
 
 async def _resolve_test_body(
-    path: str, symbol: str, repo_path: str, commit_sha: str
+    path: str,
+    symbol: str,
+    repo_path: str,
+    commit_sha: str,
+    *,
+    source_cache: dict[str, str] | None = None,
 ) -> tuple[str, tuple[str, ...]]:
-    source = await _read_test_file_from_commit(path, commit_sha, repo_path)
+    source = source_cache.get(path) if source_cache is not None else None
+    if source is None:
+        source = await _read_test_file_from_commit(path, commit_sha, repo_path)
+        if source_cache is not None:
+            source_cache[path] = source
     if Path(path).suffix.casefold() == ".py":
         return _extract_python_test_body(source, symbol), ()
     body = _extract_braced_test_body(source, symbol, path)
