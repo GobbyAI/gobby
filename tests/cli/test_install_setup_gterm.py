@@ -70,6 +70,10 @@ def _build_gterm_workspace(
 
     with (
         patch("gobby.install.bin_release_identity.probe_native_bin_version", return_value="1.0.0"),
+        patch(
+            "gobby.install.bin_release_identity.workspace_source_identity",
+            return_value="test-source",
+        ),
         patch("gobby.cli.install_setup.shutil.which", side_effect=which),
         patch(
             "gobby.cli.install_setup.subprocess.run",
@@ -209,6 +213,10 @@ class TestGclientInstaller:
         with (
             patch(
                 "gobby.install.bin_release_identity.probe_native_bin_version", return_value="1.0.0"
+            ),
+            patch(
+                "gobby.install.bin_release_identity.workspace_source_identity",
+                return_value="test-source",
             ),
             patch("gobby.cli.install_setup.shutil.which", side_effect=_which_cargo_only),
             patch(
