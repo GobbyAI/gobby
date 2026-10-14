@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -117,15 +119,27 @@ class TestInstallGhookFromWorkspace:
         (workspace / "crates" / "ghook" / "Cargo.toml").touch()
         source = workspace / "target" / "release" / _GHOOK_BIN_NAME
         source.parent.mkdir(parents=True)
-        source.write_bytes(b"new-binary")
+        payload = f"#!/bin/sh\necho 'ghook {MANAGED_BIN_VERSION_PINS['ghook']}'\n".encode()
+        source.write_bytes(payload)
+        source.chmod(0o755)
         destination_dir = tmp_path / "bin"
         lock = MagicMock()
+        run = MagicMock(return_value=subprocess.CompletedProcess([], 0))
 
         with (
-            patch("gobby.cli.install_setup.shutil.which", return_value="/usr/bin/cargo"),
             patch(
-                "gobby.cli.install_setup.subprocess.run", return_value=MagicMock(returncode=0)
-            ) as run,
+                "gobby.cli.install_setup.shutil",
+                SimpleNamespace(which=MagicMock(return_value="/usr/bin/cargo")),
+            ),
+            patch("gobby.install.bin_set_coherence._codesign_workspace_binary"),
+            patch(
+                "gobby.cli.install_setup.subprocess",
+                SimpleNamespace(run=run, TimeoutExpired=subprocess.TimeoutExpired),
+            ),
+            patch(
+                "gobby.install.bin_release_identity.workspace_source_identity",
+                return_value="test-source",
+            ),
             patch("gobby.cli.install_setup.click"),
             patch(
                 "gobby.cli.install_setup_ghook.__file__",
@@ -150,7 +164,7 @@ class TestInstallGhookFromWorkspace:
             result = _install_ghook_from_workspace(destination_dir)
 
         assert result is True
-        assert (destination_dir / _GHOOK_BIN_NAME).read_bytes() == b"new-binary"
+        assert (destination_dir / _GHOOK_BIN_NAME).read_bytes() == payload
         build = run.call_args_list[0].args[0]
         assert build[:5] == ["cargo", "build", "--release", "-p", "gobby-hooks"]
         assert build[-1] == str(workspace / "Cargo.toml")
