@@ -958,7 +958,7 @@ class TestExecuteSpawn:
         mock_resolve.assert_called_once()
         assert mock_resolve.call_args.args[0] == "qa-reviewer"
         delivered_prompt = mock_codex_prompt_delivery.call_args.args[2]
-        agent_body.prompt_for.assert_called_once_with("agent")
+        agent_body.prompt_for.assert_called_once_with("agent", variables=None)
         assert delivered_prompt.startswith("## Agent\nYou are the QA reviewer.")
         assert delivered_prompt.endswith("Review the plan")
         mock_sv_mgr.return_value.merge_variables.assert_called_once_with(
