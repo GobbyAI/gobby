@@ -3748,6 +3748,11 @@ Verification planned:
   codex's overrides and before the resume id, and its launch corpus
   carries them. gobby#15977 adds #22407 to the expansion edge notes for
   the carried-over Droid TODO in 2.5's `ps_shim.rs`.
+- 2026-10-14: Consensus with Plan Adversary gobby#16491 on 793b9d1d53. Its
+  review of the NH-O1 revision checked 2.5.8 and the 2.6 corpus against
+  `srt_runtime.py`, `test_srt_runtime.py` and `command_builder.py` and
+  found nothing further. Routing for derivation is unchanged from the
+  consensus on 712f75279a.
 
 ## V2: Verification
 `kind: verification`
