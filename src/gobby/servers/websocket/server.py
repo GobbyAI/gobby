@@ -248,6 +248,7 @@ class WebSocketServer(
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
         self._workspace_attach_reads: dict[WorkspaceAttachKey, asyncio.Task[WorkspaceSnapshot]] = {}
+        self._workspace_attach_waiters: dict[WorkspaceAttachKey, set[Any]] = {}
         self.agent_pane_reserver: AgentPaneReserver | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:

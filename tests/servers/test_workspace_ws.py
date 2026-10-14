@@ -7,6 +7,7 @@ import base64
 import inspect
 import itertools
 import json
+import threading
 import tracemalloc
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -24,7 +25,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager, Machine
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
-from gobby.storage.workspaces import Workspace, WorkspaceManager, WorkspaceNotFoundError
+from gobby.storage.workspaces import (
+    LayoutChange,
+    Workspace,
+    WorkspaceManager,
+    WorkspaceNotFoundError,
+)
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
 from gobby.terminals.pane_io import SUBMIT_UNVERIFIED_ERROR_CODE
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
@@ -900,3 +906,72 @@ async def test_shutdown_cancels_shared_attach_reads(stack: _Stack) -> None:
     assert stopped.is_set()
     assert stack.server._workspace_attach_reads == {}
     assert client.sent_messages == []
+
+
+@pytest.mark.parametrize("client_count", [1, 2])
+async def test_attaching_clients_receive_mutation_queued_on_snapshot_fence(
+    stack: _Stack, client_count: int
+) -> None:
+    ops = stack.server._workspace_ops()
+    home = await ops.workspace_create("operator", "before-attach")
+    clients = [_client(stack, set()) for _ in range(client_count)]
+    loop = asyncio.get_running_loop()
+    reading = asyncio.Event()
+    queued = asyncio.Event()
+    release = threading.Event()
+    snapshot_storage = ops._snapshot_storage
+    emit = ops._emit
+    reads: list[str] = []
+
+    def read(
+        reference: str,
+        node: str | None,
+        timing: dict[str, float],
+        *,
+        sweep_dead_panes: bool = True,
+    ) -> tuple[WorkspaceSnapshot, LayoutChange]:
+        result = snapshot_storage(reference, node, timing, sweep_dead_panes=sweep_dead_panes)
+        reads.append(reference)
+        loop.call_soon_threadsafe(reading.set)
+        if not release.wait(timeout=5):
+            raise TimeoutError("Snapshot storage was never released")
+        return result
+
+    async def publish(*args: Any, **kwargs: Any) -> int | None:
+        if args[0] == "workspace.renamed":
+            queued.set()
+        return await emit(*args, **kwargs)
+
+    with (
+        patch.object(ops, "_snapshot_storage", side_effect=read),
+        patch.object(ops, "_emit", side_effect=publish),
+    ):
+        pending: list[asyncio.Task[Any]] = [
+            asyncio.create_task(
+                stack.server._handle_workspace_attach(client, {"workspace": home.id})
+            )
+            for client in clients
+        ]
+        try:
+            await asyncio.wait_for(reading.wait(), timeout=1)
+            assert ops._publish_fence.locked()
+            pending.append(
+                asyncio.create_task(ops.workspace_rename("operator", home.id, "after-attach"))
+            )
+            await asyncio.wait_for(queued.wait(), timeout=1)
+            assert reads == [home.id]
+            assert all(not task.done() for task in pending)
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*pending), timeout=3)
+        finally:
+            release.set()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    for client in clients:
+        frames = [json.loads(message) for message in client.sent_messages]
+        assert [frame["type"] for frame in frames] == ["workspace_snapshot", "workspace_event"]
+        snapshot, event = frames
+        assert snapshot["workspace"]["name"] == "before-attach"
+        assert event["kind"] == "workspace.renamed"
+        assert event["workspace"]["name"] == "after-attach"
+        assert event["seq"] > snapshot["snapshot"]["seq"]

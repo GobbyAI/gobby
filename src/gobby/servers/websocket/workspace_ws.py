@@ -117,6 +117,7 @@ class WorkspaceWsMixin:
 
     workspace_ops: WorkspaceOps | None
     _workspace_attach_reads: dict[WorkspaceAttachKey, asyncio.Task[WorkspaceSnapshot]]
+    _workspace_attach_waiters: dict[WorkspaceAttachKey, set[Any]]
     shutdown_in_progress: Callable[[], bool]
 
     if TYPE_CHECKING:
@@ -149,7 +150,7 @@ class WorkspaceWsMixin:
 
         try:
             self._ensure_workspace_requests_open()
-            snapshot = await self._read_shared_attach(data)
+            snapshot = await self._read_shared_attach(websocket, data)
         except LifecyclePublicationError:
             if not self.shutdown_in_progress():
                 raise
@@ -225,7 +226,7 @@ class WorkspaceWsMixin:
     def _shutdown_error() -> WorkspaceOpError:
         return WorkspaceOpError("shutdown_in_progress", "Daemon is shutting down")
 
-    async def _read_shared_attach(self, data: dict[str, Any]) -> WorkspaceSnapshot:
+    async def _read_shared_attach(self, websocket: Any, data: dict[str, Any]) -> WorkspaceSnapshot:
         arguments = _arguments("workspace_snapshot", data, _ENVELOPE)
         # Sharing is bounded to one in-flight read and one lifecycle watermark.
         # A published mutation makes subsequent attaches read fresh rows.
@@ -238,8 +239,10 @@ class WorkspaceWsMixin:
         )
         task = self._workspace_attach_reads.get(key)
         if task is None or task.done():
+            waiters: set[Any] = set()
+            self._workspace_attach_waiters[key] = waiters
             task = asyncio.create_task(
-                self._read_attach_snapshot(dict(data)),
+                self._read_attach_snapshot(dict(data), waiters),
                 name="ws-workspace-attach",
             )
             self._workspace_attach_reads[key] = task
@@ -247,15 +250,29 @@ class WorkspaceWsMixin:
             def forget(done: asyncio.Task[WorkspaceSnapshot]) -> None:
                 if self._workspace_attach_reads.get(key) is done:
                     self._workspace_attach_reads.pop(key, None)
+                    self._workspace_attach_waiters.pop(key, None)
                 # All clients may have disconnected. Reap any unobserved error.
                 if not done.cancelled():
                     done.exception()
 
             task.add_done_callback(forget)
-        return await asyncio.shield(task)
+        waiters = self._workspace_attach_waiters[key]
+        waiters.add(websocket)
+        try:
+            return await asyncio.shield(task)
+        finally:
+            waiters.discard(websocket)
 
-    async def _read_attach_snapshot(self, data: dict[str, Any]) -> WorkspaceSnapshot:
+    async def _read_attach_snapshot(
+        self, data: dict[str, Any], waiters: set[Any]
+    ) -> WorkspaceSnapshot:
         snapshot = await self._read_workspace(data)
+        # Register every client before yielding after the snapshot fence opens.
+        # A mutation already queued on that fence must reach these subscribers.
+        for websocket in waiters:
+            if getattr(websocket, "subscriptions", None) is None:
+                websocket.subscriptions = set()
+            websocket.subscriptions.add(f"workspace_event:workspace_id={snapshot.workspace.id}")
         # Capture before this task yields its result to clients. This includes
         # default workspace creation while preventing a later reply's live
         # watermark from hiding changes published after the rows were read.
