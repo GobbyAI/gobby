@@ -23,11 +23,19 @@ from gobby.tasks.expansion._reconcile import (
     adopt,
     can_reconcile,
     prepare,
+    prior_deferral_map,
     record_created,
     record_reused,
+    record_skipped_edge,
     reusable_phase_id,
     update_reused_leaf,
 )
+
+
+def _reopen_completed_parent(self: Any, conn: Any, parent_id: str) -> None:
+    """Reopen a closed phase epic so a new or reused open leaf can sit under it."""
+    if clear_closure_in_txn(conn, parent_id):
+        withdraw_memory_reviews(self.db, parent_id)
 
 
 def _parent_target_branch(self: Any, parent_task_id: str) -> str | None:
@@ -160,6 +168,20 @@ def apply_run(
                 "Reset expansion output before applying a new run."
             )
 
+        # Lock adopted leaves and prior deferral holders before the parent row.
+        # A close locks the task and then its parent, so the parent lock must
+        # come second or the two transactions deadlock.
+        adopted_by_item: dict[str, Any] = {}
+        if reconciliation is not None:
+            for task_item in tasks:
+                adopted_by_item[task_item["id"]] = adopt(self, conn, reconciliation, task_item)
+            if existing_output is not None:
+                for holder_id in sorted(prior_deferral_map(existing_output).values()):
+                    conn.execute(
+                        "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
+                        (holder_id,),
+                    )
+
         # A closed target takes no new children (#22570). An expansion applied to
         # a task whose previous children were obsoleted -- which auto-closed it on
         # its last child -- is work resuming, so reopen it and any closed ancestor
@@ -222,21 +244,24 @@ def apply_run(
 
             for task_item in tasks_by_phase[phase_id]:
                 adopted = (
-                    adopt(self, reconciliation, task_item) if reconciliation is not None else None
+                    adopted_by_item.get(task_item["id"]) if reconciliation is not None else None
                 )
                 if adopted is not None and reconciliation is not None:
                     if adopted.action == "update":
+                        _reopen_completed_parent(self, conn, parent_id)
                         update_reused_leaf(
                             self,
                             task_id=adopted.task_id,
                             task_item=task_item,
                             plan_ref_block=plan_ref_block,
-                            provenance_label=provenance_label,
+                            labels=task_label_map.get(task_item["id"]),
                         )
                         record_reused(reconciliation, task_item, adopted.task_id)
                     created_task_map[task_item["id"]] = adopted.task_id
                     phase_child_ids[phase_id].append(adopted.task_id)
                     continue
+                if reconciliation is not None:
+                    _reopen_completed_parent(self, conn, parent_id)
                 raw_description = task_item.get("description") or ""
                 description = (
                     f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
@@ -283,10 +308,22 @@ def apply_run(
         for edge in dependency_edges:
             deps_by_task[edge["task_id"]].append(edge["depends_on"])
 
+        protected_ids: set[str] = set()
+        if reconciliation is not None:
+            protected_ids = {
+                binding.task_id
+                for binding in (*reconciliation.preserved, *reconciliation.untouched)
+            }
         for task_item in tasks:
             stable_id = task_item["id"]
             created_id = created_task_map[stable_id]
             blockers = deps_by_task.get(stable_id, [])
+            if reconciliation is not None and created_id in protected_ids:
+                for blocker_id in blockers:
+                    blocker_created = created_task_map.get(blocker_id)
+                    if blocker_created:
+                        record_skipped_edge(reconciliation, task_item, created_id, blocker_created)
+                continue
             for blocker_id in blockers:
                 blocker_created = created_task_map.get(blocker_id)
                 if blocker_created:
@@ -302,6 +339,11 @@ def apply_run(
             for child_id in phase_child_ids.get(phase_list[0]["id"], []):
                 self._add_dependency(task.id, child_id)
 
+        prior_holders = (
+            prior_deferral_map(existing_output)
+            if reconciliation is not None and existing_output is not None
+            else None
+        )
         deferral_task_map = create_placeholder_deferral_tasks(
             self,
             conn,
@@ -311,6 +353,7 @@ def apply_run(
             provenance_label=provenance_label,
             plan_ref_block=plan_ref_block,
             created_task_map=created_task_map,
+            prior_holders=prior_holders,
         )
 
         created_ids = list(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.plans._task_refs import is_placeholder_task_ref
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.tasks.expansion._reset import (
     _has_progressed_stage_state,
@@ -37,6 +38,22 @@ class AdoptedLeaf:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class SkippedEdge:
+    """A spec edge that would have changed a protected leaf's blockers."""
+
+    section_id: str
+    task_id: str
+    depends_on: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "section_id": self.section_id,
+            "task_id": self.task_id,
+            "depends_on": self.depends_on,
+        }
+
+
 @dataclass
 class ReconciliationPlan:
     """Section matches for one re-expansion apply."""
@@ -47,6 +64,7 @@ class ReconciliationPlan:
     reused: list[SectionBinding]
     created: list[SectionBinding]
     untouched: list[SectionBinding]
+    skipped_edges: list[SkippedEdge]
 
     def checkpoint(self) -> dict[str, list[dict[str, str]]]:
         return {
@@ -55,6 +73,7 @@ class ReconciliationPlan:
             "created": [row.to_dict() for row in self.created],
             "removed": [row.to_dict() for row in self.removed],
             "untouched": [row.to_dict() for row in self.untouched],
+            "skipped_edges": [row.to_dict() for row in self.skipped_edges],
         }
 
 
@@ -92,6 +111,13 @@ def prepare(self: Any, prior: ExpansionRun, spec: dict[str, Any]) -> Reconciliat
         for section_id, task_id in sorted(prior_by_section.items())
         if section_id not in new_sections
     ]
+    kept_placeholders = _placeholder_sections(spec)
+    for section_id, task_id in sorted(prior_deferral_map(prior).items()):
+        if section_id in kept_placeholders:
+            continue
+        if not _task_exists(self, task_id) or _is_closed_obsolete_task(self, task_id):
+            continue
+        removed.append(SectionBinding(section_id=section_id, task_id=task_id))
     return ReconciliationPlan(
         prior_by_section=prior_by_section,
         removed=removed,
@@ -99,23 +125,45 @@ def prepare(self: Any, prior: ExpansionRun, spec: dict[str, Any]) -> Reconciliat
         reused=[],
         created=[],
         untouched=[],
+        skipped_edges=[],
     )
 
 
-def adopt(self: Any, plan: ReconciliationPlan, task_item: dict[str, Any]) -> AdoptedLeaf | None:
-    """Keep a prior leaf for this section, or return None so apply creates one."""
+def adopt(
+    self: Any,
+    conn: Any,
+    plan: ReconciliationPlan,
+    task_item: dict[str, Any],
+) -> AdoptedLeaf | None:
+    """Keep a prior leaf for this section, or return None so apply creates one.
+
+    The caller is the apply transaction. The row lock is held until that
+    transaction commits, including through ``update_reused_leaf``.
+    """
     section_id = _section_id(task_item)
     if section_id is None:
         return None
     task_id = plan.prior_by_section.get(section_id)
     if task_id is None:
         return None
-    task = self.task_manager.get_task(task_id)
+    row = conn.execute(
+        """
+        SELECT closed_at, closed_reason, claimed_by_session_id
+        FROM tasks
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
     binding = SectionBinding(section_id=section_id, task_id=task_id)
-    if task.closed_at is not None:
+    if row["closed_at"] is not None:
+        if row["closed_reason"] == "obsolete":
+            return None
         plan.preserved.append(binding)
         return AdoptedLeaf(task_id=task_id, action="preserve")
-    if task.claimed_by_session_id:
+    if row["claimed_by_session_id"]:
         claimed = SectionBinding(section_id=section_id, task_id=task_id, reason="claimed")
         plan.untouched.append(claimed)
         return AdoptedLeaf(task_id=task_id, action="untouched", reason="claimed")
@@ -138,6 +186,31 @@ def record_created(plan: ReconciliationPlan, task_item: dict[str, Any], task_id:
         plan.created.append(SectionBinding(section_id=section_id, task_id=task_id))
 
 
+def record_skipped_edge(
+    plan: ReconciliationPlan,
+    task_item: dict[str, Any],
+    task_id: str,
+    depends_on: str,
+) -> None:
+    section_id = _section_id(task_item)
+    if section_id is not None:
+        plan.skipped_edges.append(
+            SkippedEdge(section_id=section_id, task_id=task_id, depends_on=depends_on)
+        )
+
+
+def prior_deferral_map(prior: ExpansionRun) -> dict[str, str]:
+    """Section ids of placeholder holders the prior run recorded."""
+    raw = (prior.checkpoints or {}).get("deferral_task_map") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        section_id: task_id
+        for section_id, task_id in raw.items()
+        if isinstance(section_id, str) and isinstance(task_id, str)
+    }
+
+
 def reusable_phase_id(self: Any, prior: ExpansionRun, phase_id: str) -> str | None:
     """Return the phase epic a prior run created when it still exists."""
     checkpoints = prior.checkpoints or {}
@@ -156,14 +229,11 @@ def update_reused_leaf(
     task_id: str,
     task_item: dict[str, Any],
     plan_ref_block: str,
-    provenance_label: str,
+    labels: list[str] | None,
 ) -> None:
     """Refresh an open unclaimed leaf from the amended section text."""
     raw_description = task_item.get("description") or ""
     description = f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
-    labels = list(task_item.get("labels") or [])
-    if provenance_label not in labels:
-        labels.append(provenance_label)
     self.task_manager.update_task(
         task_id,
         title=task_item["title"],
@@ -172,7 +242,7 @@ def update_reused_leaf(
         task_type=task_item.get("task_type", "task"),
         category=task_item.get("category"),
         validation_criteria=task_item.get("validation"),
-        labels=labels or None,
+        labels=labels,
         assigned_agent=task_item.get("assigned_agent"),
         implementation_domain=task_item.get("implementation_domain"),
         additional_skills=task_item.get("additional_skills"),
@@ -180,6 +250,18 @@ def update_reused_leaf(
     affected_files = task_item.get("affected_files") or []
     if affected_files:
         self.af_manager.set_files(task_id, affected_files, "expansion")
+
+
+def _placeholder_sections(spec: dict[str, Any]) -> set[str]:
+    sections: set[str] = set()
+    for deferral in spec.get("deferrals") or []:
+        if not isinstance(deferral, dict):
+            continue
+        task_ref = str(deferral.get("task_ref") or "")
+        section_id = deferral.get("section_id")
+        if isinstance(section_id, str) and is_placeholder_task_ref(task_ref):
+            sections.add(section_id)
+    return sections
 
 
 def _section_id(task_item: dict[str, Any]) -> str | None:
