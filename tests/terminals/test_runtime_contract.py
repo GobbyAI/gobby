@@ -44,6 +44,7 @@ from tests.e2e.conftest import (
     _seed_e2e_runtime_state,
     daemon_token,
     find_free_port,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -579,7 +580,9 @@ def _start_isolated_daemon(
         env = prepare_daemon_env(base_env, home_dir=home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(home)
-        command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        command = native_daemon_command(
+            env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+        )
         log_file = log_dir / "daemon.log"
         error_log_file = log_dir / "daemon_error.log"
         with log_file.open("w") as log_f, error_log_file.open("w") as err_f:

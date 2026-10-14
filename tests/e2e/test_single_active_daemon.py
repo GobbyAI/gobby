@@ -22,6 +22,7 @@ from tests.e2e.conftest import (
     copy_daemon_api_key,
     daemon_token,
     find_free_port,
+    native_daemon_command,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -132,7 +133,9 @@ def _spawn_daemon(
     env["GOBBY_HOME"] = str(home)
     target_debug = checkout_debug_dir(Path(__file__).resolve().parents[2], os.environ)
     env["PATH"] = f"{target_debug}:{env.get('PATH', '')}"
-    command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+    command = native_daemon_command(
+        env, [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
+    )
     with log_file.open("wb") as log_handle, error_log_file.open("wb") as error_handle:
         process = subprocess.Popen(
             command,
@@ -169,7 +172,7 @@ def _wait_for_standby(instance: DaemonInstance, timeout: float = 30.0) -> None:
             )
         try:
             response = httpx.get(f"{instance.http_url}/api/health", timeout=1.0)
-            if response.status_code == 200 and response.json().get("lease_mode") == "standby":
+            if response.status_code == 503 and response.json().get("state") == "standby":
                 return
         except httpx.HTTPError:
             pass
@@ -233,10 +236,13 @@ def test_single_active_daemon_and_explicit_handoff(
         _wait_for_standby(standby)
         assert active.gobby_home != standby.gobby_home
         assert active_machine_id != standby_machine_id
-        assert httpx.get(f"{standby.http_url}/mcp", timeout=2.0).status_code == 404
-        assert httpx.get(f"{standby.http_url}/api/sessions", timeout=2.0).status_code == 404
-        # The front door owns both public ports even while the Python standby
-        # serves only lease control. An upgrade must not reach a live WS backend.
+        # gdaemon answers every product route itself while it waits for the lease.
+        for path in ("/mcp", "/api/sessions"):
+            refused = httpx.get(f"{standby.http_url}{path}", timeout=2.0)
+            assert refused.status_code == 503, refused.text
+            assert refused.json().get("state") == "standby"
+        # The front door owns both public ports even while it waits as standby
+        # with no backend. An upgrade must not reach a live WS backend.
         refused_upgrade = httpx.get(
             f"http://127.0.0.1:{standby.ws_port}/",
             headers={
