@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 from gobby.tasks.acceptance_artifacts import (
     AcceptanceTest,
     is_assertion_failure,
+    rust_validation_run_names_test,
     validation_run_covers_test,
     validation_run_names_test,
 )
@@ -577,6 +578,8 @@ def _has_named_red_failure(
 ) -> tuple[bool, str]:
     if not output:
         return False, "run produced no output"
+    if _has_failed_node_summary(output, test):
+        return True, ""
     matched, reason = _has_pytest_body_failure(command, output, test)
     if validation_run_names_test(command, output, test) and matched:
         return True, ""
@@ -590,6 +593,10 @@ def _has_named_red_failure(
     )
     lines = output.splitlines()
     for index, line in enumerate(lines):
+        # Summaries carry their own path/node identity. Never borrow an assertion
+        # from a sibling summary through the generic symbol/section fallback.
+        if re.match(r"^\s*(?:FAILED\s|FAIL\s+\[)", line):
+            continue
         if _PYTEST_LOCATION_RE.match(line):
             continue
         if not any(pattern.search(line) for pattern in symbol_patterns):
@@ -600,6 +607,38 @@ def _has_named_red_failure(
         if _ASSERTION_DETAIL_RE.search(section) and is_assertion_failure(section):
             return True, ""
     return False, reason
+
+
+def _has_failed_node_summary(output: str, test: AcceptanceTest) -> bool:
+    """Retain per-node failure evidence when runner details were compacted away."""
+    if test.path.endswith(".py") and any(
+        _PYTEST_LOCATION_RE.match(line) for line in output.splitlines()
+    ):
+        # Existing location/summary pairing owns complete and conflicting reports.
+        # A summary cannot overrule a timeout or an unpaired sibling failure.
+        return False
+    expected = test.symbol.replace("::", ".")
+    for line in output.splitlines():
+        if test.path.endswith(".py"):
+            match = re.fullmatch(r"\s*FAILED\s+(\S+\.py)::(\S+)(?:\s+-.*)?\s*", line)
+            if match is None or not _path_matches_artifact(match[1], test):
+                continue
+            if re.search(r"\bFailed:\s+Timeout\b", line):
+                continue
+            reported = match[2].replace("::", ".")
+            if "[" not in expected:
+                reported = reported.split("[", maxsplit=1)[0]
+            if reported == expected:
+                return True
+        elif test.path.endswith(".rs"):
+            match = re.fullmatch(r"\s*FAIL\s+\[[^\]]+\]\s+\(\d+/\d+\)\s+(\S+)\s+(\S+)\s*", line)
+            if (
+                match is not None
+                and match[2].replace("::", ".") == expected
+                and rust_validation_run_names_test(line, test)
+            ):
+                return True
+    return False
 
 
 def _has_pytest_body_failure(
