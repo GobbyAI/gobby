@@ -846,6 +846,47 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
     assert "'working-tree'" not in result.tests[0].body
 
 
+@pytest.mark.parametrize("path_attribute", [True, False])
+def test_rust_validation_runs_match_integration_path_module(
+    tmp_path: Path, path_attribute: bool
+) -> None:
+    repo = _init_repo(tmp_path)
+    source_dir = repo / "crates/example/tests"
+    test_file = source_dir / ("parity/mod.rs" if path_attribute else "parity/keep_set.rs")
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n",
+        encoding="utf-8",
+    )
+    (source_dir / "parity.rs").write_text(
+        '#[path = "parity/mod.rs"]\nmod parity;\n' if path_attribute else "mod parity;\n",
+        encoding="utf-8",
+    )
+    if not path_attribute:
+        (source_dir / "parity/mod.rs").write_text("mod keep_set;\n", encoding="utf-8")
+    linked_sha = _commit(repo, "Integration crate root path module fixture")
+
+    result = evaluate_acceptance_artifacts(
+        criteria=f"test: {test_file.relative_to(repo).as_posix()}::ties_are_numeric",
+        repo_path=str(repo),
+        commit_shas=[linked_sha],
+    )
+
+    assert result.passed, result.findings
+    test = result.tests[0]
+    module = "parity" if path_attribute else "parity::keep_set"
+    assert validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity {module}::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity parity::{module}::ties_are_numeric",
+        test,
+    )
+
+
 @pytest.mark.parametrize("declaring_file", ["render.rs", "render/mod.rs"])
 @pytest.mark.parametrize("inline", [False, True])
 @pytest.mark.parametrize("wrapped", [False, True])
