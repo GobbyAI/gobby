@@ -153,6 +153,7 @@ def test_attachment_requires_project_ownership_before_target_writes(
         channel.config_json["responder"] = {"project_id": holder.project_id}
     elif ownership == "foreign":
         channel.config_json["operator_project_id"] = "foreign-project"
+        channel.config_json["responder"] = {"project_id": "other-foreign-project"}
     elif ownership == "malformed":
         channel.config_json["operator_project_id"] = [holder.project_id]
         channel.config_json["responder"] = {"project_id": {"value": holder.project_id}}
@@ -4137,12 +4138,17 @@ def test_concurrent_attachment_claims_have_one_holder() -> None:
     assert results.count(False) == 1
 
 
-def test_switch_telegram_conversation_replaces_holder_atomically() -> None:
+@pytest.mark.parametrize("target_project", ["project-1", "foreign-project"])
+def test_switch_telegram_conversation_replaces_holder_atomically(target_project: str) -> None:
     channel = make_channel(channel_type="telegram")
     channel.config_json["operator_project_id"] = "project-1"
+    channel.config_json["responder"] = {"project_id": "chat-project"}
     sessions = MagicMock()
     sessions.get.side_effect = lambda session_id: MagicMock(
-        project_id="project-1", id=session_id, status="active", source="claude"
+        project_id=target_project if session_id == "lane" else "project-1",
+        id=session_id,
+        status="active",
+        source="claude",
     )
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
@@ -4506,17 +4512,19 @@ def test_atomic_channel_config_update_preserves_telegram_target(
     }
 
 
-async def test_ended_target_falls_back_to_live_assistant() -> None:
+@pytest.mark.parametrize("assistant_project", ["project-1", "foreign-project"])
+async def test_ended_target_falls_back_to_live_assistant(assistant_project: str) -> None:
     from gobby.sessions.status_events import SessionStatusTransition
 
     channel = make_channel(channel_type="telegram")
     channel.config_json["operator_project_id"] = "project-1"
+    channel.config_json["responder"] = {"project_id": "chat-project"}
     sessions = MagicMock()
     target = MagicMock(
         project_id="project-1", id="11111111-1111-4111-8111-111111111111", status="active"
     )
     assistant = MagicMock(
-        project_id="project-1",
+        project_id=assistant_project,
         id="22222222-2222-4222-8222-222222222222",
         status="active",
         source="claude",
