@@ -724,7 +724,11 @@ and a node can register its checkouts and report its runs to the hub.
 Delivered by #24268 (Hub-node contract: command envelope, node bodies,
 golden corpus, and typed models), closed 2026-10-14. This section records
 what that leaf delivered. Node-halves 3.1 (contract version 2) and this
-plan's 4.1 (version 3) extend the same files.
+plan's 4.1 (version 3) extend the same files. At expansion, before
+dispatch, the Orchestrator closes the 1.1 task that expansion creates as
+already delivered by #24268, citing its landed commits a64a5f0978,
+69a818739f and 6671d0ae00; tasks that depend on 1.1 keep their edges to
+it.
 
 Targets:
 - `docs/contracts/node-commands.md`
@@ -1268,10 +1272,20 @@ Verification planned:
 
 Targets:
 - `src/gobby/hub/caller_scope.py`
+- `src/gobby/servers/grant_auth.py::AuthDecision`
+- `src/gobby/servers/auth_service.py::AuthService.authenticate`
 - `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`
-- `src/gobby/servers/websocket/server.py::WebSocketServer._handle_connection`
+- `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`
+- `src/gobby/servers/websocket/server.py::WebSocketServer.handle_connection`
+- `tests/servers/conftest.py::authenticate_test_server`
+- `tests/servers/conftest.py::authenticated_http_requests`
+- `tests/servers/test_ws_asgi_endpoint.py::*` — scope-reason: its fake auth services (`_AuthService`, the `SimpleNamespace` services, `DelayedAuthServer.run_db`) answer `authenticate` with an `AuthDecision` in place of a bool, and `_WebSocketServer.handle_connection` takes the decision
 - `tests/hub/test_caller_scope.py`
 - `tests/servers/test_caller_scope_binding.py`
+
+**Granularity:** one leaf. Resolving the caller's user at authentication
+and binding it at each entry are one behavior: either half alone leaves a
+credential path unchecked, and 1.5.5 tests them together.
 
 **Research context:**
 - Orchestrator gobby#15977's security return (2026-10-14) asks for an
@@ -1282,18 +1296,55 @@ Targets:
   not with the caller's user, and skips a local target, so spawn (2.5) calls
   this check too.
 - `AuthService.authenticate` (`src/gobby/servers/auth_service.py`) returns
-  an `AuthDecision` whose `user_id` is set only from
-  `verified_front_door_identity`: a request that came through gdaemon with
-  the front-door secret and a key's user, machine, and key ids. A request
-  with the local CLI token, which sandboxed runs cannot read, has no user.
-  `AuthMiddleware.dispatch` (`src/gobby/servers/middleware/auth.py`) calls
-  it and does not keep the decision.
-- Every WebSocket connection has a user: `verify_ws_identity` returns the
-  verified identity's `user_id`, and `src/gobby/servers/websocket/auth.py`
-  refuses a connection without one. `WebSocketServer._handle_connection`
-  (`src/gobby/servers/websocket/server.py`) reads `websocket.user_id` and
-  runs the message loop. Its `terminal_services` (attached after
+  an `AuthDecision` (`src/gobby/servers/grant_auth.py`) whose `user_id` is
+  set only from `verified_front_door_identity`: a request that came through
+  gdaemon with the front-door secret and a key's user, machine, and key ids.
+  It admits three more credentials with no user, in both its legacy branch
+  (`_legacy_rejection`) and its grant-route branch (`_accepted_bearer`):
+  - Break-glass: `break_glass_admits` needs an HTTP request from a loopback
+    address whose `X-Gobby-Break-Glass` header matches the break-glass
+    file. It never admits a WebSocket.
+  - A managed bearer (`gobby-agent-v1.`): `_classify_agent_token` checks
+    the signature against the bootstrap's managed signing key, the route
+    against `_AGENT_CAPABILITY_MATRIX` (which allows MCP tool calls), the
+    live run, and the identity headers. Its `AgentApiTokenClaims`
+    (`src/gobby/utils/local_token.py`) carry the run's `machine_id`.
+  - A `gobby_session` cookie that `AuthStore.validate_session` accepts.
+    `AuthStore.session_user_id(token)` (`src/gobby/storage/auth.py`)
+    already returns the session's user, and
+    `src/gobby/servers/routes/api_keys.py::_resolve_principal` uses it.
+- No local CLI token is accepted: ROADMAP decision 17 retires
+  `local_cli_token`, and says browser sessions and API keys both carry a
+  user while hub-internal work runs as a system principal.
+- The front door does not supply the missing user.
+  `crates/gdaemon/src/front_door/auth.rs::AuthState.authenticate` strips
+  the identity headers, then passes a `gobby-agent-v1.` bearer and a
+  request with no `Authorization` header (a browser's cookie) through
+  without an identity. (Security gobby#16011 and the Plan Adversary
+  gobby#16491, 2026-10-14.)
+- `AuthMiddleware.dispatch` (`src/gobby/servers/middleware/auth.py`) calls
+  `authenticate` and does not keep the decision. `_PUBLIC_PREFIXES` and
+  `_PUBLIC_PATHS` skip authentication: login (`/api/auth`), inbound
+  channel webhooks (`/api/comms/webhooks`, whose handlers check the
+  channel's signature after the middleware), health, startup progress, the
+  runtime handshake challenge, and static files.
+- There are two WebSocket entries. The native server authenticates in
+  `src/gobby/servers/websocket/auth.py::AuthMixin._authenticate` through
+  `verify_ws_identity`, which reads only the verified front-door identity,
+  and sets `websocket.user_id`; it refuses a connection without one. The
+  ASGI `/ws` endpoint (`src/gobby/servers/_app_ui.py::_mount_ws_endpoint`)
+  accepts any credential `is_request_authenticated` admits, cookies and
+  managed bearers included, and labels the client `local-web-<hex>`. Both
+  reach `WebSocketServer.handle_connection`
+  (`src/gobby/servers/websocket/server.py`), which runs
+  `_handle_connection`: it reads `websocket.user_id` as the client's label
+  and runs the message loop. Its `terminal_services` (attached after
   construction) holds `manager`, a `TerminalManager` with `db`.
+- `tests/servers/conftest.py`'s `authenticate_test_server` and
+  `authenticated_http_requests` stub `authenticate` with
+  `AuthDecision(allowed=True)` for route tests outside the authentication
+  contract. `tests/servers/test_ws_asgi_endpoint.py` fakes the auth service
+  with `is_request_authenticated` only.
 - `Machine.owner_user_id` is required, and
   `LocalMachineManager(db).get(machine_id)` reads one row
   (`src/gobby/storage/machines.py`). `src/gobby/servers/routes/api_keys.py::mint_key`
@@ -1309,53 +1360,125 @@ Targets:
   because it binds for every HTTP request and WebSocket message.
 - Per-user visibility of the roster and of attention broadcasts is S4.4's
   (Cross-plan edges, "Relations that set no edge").
+- Rejected: refusing a credential whose owner does not resolve at
+  authentication (401). That refuses every route for that caller, where
+  only the guarded actions need an owner. Rejected: refusing managed
+  bearers at the guard, as `_resolve_principal` refuses raw bearers when
+  minting keys. Spawned seats call `spawn_agent`, `kill_agent`, and terminal
+  writes with managed bearers on their own machine.
 
 **Implementation:**
 - `caller_scope.py`:
-  - `CallerScope(user_id: str, db: HubDatabase | None)`, a frozen
-    dataclass, and the context variable `_caller_scope`, default `None`.
-  - `bind_caller(user_id: str | None, db: HubDatabase | None) -> Token | None`
-    binds a scope when `user_id` is non-empty and returns the token, and
-    binds nothing for no user. `reset_caller(token)` resets a token that is
-    not `None`.
+  - `CallerScope(user_id: str | None, db: HubDatabase | None)`, a frozen
+    dataclass, and the context variable `_caller_scope`, default `None`. A
+    scope whose `user_id` is `None` is an authenticated outside caller whose
+    owner did not resolve.
+  - `bind_caller(user_id: str | None, db: HubDatabase | None) -> Token`
+    always binds a scope and returns the token. `reset_caller(token)`
+    resets a token that is not `None`.
+  - `bind_decision(decision: AuthDecision, db: HubDatabase | None) -> Token | None`
+    binds nothing for `decision.break_glass` and otherwise returns
+    `bind_caller(decision.user_id, db)`.
   - `require_machine_owned(machine_id: str | None) -> None`. An unbound
-    context returns at once: it is a hub-internal loop or a local-token
-    request. A bound scope reads `LocalMachineManager(scope.db).get(machine_id or require_machine_id())`.
+    context returns at once. Only three kinds of work run unbound: work that
+    entered through no HTTP request or WebSocket (hub loops, 4.5's expiry),
+    an allowed break-glass request, and a public path. A bound scope with no
+    user raises `NodeCommandError("machine_not_owned", ..., stage="none")`
+    for every machine without reading the database. A bound user's scope
+    reads `LocalMachineManager(scope.db).get(machine_id or require_machine_id())`.
     A missing row raises `NodeCommandError("machine_not_found", ..., stage="none")`,
     and a row whose `owner_user_id` is not the scope's user raises
-    `NodeCommandError("machine_not_owned", ..., stage="none")`. The rule has
-    no exception for the hub's own machine. A scope whose `db` is `None`
-    refuses every machine with `machine_not_found`, so a binding that cannot
-    read ownership fails closed.
+    `machine_not_owned`. The rule has no exception for the hub's own
+    machine. A scope whose `db` is `None` refuses every machine with
+    `machine_not_found`, so a binding that cannot read ownership fails
+    closed.
+- `AuthDecision` gains `break_glass: bool = False`.
+- `AuthService.authenticate` sets `user_id` on every allowed decision, in
+  the legacy branch and the grant-route branch alike, through one private
+  helper, in this order:
+  - A verified front-door identity gives its `user_id`, as today.
+  - Otherwise a managed bearer gives the `owner_user_id` of
+    `LocalMachineManager(db).get(claims.machine_id)`. The grant-route
+    branch already holds the claims as `bearer`. The legacy branch decodes
+    them with `classify_agent_api_token(token, self.managed_signing_key())`,
+    because `_legacy_rejection` has already checked that token's route,
+    live run, and identity headers. The claims are trusted auth data: the
+    managed signing key signs them, and `machine_id` is the machine the run
+    was launched on, whose owner is required.
+  - Otherwise a `gobby_session` cookie gives `AuthStore(db).session_user_id(token)`.
+  - A missing row, or a lookup that raises, leaves `user_id` `None`. The
+    decision stays allowed, and every guarded action refuses it.
+  - `break_glass` is `True` when `break_glass_admits(request)` admitted the
+    request and no front-door identity came with it.
 - `AuthMiddleware.dispatch`: when the decision is allowed, it calls
-  `bind_caller(decision.user_id, require_hub_database(self.server.services.database))`,
-  awaits `call_next`, and resets the token in `finally`.
-- `WebSocketServer._handle_connection` binds the connection's user before
-  the message loop, with `self.terminal_services.manager.db` when terminal
-  services are attached and `None` otherwise, and resets it in the
-  handler's `finally`. Messages handled off the loop (`_start_off_loop`)
-  run in tasks created inside the handler, so they inherit the binding.
+  `bind_decision(decision, require_hub_database(self.server.services.database))`,
+  awaits `call_next`, and resets the token in `finally`. Public paths, and
+  the single-page app shell served to a refused browser route, run unbound.
+  They carry no credential. A webhook handler checks its channel's
+  signature and then acts as hub-internal work, the system principal of
+  ROADMAP decision 17. The other public paths reach no guarded action.
+- `WebSocketServer.handle_connection(websocket, decision: AuthDecision | None = None)`
+  binds before it runs `_handle_connection` and resets the token in
+  `finally`. The ASGI endpoint passes its decision, bound through
+  `bind_decision` with `require_hub_database(server.services.database)`.
+  A native server connection passes none and binds `websocket.user_id`,
+  which `AuthMixin._authenticate` set from the verified front-door identity,
+  with `self.terminal_services.manager.db` when terminal services are
+  attached and `None` otherwise. Messages handled off the loop
+  (`_start_off_loop`) run in tasks created inside the handler, so they
+  inherit the binding.
+- `_mount_ws_endpoint`'s `/ws` endpoint calls `server.auth_service.authenticate`
+  through `run_db` in place of `is_request_authenticated`. It closes with
+  4401 when the decision is refused, as today, and passes the decision to
+  `handle_connection`. The adapter keeps its `local-web-<hex>` label as the
+  client's `user_id`; the binding carries the owner, the label does not.
+- `tests/servers/conftest.py`: `authenticate_test_server` and
+  `authenticated_http_requests` return `AuthDecision(allowed=True, break_glass=True)`,
+  so route tests outside the authentication contract keep running as the
+  local operator. The file never sets `DaemonConfig.max_active_agents`, so
+  2.5's `le=1000` changes nothing it uses.
+- `tests/servers/test_ws_asgi_endpoint.py`: its fake auth services answer
+  `authenticate` with an `AuthDecision`, allowed or refused as the old bool
+  was, and its fake server's `handle_connection` takes the decision.
 - 2.3, 2.4, 2.5, 3.3, 4.3, 4.4, and 4.7 each call `require_machine_owned` where
   the action names its machine and map the refusal to their own error.
 
 Consumers unchanged:
 - `src/gobby/servers/app_factory.py` — no-edit-reason: it adds `AuthMiddleware` with the same arguments.
 - `src/gobby/servers/middleware/__init__.py` — no-edit-reason: it re-exports `AuthMiddleware` by name.
+- `src/gobby/servers/websocket/auth.py` — no-edit-reason: `AuthMixin._authenticate` already sets `websocket.user_id` from the verified front-door identity, which `handle_connection` binds.
+- `tests/servers/test_auth_service.py` — no-edit-reason: allowed and refused answers are unchanged, and its front-door assertion reads the same `user_id`; re-run as verification.
+- `tests/servers/test_grant_auth.py` — no-edit-reason: it builds `AuthDecision` by keyword and reads no `user_id`; re-run as verification.
 - `tests/servers/test_auth_middleware.py` — no-edit-reason: allowed and refused decisions answer as before; the binding only adds request context; re-run as verification.
 - `tests/servers/test_http_middleware.py` — no-edit-reason: its responses are unchanged; re-run as verification.
-- `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it attaches no terminal services and reaches no guarded action, so its connections bind a scope that nothing reads.
-- `tests/servers/test_ws_asgi_endpoint.py` — no-edit-reason: it reaches no guarded action; re-run as verification.
+- `tests/servers/test_websocket_server_disconnects.py` — no-edit-reason: it calls `_handle_connection` directly, so its connections run unbound and reach no guarded action.
 - `tests/servers/test_terminal_ws_resize.py` — no-edit-reason: a resize is not a guarded action; re-run as verification.
+- `tests/servers/websocket/test_server.py` — no-edit-reason: `handle_connection` now binds its fake socket's `user_id`, and its messages (ping, terminal attach, input and release, workspace ops) reach no guarded action; re-run as verification.
+- `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: its `AuthDecision(allowed=True)` patch now binds a scope with no user, and the `gobby-workspaces` tools it calls are not guarded actions; re-run as verification.
+- `tests/servers/routes/test_statusline_endpoint.py` — no-edit-reason: it builds `AuthDecision` by keyword, and the status line is not a guarded action; re-run as verification.
+- `tests/runtime_grants/test_maintenance_launch.py` — no-edit-reason: it reads only `authenticate(request).allowed`; re-run as verification.
+- `tests/servers/routes/mcp_endpoints/test_http_caller_identity.py` — no-edit-reason: allowed and refused answers are unchanged, and it reads no `user_id` and calls no guarded action; re-run as verification.
+- `tests/servers/test_break_glass_admission.py` — no-edit-reason: break-glass decisions stay allowed and gain `break_glass=True`, so its requests run unbound and answer as before; re-run as verification.
+- `tests/servers/test_managed_clear_identity.py` — no-edit-reason: managed decisions stay allowed, and it reads no `user_id` and calls no guarded action; re-run as verification.
+- `tests/hooks/test_staged_effects_receipt_route.py` — no-edit-reason: `authenticate_test_server` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/test_http_cron.py` — no-edit-reason: `authenticate_test_server` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/routes/test_rules_routes.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/routes/test_servers_routes_pipeline_definitions.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/routes/test_session_variables.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/routes/test_variable_definitions.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
+- `tests/servers/test_servers_sessions_routes.py` — no-edit-reason: `authenticated_http_requests` stays allowed, and `break_glass=True` keeps its requests unbound, as every request is today.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/servers/test_websocket_server_disconnects.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_terminal_ws_resize.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_caller_scope.py tests/servers/test_caller_scope_binding.py tests/servers/test_auth_service.py tests/servers/test_grant_auth.py tests/servers/test_auth_middleware.py tests/servers/test_http_middleware.py tests/servers/test_websocket_server_disconnects.py tests/servers/test_ws_asgi_endpoint.py tests/servers/test_terminal_ws_resize.py tests/servers/websocket/test_server.py tests/mcp_proxy/test_workspaces_registry.py tests/servers/routes/test_statusline_endpoint.py tests/runtime_grants/test_maintenance_launch.py tests/servers/routes/mcp_endpoints/test_http_caller_identity.py tests/servers/test_break_glass_admission.py tests/servers/test_managed_clear_identity.py tests/hooks/test_staged_effects_receipt_route.py tests/servers/test_http_cron.py tests/servers/routes/test_rules_routes.py tests/servers/routes/test_servers_routes_pipeline_definitions.py tests/servers/routes/test_session_variables.py tests/servers/routes/test_variable_definitions.py tests/servers/test_servers_sessions_routes.py -v`.
 
 **Acceptance:**
 
-- 1.5.1 - `require_machine_owned` returns for an unbound context without reading the database, returns for a bound user that owns the machine, and raises `NodeCommandError` with `stage="none"` for a bound user: `machine_not_found` for an unknown machine or a scope without a database, and `machine_not_owned` for another user's machine, the hub's own machine included. test: `tests/hub/test_caller_scope.py::test_require_machine_owned`.
+- 1.5.1 - `require_machine_owned` returns for an unbound context without reading the database and returns for a bound user that owns the machine. It raises `NodeCommandError` with `stage="none"` otherwise: `machine_not_owned` for a bound scope with no user, without reading the database, and for another user's machine, the hub's own machine included; `machine_not_found` for an unknown machine or a scope without a database. test: `tests/hub/test_caller_scope.py::test_require_machine_owned`.
 - 1.5.2 - Code a bound request runs through `asyncio.create_task` and `asyncio.to_thread` sees the binding, and the binding is gone once the token is reset. test: `tests/hub/test_caller_scope.py::test_binding_reaches_child_tasks`.
-- 1.5.3 - An HTTP request with a verified front-door identity runs its endpoint with that user bound, a request with the local token runs unbound, and neither binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_verified_user`.
-- 1.5.4 - Each message on a WebSocket connection runs with the connection's user bound, and the binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
+- 1.5.3 - `authenticate` sets `user_id` on legacy and grant-route decisions alike: the front-door identity's user; for a managed bearer, the owner of its claims' machine; for a cookie, the session's user. A managed bearer whose machine has no row, and a lookup that raises, give an allowed decision with no user. A break-glass request gives no user and `break_glass=True`. test: `tests/servers/test_caller_scope_binding.py::test_authenticate_resolves_caller_user`.
+- 1.5.4 - An allowed HTTP request runs its endpoint with its decision's user bound, a request with no resolved owner runs bound with no user, a break-glass request and a public path run unbound, and no binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_resolved_user`.
+- 1.5.5 - Through the real `AuthMiddleware` and `AuthService`, a test route at a path `_AGENT_CAPABILITY_MATRIX` allows (`POST /api/mcp/tools/call`) that calls `require_machine_owned(machine_id)` answers `machine_not_owned` for a cookie request and for a managed-bearer request whose user does not own the named machine, for the hub's own machine and for a remote one. Each credential's owner proceeds on both machines. A break-glass request and an unbound call outside any request proceed. test: `tests/servers/test_caller_scope_binding.py::test_http_ownership_matrix`.
+- 1.5.6 - Each message on a native WebSocket connection runs with the front-door user bound, each message on an ASGI `/ws` connection runs with its decision's user bound (a cookie's session user), and the binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
 
 ## P2: Machine-correct hub loops and remote callers
 `kind: framing`
@@ -1750,10 +1873,10 @@ Targets:
 - `tests/terminals/fakes.py::make_memory_terminal`, used by about fifty test
   files, gives every fake terminal a random `machine_id`. Under a local-machine
   check those terminals would all read as remote.
-- 1.5's `require_machine_owned` refuses a caller bound by a verified
-  identity or a WebSocket connection when it does not own the machine, and
-  returns at once for an unbound caller, such as message wakes and other
-  hub-internal writers.
+- 1.5's `require_machine_owned` refuses a caller bound by an HTTP request
+  or a WebSocket connection when it does not own the machine or its owner
+  did not resolve, and returns at once for an unbound caller, such as
+  message wakes and other hub-internal writers.
 - The tests drive a fake node client; 5.1 proves live delivery through 1.2 and the node.
 
 **Implementation:**
@@ -2383,7 +2506,6 @@ Consumers unchanged:
 - `tests/runtime_grants/support.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/scheduler/test_cron_config.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/scheduler/test_system_automation_loop.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
-- `tests/servers/conftest.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/mcp_endpoints/test_bridge.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_agent_spawn_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
 - `tests/servers/routes/test_agents_routes.py` — no-edit-reason: it never sets `DaemonConfig.max_active_agents`, so `le=1000` changes nothing it uses.
@@ -3218,9 +3340,11 @@ Targets:
   keeps its 409 (Decision 20).
 - Ownership (1.5): `delete_worktree` and `run_clone_operation` call
   `require_machine_owned` with the row's machine after reading the owner
-  and before any local or remote action, and `GET /worktrees` and
-  `GET /clones` do the same with the `machine_id` they are given. A refusal
-  answers 403 `{error_code, stage: "none"}` and changes nothing.
+  and before any local or remote action. `GET /worktrees` and
+  `GET /clones` always call it first with the `machine_id` they are given,
+  where an omitted `machine_id` is `None`, the hub's machine, before any
+  row read. A refusal answers 403 `{error_code, stage: "none"}` and changes
+  nothing.
 
 Verification planned:
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_remote_workspace_routes.py -v`.
@@ -3230,7 +3354,7 @@ Verification planned:
 - 4.4.1 - `GET /worktrees` and `GET /clones` with a node's `machine_id` list that machine's rows, and without it this machine's. test: `tests/servers/test_remote_workspace_routes.py::test_list_routes_take_machine_id`.
 - 4.4.2 - `DELETE /worktrees/{id}` and the clone delete on a node's row remove through the node, answer 200 and delete the row on `removed`, and answer 409, 503, or 502 with the code and keep the row otherwise. test: `tests/servers/test_remote_workspace_routes.py::test_delete_routes_finish_through_node`.
 - 4.4.3 - The clone sync route on a node's clone answers 409 `machine_ownership_mismatch` and sends nothing. test: `tests/servers/test_remote_workspace_routes.py::test_sync_route_keeps_ownership_refusal`.
-- 4.4.4 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from the worktree and clone deletes on that machine's row and from the list routes naming that machine, and nothing is sent or deleted; the owner's request proceeds. test: `tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine`.
+- 4.4.4 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from the worktree and clone deletes on that machine's row, and from the list routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; nothing is sent, read, or deleted. The owner's request proceeds in each case. test: `tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine`.
 
 ### 4.5 Remote workspace expiry [category: code] (depends: 4.3)
 `kind: deliverable`
@@ -3363,15 +3487,20 @@ Targets:
   only on success. A `NodeCommandError` answers 200 with
   `current_branch`, `ahead`, and `behind` null and `branch_count` 0. `worktree_count` and `clone_count`
   come from 4.3's `list_remote`, and `repo_path` is the node's root.
-- Ownership (1.5): `list_projects` and `get_status` given a `machine_id`
-  call `require_machine_owned(machine_id)` first. A refusal answers 403
-  `{error_code}` with no command, no cache read and no checkout read.
-  Without `machine_id` both keep today's local path.
+- Ownership (1.5): `list_projects` and `get_status` always call
+  `require_machine_owned(machine_id)` first, where an omitted `machine_id`
+  is `None`, the hub's machine. A refusal answers 403 `{error_code}` with
+  no command, no cache read and no checkout read. An authorized caller
+  without `machine_id` keeps today's local path.
+- Routes that never take a `machine_id` (`src/gobby/servers/routes/files.py`
+  and the other source-control routes) work only on the hub's own disk and
+  stay as they are: the hub is the tenant, and per-user privacy inside a
+  hub is S4.4's (ROADMAP decision 17).
 
 Consumers unchanged:
 - `src/gobby/servers/routes/files.py` — no-edit-reason: it calls `_projects_to_responses(server, visible)`, whose new keyword defaults to today's behavior.
 - `src/gobby/servers/routes/__init__.py` — no-edit-reason: it re-exports `create_projects_router` and `create_source_control_router` by name, and both signatures are unchanged.
-- `tests/servers/routes/test_source_control_routes.py` — no-edit-reason: its requests omit `machine_id`, so every route takes the unchanged local path; re-run as verification.
+- `tests/servers/routes/test_source_control_routes.py` — no-edit-reason: it mounts the router on a bare app without `AuthMiddleware`, so its requests run unbound and pass the ownership check, and they omit `machine_id`, so every route takes the unchanged local path; re-run as verification.
 
 Verification planned:
 - `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_machine_scoped_projects.py tests/servers/routes/test_files.py tests/servers/routes/test_source_control_routes.py -v`.
@@ -3381,8 +3510,8 @@ Verification planned:
 - 4.7.1 - `/api/projects?machine_id=<node>` lists only projects with that node's checkout, each with the node's root, empty approval rules, and null validation detection, and reads no path. test: `tests/servers/test_machine_scoped_projects.py::test_projects_for_node_machine`.
 - 4.7.2 - `/api/source-control/status?machine_id=<node>&project_id=<p>` answers the node's git fields and that machine's worktree and clone counts, and a second call within 30 s sends no command. test: `tests/servers/test_machine_scoped_projects.py::test_remote_status_cached`.
 - 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call; a node that disconnects after a cached success answers null git fields on the very next call without a command; and a failed connected-machines read also answers null git fields. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
-- 4.7.4 - Without `machine_id`, both routes answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
-- 4.7.5 - A request with a verified identity whose user does not own the named machine gets 403 `machine_not_owned` from both routes, and no `checkout.status` is sent and no cached status returned; the owner's request proceeds. test: `tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine`.
+- 4.7.4 - For a caller that owns the hub's machine, both routes without `machine_id` answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
+- 4.7.5 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from both routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; no checkout is read, no `checkout.status` is sent, and no cached status is returned. The owner's request proceeds in each case. test: `tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine`.
 
 ### 4.8 gclient projects pane follows the machine filter [category: code] (depends: 3.2, 4.4, 4.7)
 `kind: deliverable`
@@ -3525,8 +3654,10 @@ the runs the earlier steps create.
   hub. Grok and agy runs settle through the node's exit report (2.6). The
   node's agy gate needs version 1.1.18 (node-halves 2.6), and codex
   receives its prompt after the composer marker (node-halves 2.10).
-- The test calls the hub with its local token, so 1.5's ownership checks
-  return at once; 1.5, 2.3, 2.4, 3.3, 4.3, 4.4 and 4.7 prove the refusals.
+- The test enrolls the node with a key the hub's user mints, so one user
+  owns both machines, and it calls the hub with that user's API key
+  through the front door. 1.5 binds that user, so the ownership checks
+  pass; 1.5, 2.3, 2.4, 2.5, 3.3, 4.3, 4.4 and 4.7 prove the refusals.
 - node-halves 2.9 registers a checkout on the first hook from its root.
   A hook from an operator's own CLI on the node is refused at session
   registration (Constraints), which the test expects.
@@ -3754,6 +3885,24 @@ Verification planned:
     workspace mode, after node-halves 3.1 and 3.2. Story 1 now starts from an
     agent session, because no client UI posts an agent spawn today.
   - H: Constraints states what supersedes #24280 to #24283.
+- 2026-10-14: Repaired for Security gobby#16011's bounce of D and the Plan
+  Adversary gobby#16491's HM-F26 and HM-F27.
+  - HM-F26: 1.5 left cookie and managed-bearer requests unbound, so they
+    skipped every ownership check. `AuthService.authenticate` now resolves
+    the user for both: a cookie's session user, and the owner of a managed
+    bearer's machine. Every allowed request and WebSocket binds; one whose
+    owner does not resolve is refused on every machine. Only internal work,
+    break-glass, and public paths run unbound. The ASGI `/ws` endpoint,
+    which labelled each client `local-web-<hex>`, now binds its decision's
+    user. 1.5.3 to 1.5.6 test this, including both credentials against
+    another user's local and remote machines.
+  - HM-F27: 4.7 checks ownership with or without `machine_id`, an omitted
+    one meaning the hub's machine. The same sweep made 4.4's list routes do
+    likewise. Routes that never take a `machine_id` stay hub-local under
+    ROADMAP decision 17.
+  - 1.1 states that the Orchestrator closes its expanded task as delivered
+    by #24268. 5.1 now calls the hub with an API key, because no local
+    token exists.
 
 ## V2: Verification
 `kind: verification`
