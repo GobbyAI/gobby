@@ -291,7 +291,7 @@ Writer decisions:
     - #24151 (S2.11 hub half: hook ingress and rule engine in Rust), which
       owns registering a forwarded session the hub did not pre-register.
 
-    The implementation of 1.4 and 2.5 needs a security review.
+    1.4 and 2.5 land behind the security landing gate (Constraints).
 19. **A node's agent ceiling is `max_active_agents`, and a report always fits
     its bound.** Josh ruled on HM-F16 through Orchestrator gobby#15977 on
     2026-10-12, verbatim: "Cap at 100, configurable. We already have a value
@@ -431,13 +431,22 @@ Writer decisions:
     `backfill_terminal_context`) and starts the run. It never calls `register`,
     and neither method checks the machine, so 2.2 checks it at every hook
     lookup: every hook binds only its own machine's rows, the hub's included,
-    and another machine's row counts as a miss. Session end settles the run
-    as it does locally.
+    and another machine's row counts as a miss. Session end completes the run
+    through `complete_agent_run`, which counts the turns its forwarded prompt
+    submits began (2.6), because the hub holds no node transcript.
   - A node session that misses that lookup reaches `register_session`, which
     keeps `require_local_machine_id` and is refused (Decision 18). Examples are
     a `/clear` successor and an operator's own CLI on the node; #24151 owns
     that path.
-  - 2.6 settles a run whose agent left no session end.
+  - 2.6 settles a run whose agent left no session end, and a grok or agy run
+    from its exit, since neither sends hooks from a node (Decision 7).
+- **Security landing gate.** Every candidate commit for 1.2, 1.4, 1.5, 2.2,
+  2.3, 2.4, 2.5, and 4.2 needs a Security Reviewer LAND before it lands. These
+  leaves carry the node's command route, the key-bound node routes, caller
+  ownership, hook binding, and the remote terminal, cancel, spawn, and
+  workspace paths. The manifest schema has no review label, so the
+  Orchestrator applies the gate at dispatch and at landing, and each of the
+  eight sections repeats it before its Targets.
 - **No backward compatibility.** Nothing is migrated.
 - **Monolith ceiling.** `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`
   (988 lines), `src/gobby/agents/lifecycle_monitor.py` (959), and
@@ -728,7 +737,8 @@ plan's 4.1 (version 3) extend the same files. At expansion, before
 dispatch, the Orchestrator closes the 1.1 task that expansion creates as
 already delivered by #24268, citing its landed commits a64a5f0978,
 69a818739f and 6671d0ae00; tasks that depend on 1.1 keep their edges to
-it.
+it. Its manifest entry carries `tdd: false`, because no test-first work
+remains.
 
 Targets:
 - `docs/contracts/node-commands.md`
@@ -937,6 +947,9 @@ Verification planned:
 ### 1.2 gdaemon internal node-command route over the node channel [category: code] (depends: 1.1)
 `kind: deliverable`
 
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
+
 Targets:
 - `crates/gdaemon/src/nodes/registry.rs::Registry`
 - `crates/gdaemon/src/nodes/registry.rs::Registry::register`
@@ -1107,6 +1120,9 @@ Verification planned:
 ### 1.4 Node routes: checkout registration and run reports [category: code] (depends: 1.1, 2.1)
 `kind: deliverable`
 
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
+
 Targets:
 - `src/gobby/servers/routes/nodes.py`
 - `src/gobby/hub/node_reports.py`
@@ -1270,6 +1286,9 @@ Verification planned:
 ### 1.5 Callers act only on machines they own [category: code] (depends: 1.3)
 `kind: deliverable`
 
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
+
 Targets:
 - `src/gobby/hub/caller_scope.py`
 - `src/gobby/servers/grant_auth.py::AuthDecision`
@@ -1277,8 +1296,7 @@ Targets:
 - `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`
 - `src/gobby/servers/_app_ui.py::_mount_ws_endpoint`
 - `src/gobby/servers/websocket/server.py::WebSocketServer.handle_connection`
-- `tests/servers/conftest.py::authenticate_test_server`
-- `tests/servers/conftest.py::authenticated_http_requests`
+- `tests/servers/conftest.py::*` — scope-reason: `authenticate_test_server` and `authenticated_http_requests` return break-glass decisions, and the new `authenticate_as` helper and `OTHER_USER_ID` constant join them for every ownership test
 - `tests/servers/test_ws_asgi_endpoint.py::*` — scope-reason: its fake auth services (`_AuthService`, the `SimpleNamespace` services, `DelayedAuthServer.run_db`) answer `authenticate` with an `AuthDecision` in place of a bool, and `_WebSocketServer.handle_connection` takes the decision and the `database` keyword
 - `tests/hub/test_caller_scope.py`
 - `tests/servers/test_caller_scope_binding.py`
@@ -1345,6 +1363,15 @@ credential path unchecked, and 1.5.5 tests them together.
   `AuthDecision(allowed=True)` for route tests outside the authentication
   contract. `tests/servers/test_ws_asgi_endpoint.py` fakes the auth service
   with `is_request_authenticated` only.
+- Every seeded test machine, the hub's own included, is owned by
+  `TEST_USER_ID` (`"20000000-0000-4000-8000-000000000001"`):
+  `tests/fixtures/postgres.py::postgres_canonical_seed` inserts that user
+  and gives it every test machine id and `get_machine_id()`. The conftest's
+  `TEST_FRONT_DOOR_IDENTITY` names `"server-test-user"`, which owns no
+  machine. `tests/storage/test_machines.py` and `tests/storage/test_users.py`
+  already use `"20000000-0000-4000-8000-000000000002"` as `OTHER_USER_ID`.
+  So a test that keeps the conftest's break-glass default runs unbound and
+  never reaches an ownership check (Orchestrator gobby#15977's review, O3).
 - `Machine.owner_user_id` is required, and
   `LocalMachineManager(db).get(machine_id)` reads one row
   (`src/gobby/storage/machines.py`). `src/gobby/servers/routes/api_keys.py::mint_key`
@@ -1440,6 +1467,19 @@ credential path unchecked, and 1.5.5 tests them together.
   so route tests outside the authentication contract keep running as the
   local operator. The file never sets `DaemonConfig.max_active_agents`, so
   2.5's `le=1000` changes nothing it uses.
+  - It gains `OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"`, a user
+    that owns no machine, and `authenticate_as(server: HTTPServer, user_id: str) -> HTTPServer`,
+    which stubs `is_request_authenticated` to `True` and `authenticate` to
+    `AuthDecision(allowed=True, user_id=user_id)`, with `break_glass` left
+    `False`. The real `AuthMiddleware` then binds that user.
+  - No ownership acceptance in this plan runs under the break-glass default.
+    Route tests take the owner from `authenticate_as(server, TEST_USER_ID)`
+    and the non-owner from `authenticate_as(server, OTHER_USER_ID)`: 1.5.4,
+    the HTTP half of 2.5.16, 3.3.6, 4.4.4, and 4.7.5. Hub-module tests bind
+    the same two users with `bind_caller(user_id, db)` and reset the token:
+    2.3.6, 2.4.6, the MCP half of 2.5.16, and 4.3.7. 1.5.5 stubs nothing and
+    uses real credentials, and 1.5.6 builds each connection's decision
+    explicitly.
 - `tests/servers/test_ws_asgi_endpoint.py`: its fake auth services answer
   `authenticate` with an `AuthDecision`, allowed or refused as the old bool
   was, and its fake server's `handle_connection` takes the decision and the
@@ -1480,8 +1520,8 @@ Verification planned:
 - 1.5.1 - `require_machine_owned` returns for an unbound context without reading the database and returns for a bound user that owns the machine. It raises `NodeCommandError` with `stage="none"` otherwise: `machine_not_owned` for a bound scope with no user, without reading the database, and for another user's machine, the hub's own machine included; `machine_not_found` for an unknown machine or a scope without a database. test: `tests/hub/test_caller_scope.py::test_require_machine_owned`.
 - 1.5.2 - Code a bound request runs through `asyncio.create_task` and `asyncio.to_thread` sees the binding, and the binding is gone once the token is reset. test: `tests/hub/test_caller_scope.py::test_binding_reaches_child_tasks`.
 - 1.5.3 - `authenticate` sets `user_id` on legacy and grant-route decisions alike: the front-door identity's user; for a managed bearer, the owner of its claims' machine; for a cookie, the session's user. A managed bearer whose machine has no row, and a lookup that raises, give an allowed decision with no user. A break-glass request gives no user and `break_glass=True`. test: `tests/servers/test_caller_scope_binding.py::test_authenticate_resolves_caller_user`.
-- 1.5.4 - An allowed HTTP request runs its endpoint with its decision's user bound, a request with no resolved owner runs bound with no user, a break-glass request and a public path run unbound, and no binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_resolved_user`.
-- 1.5.5 - Through the real `AuthMiddleware` and `AuthService`, a test route at a path `_AGENT_CAPABILITY_MATRIX` allows (`POST /api/mcp/tools/call`) that calls `require_machine_owned(machine_id)` answers `machine_not_owned` for a cookie request and for a managed-bearer request whose user does not own the named machine, for the hub's own machine and for a remote one. Each credential's owner proceeds on both machines. A break-glass request and an unbound call outside any request proceed. test: `tests/servers/test_caller_scope_binding.py::test_http_ownership_matrix`.
+- 1.5.4 - An allowed HTTP request runs its endpoint with its decision's user bound (`authenticate_as(server, TEST_USER_ID)` and `authenticate_as(server, OTHER_USER_ID)` each bind their user), a request with no resolved owner runs bound with no user, a break-glass request and a public path run unbound, and no binding outlives the response. test: `tests/servers/test_caller_scope_binding.py::test_http_request_binds_resolved_user`.
+- 1.5.5 - Through the real `AuthMiddleware` and `AuthService`, with no stubbed `authenticate`, a test route at a path `_AGENT_CAPABILITY_MATRIX` allows (`POST /api/mcp/tools/call`) that calls `require_machine_owned(machine_id)` answers `machine_not_owned` for a cookie request and for a managed-bearer request whose user does not own the named machine, for the hub's own machine and for a remote one. Each credential's owner proceeds on both machines. A break-glass request and an unbound call outside any request proceed. test: `tests/servers/test_caller_scope_binding.py::test_http_ownership_matrix`.
 - 1.5.6 - Each message on a native WebSocket connection runs with the front-door user bound, each message on an ASGI `/ws` connection runs with its decision's user bound (a cookie's session user), and a message handled off the loop sees the same binding. On an ASGI connection whose decision resolved no owner, a message that calls `require_machine_owned` for the hub's machine or a remote one gets `machine_not_owned`, on the loop and off it, while the cookie owner's connection proceeds for both machines. The binding ends when the connection closes. test: `tests/servers/test_caller_scope_binding.py::test_websocket_messages_bind_connection_user`.
 
 ## P2: Machine-correct hub loops and remote callers
@@ -1583,6 +1623,9 @@ Verification planned:
 
 ### 2.2 Hook ingress binds the envelope machine to the caller's key [category: code]
 `kind: deliverable`
+
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
 
 Targets:
 - `src/gobby/servers/routes/mcp/hooks.py::create_hooks_router`
@@ -1857,6 +1900,9 @@ Verification planned:
 ### 2.3 Remote terminal writes go through the node [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
 
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
+
 Targets:
 - `src/gobby/terminals/write_coordinator.py::WriteCoordinator._dispatch`
 - `src/gobby/hub/remote_terminal.py`
@@ -1924,10 +1970,13 @@ Verification planned:
 - 2.3.3 - A partial node failure surfaces `stage="partial"` and keeps the latch. test: `tests/hub/test_remote_terminal_write.py::test_partial_stage_propagates`.
 - 2.3.4 - A local terminal write never contacts the client. test: `tests/hub/test_remote_terminal_write.py::test_local_write_unchanged`.
 - 2.3.5 - When a fake node takes the write and its reply is lost (`node_timeout`) or unreadable (`node_reply_lost`), the write returns `IndeterminateWrite`, the latch stays, and a retry with the same action key sends no second `terminal.write`. test: `tests/hub/test_remote_terminal_write.py::test_lost_reply_is_indeterminate`.
-- 2.3.6 - A bound caller that does not own the terminal's machine, local or remote, gets `NodeTerminalWriteError` with `machine_not_owned` and `stage="none"`, nothing reaches the runtime or the node client, and the latch is cleared; the owner's write and an unbound write proceed. test: `tests/hub/test_remote_terminal_write.py::test_write_needs_owned_machine`.
+- 2.3.6 - A caller bound with `bind_caller(OTHER_USER_ID, db)`, which does not own the terminal's machine, local or remote, gets `NodeTerminalWriteError` with `machine_not_owned` and `stage="none"`, nothing reaches the runtime or the node client, and the latch is cleared; the owner's write and an unbound write proceed. test: `tests/hub/test_remote_terminal_write.py::test_write_needs_owned_machine`.
 
 ### 2.4 Remote cancel goes through the node [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
+
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
 
 Targets:
 - `src/gobby/agents/kill.py::kill_agent`
@@ -1986,10 +2035,13 @@ Verification planned:
 - 2.4.3 - With `close_terminal`, a stopped reply settles the terminal row as a local close would. test: `tests/hub/test_remote_cancel.py::test_close_terminal_settles_row`.
 - 2.4.4 - A `not_found` reply returns success like a stopped one. test: `tests/hub/test_remote_cancel.py::test_not_found_counts_as_stopped`.
 - 2.4.5 - A `{stopped: false}` reply returns `error_code: not_stopped` and leaves the terminal row unchanged. test: `tests/hub/test_remote_cancel.py::test_not_stopped_is_failure`.
-- 2.4.6 - A bound caller that does not own the run's machine, local or remote, gets `error_code: machine_not_owned`, and no PID is signalled, no terminal closed and no `agent.cancel` sent; an unbound caller's kill proceeds. test: `tests/hub/test_remote_cancel.py::test_cancel_needs_owned_machine`.
+- 2.4.6 - A caller bound with `bind_caller(OTHER_USER_ID, db)`, which does not own the run's machine, local or remote, gets `error_code: machine_not_owned`, and no PID is signalled, no terminal closed and no `agent.cancel` sent; an unbound caller's kill proceeds. test: `tests/hub/test_remote_cancel.py::test_cancel_needs_owned_machine`.
 
 ### 2.5 Remote spawn goes through the node [category: code] (depends: 1.3, 1.5, 2.1, 2.2, 2.4)
 `kind: deliverable`
+
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
 
 Targets:
 - `src/gobby/hub/remote_spawn.py`
@@ -2601,7 +2653,7 @@ Verification planned:
 - 2.5.13 - `DaemonConfig(max_active_agents=1000)` validates, `DaemonConfig(max_active_agents=1001)` raises `ValidationError`, and the default stays 20. test: `tests/config/test_runtime_config_contract.py::test_spawn_cap_default_and_minimum`.
 - 2.5.14 - The checked-in runtime config contract still equals the generator's output after the bound. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
 - 2.5.15 - With `verify_srt_installation` failing on the hub, a remote spawn whose agent body resolves to enabled `srt` still sends `agent.spawn` with that sandbox, the resolved model, effort, and preflight mode; a body whose sandbox is disabled or `provider-native` returns `sandbox_required` with `stage: "none"` and sends nothing. test: `tests/hub/test_remote_spawn.py::test_remote_resolvers_skip_hub_srt_install`.
-- 2.5.16 - A bound caller that does not own the target machine, local or remote, gets `machine_not_owned` from the MCP tool and `POST /api/agents/spawn`, and no session, run, or terminal row is written and nothing is launched or sent; the owner's spawn and an unbound caller's spawn proceed. test: `tests/hub/test_remote_spawn.py::test_spawn_needs_owned_machine`.
+- 2.5.16 - A caller that does not own the target machine, local or remote, gets `machine_not_owned` from the MCP tool (bound with `bind_caller(OTHER_USER_ID, db)`) and from `POST /api/agents/spawn` (`authenticate_as(server, OTHER_USER_ID)`), and no session, run, or terminal row is written and nothing is launched or sent; the owner's spawn (`TEST_USER_ID`, bound the same two ways) and an unbound caller's spawn proceed. test: `tests/hub/test_remote_spawn.py::test_spawn_needs_owned_machine`.
 
 ### 2.6 The hub settles remote runs from the node's reports [category: code] (depends: 1.3, 1.4, 2.1, 2.5)
 `kind: deliverable`
@@ -2610,15 +2662,23 @@ Targets:
 - `src/gobby/hub/remote_reconcile.py`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.__init__`
 - `src/gobby/agents/agent_health.py::AgentHealthMonitor.check_unhealthy_agents`
+- `src/gobby/hooks/session_coordinator.py::SessionCoordinator.complete_agent_run`
+- `src/gobby/hooks/event_handlers/_session_end.py::SessionEndMixin.handle_session_end`
+- `tests/hooks/test_session_end_handlers.py::TestSessionEndHandling.test_staged_clear_end_hands_run_to_successor`
 - `tests/hub/test_remote_reconcile.py`
 
-**Granularity:** seven acceptance items and two production files, one
+**Granularity:** nine acceptance items and four production files, one
 outcome: after a remote spawn leaves 2.5, every run and terminal row on a
-reporting machine reaches a settled state with one owner,
-`RemoteRunReconciler` under `AgentHealthMonitor`. Promotion covers 2.6.1,
-terminal settlement 2.6.2 to 2.6.6, and the run sweep 2.6.7. 1.4 records
-workspace rows. None is safe alone: all three read the same report, and the fence
-exits the terminal whose run the sweep settles after a hub restart.
+reporting machine reaches a settled state, completed or failed. Promotion
+covers 2.6.1, terminal settlement 2.6.2 to 2.6.6, the run sweep 2.6.7, a
+grok or agy exit 2.6.8, and a node run's session end 2.6.9.
+`RemoteRunReconciler` under `AgentHealthMonitor` owns every report-driven
+step, and `handle_session_end` owns the forwarded session end, as it does
+locally. 1.4 records workspace rows. None is safe alone: all of them read
+the same report, the fence exits the terminal whose run the sweep settles
+after a hub restart, 2.6.2 waits a second report so a forwarded session end
+can settle first, and 2.6.8 and 2.6.9 both complete through the
+`attested_turns` count that `complete_agent_run` gains here.
 
 **Research context:**
 - Every local run monitor lists runs with `require_machine_id()`:
@@ -2627,9 +2687,96 @@ exits the terminal whose run the sweep settles after a hub restart.
   same way. A remote run has no owner after the spawn reply. A lost reply leaves
   its terminal pending, and an agent that dies without a session end leaves its
   run running.
-- A remote agent's normal exit already settles. Its session-end hook reaches
+- A remote claude, codex, or droid agent's session-end hook reaches
   `handle_session_end`, and `session_end_targets_live_cli` is false for a
   session on another machine. So `complete_agent_run` and `mark_exited` run.
+  Today `complete_agent_run` still fails that run (Orchestrator gobby#15977's
+  review, O1):
+  - `complete_agent_run` (`src/gobby/hooks/session_coordinator.py`) fails a
+    run with no activity: when its task is not closed and
+    `merge_completion_stats` gives 0 tool calls and 0 turns, it calls
+    `_terminate_agent_run(action="fail", reason=format_no_activity_error(...))`.
+    The same counts are appended to a step-workflow failure.
+  - Those counts come from the run's `tool_calls_count` and `turns_used`,
+    the session's `tool_call_count` and `turn_count`, and the transcript
+    reader. Only transcript processing writes the session counters
+    (`src/gobby/storage/sessions/_bulk_update.py`, called from
+    `src/gobby/sessions/processor_transcripts.py` and
+    `transcript_processing.py`). A node session's transcript stays on the
+    node: `_read_local_transcript` returns no snapshot for a session on
+    another machine (node-halves Decision 4), and node-halves forwards no
+    transcript. So every count is 0 on the hub.
+  - The hub does hold the session's turn lifecycle. A forwarded
+    `BEFORE_AGENT` hook (the provider's prompt submit) runs
+    `handle_before_agent` (`src/gobby/hooks/event_handlers/_agent.py`), which
+    calls `TurnLifecycleReducer.begin_turn`
+    (`src/gobby/sessions/turn_lifecycle.py`), and each begun turn raises the
+    lifecycle `generation` by 1. `_dead_terminal_reason` reads it through
+    `AttentionStateManager(db).get(session_attention_entry_id(session_id))`
+    and `TurnLifecycleState.from_payload`.
+  - The task-close and step-workflow checks in `complete_agent_run`
+    (`closed_task_result`, `ended_caller_close_review_outcome`,
+    `cooperative_close_handoff_pending`, `incomplete_step_workflow_error`)
+    read hub state and apply to a node run unchanged.
+  - `complete_agent_run` takes only the session. It sets `tool_calls_count`
+    and `turns_used` from `merge_completion_stats`, then from
+    `resolve_completion_stats` when a transcript reader is set, and passes
+    both to `_terminate_agent_run`, which records them on the run.
+    `SessionCoordinator` holds no machine id, and
+    `tests/hooks/test_session_coordinator.py` builds its runs and sessions as
+    `MagicMock`s, so the remote check belongs to the callers.
+    `handle_session_end` (`SessionEndMixin`,
+    `src/gobby/hooks/event_handlers/_session_end.py`) already reads
+    `self._get_machine_id()` and holds `self._turn_lifecycle`, a
+    `TurnLifecycleReducer` (`None` without a session manager) whose
+    `get(session_id)` returns a `TurnLifecycleState` with `generation`. The
+    reconciler knows each row's machine.
+  - `EventHandlers` defaults `_get_machine_id` to `lambda: "unknown-machine"`.
+    `TestSessionEndHandling.test_staged_clear_end_hands_run_to_successor`
+    (`tests/hooks/test_session_end_handlers.py`) builds its session as a
+    `MagicMock` with no `machine_id` and compares the calls to
+    `[call(mock_session)]` exactly, so the new remote branch would change its
+    call. Its other `complete_agent_run` checks either name a session on the
+    handler's own machine or use `assert_called_once()`.
+    `tests/hooks/test_session_events_coverage.py` checks only
+    `assert_called_once()` or raises from the call, and
+    `tests/hooks/test_session_lookup_metadata.py` asserts it is not called.
+    2.2 edits other tests in both files (2.6 follows it through 2.5), and 2.6
+    re-runs both.
+- Grok and agy send no hooks from a node (Decision 7; node-halves 2.3.3
+  gives them no hook directory), so the hub never sees their prompt submit,
+  stop, or session end. Their run's end reaches the hub only as the node's
+  exit (1.1): `{run_id, terminal_id, launched, exit_code, reason, workspace}`.
+  - node-halves 2.6's `watch_exits` commits `{launched: true, exit_code,
+    reason}` with the host's exit code when the terminal exits, `reason`
+    `cancelled` when a cancel record exists and `exited` otherwise.
+    `reconcile` commits an `exited` exit with a null `exit_code` for a
+    launched run whose terminal left the host inventory.
+  - node-halves 2.6 launches grok with `--single` and agy with `--print`,
+    and both carry the prompt on the argv, so a launched one-shot runs its
+    prompt's turn and exits.
+  - `_dead_terminal_reason` fails both today. Grok's hooks include
+    `session_end` (`GROK_EVENT_MAP`, `src/gobby/adapters/capabilities.py`),
+    so `_exits_without_session_end("grok")` is false and the reason is
+    `"terminal session died unexpectedly"`. Agy has `Stop` and no
+    `SessionEnd` (`src/gobby/adapters/agy_contract.py`), so the predicate is
+    true, but no hook began a turn on the hub, so `generation` is 0 and the
+    reason is the same.
+  - 2.5 pre-registers a remote run's child session on the hub with the run's
+    `agent_run_id`, so a grok or agy run has a session row that no hook ever
+    binds. Locally, `_dead_terminal_reason` completes a clean hookless exit
+    with `await asyncio.to_thread(coordinator.complete_agent_run, session)`,
+    because the call blocks on the daemon loop. It reaches the coordinator and
+    session manager through `AgentHealthMonitor`'s
+    `_get_session_coordinator` and `_get_session_manager` getters.
+- Rejected: reading the node's pane report (node-halves 2.14's
+  `idle.turn_in_flight`, kept by node-halves 3.3's store) as proof that a
+  grok or agy turn ran. The store keeps only the latest snapshot, a one-shot
+  that runs and exits between two 30-second pane passes never shows it, and
+  it would add a cross-plan dependency for no signal the exit lacks.
+  Rejected: skipping the no-activity check for every node run. A claude,
+  codex, or droid node run has forwarded turn evidence, so the check still
+  catches one that never began a turn.
 - `check_unhealthy_agents` settles a local dead terminal through
   `_dead_terminal_reason`, which completes a provider that exits without a
   session end, and through `AgentCleanupHandler.cleanup_agent`. That chain
@@ -2674,15 +2821,36 @@ exits the terminal whose run the sweep settles after a hub restart.
   override), and a node reports right after each change. So a remote run
   turns live within one health pass, about 30 s, of its launch.
 - The tests feed the inbox directly and drive a fake node client; live
-  reports are proved in 5.1.
+  reports are proved in 5.1. 2.6.9 builds `EventHandlers` and a
+  `SessionCoordinator` over the test database and sends a node session's
+  `BEFORE_AGENT` and `SESSION_END` events through `handle_before_agent` and
+  `handle_session_end`.
 
 **Implementation:**
 - `RemoteRunReconciler` takes the run manager, the terminal manager, a
-  `cleanup_agent` callable, a `dead_reason` callable, `run_db`, and the
-  database. `AgentHealthMonitor.__init__` builds it from its own
-  `_cleanup_handler.cleanup_agent` and `_dead_terminal_reason`.
+  `cleanup_agent` callable, a `dead_reason` callable, the
+  `get_session_coordinator` and `get_session_manager` getters, `run_db`, and
+  the database. `AgentHealthMonitor.__init__` builds it from its own
+  `_cleanup_handler.cleanup_agent`, `_dead_terminal_reason`,
+  `_get_session_coordinator`, and `_get_session_manager`.
   `check_unhealthy_agents` adds the result of `reconcile()` to its count after
   the local pass.
+- `complete_agent_run(session, *, attested_turns: int = 0)`: once the counts
+  resolve, `turns_used = max(turns_used, attested_turns)`, before the
+  no-activity check and before `_terminate_agent_run` records the counts.
+  Every caller that passes nothing behaves as before.
+- `handle_session_end`: for a session whose `machine_id` is not
+  `self._get_machine_id()`, inside the existing `try` it reads the reducer
+  as `getattr(self, "_turn_lifecycle", None)`, as the method already reads
+  `_liveness_monitor`, takes its `get(session.id).generation` (0 when there
+  is no reducer), and calls `complete_agent_run(session, attested_turns=generation)`.
+  A session on the hub's own machine keeps `complete_agent_run(session)`. Each
+  forwarded prompt submit began one turn, so a node run that began a turn
+  completes, and one that never began a turn still fails "no activity".
+  `test_staged_clear_end_hands_run_to_successor` gives its session
+  `machine_id = "local-machine"` and passes
+  `get_machine_id=lambda: "local-machine"`, as its neighbours do, so it keeps
+  testing the local path.
 - `reconcile()` calls `node_report_inbox().take()` and drops this machine's
   entry. Only machines with an entry are visited, so a node that stops
   reporting keeps its rows as they are. "Consecutive reports" means
@@ -2718,10 +2886,33 @@ exits the terminal whose run the sweep settles after a hub restart.
     launch, and the node removed what it prepared. The reconciler calls
     `fail_pending` at once, and for an active run
     `cleanup_agent(run, terminal_payload="remote spawn failed on <machine>: <reason>")`.
+  - A grok or agy row (the run's `provider` is in the module constant
+    `NODE_HOOKLESS_PROVIDERS = frozenset({"grok", "agy"})`, Decision 7) with a
+    `launched: true` exit whose `reason` is `exited` settles on that report,
+    because no session end will follow it. The reconciler exits the terminal,
+    `mark_exited` for a live or orphaned row and `fail_pending` for a pending
+    one, and re-reads the run. An ended run gets nothing more. An active run
+    settles by the exit code, without `dead_reason`:
+    - 0: the reconciler reads the child session through
+      `get_session_manager()`. When the session's `agent_run_id` is the run's
+      id, it calls
+      `await asyncio.to_thread(coordinator.complete_agent_run, session, attested_turns=1)`.
+      The prompt rides the argv, so a launched one-shot that exits 0 ran its
+      prompt's turn, and the task-close and step-workflow checks still apply.
+      When a getter returns `None` or the session is missing, the reconciler
+      does nothing more.
+    - Any other code: `cleanup_agent(run, terminal_payload="remote <provider> exited with code <n> on <machine>")`.
+    - Null (the node's reconcile found the terminal gone from its inventory):
+      `cleanup_agent(run, terminal_payload="remote <provider> terminal left the node's inventory without an exit code on <machine>")`.
+    - A run left active after any of these keeps only exited terminals, so the
+      run sweep settles it two reports later, as `_unsettled_completions`
+      gives a local completion one more pass.
   - Every other row is absent. A live row whose `host_epoch` differs from the
-    report's and a row with a `launched: true` exit count as absent too, so a
-    forwarded session end can settle the run first. The first absent report
-    only records the row. On the second consecutive one:
+    report's counts as absent too. So does a claude, codex, or droid row with a
+    `launched: true` exit, and a grok or agy row whose `launched: true` exit
+    has `reason` `cancelled`, so a forwarded session end or the cancel owner
+    (2.4) can settle the run first. The first absent report only records the row. On the second
+    consecutive one:
     - A live or orphaned row gets `mark_exited`, then the run settles.
     - A pending row whose `attempt_started_at` is older than
       `spawn_in_doubt_seconds` gets a fence, for an active or an ended run. An
@@ -2750,19 +2941,30 @@ exits the terminal whose run the sweep settles after a hub restart.
 Consumers unchanged:
 - `src/gobby/agents/lifecycle_monitor.py` — no-edit-reason: it constructs `AgentHealthMonitor` with unchanged arguments and calls `check_unhealthy_agents()`, whose signature and return type are unchanged.
 - `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: its inbox holds no report, so the reconciler visits no machine, sends nothing, and adds 0; re-run as verification.
+- `src/gobby/runner_broadcasting.py` — no-edit-reason: it names `complete_agent_run` only in a comment.
+- `tests/hooks/test_session_coordinator.py` — no-edit-reason: it calls `complete_agent_run(session)` with no `attested_turns`, whose default 0 leaves every count as before; re-run as verification.
+- `tests/agents/test_lifecycle_task_completion.py` — no-edit-reason: it calls `complete_agent_run` with the session only; re-run as verification.
+- `tests/agents/watchdog/test_print_mode_exit.py` — no-edit-reason: it drives a local hookless exit through `_dead_terminal_reason`, whose call is unchanged; re-run as verification.
+- `tests/hooks/test_clear_successor_seat.py` — no-edit-reason: it asserts `complete_agent_run` is not called; re-run as verification.
+- `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: its session row has no `agent_run_id`, so `handle_session_end` never reaches `complete_agent_run`, and its handler stub sets no `_turn_lifecycle`, which the `getattr` read tolerates; re-run as verification.
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: its session-end handler stub has no session manager or coordinator, so no session is read and `complete_agent_run` is never reached; re-run as verification.
+- `tests/storage/test_storage_agents.py` — no-edit-reason: its `test_complete_agent_run` drives `LocalAgentRunManager`, not the coordinator.
+- `tests/tasks/test_transcript_evidence.py` — no-edit-reason: it names a coordinator test only in fixture text.
 
 Verification planned:
-- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_reconcile.py tests/agents/test_lifecycle_monitor.py -v`.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/hub/test_remote_reconcile.py tests/agents/test_lifecycle_monitor.py tests/hooks/test_session_end_handlers.py tests/hooks/test_session_coordinator.py tests/agents/test_lifecycle_task_completion.py tests/agents/watchdog/test_print_mode_exit.py tests/hooks/test_session_events_coverage.py tests/hooks/test_clear_successor_seat.py tests/hooks/test_session_lookup_metadata.py tests/workflows/test_session_end_cleanup.py tests/workflows/test_step_snapshot_semantics.py -v`.
 
 **Acceptance:**
 
 - 2.6.1 - A report listing a pending run's agent promotes its terminal live with the entry's locator and the report's `host_epoch` and records `pid` and `terminal_id` on the run; when the agent's session end arrived first, the terminal exits, the run stays ended, and no `pid` is recorded. test: `tests/hub/test_remote_reconcile.py::test_listed_pending_run_is_promoted`.
 - 2.6.2 - A run with a live terminal that a report omits, or a live row from an older `host_epoch`, is left on its first absent report and settled on the second through `mark_exited` and `cleanup_agent`; a run that settles in between is not failed, and its terminal still exits. test: `tests/hub/test_remote_reconcile.py::test_absent_live_run_settles_after_two_reports`.
-- 2.6.3 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and an exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
+- 2.6.3 - An exit with `launched: false` fails the pending terminal and the active run at once with the node's reason and sends no command, and a claude, codex, or droid exit with `launched: true` for a live row waits for a second report like an absent row. test: `tests/hub/test_remote_reconcile.py::test_exits_settle_by_launch`.
 - 2.6.4 - A pending run past the deadline and absent from two consecutive reports is sent `agent.cancel` first. `{stopped: true}` or `not_found` then fails its terminal and run, `node_timeout` or `{stopped: false}` changes nothing, and a run listed in `accepted` is never fenced. test: `tests/hub/test_remote_reconcile.py::test_in_doubt_spawn_is_fenced_before_settlement`.
 - 2.6.5 - A machine with no new report gets no command and its rows stay as they are, and local rows are never reconciled. test: `tests/hub/test_remote_reconcile.py::test_unreported_and_local_rows_untouched`.
 - 2.6.6 - In this case the spawn's effect lands and its reply is lost, the agent exits between reports so none lists it, and its session start and session end both reach the hub. Past the deadline the pending terminal is fenced with `agent.cancel`. After `not_found` it exits, the run stays ended, and there is no `cleanup_agent`. A later `agent.spawn` for that run is refused `cancelled` by the fake node. After `{stopped: false}` or `node_timeout` the terminal stays pending. The same row on a machine with no new report stays untouched. test: `tests/hub/test_remote_reconcile.py::test_ended_run_terminal_still_settles`.
 - 2.6.7 - An active remote run whose terminal rows have all exited, as a hub restart between `fail_pending` and the run's settlement leaves it, is left on the first report and settled through `cleanup_agent` on the second, including when 100 healthy active runs on that machine put it past the first page. A run that completes, or gains a pending or live terminal, between the two reports is not swept, and a run with no terminal row is never swept. test: `tests/hub/test_remote_reconcile.py::test_run_left_active_after_terminal_exit_settles`.
+- 2.6.8 - A grok or agy run launched with its prompt whose report carries a `launched: true` `exited` exit settles on that report: exit code 0 exits its terminal and completes the run through `complete_agent_run` with one attested turn, a nonzero code fails it with that code, and a null code fails it as gone from the node's inventory. A `cancelled` exit waits a second report like an absent row, and an ended run gets nothing more than its terminal's exit. test: `tests/hub/test_remote_reconcile.py::test_hookless_exit_settles_from_exit_code`.
+- 2.6.9 - A forwarded session end for a node session whose forwarded prompt submit began a turn completes its run, one with no begun turn fails it "no activity", and one whose task is closed completes regardless. A session end on the hub's own machine calls `complete_agent_run(session)` exactly as before. test: `tests/hub/test_remote_reconcile.py::test_node_session_end_counts_forwarded_turns`.
 
 ## P3: Machine-aware roster and attention
 `kind: framing`
@@ -2959,7 +3161,7 @@ Verification planned:
 - 3.3.3 - A request naming a stale episode gets 409 and sends nothing. test: `tests/servers/test_attention_remote_respond.py::test_stale_episode_sends_nothing`.
 - 3.3.4 - A lost reply answers 502 `injection_indeterminate` and retires the entry, and a retry sends no second `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_lost_reply_retires_entry`.
 - 3.3.5 - Two concurrent responses to one entry send one `terminal.write`. test: `tests/servers/test_attention_remote_respond.py::test_concurrent_responses_send_once`.
-- 3.3.6 - A bound caller that does not own the entry's machine, local or remote, gets 403 `machine_not_owned` before any claim, capture or write, and the entry stays open; the owner's response proceeds. test: `tests/servers/test_attention_remote_respond.py::test_respond_needs_owned_machine`.
+- 3.3.6 - A request from `authenticate_as(server, OTHER_USER_ID)`, which does not own the entry's machine, local or remote, gets 403 `machine_not_owned` before any claim, capture or write, and the entry stays open; the owner's response, from `authenticate_as(server, TEST_USER_ID)`, proceeds. test: `tests/servers/test_attention_remote_respond.py::test_respond_needs_owned_machine`.
 
 ## P4: Remote workspaces and the machine-scoped project view
 `kind: framing`
@@ -3048,6 +3250,9 @@ Verification planned:
 
 ### 4.2 Node workspace.merge and workspace.remove handlers [category: code] (depends: 4.1)
 `kind: deliverable`
+
+Landing gate: a Security Reviewer LAND on the candidate commit before it
+lands (Constraints).
 
 Targets:
 - `crates/gdaemon/src/nodes/agents/commands.rs`
@@ -3310,7 +3515,7 @@ Verification planned:
 - 4.3.4 - `get_worktree` and `get_clone` return a node's row; for a local row, a path-addressed call, and an unmatched or ambiguous prefix, the wrapper calls neither `resolve_reference` nor `get` and the original runs with its arguments untouched; every wrapped tool keeps its input schema; and `setup_internal_registries` without `db` installs no wrapper. test: `tests/hub/test_remote_workspaces.py::test_local_rows_and_schemas_unchanged`.
 - 4.3.5 - `list_worktrees` and `list_clones` with a node's `machine_id` list only that machine's rows, and without it only this machine's. test: `tests/hub/test_remote_workspaces.py::test_list_tools_take_machine_id`.
 - 4.3.6 - An offline node returns `node_offline` with `stage: "none"` and changes no row, and `sync_worktree` and `release_worktree` on a node's row still return `machine_ownership_mismatch`. test: `tests/hub/test_remote_workspaces.py::test_offline_and_other_tools_refuse`.
-- 4.3.7 - A bound caller that does not own the machine gets `machine_not_owned` from `get_<kind>`, `merge_<kind>` and `delete_<kind>` on that machine's row, local or remote, and from `list_<kind>` naming that machine, with no command and no row change; the owner and an unbound caller proceed. test: `tests/hub/test_remote_workspaces.py::test_workspace_tools_need_owned_machine`.
+- 4.3.7 - A caller bound with `bind_caller(OTHER_USER_ID, db)`, which does not own the machine, gets `machine_not_owned` from `get_<kind>`, `merge_<kind>` and `delete_<kind>` on that machine's row, local or remote, and from `list_<kind>` naming that machine, with no command and no row change; the owner and an unbound caller proceed. test: `tests/hub/test_remote_workspaces.py::test_workspace_tools_need_owned_machine`.
 
 ### 4.4 REST workspace routes list by machine and finish through the node [category: code] (depends: 1.5, 4.3)
 `kind: deliverable`
@@ -3358,7 +3563,7 @@ Verification planned:
 - 4.4.1 - `GET /worktrees` and `GET /clones` with a node's `machine_id` list that machine's rows, and without it this machine's. test: `tests/servers/test_remote_workspace_routes.py::test_list_routes_take_machine_id`.
 - 4.4.2 - `DELETE /worktrees/{id}` and the clone delete on a node's row remove through the node, answer 200 and delete the row on `removed`, and answer 409, 503, or 502 with the code and keep the row otherwise. test: `tests/servers/test_remote_workspace_routes.py::test_delete_routes_finish_through_node`.
 - 4.4.3 - The clone sync route on a node's clone answers 409 `machine_ownership_mismatch` and sends nothing. test: `tests/servers/test_remote_workspace_routes.py::test_sync_route_keeps_ownership_refusal`.
-- 4.4.4 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from the worktree and clone deletes on that machine's row, and from the list routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; nothing is sent, read, or deleted. The owner's request proceeds in each case. test: `tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine`.
+- 4.4.4 - A request from `authenticate_as(server, OTHER_USER_ID)`, whose user does not own the machine, gets 403 `machine_not_owned` from the worktree and clone deletes on that machine's row, and from the list routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; nothing is sent, read, or deleted. The owner's request, from `authenticate_as(server, TEST_USER_ID)`, proceeds in each case. test: `tests/servers/test_remote_workspace_routes.py::test_routes_need_owned_machine`.
 
 ### 4.5 Remote workspace expiry [category: code] (depends: 4.3)
 `kind: deliverable`
@@ -3515,7 +3720,7 @@ Verification planned:
 - 4.7.2 - `/api/source-control/status?machine_id=<node>&project_id=<p>` answers the node's git fields and that machine's worktree and clone counts, and a second call within 30 s sends no command. test: `tests/servers/test_machine_scoped_projects.py::test_remote_status_cached`.
 - 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call; a node that disconnects after a cached success answers null git fields on the very next call without a command; and a failed connected-machines read also answers null git fields. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
 - 4.7.4 - For a caller that owns the hub's machine, both routes without `machine_id` answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
-- 4.7.5 - A request with a verified identity whose user does not own the machine gets 403 `machine_not_owned` from both routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; no checkout is read, no `checkout.status` is sent, and no cached status is returned. The owner's request proceeds in each case. test: `tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine`.
+- 4.7.5 - A request from `authenticate_as(server, OTHER_USER_ID)`, whose user does not own the machine, gets 403 `machine_not_owned` from both routes with `machine_id` omitted (the hub's machine), set to the hub's machine, or set to a node; no checkout is read, no `checkout.status` is sent, and no cached status is returned. The owner's request, from `authenticate_as(server, TEST_USER_ID)`, proceeds in each case. test: `tests/servers/test_machine_scoped_projects.py::test_routes_need_owned_machine`.
 
 ### 4.8 gclient projects pane follows the machine filter [category: code] (depends: 3.2, 4.4, 4.7)
 `kind: deliverable`
@@ -3655,7 +3860,10 @@ the runs the earlier steps create.
   detection manifests, whose positive approval case per provider is in
   `crates/gdaemon/tests/fixtures/pane_detection/corpus.json` (node-halves
   2.12, 2.13), and node-halves 3.3 applies the report's `pane` block on the
-  hub. Grok and agy runs settle through the node's exit report (2.6). The
+  hub. Claude, codex, and droid runs complete through the forwarded session
+  end, which counts the turns their forwarded prompt submits began, and grok
+  and agy runs settle through the node's exit report, completed on exit code
+  0 (2.6.8, 2.6.9). The
   node's agy gate needs version 1.1.18 (node-halves 2.6), and codex
   receives its prompt after the composer marker (node-halves 2.10).
 - The test enrolls the node with a key the hub's user mints, so one user
@@ -3681,7 +3889,9 @@ the runs the earlier steps create.
   - codex prints the composer marker from the pane-detection corpus and
     reads its prompt; claude, codex, and droid pipe a session-start
     envelope into `ghook --cli=<provider> --type=session-start` with the
-    run's `GOBBY_SESSION_ID`;
+    run's `GOBBY_SESSION_ID`, then their provider's prompt-submit envelope,
+    which the hub handles as `BEFORE_AGENT` and which begins the session's
+    turn (2.6);
   - it reads one line from its pane and writes it to a file in its
     workspace;
   - it asks for attention through its provider's path: claude and codex
@@ -3689,7 +3899,7 @@ the runs the earlier steps create.
     envelope into `ghook`, and grok and agy print their provider's positive
     approval pane from the detection corpus;
   - it reads the answer line, appends it to the file, commits it, sends its
-    stop and session-end hooks where it has hooks, and exits.
+    stop and session-end hooks where it has hooks, and exits with code 0.
 - Steps, each run for claude, codex, grok, droid, and agy:
   1. One `ghook` session-start from the checkout root registers the node's
      checkout (once, before the providers).
@@ -3716,7 +3926,7 @@ Verification planned:
 **Acceptance:**
 
 - 5.1.1 - The node's first hook from its checkout root registers that checkout on the hub under the node's machine. test: `tests/e2e/test_hub_node_live.py::test_node_registers_checkout`.
-- 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed, through hooks for claude, codex, and droid and through the exit report for grok and agy. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
+- 5.1.2 - For each of claude, codex, grok, droid, and agy, a spawn aimed at the node runs the fake there under SRT, the node's report promotes the run live and records its worktree row on the node's machine, and the run settles completed: for claude, codex, and droid through the forwarded session end, whose earlier prompt submit began a turn, and for grok and agy through the exit report with exit code 0. test: `tests/e2e/test_hub_node_live.py::test_spawn_runs_each_provider_on_node`.
 - 5.1.3 - For each of the five providers, a terminal write reaches the fake's pane on the node, and the fake records the written line. test: `tests/e2e/test_hub_node_live.py::test_terminal_write_reaches_each_provider`.
 - 5.1.4 - For each of the five providers, the fake's attention request raises an attention entry on the node's machine, through `PermissionRequest` for claude and codex, `Notification` for droid, and the node's pane report for grok and agy, and the respond route's answer reaches the fake. test: `tests/e2e/test_hub_node_live.py::test_attention_respond_reaches_each_provider`.
 - 5.1.5 - For each of the five providers, a cancel stops a run waiting on the node, and the run settles cancelled. test: `tests/e2e/test_hub_node_live.py::test_cancel_stops_each_provider`.
@@ -3918,6 +4128,28 @@ Verification planned:
 - 2026-10-14: M1 withdrawn for Orchestrator gobby#15977's review of the
   stamped plan at fb13ada49f (O1 to O4); the Plan Adversary derives a fresh
   M1 after the repair.
+- 2026-10-14: Repaired for Orchestrator gobby#15977's review, O1 to O4.
+  - O1: the hub fills a session's turn and tool-call counts only from its
+    transcript, which stays on the node. So `complete_agent_run` would fail
+    every node run "no activity", and grok and agy send no hooks from a node
+    at all. In 2.6, `complete_agent_run` gains `attested_turns`. A forwarded
+    session end for a node session passes the hub's turn-lifecycle
+    generation, one turn per forwarded prompt submit (2.6.9). A grok or agy
+    run settles from the node's exit on that report: code 0 completes it with
+    one attested turn, and any other code or none fails it (2.6.8). Pane
+    `turn_in_flight` was rejected as evidence. 5.1's fake sends its prompt
+    submit and exits 0, and 5.1.2 names each provider's path.
+  - O2: the manifest schema has no review label. A Constraints bullet, the
+    security landing gate, requires a Security Reviewer LAND on every
+    candidate commit for 1.2, 1.4, 1.5, 2.2, 2.3, 2.4, 2.5, and 4.2. Each of
+    those sections repeats it, and Decision 18 points to it.
+  - O3: `tests/servers/conftest.py` gains `authenticate_as(server, user_id)`
+    and `OTHER_USER_ID`. Every ownership acceptance takes its owner
+    (`TEST_USER_ID`, which owns every seeded machine) and its non-owner
+    explicitly: through `authenticate_as` for routes, through `bind_caller`
+    for hub modules, and through real credentials in 1.5.5. None runs under
+    the break-glass default.
+  - O4: 1.1 states that its manifest entry carries `tdd: false`.
 
 ## V2: Verification
 `kind: verification`
