@@ -1,1 +1,402 @@
-{}
+{
+  "CLI gobby pipelines": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines` from Python callback `src/gobby/cli/pipelines.py:271` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines approve": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines approve` from Python callback `src/gobby/cli/pipelines_runs.py:113` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines check": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines check` from Python callback `src/gobby/cli/pipelines_catalog.py:208` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines history": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines history` from Python callback `src/gobby/cli/pipelines_runs.py:179` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines import": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines import` from Python callback `src/gobby/cli/pipelines_import.py:17` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines list": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines list` from Python callback `src/gobby/cli/pipelines_catalog.py:86` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines reject": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines reject` from Python callback `src/gobby/cli/pipelines_runs.py:147` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines run": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines run` from Python callback `src/gobby/cli/pipelines_catalog.py:241` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines runs": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines runs` from Python callback `src/gobby/cli/pipelines_runs.py:19` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines runs list": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines runs list` from Python callback `src/gobby/cli/pipelines_runs.py:255` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines runs show": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines runs show` from Python callback `src/gobby/cli/pipelines_runs.py:24` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines search": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines search` from Python callback `src/gobby/cli/pipelines_runs.py:363` to Rust services and CLI parity."
+  },
+  "CLI gobby pipelines show": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines show` from Python callback `src/gobby/cli/pipelines_catalog.py:132` to Rust services and CLI parity."
+  },
+  "CLI gobby rules": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules` from Python callback `src/gobby/cli/rules.py:157` to Rust services and CLI parity."
+  },
+  "CLI gobby rules audit": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules audit` from Python callback `src/gobby/cli/rules.py:335` to Rust services and CLI parity."
+  },
+  "CLI gobby rules disable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules disable` from Python callback `src/gobby/cli/rules.py:251` to Rust services and CLI parity."
+  },
+  "CLI gobby rules enable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules enable` from Python callback `src/gobby/cli/rules.py:242` to Rust services and CLI parity."
+  },
+  "CLI gobby rules export": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules export` from Python callback `src/gobby/cli/rules.py:298` to Rust services and CLI parity."
+  },
+  "CLI gobby rules import": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules import` from Python callback `src/gobby/cli/rules.py:260` to Rust services and CLI parity."
+  },
+  "CLI gobby rules list": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules list` from Python callback `src/gobby/cli/rules.py:163` to Rust services and CLI parity."
+  },
+  "CLI gobby rules show": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules show` from Python callback `src/gobby/cli/rules.py:205` to Rust services and CLI parity."
+  },
+  "CLI gobby variables": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables` from Python callback `src/gobby/cli/variables.py:67` to Rust services and CLI parity."
+  },
+  "CLI gobby variables get": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables get` from Python callback `src/gobby/cli/variables.py:109` to Rust services and CLI parity."
+  },
+  "CLI gobby variables set": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby variables set` from Python callback `src/gobby/cli/variables.py:72` to Rust services and CLI parity."
+  },
+  "HTTP DELETE /api/pipelines/definitions/{definition_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:373`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP DELETE /api/rules/{name}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:396`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP DELETE /api/variables/{ref}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/variables/{ref}; Python handler `src/gobby/servers/routes/variable_definitions.py:171`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/definitions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:183`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/definitions/templates": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions/templates; Python handler `src/gobby/servers/routes/pipeline_definitions.py:178`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/definitions/{definition_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:227`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/definitions/{definition_id}/export": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/definitions/{definition_id}/export; Python handler `src/gobby/servers/routes/pipeline_definitions.py:209`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/executions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/executions; Python handler `src/gobby/servers/routes/pipelines.py:94`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/executions/search": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/executions/search; Python handler `src/gobby/servers/routes/pipelines.py:195`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/pipelines/{execution_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/pipelines/{execution_id}; Python handler `src/gobby/servers/routes/pipelines.py:363`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/rules": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules; Python handler `src/gobby/servers/routes/rules.py:170`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/rules/groups": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules/groups; Python handler `src/gobby/servers/routes/rules.py:119`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/rules/tags": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules/tags; Python handler `src/gobby/servers/routes/rules.py:143`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/rules/{name}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:279`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP GET /api/variables": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:87`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/approve/{token}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/approve/{token}; Python handler `src/gobby/servers/routes/pipelines.py:432`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:284`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/import": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/import; Python handler `src/gobby/servers/routes/pipeline_definitions.py:238`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/{definition_id}/duplicate": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/{definition_id}/duplicate; Python handler `src/gobby/servers/routes/pipeline_definitions.py:270`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/{definition_id}/move-to-global": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/{definition_id}/move-to-global; Python handler `src/gobby/servers/routes/pipeline_definitions.py:436`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/{definition_id}/move-to-project": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/{definition_id}/move-to-project; Python handler `src/gobby/servers/routes/pipeline_definitions.py:418`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/{definition_id}/restore": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/{definition_id}/restore; Python handler `src/gobby/servers/routes/pipeline_definitions.py:452`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/definitions/{definition_id}/restore-from-template": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/{definition_id}/restore-from-template; Python handler `src/gobby/servers/routes/pipeline_definitions.py:389`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/reject/{token}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/reject/{token}; Python handler `src/gobby/servers/routes/pipelines.py:513`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/pipelines/run": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/run; Python handler `src/gobby/servers/routes/pipelines.py:269`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/rules": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/rules; Python handler `src/gobby/servers/routes/rules.py:208`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/variables": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:109`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP POST /api/variables/{ref}/restore-from-template": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/variables/{ref}/restore-from-template; Python handler `src/gobby/servers/routes/variable_definitions.py:188`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/pipelines/definitions/{definition_id}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:336`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/pipelines/definitions/{definition_id}/toggle": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/pipelines/definitions/{definition_id}/toggle; Python handler `src/gobby/servers/routes/pipeline_definitions.py:324`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/rules/bulk-toggle": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/bulk-toggle; Python handler `src/gobby/servers/routes/rules.py:231`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/rules/{name}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:297`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/rules/{name}/toggle": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/rules/{name}/toggle; Python handler `src/gobby/servers/routes/rules.py:422`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/variables/{ref}": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/variables/{ref}; Python handler `src/gobby/servers/routes/variable_definitions.py:151`; Rust front-door dispatch currently proxies this family."
+  },
+  "HTTP PUT /api/variables/{ref}/toggle": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native PUT /api/variables/{ref}/toggle; Python handler `src/gobby/servers/routes/variable_definitions.py:138`; Rust front-door dispatch currently proxies this family."
+  },
+  "MCP gobby-workflows:approve_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `approve_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:569` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:cancel_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `cancel_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:619` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:clear_pipeline_execution_history": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `clear_pipeline_execution_history` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:736` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:create_agent_definition": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `create_agent_definition` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:482` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:create_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `create_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:763` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:create_rule": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `create_rule` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:298` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:create_variable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `create_variable` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:386` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:delete_agent_definition": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `delete_agent_definition` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:519` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:delete_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `delete_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:811` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:delete_rule": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `delete_rule` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:315` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:delete_variable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `delete_variable` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:432` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:evaluate_agent": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `evaluate_agent` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:189` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:evaluate_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `evaluate_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:168` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:export_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `export_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:838` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:export_variable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `export_variable` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:444` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:fail_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `fail_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:635` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_agent_definition": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_agent_definition` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:472` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:403` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_pipeline_status": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_pipeline_status` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:639` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_rule": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_rule` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:279` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_step_status": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_step_status` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:146` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:get_variable_definition": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `get_variable_definition` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:376` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:list_agent_definitions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `list_agent_definitions` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:456` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:list_pipeline_executions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `list_pipeline_executions` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:660` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:list_pipelines": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `list_pipelines` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:393` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:list_rules": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `list_rules` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:264` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:list_variables": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `list_variables` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:364` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:pipeline_eval": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `pipeline_eval` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:642` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:reject_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `reject_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:594` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:reload_cache": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `reload_cache` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:240` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:resume_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `resume_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:496` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:run_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `run_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:446` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:search_pipeline_executions": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `search_pipeline_executions` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:699` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:toggle_agent_definition": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `toggle_agent_definition` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:506` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:toggle_rule": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `toggle_rule` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:289` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_agent_rules": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_agent_rules` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:535` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_agent_step_workflow": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_agent_step_workflow` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:589` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_agent_variables": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_agent_variables` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:562` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_pipeline": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_pipeline` from Python handler `src/gobby/mcp_proxy/tools/workflows/_pipelines.py:778` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_rule": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_rule` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:327` and serve the `gobby-workflows` registry in Rust."
+  },
+  "MCP gobby-workflows:update_variable": {
+    "status": "proxied",
+    "note": "Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `update_variable` from Python handler `src/gobby/mcp_proxy/tools/workflows/__init__.py:409` and serve the `gobby-workflows` registry in Rust."
+  }
+}
