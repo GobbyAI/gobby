@@ -371,13 +371,22 @@ def rust_validation_run_names_test(evidence: str, test: AcceptanceTest) -> bool:
 
     module_prefix = "::".join(re.escape(part) for part in path_parts)
     symbol = re.escape(test.symbol)
-    module_test = re.compile(rf"\b{module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b")
+    module_test = re.compile(
+        rf"(?<![\w:]){module_prefix}::{symbol}\b"
+        if is_integration_test and test.rust_module is not None
+        else rf"\b{module_prefix}(?:::[A-Za-z0-9_]+)*::{symbol}\b"
+    )
     integration_stem = re.compile(rf"\b{re.escape(PurePosixPath(test.path).stem)}\b")
     symbol_word = re.compile(rf"\b{symbol}\b")
 
     return any(
         module_test.search(line)
-        or (is_integration_test and integration_stem.search(line) and symbol_word.search(line))
+        or (
+            is_integration_test
+            and len(source_parts) == 2
+            and integration_stem.search(line)
+            and symbol_word.search(line)
+        )
         for line in evidence.splitlines()
     )
 
