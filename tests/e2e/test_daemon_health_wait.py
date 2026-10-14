@@ -95,12 +95,12 @@ def test_timed_out_probes_make_documented_minimum_attempts(
 ) -> None:
     attempts = 0
 
-    def time_out(_url: str, *, timeout: float) -> httpx.Response:
+    def time_out(_client: httpx.Client, _url: str, *, timeout: float) -> httpx.Response:
         nonlocal attempts
         attempts += 1
         raise httpx.ReadTimeout(f"probe timed out after {timeout}")
 
-    monkeypatch.setattr("tests.e2e.conftest.httpx.get", time_out)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", time_out)
 
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(find_free_port(), timeout=0.0)
@@ -121,7 +121,7 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
     process = Mock(spec=subprocess.Popen)
     process.poll.return_value = 17
 
-    def fail_probe(url: str, *, timeout: float) -> httpx.Response:
+    def fail_probe(_client: httpx.Client, url: str, *, timeout: float) -> httpx.Response:
         nonlocal attempts
         attempts += 1
         request = httpx.Request("GET", url)
@@ -129,7 +129,7 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
             raise httpx.ConnectError("connection refused", request=request)
         raise httpx.ReadTimeout(f"probe timed out after {timeout}", request=request)
 
-    monkeypatch.setattr("tests.e2e.conftest.httpx.get", fail_probe)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", fail_probe)
 
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(
@@ -173,10 +173,10 @@ def test_unready_daemon_reports_bounded_mcp_startup_tail(
     elif mcp_log_state == "empty":
         mcp_log.touch()
 
-    def unavailable(url: str, *, timeout: float) -> httpx.Response:
+    def unavailable(_client: httpx.Client, url: str, *, timeout: float) -> httpx.Response:
         return httpx.Response(503, request=httpx.Request("GET", url))
 
-    monkeypatch.setattr("tests.e2e.conftest.httpx.get", unavailable)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", unavailable)
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(1, log_file=log_file, timeout=0.0, min_attempts=1)
 
@@ -205,14 +205,14 @@ def test_daemon_that_never_serves_route_fails_promptly(
         nonlocal elapsed
         elapsed += seconds
 
-    def refused(url: str, *, timeout: float) -> httpx.Response:
+    def refused(_client: httpx.Client, url: str, *, timeout: float) -> httpx.Response:
         advance(0.02)
         raise httpx.ConnectError("isolated listener unavailable")
 
     monkeypatch.setattr(
         "tests.e2e.conftest.time", SimpleNamespace(monotonic=lambda: elapsed, sleep=advance)
     )
-    monkeypatch.setattr("tests.e2e.conftest.httpx.get", refused)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", refused)
 
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(
@@ -256,7 +256,7 @@ def test_timeout_captures_isolated_stacks_timings_and_safe_backend_state(
             "token": "do-not-emit-token",
         },
     )
-    monkeypatch.setattr("tests.e2e.conftest.httpx.get", lambda *args, **kwargs: response)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client.get", lambda *args, **kwargs: response)
     with pytest.raises(DaemonHealthTimeoutError) as exc_info:
         wait_for_daemon_health(
             find_free_port(),
@@ -273,3 +273,34 @@ def test_timeout_captures_isolated_stacks_timings_and_safe_backend_state(
     assert "do-not-emit" not in str(error)
     process.send_signal.assert_any_call(signal.SIGUSR2)
     process.send_signal.assert_any_call(signal.SIGUSR1)
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_readiness_reuses_and_closes_loopback_client(
+    monkeypatch: pytest.MonkeyPatch, ready: bool
+) -> None:
+    attempts = 0
+
+    def probe(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        assert request.url == "http://127.0.0.1:1/api/auth/status"
+        if attempts == 1:
+            raise httpx.ConnectError("listener starting", request=request)
+        return httpx.Response(200 if ready and attempts == 3 else 503, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(probe))
+    factory = Mock(return_value=client)
+    monkeypatch.setattr("tests.e2e.conftest.httpx.Client", factory)
+
+    if ready:
+        wait_for_daemon_health(1, timeout=0.0, min_attempts=3)
+    else:
+        with pytest.raises(DaemonHealthTimeoutError) as exc_info:
+            wait_for_daemon_health(1, timeout=0.0, min_attempts=3)
+        assert exc_info.value.connect_refused == 1
+        assert exc_info.value.last_status_code == 503
+
+    assert attempts == 3
+    factory.assert_called_once_with(verify=False, trust_env=False)
+    assert client.is_closed

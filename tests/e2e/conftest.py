@@ -663,29 +663,32 @@ def wait_for_daemon_health(
     last_status_code: int | None = None
     backend_state: str | None = None
 
-    while attempts < min_attempts or time.monotonic() < deadline:
-        remaining = max(deadline - time.monotonic(), 0.0)
-        probe_timeout = max(0.001, min(DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS, remaining))
-        attempts += 1
-        try:
-            response = httpx.get(
-                f"http://127.0.0.1:{port}/api/auth/status",
-                timeout=probe_timeout,
-            )
-            last_status_code = response.status_code
-            backend_state = safe_backend_state(response)
-            if response.status_code == 200:
-                return
-        except httpx.ConnectError:
-            connect_refused += 1
-        except httpx.TimeoutException:
-            timed_out += 1
-        except httpx.TransportError:
-            transport_errors += 1
+    # This is a plaintext loopback probe, including for TLS front doors. Reuse
+    # the client so retries don't reload CA roots and compete with startup.
+    with httpx.Client(verify=False, trust_env=False) as client:
+        while attempts < min_attempts or time.monotonic() < deadline:
+            remaining = max(deadline - time.monotonic(), 0.0)
+            probe_timeout = max(0.001, min(DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS, remaining))
+            attempts += 1
+            try:
+                response = client.get(
+                    f"http://127.0.0.1:{port}/api/auth/status",
+                    timeout=probe_timeout,
+                )
+                last_status_code = response.status_code
+                backend_state = safe_backend_state(response)
+                if response.status_code == 200:
+                    return
+            except httpx.ConnectError:
+                connect_refused += 1
+            except httpx.TimeoutException:
+                timed_out += 1
+            except httpx.TransportError:
+                transport_errors += 1
 
-        remaining = max(deadline - time.monotonic(), 0.0)
-        if remaining > 0:
-            time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
+            remaining = max(deadline - time.monotonic(), 0.0)
+            if remaining > 0:
+                time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
     elapsed_seconds = time.monotonic() - start
     capture = capture_readiness_timeout(log_file.parent if log_file is not None else None, process)
