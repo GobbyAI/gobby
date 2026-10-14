@@ -26,6 +26,16 @@ The caller's installed agent definition must explicitly grant
 accepts no destination, and preserves conversation attachment state. The same
 workspace containment and delivery checks apply.
 
+Whole files and plans use `send_operator_attachment`, which sends the workspace
+file whole without redaction. The bundled `no-comms-attach` rule blocks the
+stdin attachment CLI for every seat except the Reporter, Log Monitor,
+Metrics Monitor and Trajectory Monitor. Those four definitions exclude the
+rule by name so they may send redacted log excerpts with `gobby comms attach`.
+Every other seat uses `send_operator_attachment` for authorized whole-file
+delivery. The Assistant asks the Log Monitor through `gobby-agents:send_message`
+to send cited log lines redacted; its own message says what happened and when,
+never the log lines or a path.
+
 To send text as a document without a file, operators use
 `gobby comms attach CHANNEL_NAME FILENAME`, which reads stdin, or the
 authenticated `POST /api/comms/attachment` endpoint. Both are content-fed and
