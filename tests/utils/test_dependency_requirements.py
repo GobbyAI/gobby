@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import threading
-import time
+from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from gobby.utils.dependency_requirements import (
     parse_version_output,
     srt_dependency_status,
 )
+from gobby.utils.probes import ProbeResults
 
 pytestmark = pytest.mark.unit
 
@@ -355,7 +355,6 @@ def test_platform_support(
 def test_report_marks_probes_past_the_deadline_timed_out_without_waiting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    release = threading.Event()
     healthy = DependencyStatus(
         state="healthy",
         installed_version="99.0.0",
@@ -367,26 +366,43 @@ def test_report_marks_probes_past_the_deadline_timed_out_without_waiting(
 
     def command_status(**kwargs: object) -> DependencyStatus:
         if kwargs["arguments"] == ("--version",) and kwargs["executable"] == "git":
-            release.wait(10)
+            pytest.fail("The report must not retry a timed-out probe")
         return healthy
 
+    # ProbeBatch owns concurrent execution and deadline enforcement. Control its
+    # result here so report conversion does not depend on host thread scheduling.
+    batches: list[tuple[str, ...]] = []
+
+    class CompletedBatch[T]:
+        def __init__(
+            self, probes: Mapping[str, Callable[[], T]], *, deadline: float | None
+        ) -> None:
+            assert deadline == 123.0
+            self.probes = probes
+            batches.append(tuple(probes))
+
+        def collect(self) -> ProbeResults[T]:
+            return ProbeResults(
+                values={name: probe() for name, probe in self.probes.items() if name != "git"},
+                timed_out=("git",) if "git" in self.probes else (),
+            )
+
+    monkeypatch.setattr(requirements, "ProbeBatch", CompletedBatch)
     monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
     monkeypatch.setattr(requirements, "_command_status", command_status)
     monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
     monkeypatch.setattr(requirements, "impeccable_dependency_status", lambda: healthy)
     monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
-    try:
-        started = time.monotonic()
-        report = requirements.collect_dependency_report(
-            managed_services=False,
-            include_srt=False,
-            deadline=started + 0.2,
-        )
-        elapsed = time.monotonic() - started
-    finally:
-        release.set()
+    report = requirements.collect_dependency_report(
+        managed_services=False,
+        include_srt=False,
+        deadline=123.0,
+    )
 
-    assert elapsed < 1.5
+    assert batches == [
+        ("git", "node", "impeccable", "docker_compose", "tailscale", "docker"),
+        ("docker_running",),
+    ]
     assert report.timed_out == ("git",)
     assert report.required["git"].state == "timed_out"
     assert report.required["node"] == healthy

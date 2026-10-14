@@ -152,6 +152,11 @@ async def test_launch_uses_private_grok_home_and_protects_host_controls(
 
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", installation)
     monkeypatch.setattr(srt_runtime, "_preflight_srt", preflight)
+
+    def monitor(**_kwargs: object) -> str:
+        return str(tmp_path / "monitor.sock")
+
+    monkeypatch.setattr("gobby.agents.srt_monitor.ensure_srt_monitor", monitor)
     launch = await prepare_sandbox_launch(
         config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
         provider="grok",
