@@ -103,3 +103,12 @@ each as its own crate statically linked into `gdaemon` (decision 16):
 
 The crate → binary map and the rebuild-and-reinstall requirement (including the
 new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.
+
+Every released `gcode`, `gdaemon`, `ghook`, `gclient`, or `gterm` binary whose
+crate or recursive path dependencies changed needs a `0.0.1` patch bump in its
+shipping commit and a matching `Cargo.lock` update. Bump only binaries actually
+released; keep managed version pins and the gcode maintenance floor in step.
+The shared workspace promotion guard records version/source identity
+in `.<binary>-release-identity.json` and refuses same-version changed-source
+promotion. Cutover checks it before daemon stop; separate component installs
+use the same check. Same-source re-promotion is permitted.

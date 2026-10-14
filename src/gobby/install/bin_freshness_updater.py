@@ -28,6 +28,7 @@ from gobby.install.bin_freshness_models import (
     managed_bin_specs,
 )
 from gobby.install.bin_freshness_promotion import stage_and_promote_release_binary
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.machine_id import get_machine_id
@@ -223,7 +224,7 @@ def update_managed_bin(
                 error=str(exc),
                 source_url=asset.asset_url,
             )
-        except OSError as exc:
+        except (OSError, BinaryReleaseVersionError) as exc:
             return _record_state(
                 store,
                 inspection=inspection,

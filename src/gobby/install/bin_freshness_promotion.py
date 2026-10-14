@@ -10,12 +10,20 @@ import subprocess  # nosec B404 # reads git commit times for staleness reporting
 import tarfile
 import tempfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from io import BytesIO
 from pathlib import Path
 from typing import IO
 
 from gobby.install.bin_freshness_github import SourceUnavailableError
+from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_release_identity import (
+    RELEASE_CRATES,
+    BinaryReleaseIdentity,
+    BinaryReleaseVersionError,
+    check_binary_release,
+    write_release_identity,
+)
 from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_dir
 
@@ -51,8 +59,19 @@ def stage_and_promote_binary_file(
     *,
     destination: Path,
     prepare_staged: Callable[[Path], None] | None = None,
+    workspace_root: Path | None = None,
+    identity: BinaryReleaseIdentity | None = None,
 ) -> None:
     """Copy a local binary to staging and atomically promote it."""
+
+    name = destination.stem if destination.suffix == ".exe" else destination.name
+    identities = (
+        {name: identity}
+        if identity is not None
+        else preflight_binary_promotions(
+            {name: source}, bin_dir=destination.parent, workspace_root=workspace_root
+        )
+    )
 
     def write_staged(staged_binary: Path) -> None:
         with source.open("rb") as fileobj:
@@ -60,7 +79,77 @@ def stage_and_promote_binary_file(
         if prepare_staged is not None:
             prepare_staged(staged_binary)
 
-    _stage_and_promote(destination.name, bin_dir=destination.parent, write_staged=write_staged)
+    _stage_and_promote(
+        destination.name,
+        bin_dir=destination.parent,
+        write_staged=write_staged,
+        identity=identities.get(name),
+    )
+
+
+def install_staged_cargo_binary(
+    command: list[str],
+    *,
+    binary_name: str,
+    bin_dir: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    timeout: int,
+) -> bool:
+    """Install a Cargo artifact in isolation and guard its atomic promotion."""
+    with tempfile.TemporaryDirectory(prefix=f"{binary_name}-cargo-") as temporary:
+        install_root = Path(temporary)
+        staged_command = command.copy()
+        if "--root" in staged_command:
+            staged_command[staged_command.index("--root") + 1] = str(install_root)
+            source = install_root / "bin" / binary_name
+        else:
+            staged_command[staged_command.index("--install-path") + 1] = str(install_root)
+            source = install_root / binary_name
+        result = run(staged_command, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            return False
+
+        def write_staged(staged_binary: Path) -> None:
+            with source.open("rb") as fileobj:
+                _write_staged_binary(staged_binary, fileobj)
+
+        name = Path(binary_name).stem if binary_name.endswith(".exe") else binary_name
+        lock = try_acquire_native_bin_lock(name, bin_dir=bin_dir)
+        if lock is None:
+            return False
+        with lock:
+            _stage_and_promote(binary_name, bin_dir=bin_dir, write_staged=write_staged)
+        return True
+
+
+def preflight_binary_promotions(
+    candidates: dict[str, Path],
+    *,
+    bin_dir: Path,
+    workspace_root: Path | None = None,
+    source_identities: Mapping[str, str] | None = None,
+) -> dict[str, BinaryReleaseIdentity]:
+    """Check every workspace release before any member or daemon is changed."""
+    managed = {name: source for name, source in candidates.items() if name in RELEASE_CRATES}
+    if not managed:
+        return {}
+    if workspace_root is None:
+        crates_root = _workspace_crates_root()
+        if crates_root is None:
+            raise BinaryReleaseVersionError(
+                "workspace release source identity unavailable; use a checkout"
+            )
+        workspace_root = crates_root.parent
+    return {
+        name: check_binary_release(
+            name,
+            source,
+            bin_dir=bin_dir,
+            workspace_root=workspace_root,
+            source_identity=source_identities[name] if source_identities is not None else None,
+        )
+        for name, source in managed.items()
+    }
 
 
 def _stage_and_promote(
@@ -68,13 +157,21 @@ def _stage_and_promote(
     *,
     bin_dir: Path,
     write_staged: Callable[[Path], None],
+    identity: BinaryReleaseIdentity | None = None,
 ) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(tempfile.mkdtemp(prefix=f".{binary_name}-staging-", dir=str(bin_dir)))
     try:
         staged_binary = staging_dir / binary_name
         write_staged(staged_binary)
+        name = Path(binary_name).stem if binary_name.endswith(".exe") else binary_name
+        if name in RELEASE_CRATES and identity is None:
+            identity = check_binary_release(
+                name, staged_binary, bin_dir=bin_dir, workspace_root=None
+            )
         os.replace(staged_binary, bin_dir / binary_name)
+        if identity is not None:
+            write_release_identity(bin_dir, name, identity)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 
@@ -173,7 +270,9 @@ def clear_source_hash(bin_dir: Path, name: str) -> None:
     source_hash_path(bin_dir, name).unlink(missing_ok=True)
 
 
-def workspace_binary_is_current(bin_dir: Path, name: str, built: Path, installed: Path) -> bool:
+def workspace_binary_is_current(
+    bin_dir: Path, name: str, built: Path, installed: Path, *, workspace_root: Path | None = None
+) -> bool:
     """True when the installed binary already came from this exact build artifact.
 
     A True answer re-records the stamp so its mtime says when the installed bytes
@@ -185,6 +284,7 @@ def workspace_binary_is_current(bin_dir: Path, name: str, built: Path, installed
     recorded = read_source_hash(bin_dir, name)
     if recorded is None or recorded != file_sha256(built):
         return False
+    preflight_binary_promotions({name: built}, bin_dir=bin_dir, workspace_root=workspace_root)
     try:
         write_source_hash(bin_dir, name, recorded)
     except OSError:

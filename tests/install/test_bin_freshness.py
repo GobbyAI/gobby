@@ -59,11 +59,11 @@ def test_lock_close_error_does_not_mask_unlock_error(
     def fail_close(_fd: int) -> None:
         raise OSError("close failed")
 
-    # freshness_locks.os is the os module: scope the close patch to release() so
+    # Scope the os.close patch to release() so
     # fixture teardown (temp-dir cleanup) sees the real os.close.
     with monkeypatch.context() as patched:
         patched.setattr(freshness_locks, "_fcntl", FailingFcntl())
-        patched.setattr(freshness_locks.os, "close", fail_close)
+        patched.setattr(os, "close", fail_close)
         lock = NativeBinFileLock(tmp_path / "lock", 123)
 
         with pytest.raises(OSError, match="unlock failed") as exc_info:
@@ -318,7 +318,8 @@ class TestBinUpdater:
         spec = _spec()
         _write_binary(bin_dir, spec)
         _write_stamp(bin_dir, spec, "0.4.1")
-        client = FakeClient(asset=_asset(spec))
+        asset = _asset(spec)
+        client = FakeClient(asset=asset)
 
         record = update_managed_bin(
             db,
@@ -331,7 +332,7 @@ class TestBinUpdater:
         assert record is not None
         assert record.last_status == "up_to_date"
         assert record.latest_version == "0.4.1"
-        assert record.source_url == client.asset.asset_url
+        assert record.source_url == asset.asset_url
         assert client.downloads == 0
 
     def test_floor_ahead_of_release_does_not_redownload_current_binary(
@@ -370,10 +371,14 @@ class TestBinUpdater:
         db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
-        _write_binary(bin_dir, spec, b"old")
+        installed = _write_binary(bin_dir, spec, b"old")
         _write_stamp(bin_dir, spec, "0.4.0")
         asset = _asset(spec, "0.4.1")
         client = FakeClient(asset=asset, archive=_tar_with_binary(spec, b"new"))
+        monkeypatch.setattr(
+            "gobby.install.bin_release_identity.probe_native_bin_version",
+            lambda path: "0.4.0" if path == installed else asset.version,
+        )
         events: list[str] = []
         real_fsync = os.fsync
         real_replace = os.replace
@@ -522,13 +527,36 @@ class TestBinUpdater:
         assert record.latest_version is None
         assert record.last_error == "api down"
 
+    def test_version_refusal_is_recorded_without_replacing_existing_binary(
+        self, tmp_path: Path, postgres_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        installed = _write_binary(bin_dir, spec, b"old")
+        _write_stamp(bin_dir, spec, "0.4.0")
+        client = FakeClient(asset=_asset(spec, "0.4.1"), archive=_tar_with_binary(spec, b"new"))
+        monkeypatch.setattr(
+            "gobby.install.bin_release_identity.probe_native_bin_version", lambda _path: "0.4.1"
+        )
+
+        record = update_managed_bin(
+            postgres_db, spec, BinFreshnessConfig(), bin_dir=bin_dir, client=client
+        )
+
+        assert record is not None
+        assert record.last_status == "failed"
+        assert record.last_error is not None
+        assert spec.name in record.last_error
+        assert "bump its patch version" in record.last_error
+        assert installed.read_bytes() == b"old"
+
     def test_atomic_promotion_failure_keeps_existing_binary(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:
         db = postgres_db
         bin_dir = tmp_path / "bin"
         spec = _spec()
-        _write_binary(bin_dir, spec, b"old")
+        installed = _write_binary(bin_dir, spec, b"old")
         _write_stamp(bin_dir, spec, "0.4.0")
         client = FakeClient(asset=_asset(spec, "0.4.2"), archive=_tar_with_binary(spec, b"new"))
 
@@ -540,6 +568,10 @@ class TestBinUpdater:
             original_replace(src, dst)
 
         with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(
+                "gobby.install.bin_release_identity.probe_native_bin_version",
+                lambda path: "0.4.0" if path == installed else "0.4.2",
+            )
             monkeypatch.setattr(
                 "gobby.install.bin_freshness_promotion.os.replace", fail_final_replace
             )
@@ -592,7 +624,9 @@ class TestBinUpdater:
             lock.release()
 
         assert result is None
-        assert store.get(spec.name).last_status == "up_to_date"
+        record = store.get(spec.name)
+        assert record is not None
+        assert record.last_status == "up_to_date"
 
     def test_source_unavailable_below_floor_records_floor_violation(
         self, tmp_path: Path, postgres_db: HubDatabase
@@ -878,6 +912,10 @@ class TestGithubReleaseClient:
         bin_dir = tmp_path / "bin"
         binary_path = _write_binary(bin_dir, spec)
         _write_stamp(bin_dir, spec, "0.4.0")
+        monkeypatch.setattr(
+            "gobby.install.bin_release_identity.probe_native_bin_version",
+            lambda path: "0.4.0" if path == binary_path else spec.floor_version,
+        )
 
         record = update_managed_bin(
             postgres_db,
@@ -932,6 +970,12 @@ class TestGithubReleaseClient:
 
 class TestWorkspaceBinaryFreshness:
     """Content-hash freshness for unpublished managed binaries (gclient, gterm)."""
+
+    @pytest.fixture(autouse=True)
+    def versioned_artifacts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.install.bin_release_identity.probe_native_bin_version", lambda _path: "1.0.0"
+        )
 
     def _workspace(self, tmp_path: Path) -> tuple[Path, Path, Path]:
         bin_dir = tmp_path / "bin"

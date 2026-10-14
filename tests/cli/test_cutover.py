@@ -55,7 +55,7 @@ def test_cutover_refuses_node_bootstrap_before_build(
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", forbid("promote"))
     monkeypatch.setattr(cutover_module, "start", click.Command("start", callback=forbid("start")))
     monkeypatch.setattr(subprocess, "run", forbid("subprocess"))
-    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover)
+    result = _invoke_cli(tmp_path, monkeypatch, cutover_module.run_cutover, prepare_artifacts=False)
     assert result.exit_code != 0, result.output
     assert (
         "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
@@ -166,7 +166,8 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     (fixture / "examples").mkdir()
     (fixture / "examples/catalog_candidate_24042.rs").write_text(
-        'fn main() { println!("{}", serde_json::to_string('
+        'fn main() { if std::env::args().nth(1).as_deref() == Some("--version") '
+        '{ println!("gdaemon 1.0.0"); return; } println!("{}", serde_json::to_string('
         "&gobby_core::schema::SchemaIdentityContract::embedded()).unwrap()); }\n"
     )
     subprocess.run(
@@ -188,12 +189,16 @@ def test_stale_embedded_catalog_refuses_cutover_before_promotion(
     target = Path(os.environ.get("CARGO_TARGET_DIR", str(fixture / "target")))
     candidate = target / "debug/examples/catalog_candidate_24042"
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: {"gdaemon": candidate})
-    monkeypatch.setattr(cutover_module, "_prove_catalog_freshness", _PROVE_CATALOG_FRESHNESS)
+    monkeypatch.setattr(
+        cutover_module,
+        "_prove_catalog_freshness",
+        lambda _root, candidate: _PROVE_CATALOG_FRESHNESS(fixture, candidate),
+    )
     promotion, restart = Mock(), Mock()
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
     with pytest.raises(cutover_module.CutoverError) as error:
         cutover_module.run_cutover(
-            fixture,
+            repo,
             tmp_path / "bin",
             stop_daemon=lambda: True,
             start_daemon=restart,
@@ -217,11 +222,11 @@ def _identity(version: int) -> dict[str, int | str]:
     }
 
 
-def _write_stub(path: Path, identity: dict[str, int | str]) -> None:
+def _write_stub(path: Path, identity: dict[str, int | str], version: str = VERSION) -> None:
     payload = json.dumps(identity, sort_keys=True)
     path.write_text(
         "#!/bin/sh\n"
-        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{path.name} {VERSION}'; "
+        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{path.name} {version}'; "
         f"else printf '%s\\n' '{payload}'; fi\n",
         encoding="utf-8",
     )
@@ -229,8 +234,15 @@ def _write_stub(path: Path, identity: dict[str, int | str]) -> None:
 
 
 def _artifacts(root: Path, identity: dict[str, int | str]) -> dict[str, Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-q")
+    (root / "Cargo.toml").write_text('[workspace]\nmembers = ["crates/*"]\n')
+    for member in SET_MEMBERS:
+        crate = root / "crates" / member
+        crate.mkdir(parents=True, exist_ok=True)
+        (crate / "Cargo.toml").write_text(f'[package]\nname = "{member}"\nversion = "{VERSION}"\n')
     release = root / "target" / "release"
-    release.mkdir(parents=True)
+    release.mkdir(parents=True, exist_ok=True)
     artifacts = {member: release / member for member in SET_MEMBERS}
     for artifact in artifacts.values():
         _write_stub(artifact, identity)
@@ -355,6 +367,7 @@ def _invoke_cli(
     dirty: list[str] | None = None,
     identity: dict[str, int | str] | None = None,
     extra_args: tuple[str, ...] = (),
+    prepare_artifacts: bool = True,
 ) -> Result:
     workspace = tmp_path / "workspace"
     (workspace / "crates").mkdir(parents=True)
@@ -362,6 +375,8 @@ def _invoke_cli(
     pin = workspace / "src" / "gobby" / "storage" / "schema_expected_identity.json"
     pin.parent.mkdir(parents=True)
     pin.write_text(json.dumps(identity or _identity(420)), encoding="utf-8")
+    if prepare_artifacts:
+        _artifacts(workspace, identity or _identity(420))
     monkeypatch.setattr(cutover_module, "run_cutover", run_cutover)
     monkeypatch.setattr(cutover_module, "_dirty_schema_inputs", lambda _root: list(dirty or []))
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "managed-bin"))
@@ -593,11 +608,13 @@ class _FakeRuntime:
 def _stub_cutover_pipeline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, events: list[str]
 ) -> None:
+    _artifacts(tmp_path, _identity(420))
+
     def promote(*_args: object, **_kwargs: object) -> None:
         events.append("promote")
 
     monkeypatch.setattr(
-        cutover_module, "_build_artifacts", lambda _root: _artifacts(tmp_path, _identity(420))
+        cutover_module, "_build_artifacts", lambda root: _artifacts(root, _identity(420))
     )
     monkeypatch.setattr(cutover_module, "restart_start_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promote)
@@ -691,12 +708,12 @@ def test_route_stop_refusal_leaves_installed_set_and_stamp_unchanged(
     bin_dir.mkdir()
     installed = {name: bin_dir / name for name in SET_MEMBERS}
     for path in installed.values():
-        _write_stub(path, _identity(419))
+        _write_stub(path, _identity(419), "0.4.0")
     stamp = bin_dir / ".gdaemon-schema-identity.json"
     stamp.write_text(json.dumps(_identity(419)), encoding="utf-8")
     paths = [*installed.values(), stamp]
     before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths}
-    candidate = _artifacts(tmp_path / "candidate", _identity(420))
+    candidate = _artifacts(tmp_path, _identity(420))
     monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: candidate)
     monkeypatch.setattr(daemon_lifecycle, "is_test_protect_enabled", lambda: False)
     monkeypatch.setattr(
