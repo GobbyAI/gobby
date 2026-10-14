@@ -60,7 +60,6 @@ def _handler_with_fake_engine(evaluate: EvalFn) -> WorkflowHookHandler:
 
     session_vars = MagicMock()
     session_vars.get_variables.return_value = {
-        "baseline_dirty_files": [],
         "session_edited_files": [],
     }
 
@@ -286,7 +285,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
     platform_session_id = "11111111-1111-4111-8111-111111111111"
     SessionVariableManager(db).merge_variables(
         platform_session_id,
-        {"baseline_dirty_files": [], "session_edited_files": []},
+        {"session_edited_files": []},
     )
 
     manager = RuleDefinitionManager(db)

@@ -139,7 +139,6 @@ def _prepare_handler(db: HubDatabase, project_path: Path) -> WorkflowHookHandler
         {
             "_agent_type": "default",
             "_variable_defaults_loaded": True,
-            "baseline_dirty_files": [],
             "claimed_tasks": {task.id: f"#{task.seq_num}"},
             "mode_level": 1,
             "session_edited_files": [],

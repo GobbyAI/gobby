@@ -1309,7 +1309,7 @@ class TestRunCoroBlocking:
             return "done"
 
         logger = MagicMock()
-        label = "session_start:gobby-sessions/capture_baseline_dirty_files"
+        label = "example_label"
 
         try:
             result = run_coro_blocking(

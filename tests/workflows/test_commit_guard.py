@@ -240,7 +240,6 @@ def guard_harness(
             "task_edited_file_checkouts": {
                 current_task.id: {str(repo): ["owned.txt"]},
             },
-            "baseline_dirty_files": [],
         },
     )
     variables.merge_variables(

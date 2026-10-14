@@ -27,6 +27,7 @@ from gobby.hooks.session_activation import (
     MARKER_VERSION,
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
+    SESSION_ACTIVATION_INVARIANTS,
     _agent_has_step_workflow,
     _agent_run_from_row,
     _AgentRunRecovery,
@@ -47,7 +48,7 @@ from gobby.workflows.definitions import (
     RuleTriggerEvent,
 )
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.git_utils import GIT_STATUS_UNAVAILABLE_MARKER, DirtyFiles
+from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -339,7 +340,6 @@ def test_missing_agent_type_restored_before_rules(
             MARKER_COMPLETED: True,
             MARKER_VERSION: SESSION_ACTIVATION_CONTRACT_VERSION,
             MARKER_HASH: SESSION_ACTIVATION_CONTRACT_HASH,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -468,7 +468,6 @@ def test_reconciliation_refreshes_stale_active_rule_names(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -528,7 +527,6 @@ def test_reconciliation_caches_active_rule_names_for_same_agent_and_project(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -595,7 +593,6 @@ def test_reconciliation_invalidates_active_rule_cache_after_definition_mutation(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -876,7 +873,6 @@ async def test_interactive_seat_reconciliation_keeps_seat_rules_active(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1055,7 +1051,6 @@ def test_stale_spawned_flag_is_repaired_from_session_depth(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1121,7 +1116,6 @@ async def test_spawned_flag_survives_lagging_terminal_pickup_refresh(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": True,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1166,7 +1160,6 @@ def test_spawned_flag_clears_after_agent_run_lookup_finds_no_run(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": True,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1212,7 +1205,6 @@ def test_clear_successor_lineage_is_not_stamped_spawned(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1258,7 +1250,6 @@ def test_clear_successor_wrongly_stamped_spawned_is_repaired(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": True,
-            "baseline_dirty_files": [],
             "session_edited_files": [],
         },
     )
@@ -1271,7 +1262,43 @@ def test_clear_successor_wrongly_stamped_spawned_is_repaired(
     assert _variables(db, successor_id)["is_spawned_agent"] is False
 
 
-def test_baseline_dirty_initializes_once_and_preserves_session_edits(
+def test_activation_seeds_no_baseline_dirty_files(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+
+    result = reconcile_session_activation(
+        _event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers
+    )
+
+    assert "baseline_dirty_files" not in _variables(db, session_id)
+    assert "baseline_dirty_files" not in result.missing
+
+
+def test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    session_id = _register_session(session_manager, project_id, tmp_path)
+
+    reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
+
+    variables = _variables(db, session_id)
+    assert "baseline_dirty_tracking" in SESSION_ACTIVATION_INVARIANTS
+    assert "baseline_dirty_files" not in variables
+    assert variables["session_edited_files"] == []
+    assert variables["active_task_id"] is None
+    assert variables["task_edited_files"] == {}
+
+
+def test_activation_initializes_once_and_preserves_session_edits(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -1285,20 +1312,18 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
     variables = _variables(db, session_id)
-    # The marker records that activation did not sample; dirty state comes from
-    # the edit ledger, and only the sessions capture-baseline action writes a list.
-    assert variables["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
+    assert "baseline_dirty_files" not in variables
     assert variables["session_edited_files"] == ["kept.py"]
     assert variables["active_task_id"] is None
     assert variables["task_edited_files"] == {}
 
-    SessionVariableManager(db).merge_variables(session_id, {"baseline_dirty_files": ["dirty.py"]})
+    SessionVariableManager(db).merge_variables(session_id, {"session_edited_files": ["dirty.py"]})
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
-    assert _variables(db, session_id)["baseline_dirty_files"] == ["dirty.py"]
+    assert _variables(db, session_id)["session_edited_files"] == ["dirty.py"]
 
 
-def test_pipeline_session_skips_agent_activation_and_reconciles_baseline(
+def test_pipeline_session_skips_agent_activation_and_preserves_edit_ledger(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -1325,11 +1350,11 @@ def test_pipeline_session_skips_agent_activation_and_reconciles_baseline(
     variables = _variables(db, session_id)
     activate.assert_not_called()
     assert variables["_agent_type"] == "pipeline"
-    assert variables["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
+    assert "baseline_dirty_files" not in variables
     assert variables["session_edited_files"] == ["kept.py"]
 
 
-def test_baseline_dirty_sampling_is_deferred_to_workflow_evaluation(
+def test_activation_never_samples_git_status(
     db: HubDatabase,
     session_manager: SessionManager,
     handlers: EventHandlers,
@@ -1350,7 +1375,7 @@ def test_baseline_dirty_sampling_is_deferred_to_workflow_evaluation(
 
     reconcile_session_activation(_event(HookEventType.BEFORE_AGENT, session_id, tmp_path), handlers)
 
-    assert _variables(db, session_id)["baseline_dirty_files"] == [GIT_STATUS_UNAVAILABLE_MARKER]
+    assert "baseline_dirty_files" not in _variables(db, session_id)
 
 
 def test_terminal_pickup_metadata_backfills_from_agent_runs(

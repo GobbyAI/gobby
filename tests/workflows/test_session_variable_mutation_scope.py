@@ -460,7 +460,6 @@ def test_activation_reconciliation_projects_its_invariants(
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": False,
-            "baseline_dirty_files": ["baseline.py"],
             "session_edited_files": ["edited.py"],
             "active_task_id": None,
             "task_edited_files": {},
@@ -493,5 +492,5 @@ def test_activation_reconciliation_projects_its_invariants(
     assert max(decode_sizes) < 4096
     stored = manager.get_variables(mutation_session)
     assert stored["unrelated"] == unrelated
-    assert stored["baseline_dirty_files"] == ["baseline.py"]
+    assert "baseline_dirty_files" not in stored
     assert stored["session_edited_files"] == ["edited.py"]

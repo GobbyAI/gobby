@@ -10,7 +10,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.sessions._actions import register_action_tools
 from gobby.mcp_proxy.tools.sessions._claim_hold import register_claim_hold_tools
 from gobby.mcp_proxy.tools.sessions._commits import register_commits_tools
 from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
@@ -96,18 +95,6 @@ def create_session_messages_registry(
     # Only register if session_manager is available
     if session_manager is not None:
         register_commits_tools(registry, session_manager, db=db)
-
-    # --- Action Tools (workflow action wrappers) ---
-    # Only register if session_manager is available
-    if session_manager is not None:
-        register_action_tools(
-            registry,
-            session_manager=session_manager,
-            llm_service_resolver=llm_service_resolver,
-            transcript_processor=transcript_processor,
-            db=db,
-            worktree_manager=worktree_manager,
-        )
 
     # --- Operator claim hold (directed seat parking) ---
     if session_manager is not None and db is not None:

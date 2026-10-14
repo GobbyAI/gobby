@@ -1159,7 +1159,6 @@ async def test_rtk_runs_after_same_session_queue_wait(
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
     handler._session_var_manager = MagicMock()
     handler._session_var_manager.get_variables.return_value = {
-        "baseline_dirty_files": [],
         "session_edited_files": [],
     }
     event = _event()
