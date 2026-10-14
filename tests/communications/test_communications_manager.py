@@ -58,7 +58,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
     from gobby.workflows.state_manager import SessionVariableManager
 
     manager, channel, holder, adapter = operator_telegram
-    channel.config_json["responder"] = {"project_id": str(sample_project["id"])}
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     if attachment:
         channel.config_json.pop("default_destination", None)
     caller = SessionManager(temp_db).register(
@@ -81,6 +81,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
     )
     SessionVariableManager(temp_db).set_variable(caller.id, "_agent_type", agent_type)
     holder.id = caller.id
+    holder.project_id = caller.project_id
     holder.transcript_path = None
     if attached:
         manager.attach_conversation(channel.name, "topic:-100123:77", caller.id)
@@ -138,11 +139,45 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
         await manager._outbound.stop()
 
 
+@pytest.mark.parametrize("ownership", ["operator", "chat", "foreign", "missing", "malformed"])
+def test_attachment_requires_project_ownership_before_target_writes(
+    operator_telegram: tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock],
+    ownership: str,
+) -> None:
+    manager, channel, holder, _ = operator_telegram
+    holder.project_id = "caller-project"
+    channel.config_json.pop("operator_project_id", None)
+    if ownership == "operator":
+        channel.config_json["operator_project_id"] = holder.project_id
+    elif ownership == "chat":
+        channel.config_json["responder"] = {"project_id": holder.project_id}
+    elif ownership == "foreign":
+        channel.config_json["operator_project_id"] = "foreign-project"
+    elif ownership == "malformed":
+        channel.config_json["operator_project_id"] = [holder.project_id]
+        channel.config_json["responder"] = {"project_id": {"value": holder.project_id}}
+    before = dict(channel.config_json)
+    if ownership in {"operator", "chat"}:
+        manager.attach_conversation(channel.name, "dm:42", holder.id)
+        cast(MagicMock, manager.store).set_telegram_agent_target.assert_called_once_with(
+            channel.id, "dm:42", holder.id
+        )
+        assert manager.attached_session(channel.id, "dm:42") == holder.id
+    else:
+        with pytest.raises(ValueError, match="matching channel project ownership"):
+            manager.attach_conversation(channel.name, "dm:42", holder.id)
+        cast(MagicMock, manager.store).set_telegram_agent_target.assert_not_called()
+        cast(MagicMock, manager.store).cancel_transcript_messages.assert_not_called()
+        assert channel.config_json == before
+        assert manager._conversation_attachments == {}
+
+
 @pytest.fixture
 def operator_telegram() -> tuple[CommunicationsManager, ChannelConfig, MagicMock, MagicMock]:
     channel = make_channel(
         channel_type="telegram", config_json={"allow_from": ["42"], "default_destination": "88"}
     )
+    channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     store.get_channel.return_value = channel
     identity = CommsIdentity(
@@ -157,7 +192,12 @@ def operator_telegram() -> tuple[CommunicationsManager, ChannelConfig, MagicMock
     store.get_identity_by_external.return_value = identity
     store.update_identity.side_effect = lambda value: value
     sessions = MagicMock()
-    holder = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active", source="codex")
+    holder = MagicMock(
+        id="11111111-1111-4111-8111-111111111111",
+        status="active",
+        source="codex",
+        project_id="project-1",
+    )
     sessions.get.side_effect = lambda session_id: holder if session_id == holder.id else None
     sessions.list.return_value = []
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
@@ -377,6 +417,7 @@ async def test_registered_dm_survives_resume_and_daemon_restart(
         channel_id=str(uuid.uuid4()),
         config_json={"allow_from": ["42"]},
     )
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -503,6 +544,7 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         channel_id=str(uuid.uuid4()),
         config_json={"allow_from": ["42"]},
     )
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -579,6 +621,7 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -786,6 +829,7 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -882,7 +926,10 @@ async def test_offline_deleted_restore_prefers_same_project_assistant(
     channel = make_channel(
         channel_type="telegram",
         channel_id=str(uuid.uuid4()),
-        config_json={"telegram_agent_targets": {"dm:42": str(uuid.uuid4())}},
+        config_json={
+            "telegram_agent_targets": {"dm:42": str(uuid.uuid4())},
+            "operator_project_id": str(sample_project["id"]),
+        },
     )
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
@@ -3836,6 +3883,7 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
         channel_type="telegram",
         config_json={"allow_from": ["1111111"]},
     )
+    channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     created_at = datetime(2024, 1, 1, tzinfo=UTC)
     outbound_by_platform_id = {
@@ -3874,11 +3922,13 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
     store.get_message_by_platform_id.side_effect = get_message_by_platform_id
     sessions = MagicMock()
     source_session = (
-        MagicMock(id="session-a", status=source_status, source="claude")
+        MagicMock(project_id="project-1", id="session-a", status=source_status, source="claude")
         if source_status is not None
         else None
     )
-    attached_session = MagicMock(id="session-b", status="active", source="codex")
+    attached_session = MagicMock(
+        project_id="project-1", id="session-b", status="active", source="codex"
+    )
     sessions.get.side_effect = lambda session_id: (
         source_session if session_id == "session-a" else attached_session
     )
@@ -3943,13 +3993,26 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
 @pytest.mark.asyncio
 async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_back() -> None:
     channel = make_channel(channel_type="telegram", config_json={"allow_from": ["42"]})
+    channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     store.get_message_by_platform_id.return_value = None
     store.create_message.side_effect = lambda message: message
     sessions = MagicMock()
-    holder = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active", source="claude")
-    lane = MagicMock(id="44444444-4444-4444-8444-444444444444", status="active", source="codex")
-    comms_session = MagicMock(id="comms-session", status="active", source="comms")
+    holder = MagicMock(
+        project_id="project-1",
+        id="11111111-1111-4111-8111-111111111111",
+        status="active",
+        source="claude",
+    )
+    lane = MagicMock(
+        project_id="project-1",
+        id="44444444-4444-4444-8444-444444444444",
+        status="active",
+        source="codex",
+    )
+    comms_session = MagicMock(
+        project_id="project-1", id="comms-session", status="active", source="comms"
+    )
     sessions.get.side_effect = lambda session_id: (
         holder if session_id == holder.id else lane if session_id == lane.id else comms_session
     )
@@ -4021,9 +4084,10 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
 @pytest.mark.asyncio
 async def test_attachment_sets_outbound_destination_and_rejects_second_holder() -> None:
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
     sessions.get.side_effect = lambda session_id: MagicMock(
-        id=session_id, status="active", source="claude"
+        project_id="project-1", id=session_id, status="active", source="claude"
     )
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
@@ -4043,6 +4107,7 @@ async def test_attachment_sets_outbound_destination_and_rejects_second_holder() 
 @pytest.mark.unit
 def test_concurrent_attachment_claims_have_one_holder() -> None:
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     barrier = threading.Barrier(2)
     local = threading.local()
 
@@ -4050,7 +4115,7 @@ def test_concurrent_attachment_claims_have_one_holder() -> None:
         if not getattr(local, "entered", False):
             local.entered = True
             barrier.wait(timeout=5)
-        return MagicMock(id=session_id, status="active", source="claude")
+        return MagicMock(project_id="project-1", id=session_id, status="active", source="claude")
 
     sessions = MagicMock()
     sessions.get.side_effect = get_session
@@ -4074,9 +4139,10 @@ def test_concurrent_attachment_claims_have_one_holder() -> None:
 
 def test_switch_telegram_conversation_replaces_holder_atomically() -> None:
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
     sessions.get.side_effect = lambda session_id: MagicMock(
-        id=session_id, status="active", source="claude"
+        project_id="project-1", id=session_id, status="active", source="claude"
     )
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
@@ -4106,6 +4172,7 @@ async def test_telegram_target_survives_manager_restart(
     channel = make_channel(
         channel_type="telegram", channel_id="33333333-3333-4333-8333-333333333333"
     )
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     first = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     first._channel_by_name[channel.name] = channel
@@ -4168,6 +4235,7 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -4306,6 +4374,7 @@ async def test_native_clear_does_not_take_sibling_panes_dm(
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -4369,6 +4438,7 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     channel = make_channel(
         channel_type="telegram", channel_id="33333333-3333-4333-8333-333333333335"
     )
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -4440,9 +4510,13 @@ async def test_ended_target_falls_back_to_live_assistant() -> None:
     from gobby.sessions.status_events import SessionStatusTransition
 
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
-    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
+    target = MagicMock(
+        project_id="project-1", id="11111111-1111-4111-8111-111111111111", status="active"
+    )
     assistant = MagicMock(
+        project_id="project-1",
         id="22222222-2222-4222-8222-222222222222",
         status="active",
         source="claude",
@@ -4483,10 +4557,13 @@ async def test_ended_target_with_no_assistant_replies_without_switching() -> Non
     from gobby.sessions.status_events import SessionStatusTransition
 
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     store.get_channel.return_value = channel
     sessions = MagicMock()
-    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
+    target = MagicMock(
+        project_id="project-1", id="11111111-1111-4111-8111-111111111111", status="active"
+    )
     sessions.get.side_effect = lambda session_id: target if session_id == target.id else None
     sessions.list.return_value = []
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
@@ -4517,10 +4594,14 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
     from gobby.sessions.status_events import SessionStatusTransition
 
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     store.get_channel.return_value = channel
-    target = MagicMock(id="11111111-1111-4111-8111-111111111111", status="active")
+    target = MagicMock(
+        project_id="project-1", id="11111111-1111-4111-8111-111111111111", status="active"
+    )
     assistant = MagicMock(
+        project_id="project-1",
         id="22222222-2222-4222-8222-222222222222",
         status="active",
         source="claude",
@@ -4557,8 +4638,10 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
 
 async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
     assistant = MagicMock(
+        project_id="project-1",
         id="11111111-1111-4111-8111-111111111111",
         status="active",
         source="claude",
@@ -4566,6 +4649,7 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
         ref="gobby#15976",
     )
     lane = MagicMock(
+        project_id="project-1",
         id="44444444-4444-4444-8444-444444444444",
         status="active",
         source="codex",
@@ -4680,9 +4764,15 @@ async def test_telegram_origin_kinds_share_trusted_heading(
 
 async def test_telegram_mirror_labels_attached_origin() -> None:
     channel = make_channel(channel_type="telegram")
+    channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
     sessions.get.return_value = MagicMock(
-        source="claude", title="Assistant", ref="gobby#15976", status="active", transcript_path=None
+        project_id="project-1",
+        source="claude",
+        title="Assistant",
+        ref="gobby#15976",
+        status="active",
+        transcript_path=None,
     )
     store = make_store([channel])
     store.reserve_transcript_message.side_effect = lambda message: (message, True)
@@ -4970,6 +5060,7 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
     sessions.update_status(predecessor.id, status)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel
@@ -5051,6 +5142,7 @@ async def test_resumed_older_session_native_clear_transfers_its_dm(
     assert older.created_at < newer.created_at
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_type="telegram", channel_id=str(uuid.uuid4()))
+    channel.config_json["operator_project_id"] = str(sample_project["id"])
     store.create_channel(channel)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
     manager._channel_by_name[channel.name] = channel

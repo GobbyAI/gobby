@@ -29,6 +29,7 @@ def test_comms_agent_is_a_restricted_persona_coordinator() -> None:
     agent = AgentDefinitionBody.model_validate(raw)
 
     assert agent.name == "comms-agent"
+    assert agent.communications_admin is True
     assert agent.surfaces == ["persona"]
     assert agent.provider == "inherit"
     assert {

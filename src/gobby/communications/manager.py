@@ -663,6 +663,15 @@ class CommunicationsManager:
             or session.source in {"comms", "web-chat", "web_chat"}
         ):
             raise ValueError("A live non-comms session is required")
+        responder = channel.config_json.get("responder")
+        chat_project = responder.get("project_id") if isinstance(responder, dict) else None
+        projects = {
+            value
+            for value in (channel.config_json.get("operator_project_id"), chat_project)
+            if isinstance(value, str) and value
+        }
+        if session.project_id not in projects:
+            raise ValueError("Conversation attachment requires matching channel project ownership")
         with self._attachment_lock:
             holder = self.attached_session(channel.id, conversation_id)
             if holder is not None and holder != session_id:

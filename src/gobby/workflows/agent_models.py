@@ -169,6 +169,7 @@ class AgentDefinitionBody(BaseModel):
     send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
+    communications_admin: StrictBool = False
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")
