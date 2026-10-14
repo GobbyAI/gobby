@@ -338,13 +338,13 @@ fn malformed_control_does_not_mutate_state() {
         }
     }
 
-    for (text, expected) in &cases {
+    for (text, expected) in cases {
         for state in every_state() {
             let mut after = state.clone();
-            let outcome = after.apply_subscription_request(text);
+            let outcome = after.apply_subscription_request(&text);
             assert_eq!(
                 outcome,
-                Inbound::Rejected(*expected),
+                Inbound::Rejected(expected),
                 "{text}: rejection from {state:?}"
             );
             assert_eq!(after, state, "{text}: state mutated");
