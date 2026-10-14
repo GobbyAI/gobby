@@ -26,6 +26,7 @@ from gobby.tasks.tdd_python_evidence import (
     _has_python_unchanged_api,
     _original_test_module,
     _original_test_node,
+    _retains_python_red_source,
 )
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
@@ -349,28 +350,13 @@ def _red_run_proof(
     matched, reason = _has_named_red_failure(core_command, run.output, test)
     matched = matched or source_failure
     if matched:
-        prior_green = max(
-            (
-                candidate
-                for candidate in evidence.validation_runs
-                if candidate.session_id == run.session_id
-                and candidate.outcome == "success"
-                and candidate.order < run.order
-                and candidate.completed_at is not None
-                and candidate.completed_at < run.started_at
-                and _is_test_execution_run(candidate)
-                and _green_run_covers_test(candidate, test)
-            ),
-            key=lambda candidate: candidate.order,
-            default=None,
-        )
         if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
             reason = "test body is an unconditional pytest.fail placeholder"
         elif not require_not_implemented or (
             _has_python_keyword_stub(test, evidence, run, parse_cache)
             or _has_python_module_stub(test, evidence, run, parse_cache)
             or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
-            or _has_python_test_tightening(test, evidence, run, prior_green, parse_cache)
+            or _test_tightening_proof(test, evidence, run, parse_cache)
         ):
             return True, None
         else:
@@ -378,6 +364,30 @@ def _red_run_proof(
                 "post-production red has no attributable NotImplementedError or proven API stub"
             )
     return False, reason
+
+
+def _test_tightening_proof(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    red: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+) -> bool:
+    prior_green = max(
+        (
+            candidate
+            for candidate in evidence.validation_runs
+            if candidate.session_id == red.session_id
+            and candidate.outcome == "success"
+            and candidate.order < red.order
+            and candidate.completed_at is not None
+            and candidate.completed_at < red.started_at
+            and _is_test_execution_run(candidate)
+            and _green_run_covers_test(candidate, test)
+        ),
+        key=lambda candidate: candidate.order,
+        default=None,
+    )
+    return _has_python_test_tightening(test, evidence, red, prior_green, parse_cache)
 
 
 def _has_pytest_fail_placeholder(
@@ -823,6 +833,7 @@ def _find_green_run(
     *,
     after_order: int,
 ) -> TranscriptValidationRun | None:
+    retain_source = _test_tightening_proof(test, evidence, red)
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
         if (
             run.outcome != "success"
@@ -830,7 +841,9 @@ def _find_green_run(
             or run.order <= max(red.order, after_order)
         ):
             continue
-        if _green_run_covers_test(run, test):
+        if _green_run_covers_test(run, test) and (
+            not retain_source or _retains_python_red_source(test, evidence, red, run)
+        ):
             return run
     return None
 

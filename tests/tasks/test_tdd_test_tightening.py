@@ -111,14 +111,17 @@ def test_post_production_proof_rejects_unattributable_red(cause: str) -> None:
 
 def test_post_production_proof_credits_added_node() -> None:
     test, evidence = cycle()
+    baseline = BEFORE.replace("test_feature", "test_other")
     evidence = replace(
         evidence,
         edits=tuple(
             replace(
                 item,
-                source_after="from feature import Engine\n\ndef test_other():\n    assert Engine().run()\n",
+                source_after=baseline,
             )
             if item.path == TEST_PATH and item.order == 1
+            else replace(item, source_after=baseline + "\n" + AFTER.split("\n\n", 1)[1])
+            if item.path == TEST_PATH and item.order == 4
             else item
             for item in evidence.edits
         ),
@@ -227,3 +230,71 @@ def test_post_production_cycle_accepts_python_module_pytest() -> None:
     )
 
     assert evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("cause", ["setup", "module_binding", "helper", "conftest"])
+def test_post_production_proof_rejects_behavior_changes(cause: str) -> None:
+    test, evidence = cycle()
+    if cause == "conftest":
+        evidence = replace(
+            evidence,
+            edits=(
+                *evidence.edits,
+                edit(
+                    "tests/conftest.py",
+                    4,
+                    "from feature import Engine\nEngine.run = lambda self: 0\n",
+                ),
+            ),
+        )
+    else:
+        source = {
+            "setup": AFTER.replace("    assert", "    Engine.run = lambda self: 0\n    assert"),
+            "module_binding": AFTER + "\nEngine.run = lambda self: 0\n",
+            "helper": AFTER + "\ndef helper():\n    Engine.run = lambda self: 0\n",
+        }[cause]
+        evidence = replace(
+            evidence,
+            edits=tuple(
+                replace(item, source_after=source)
+                if item.path == TEST_PATH and item.order == 4
+                else item
+                for item in evidence.edits
+            ),
+        )
+    red = evidence.validation_runs[1]
+
+    matched, _ = _red_run_proof(test, evidence, red, red.command, True, {}, {})
+
+    assert not matched
+    assert not evaluate_tdd_evidence((test,), evidence).passed
+
+
+@pytest.mark.parametrize("source", [BEFORE, "def test_feature():\n    pass\n", AFTER])
+def test_post_production_green_must_retain_red_expectation(source: str) -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=(*evidence.edits, edit(TEST_PATH, 7, source)),
+        validation_runs=(*evidence.validation_runs[:-1], run(8)),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed is (source == AFTER)
+
+
+@pytest.mark.parametrize("body", [BEFORE, "def test_feature():\n    assert True\n"])
+def test_post_production_cycle_rejects_changed_committed_expectation(body: str) -> None:
+    test, evidence = cycle()
+
+    assert not evaluate_tdd_evidence((replace(test, body=body),), evidence).passed
+
+
+def test_post_production_cycle_rejects_intermediate_expectation_reset() -> None:
+    test, evidence = cycle()
+    evidence = replace(
+        evidence,
+        edits=(*evidence.edits, edit(TEST_PATH, 7, BEFORE), edit(TEST_PATH, 8, AFTER)),
+        validation_runs=(*evidence.validation_runs[:-1], run(9)),
+    )
+
+    assert not evaluate_tdd_evidence((test,), evidence).passed
