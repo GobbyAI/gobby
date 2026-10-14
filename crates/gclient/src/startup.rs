@@ -136,6 +136,8 @@ struct HealthPayload {
 pub enum StartupError {
     #[error("{message}")]
     Usage { message: String },
+    #[error("invalid Gobby configuration: {detail}")]
+    Configuration { detail: String },
     #[error(
         "daemon unreachable at {url}: {detail}\nStart it with `gobby start` and check `gobby status`."
     )]
@@ -466,16 +468,16 @@ pub fn resolve_probe_env_at(
 fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
     let default_daemon_url = match &args.daemon_url {
         Some(url) => url.clone(),
-        None => gobby_core::daemon_url::daemon_url().map_err(|err| StartupError::TokenFile {
-            path: "~/.gobby/bootstrap.yaml".into(),
-            detail: err.to_string(),
-        })?,
+        None => {
+            gobby_core::daemon_url::daemon_url().map_err(|err| StartupError::Configuration {
+                detail: err.to_string(),
+            })?
+        }
     };
     let default_gobby_home = if args.token_file.is_some() {
         PathBuf::new()
     } else {
-        gobby_core::gobby_home().map_err(|err| StartupError::TokenFile {
-            path: "~/.gobby/bootstrap.yaml".into(),
+        gobby_core::gobby_home().map_err(|err| StartupError::Configuration {
             detail: err.to_string(),
         })?
     };
