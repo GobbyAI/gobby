@@ -738,11 +738,12 @@ class TestReleaseTagHelpers:
     def test_download_release_binary_uses_only_canonical_repo(
         self, mock_urlopen: MagicMock, tmp_path: Path
     ) -> None:
+        payload = b"#!/bin/sh\necho 'gcode 1.5.0'\n"
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             info = tarfile.TarInfo(name="gcode")
-            info.size = 5
-            tar.addfile(info, BytesIO(b"fake!"))
+            info.size = len(payload)
+            tar.addfile(info, BytesIO(payload))
 
         fake_resp = MagicMock()
         fake_resp.read.return_value = buf.getvalue()
@@ -765,7 +766,7 @@ class TestReleaseTagHelpers:
             "https://github.com/GobbyAI/gobby/releases/download/"
             "gcode-v1.5.0/gcode-aarch64-apple-darwin.tar.gz",
         ]
-        assert (tmp_path / "gcode").read_bytes() == b"fake!"
+        assert (tmp_path / "gcode").read_bytes() == payload
 
     @patch("gobby.cli.install_release.urlopen")
     def test_download_release_binary_fails_closed_when_asset_is_missing(
@@ -852,13 +853,29 @@ class TestGcodeHelpers:
         (workspace / "crates" / "gcode" / "Cargo.toml").touch()
         source = workspace / "target" / "release" / "gcode"
         source.parent.mkdir(parents=True)
-        source.write_bytes(b"new-binary")
+        payload = f"#!/bin/sh\necho 'gcode {GCODE_PIN}'\n".encode()
+        source.write_bytes(payload)
+        source.chmod(0o755)
         destination_dir = tmp_path / "bin"
         lock = MagicMock()
 
         with (
-            patch("gobby.cli.install_setup.shutil.which", return_value="/usr/bin/cargo"),
-            patch("gobby.cli.install_setup.subprocess.run", return_value=MagicMock(returncode=0)),
+            patch(
+                "gobby.cli.install_setup.shutil",
+                SimpleNamespace(which=MagicMock(return_value="/usr/bin/cargo")),
+            ),
+            patch("gobby.install.bin_set_coherence._codesign_workspace_binary"),
+            patch(
+                "gobby.cli.install_setup.subprocess",
+                SimpleNamespace(
+                    run=MagicMock(return_value=subprocess.CompletedProcess([], 0)),
+                    TimeoutExpired=subprocess.TimeoutExpired,
+                ),
+            ),
+            patch(
+                "gobby.install.bin_release_identity.workspace_source_identity",
+                return_value="test-source",
+            ),
             patch(
                 "gobby.cli.install_setup_gcode.__file__",
                 str(workspace / "src" / "gobby" / "cli" / "install_setup_gcode.py"),
@@ -883,11 +900,11 @@ class TestGcodeHelpers:
             result = _install_gcode_from_submodule(destination_dir)
 
         assert result is True
-        assert (destination_dir / "gcode").read_bytes() == b"new-binary"
+        assert (destination_dir / "gcode").read_bytes() == payload
         acquire_lock.assert_called_once_with("gcode", bin_dir=destination_dir)
         lock.__enter__.assert_called_once()
         lock.__exit__.assert_called_once()
-        assert replace.call_args.args[1] == destination_dir / "gcode"
+        assert any(call.args[1] == destination_dir / "gcode" for call in replace.call_args_list)
 
     @patch("gobby.cli.install_setup.sys.platform", "darwin")
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
@@ -1237,7 +1254,8 @@ class TestDownloadReleaseBinaryChecksum:
         )
 
     def test_places_binary_when_checksum_matches(self, tmp_path: Path) -> None:
-        archive = _release_tarball("gcode")
+        payload = b"#!/bin/sh\necho 'gcode 0.1.0'\n"
+        archive = _release_tarball("gcode", payload)
         digest = hashlib.sha256(archive).hexdigest()
         # urlopen order: archive download, then checksum fetch.
         with patch(
@@ -1247,10 +1265,11 @@ class TestDownloadReleaseBinaryChecksum:
             result = self._download(tmp_path)
         assert result is True
         assert (tmp_path / "gcode").exists()
-        assert (tmp_path / "gcode").read_bytes() == b"fake-binary"
+        assert (tmp_path / "gcode").read_bytes() == payload
 
     def test_archive_promotion_stages_under_native_lock(self, tmp_path: Path) -> None:
-        archive = _release_tarball("gcode", b"new-binary")
+        payload = b"#!/bin/sh\necho 'gcode 0.1.0'\n"
+        archive = _release_tarball("gcode", payload)
         lock = MagicMock()
 
         with (
@@ -1268,10 +1287,10 @@ class TestDownloadReleaseBinaryChecksum:
             )
 
         assert result is True
-        assert (tmp_path / "gcode").read_bytes() == b"new-binary"
+        assert (tmp_path / "gcode").read_bytes() == payload
         acquire_lock.assert_called_once_with("gcode", bin_dir=tmp_path)
         lock.__enter__.assert_called_once_with()
-        assert replace.call_args.args[1] == tmp_path / "gcode"
+        assert any(call.args[1] == tmp_path / "gcode" for call in replace.call_args_list)
 
     def test_archive_promotion_preserves_binary_when_lock_is_held(self, tmp_path: Path) -> None:
         destination = tmp_path / "gcode"

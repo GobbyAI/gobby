@@ -182,6 +182,8 @@ def _run_except_cargo(args: list[str], **kwargs: Any) -> subprocess.CompletedPro
     """Let codesign run; the submodule installer must not invoke cargo here."""
     if args and args[0] == "cargo":
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+    if len(args) == 2 and args[1] == "--version":
+        return subprocess.CompletedProcess(args, 0, stdout="fixture 0.1.0\n", stderr="")
     return _REAL_SUBPROCESS_RUN(args, **kwargs)
 
 
@@ -238,6 +240,10 @@ def test_submodule_install_ad_hoc_signs_the_staged_binary(
             str(workspace / "src" / "gobby" / "cli" / "installer.py"),
         ),
         patch(f"{module_name}.try_acquire_native_bin_lock", return_value=MagicMock()),
+        patch(
+            "gobby.install.bin_release_identity.workspace_source_identity",
+            return_value="test-source",
+        ),
         patch("gobby.install.bin_freshness_promotion.os.replace", side_effect=replace_staged),
     ):
         result = install(dest_dir)
