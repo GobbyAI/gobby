@@ -794,17 +794,20 @@ def test_rust_validation_runs_reject_different_symbol() -> None:
     assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
 
 
-def test_rust_validation_runs_reject_inconsistent_module_prefix() -> None:
+@pytest.mark.parametrize("module", ["other_mod", "unrelated::config", "config::config"])
+def test_rust_validation_runs_reject_inconsistent_module_prefix(module: str) -> None:
     test = AcceptanceTest(
         reference="crates/gcode/src/config/tests.rs::expected_symbol",
         path="crates/gcode/src/config/tests.rs",
         symbol="expected_symbol",
         body="fn expected_symbol() {}",
     )
-    output = "    FAIL [0.004s] gobby-code other_mod::tests::expected_symbol"
+    output = f"    PASS [0.004s] gobby-code {module}::tests::expected_symbol"
 
     assert not validation_run_covers_test("cargo nextest run -p gobby-code", output, test)
-    assert not validation_run_names_test("cargo nextest run -p gobby-code", output, test)
+    assert not validation_run_names_test(
+        "cargo nextest run -p gobby-code", output.replace("PASS", "FAIL"), test
+    )
 
 
 def test_rust_validation_runs_require_symbol_word_boundary() -> None:
@@ -847,17 +850,19 @@ def test_test_bodies_pinned_to_linked_commit(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("path_attribute", [True, False])
+@pytest.mark.parametrize("inline", [False, True])
 def test_rust_validation_runs_match_integration_path_module(
-    tmp_path: Path, path_attribute: bool
+    tmp_path: Path, path_attribute: bool, inline: bool
 ) -> None:
     repo = _init_repo(tmp_path)
     source_dir = repo / "crates/example/tests"
     test_file = source_dir / ("parity/mod.rs" if path_attribute else "parity/keep_set.rs")
     test_file.parent.mkdir(parents=True)
-    test_file.write_text(
-        "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n",
-        encoding="utf-8",
-    )
+    test_body = "#[test]\nfn ties_are_numeric() { assert_eq!(ordered_ids(), vec![2, 10]); }\n"
+    if inline:
+        test_body = f"mod project_rows {{\nmod nested {{\n{test_body}}}\n}}\n"
+    test_body = "// mod decoy { fn ties_are_numeric() {} }\n" + test_body
+    test_file.write_text(test_body, encoding="utf-8")
     (source_dir / "parity.rs").write_text(
         '#[path = "parity/mod.rs"]\nmod parity;\n' if path_attribute else "mod parity;\n",
         encoding="utf-8",
@@ -875,9 +880,17 @@ def test_rust_validation_runs_match_integration_path_module(
     assert result.passed, result.findings
     test = result.tests[0]
     module = "parity" if path_attribute else "parity::keep_set"
+    if inline:
+        module += "::project_rows::nested"
+    assert test.rust_module == tuple(module.split("::"))
     assert validation_run_covers_test(
         "cargo nextest run -p example --test parity",
         f"PASS [0.004s] example::parity {module}::ties_are_numeric",
+        test,
+    )
+    assert not validation_run_covers_test(
+        "cargo nextest run -p example --test parity",
+        f"PASS [0.004s] example::parity {module}::unrelated::ties_are_numeric",
         test,
     )
     assert not validation_run_covers_test(
