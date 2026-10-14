@@ -1787,7 +1787,7 @@ def test_tdd_evidence_ignores_other_test_edits_before_red() -> None:
     assert result.green_runs
 
 
-def test_tdd_evidence_accepts_later_repair_cycle() -> None:
+def test_tdd_evidence_rejects_unproven_later_repair_cycle() -> None:
     started = datetime(2026, 8, 21, tzinfo=UTC)
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
@@ -1822,9 +1822,9 @@ def test_tdd_evidence_accepts_later_repair_cycle() -> None:
 
     result = evaluate_tdd_evidence((test,), repaired)
 
-    assert result.passed is True
-    assert result.red_runs
-    assert result.green_runs
+    assert result.passed is False
+    assert not result.red_runs
+    assert not result.green_runs
 
     post_implementation_red = TranscriptEvidence(
         edits=repaired.edits[:2],
