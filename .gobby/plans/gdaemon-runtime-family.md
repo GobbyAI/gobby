@@ -195,9 +195,13 @@ operator's own answers. A 2026-10-14 ruling replaces the 2026-10-13 one it names
   - No agent reads or edits `~/.gobby/bootstrap.yaml`. The operator runs the
     route commands in E1, and Orchestrator #15977 coordinates them with the
     operator at each cutover or restart.
-- **Q2, soak window (operator, 2026-10-13).** At least 24 hours, at least one
-  config read and one interactive handshake per active project, and no pending
-  config activation.
+- **Q2, soak window (operator, 2026-10-13; clock rule 2026-10-14).** At least 24
+  hours, at least one config read and one interactive handshake per active
+  project, and no pending config activation. The 24 hours are measured once, from
+  the cutover that starts compare mode ("I'd rather not restart the clock at all").
+  No restart resets the clock: a Python backend restart, a gdaemon restart, a
+  binary promotion and a change to the runtime-family code itself all leave it
+  running. Lanes keep landing and restarting throughout the soak.
 - **Process-lifetime family.** gdaemon builds the runtime family once in
   `serve::run`, on the shared pool, and leaks it with `Box::leak`. It then has the
   same `'static` lifetime as `FAMILIES`, and `RouteTable::new` keeps its signature
@@ -6904,7 +6908,12 @@ freshly built and installed binaries, before #21559 closes.
       probe fails on any `apply_status` other than `applied`. That includes
       `reconcile_failed`, which `ConfigValuesService.patch_flat` answers with HTTP
       200 and `committed: true`. A backend restart inside the window is allowed,
-      because requests that cannot reach Python record `skipped` (2.1).
+      because requests that cannot reach Python record `skipped` (2.1). The 24
+      hours are measured once, from the cutover in step 1 that starts compare
+      mode, and no restart resets them (Q2): a Python backend restart, a gdaemon
+      restart, a binary promotion and a change to the runtime-family code itself
+      all leave the clock running, and lanes keep landing and restarting
+      throughout.
    3. Write evidence uses an API-key client (Orchestrator #15977, 2026-10-14). Once
       inside the window, the operator must run this soak probe from the main
       checkout. `DaemonClient` reads the bootstrap API key in the operator's own
