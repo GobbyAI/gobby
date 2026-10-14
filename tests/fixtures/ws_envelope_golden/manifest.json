@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "corpus": "ws_envelope_golden",
+  "cases_file": "cases.json",
+  "oracle": "HandlerMixin._handle_subscribe, HandlerMixin._handle_unsubscribe and BroadcastMixin.broadcast, driven through WebSocketServer.handle_connection. Expected output is hand-authored; harnesses must never re-record it.",
+  "entry_modes": {
+    "direct": "Dedicated public WS listener. The connection starts with no subscriptions attribute (state \"absent\").",
+    "browser": "HTTP listener ASGI /ws entry through ASGIWebSocketAdapter, including bearer clients on that path. The connection starts with an initialized empty set."
+  },
+  "client_spec": {
+    "entry": "direct or browser.",
+    "explicit_null": "Optional. true sets the internal subscriptions state to null before the connection loop starts; no public entry produces it.",
+    "initial_state": "Subscription state expected before the first step, in the state encoding below."
+  },
+  "state_encoding": {
+    "\"absent\"": "The connection has no subscriptions attribute. Every broadcast is filtered out.",
+    "null": "Explicit internal null. Every broadcast is filtered out; subscribe initializes it; unsubscribe raises through the generic handler-error path and leaves it null.",
+    "[...]": "Initialized set, listed in sorted order."
+  },
+  "step_ops": {
+    "send": "Client sends `text` as one inbound text frame. `replies` are the sender's frames; every other client receives nothing. `subscriptions` is the sender's state afterwards. `handler_exception` names the exception the connection wrapper logged, when the handler raised.",
+    "broadcast": "BroadcastMixin.broadcast(message, frames=frames). Subscription filtering uses `message`; recipients receive each of `frames` in order, or `message` when frames is omitted. `deliveries` names every client, empty for non-recipients.",
+    "direct": "One application reply sent to `client` with websocket.send(json_dumps(message)). Direct delivery bypasses subscription filtering. `deliveries` names every client."
+  },
+  "comparison": {
+    "frames": "Every expected frame given as a string is compared byte-for-byte as UTF-8 text.",
+    "acknowledgements": "The single normalization: an expected frame given as {\"ack\": {...}} matches a subscribe_success or unsubscribe_success frame whose keys are exactly type and events, whose events have no duplicates, and whose events equal the expected list after sorting. Python emits that array from an unordered set. No other array, field or frame is normalized."
+  },
+  "parity_domain": "Inbound controls are JSON objects with a string `type` and either an omitted `events` or an `events` array containing only strings. The non-list container error (`events` given as a string, object or null) is characterized for both subscribe and unsubscribe.",
+  "excluded": [
+    {
+      "domain": "Non-string or unhashable `events` members",
+      "reason": "Not a parity requirement. The Python handlers currently reject an `events` array with any non-string member using the same error frame, without mutating state, but this corpus does not prescribe that behavior. Native negative cases with a deliberate all-or-nothing validation rule belong to A2 (#23879)."
+    },
+    {
+      "domain": "Retired token behavior",
+      "reason": "No case prescribes credential or token handling; authentication precedes the connection loop exercised here."
+    }
+  ],
+  "cases": [
+    "direct_absent_filters_every_broadcast",
+    "direct_unsubscribe_before_subscribe_stays_absent",
+    "direct_subscribe_omitted_events_initializes",
+    "direct_subscribe_empty_events_initializes",
+    "browser_initialized_empty_passes_non_events",
+    "direct_explicit_null_lifecycle",
+    "browser_explicit_null_lifecycle",
+    "duplicate_and_additive_subscriptions",
+    "exact_type_subscriptions_gate_event_types",
+    "wildcard_receives_gated_events_until_cleared",
+    "parameter_selectors_use_string_equality",
+    "hook_event_subtype_selector",
+    "unsubscribe_removes_listed_members",
+    "unsubscribe_clear_all_variants",
+    "events_not_a_list_is_rejected",
+    "fragmented_broadcast_filters_on_message",
+    "non_ascii_payload_bytes",
+    "direct_reply_bypasses_broadcast_filter"
+  ]
+}
