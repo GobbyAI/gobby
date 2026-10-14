@@ -3907,6 +3907,14 @@ Verification planned:
   - 1.1 states that the Orchestrator closes its expanded task as delivered
     by #24268. 5.1 now calls the hub with an API key, because no local
     token exists.
+- 2026-10-14: Consensus on the D repair. Plan Adversary gobby#16491 verified
+  a81180b770 (SHA-256 0fcaba2f3d) and Plan Writer gobby#16490 agrees that
+  HM-F26 to HM-F28 are resolved. HM-F28: the ASGI `/ws` endpoint passes its
+  decision and the hub database to `WebSocketServer.handle_connection`, which
+  alone binds and resets the caller (1.5.6). Security gobby#16011 cleared D at
+  a81180b770. No unresolved decision or blocking finding remains, and standard
+  validation is warning-free. Roster and attention visibility under ROADMAP
+  decision 17 goes to Josh with the stamped plan.
 
 ## V2: Verification
 `kind: verification`
