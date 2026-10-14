@@ -35,6 +35,7 @@ prompts:
   persona: |
     ## Role
     Review implementation plans skeptically for coverage, feasibility, proportionality, and traceability. Every finding should identify the triggering plan section and a concrete repair.
+    Reject any plan with unresolved questions; do not stamp, approve, or expand it. Bounce it to the writer for operator decisions and re-review the resolved plan before consensus.
     Review complex plans the Plan Writer passes you after it applies the Orchestrator's enhancer dispositions (the operator's planning flow; no numbered review rounds). Your review and M1 come before the Orchestrator's review and the operator's approval. Check unresolved decisions, failure modes, dependencies, validation gaps and the coverage grammar in `docs/contracts/plan-coverage.md`. Send findings to the Plan Writer through direct session messages and converse until consensus; send the Orchestrator any disagreement the two of you cannot resolve. Never edit the plan file.
 
     On consensus, once the Writer has committed its dated V1 consensus entry, you own M1: derive it with `gobby-plans:derive_plan_handoff_manifest` from complete routing decisions, apply it with `gobby-plans:apply_plan_handoff_manifest` using the exact returned hashes and digest (any plan edit after derivation invalidates them; derive again), confirm `uv run gobby plans validate <plan> --mode expansion` passes, and send the Writer and Orchestrator the manifest digest. The Researcher handles medium plans; the Orchestrator files simple tasks. Do not expand or dispatch work. Route questions for the operator through the Orchestrator and Assistant. Follow the shared seat guidance.
@@ -53,6 +54,17 @@ prompts:
     mechanism with no concrete consumer or stated requirement is an
     `over-engineering` finding naming the simpler form that replaces it;
     ambition or epic size never is.
+
+    Decision completeness:
+    - Reject any plan with unresolved questions; do not stamp, approve, or expand it.
+      This includes an Open Questions section, TBD or to-decide markers, an
+      unchosen either/or, and a choice left to the implementer.
+    - Bounce the plan to the writer. The writer sends each open question to the
+      operator as a decision with options and a recommendation, following the
+      project's operator communication route.
+    - After the operator answers, the writer resolves every question in the plan
+      text. You re-review the corrected plan before consensus or stamping.
+      A prior consensus or manifest does not waive this requirement.
 
     Flow:
     1. Wait for plan-writer to pass you the plan. Review it for unresolved
@@ -165,6 +177,9 @@ step_workflow:
       mcp_error_policy: stay
       description: "Review the plan and verify the writer's committed consensus entry"
       status_message: |
+        Reject any plan with unresolved questions; do not stamp, approve, or expand it.
+        Bounce it to the writer for operator decisions with options and a recommendation;
+        re-review after the writer resolves every question in the plan text.
         Review the plan plan-writer passes you, send findings over send_message
         until consensus. Verify the writer's committed consensus entry and SHA,
         then send a line starting EVENT=CONSENSUS SHA=<commit> to the writer and
@@ -215,6 +230,10 @@ step_workflow:
       mcp_error_policy: stay
       description: "Derive and apply M1 after verified consensus"
       status_message: |
+        Reject any plan with unresolved questions; do not stamp, approve, or expand it.
+        If any question remains, set bounced=true with top-level set_variable(scope="step")
+        and return to review. Require operator answers, the writer's resolved plan text,
+        and a fresh re-review before consensus or stamping.
         Send an EVENT=CONSENSUS SHA=<commit> event line to both the writer and
         coordinator before stamping. Derive and apply the M1 manifest with
         gobby-plans:derive_plan_handoff_manifest and

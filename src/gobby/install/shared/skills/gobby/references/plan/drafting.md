@@ -15,7 +15,17 @@ Read the [Plan-Coverage Contract](../../../../../../../../docs/contracts/plan-co
    A narrative first draft has no M1; expansion validation is explicitly unrun. A manifest-bearing revision needs both base and expansion validation.
 
 ## Constraints
-Resolve material questions before finalization. Do not invent planning tasks, review tasks, TDD wrapper leaves, or per-file chores. Standalone test infrastructure can be its own outcome. Revisions sweep the whole plan for the same finding class, retain every acceptance obligation, and update dependent references; the manifest must be re-derived through approval after narrative changes.
+Resolve or escalate every open question before review. An Open Questions
+section, TBD or to-decide markers, an unchosen either/or, and a choice left to
+the implementer block stamping, approval and expansion. Send each unresolved
+question to the operator as a decision with options and a recommendation,
+following the project's operator communication route; await the answer and
+resolve it in the plan text before submitting for review. If the adversary
+bounces the plan for open questions, resolve every question and request a
+fresh review before consensus or stamping. Optional review never waives
+decision completeness.
+
+Do not invent planning tasks, review tasks, TDD wrapper leaves, or per-file chores. Standalone test infrastructure can be its own outcome. Revisions sweep the whole plan for the same finding class, retain every acceptance obligation, and update dependent references; the manifest must be re-derived through approval after narrative changes.
 
 ## Write restrictions and recovery
 Load session handoff guidance first. When writable, save the canonical draft and reference its project-relative path in the handoff. If canonical writes are unavailable, preserve the complete latest Markdown draft in `set_handoff(clear_session=false)` current_state only when all rendered sections fit the shared 10,000 JSON-escaped character cap. Decisions/approvals belong in key_decisions, unresolved questions in notes, and continuation in next_steps. If the complete draft cannot fit and writing is prohibited, surface the preservation conflict before initiating compaction; never truncate the draft or repeatedly submit oversized content. Restore with argumentless `get_handoff`. No scratch store, indirect writer, or subagent may bypass restrictions.
@@ -24,4 +34,4 @@ In generic interactive planning, after drafting, enhancement, each finalized rev
 
 See [Specification writing](../../../../../../../../docs/guides/spec-writing.md#plan-shape).
 
-_Last verified: 2026-10-06_
+_Last verified: 2026-10-13_
