@@ -128,6 +128,21 @@ def prepare(self: Any, prior: ExpansionRun, spec: dict[str, Any]) -> Reconciliat
     )
 
 
+def _require_read_committed(conn: Any) -> None:
+    """Fail closed unless this transaction can see commits that land mid-apply."""
+    row = conn.execute("SHOW transaction_isolation").fetchone()
+    if hasattr(row, "keys"):
+        isolation = str(row["transaction_isolation"]).strip().lower()
+    elif row is None:
+        isolation = ""
+    else:
+        isolation = str(row[0]).strip().lower()
+    if isolation != "read committed":
+        raise RuntimeError(
+            f"Expansion reconciliation requires read committed isolation, got {isolation!r}"
+        )
+
+
 def adopt(
     self: Any,
     conn: Any,
@@ -145,9 +160,12 @@ def adopt(
     task_id = plan.prior_by_section.get(section_id)
     if task_id is None:
         return None
+    # Read Committed is what makes the post-lock stage read a fresh snapshot.
+    # A transaction-wide snapshot would keep the empty pre-lock view.
+    _require_read_committed(conn)
     # Stage rows before the task row. A stage start updates task_stage_states
     # and the state-bucket trigger then locks the task, so this order matches it.
-    stage_rows = conn.execute(
+    conn.execute(
         """
         SELECT state, entered_at, completed_at, work_attempt_count,
                review_round_count, artifact_refs, notes
@@ -179,6 +197,20 @@ def adopt(
         claimed = SectionBinding(section_id=section_id, task_id=task_id, reason="claimed")
         plan.untouched.append(claimed)
         return AdoptedLeaf(task_id=task_id, action="untouched", reason="claimed")
+    # Fresh Read Committed snapshot. A stage insert or start that committed
+    # before this task lock is visible here; one still in flight cannot commit
+    # past the lock, because the stage trigger updates this task. Do not lock
+    # these rows: the inserter may hold them while that trigger waits.
+    stage_rows = conn.execute(
+        """
+        SELECT state, entered_at, completed_at, work_attempt_count,
+               review_round_count, artifact_refs, notes
+          FROM task_stage_states
+         WHERE task_id = %s
+         ORDER BY position, stage_name
+        """,
+        (task_id,),
+    ).fetchall()
     if _stage_rows_progressed(stage_rows):
         active = SectionBinding(section_id=section_id, task_id=task_id, reason="in_progress")
         plan.untouched.append(active)

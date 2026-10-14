@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
@@ -20,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase, TaskDependencyMutation
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.expansion._reconcile import _require_read_committed
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.machine_id import require_machine_id
@@ -1047,3 +1050,266 @@ def test_reexpand_close_of_removed_leaf_does_not_deadlock_on_root(
         assert added.parent_task_id == phase_id
     finally:
         writer_db.close()
+
+
+class _AdoptBarrier:
+    """Pause apply around the absent-stage reads. Real SQL results pass through."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.paused = Event()
+        self.release = Event()
+        self._tripped = False
+
+    def before_execute(self, query: object) -> None:
+        if self._tripped or self.mode != "before_fresh_read":
+            return
+        if _is_fresh_stage_read(query):
+            self._tripped = True
+            self.paused.set()
+            if not self.release.wait(timeout=5):
+                raise TimeoutError("fresh stage read stayed paused")
+
+    def wrap_cursor(self, query: object, cursor: Any) -> Any:
+        if self._tripped or self.mode != "before_task_lock" or not _is_stage_lock(query):
+            return cursor
+        return _EmptyStageCursor(cursor, self)
+
+
+class _EmptyStageCursor:
+    def __init__(self, cursor: Any, barrier: _AdoptBarrier) -> None:
+        self._cursor = cursor
+        self._barrier = barrier
+
+    def fetchall(self) -> Any:
+        rows = self._cursor.fetchall()
+        if not rows and not self._barrier._tripped:
+            self._barrier._tripped = True
+            self._barrier.paused.set()
+            if not self._barrier.release.wait(timeout=5):
+                raise TimeoutError("empty stage lock stayed paused")
+        return rows
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+
+class _BarrierTxn:
+    def __init__(self, txn: Any, barrier: _AdoptBarrier) -> None:
+        self._txn = txn
+        self._barrier = barrier
+
+    def execute(self, sql: str, params: Any = ()) -> Any:
+        self._barrier.before_execute(sql)
+        return self._barrier.wrap_cursor(sql, self._txn.execute(sql, params))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._txn, name)
+
+
+def _is_stage_lock(query: object) -> bool:
+    text = str(query).lower()
+    return "task_stage_states" in text and "for update" in text
+
+
+def _is_fresh_stage_read(query: object) -> bool:
+    text = str(query).lower()
+    return "task_stage_states" in text and "for update" not in text and "for share" not in text
+
+
+@contextmanager
+def _pause_apply(database: PostgresHubDatabase, barrier: _AdoptBarrier) -> Iterator[None]:
+    original = database.transaction_immediate
+
+    @contextmanager
+    def wrapped(lock: Any) -> Iterator[Any]:
+        with original(lock) as txn:
+            yield _BarrierTxn(txn, barrier)
+
+    target: Any = database
+    target.transaction_immediate = wrapped
+    try:
+        yield
+    finally:
+        target.transaction_immediate = original
+
+
+def _amended_absent_spec() -> dict[str, Any]:
+    return _spec(
+        [
+            _leaf("again-11", "1.1", "Rewritten title", "Touches src/other.py."),
+            _leaf("leaf-12", "1.2", "Added blocker", "Touches src/other.py."),
+        ],
+        [{"task_id": "again-11", "depends_on": "leaf-12"}],
+    )
+
+
+def _start_leaf_stage(database: PostgresHubDatabase, leaf_id: str, session_id: str) -> None:
+    actor = _service(database)
+    actor.task_manager.initialize_task_manifest(leaf_id, stage_names=["development", "pr", "merge"])
+    actor.task_manager.stage_states.start_stage(leaf_id, "development", by_session_id=session_id)
+
+
+def test_reexpand_absent_stage_start_committed_first_is_not_rewritten(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """A manifest and start that commit before the task lock stay in progress."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+    session = _session(temp_db, sample_project)
+    first = _spec([_leaf("leaf-11", "1.1", "Original title", "Touches src/keep.py.")])
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    leaf_id = _task_id(applied, "leaf-11")
+    assert service.task_manager.stage_states.list_for_task(leaf_id) == []
+    original = service.task_manager.get_task(leaf_id)
+    amended_run = _save_run(service, parent, sample_project, _amended_absent_spec())
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    actor_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    actor_db.open()
+    barrier = _AdoptBarrier("before_task_lock")
+    apply_finished = Event()
+    progress_finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            apply_finished.set()
+
+    def run_progress() -> None:
+        try:
+            _start_leaf_stage(actor_db, leaf_id, session.id)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            progress_finished.set()
+
+    apply_thread = Thread(target=run_apply, daemon=True)
+    progress_thread = Thread(target=run_progress, daemon=True)
+    try:
+        with _pause_apply(writer_db, barrier):
+            apply_thread.start()
+            assert barrier.paused.wait(timeout=5)
+            progress_thread.start()
+            assert progress_finished.wait(timeout=5)
+            progress_thread.join(timeout=1)
+            if errors:
+                raise errors[0]
+            started = service.task_manager.stage_states.get(leaf_id, "development")
+            assert started is not None
+            assert started.state == "in_progress"
+            barrier.release.set()
+            assert apply_finished.wait(timeout=5)
+            apply_thread.join(timeout=1)
+            if errors:
+                raise errors[0]
+        task = service.task_manager.get_task(leaf_id)
+        assert task.id == leaf_id
+        assert task.title == original.title
+        assert task.description == original.description
+        assert _blocker_ids(service, leaf_id) == set()
+        finished = service.task_manager.stage_states.get(leaf_id, "development")
+        assert finished is not None
+        assert finished.state == "in_progress"
+        assert finished.entered_at == started.entered_at
+        assert finished.work_attempt_count == started.work_attempt_count
+        report = _report(_service(writer_db).run_manager.get(amended_run.id))
+        assert report["untouched"] == [
+            {"section_id": "1.1", "task_id": leaf_id, "reason": "in_progress"}
+        ]
+        assert "1.1" not in _ids_for(report, "reused")
+    finally:
+        barrier.release.set()
+        writer_db.close()
+        actor_db.close()
+
+
+def test_reexpand_absent_stage_start_after_task_lock_does_not_deadlock(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    postgres_database_url: str,
+) -> None:
+    """A start that arrives after the task lock waits on that lock and then finishes."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+    session = _session(temp_db, sample_project)
+    first = _spec([_leaf("leaf-11", "1.1", "Original title", "Touches src/keep.py.")])
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    leaf_id = _task_id(applied, "leaf-11")
+    assert service.task_manager.stage_states.list_for_task(leaf_id) == []
+    amended_run = _save_run(service, parent, sample_project, _amended_absent_spec())
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    actor_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    actor_db.open()
+    barrier = _AdoptBarrier("before_fresh_read")
+    apply_finished = Event()
+    progress_finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            apply_finished.set()
+
+    def run_progress() -> None:
+        try:
+            _start_leaf_stage(actor_db, leaf_id, session.id)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            progress_finished.set()
+
+    apply_thread = Thread(target=run_apply, daemon=True)
+    progress_thread = Thread(target=run_progress, daemon=True)
+    try:
+        with _pause_apply(writer_db, barrier):
+            apply_thread.start()
+            assert barrier.paused.wait(timeout=5)
+            progress_thread.start()
+            _wait_for_lock(postgres_database_url, progress_finished, actor_db.application_name)
+            barrier.release.set()
+            assert apply_finished.wait(timeout=5)
+            assert progress_finished.wait(timeout=5)
+            apply_thread.join(timeout=1)
+            progress_thread.join(timeout=1)
+            if errors:
+                raise errors[0]
+        stage = service.task_manager.stage_states.get(leaf_id, "development")
+        assert stage is not None
+        assert stage.state == "in_progress"
+    finally:
+        barrier.release.set()
+        writer_db.close()
+        actor_db.close()
+
+
+def test_reexpand_revalidation_rejects_repeatable_read(postgres_database_url: str) -> None:
+    with psycopg.connect(postgres_database_url) as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            with pytest.raises(RuntimeError, match="read committed"):
+                _require_read_committed(conn)
+
+
+def test_reexpand_revalidation_accepts_read_committed(postgres_database_url: str) -> None:
+    with psycopg.connect(postgres_database_url) as conn:
+        with conn.transaction():
+            _require_read_committed(conn)
+            row = conn.execute("SHOW transaction_isolation").fetchone()
+            assert row is not None
+            assert str(row[0]).strip().lower() == "read committed"
