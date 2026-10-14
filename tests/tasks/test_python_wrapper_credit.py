@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -16,14 +17,56 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("printed_exit", [0, 101])
-def test_python_wrapper_masking_inner_exit_cannot_pass_gate(printed_exit: int) -> None:
+@pytest.mark.parametrize(
+    ("uv_options", "options", "free_threaded_name"),
+    [
+        ((), (), False),
+        ((), ("-IW", "error"), False),
+        ((), ("-IX", "dev"), False),
+        ((), ("--check-hash-based-pycs", "always"), False),
+        ((), ("-IWerror",), False),
+        ((), ("-IXdev",), False),
+        (("--no-sync",), (), False),
+        (("--project", "."), (), False),
+        (("--",), (), False),
+        ((), (), True),
+    ],
+)
+def test_python_wrapper_masking_inner_exit_cannot_pass_gate(
+    printed_exit: int,
+    uv_options: tuple[str, ...],
+    options: tuple[str, ...],
+    free_threaded_name: bool,
+    tmp_path: Path,
+) -> None:
     source = (
         "import json,subprocess,sys; "
         "result=subprocess.run([sys.executable,'-c','raise SystemExit(101)']); "
         "assert result.returncode == 101; "
         f"print(json.dumps({{'exit':{printed_exit}}}))"
     )
-    arguments = ["uv", "run", sys.executable, "-c", source]
+    interpreter = sys.executable
+    if free_threaded_name:
+        # Exercise the executable-name boundary without requiring a second Python install.
+        alias = tmp_path / "python3.14t"
+        alias.symlink_to(sys.executable)
+        interpreter = str(alias)
+    arguments = ["uv", "run", *uv_options, interpreter, *options, "-c", source]
+    _assert_wrapper_rejected(arguments, printed_exit)
+
+
+@pytest.mark.parametrize("printed_exit", [0, 101])
+def test_uv_node_wrapper_masking_inner_exit_cannot_pass_gate(printed_exit: int) -> None:
+    source = (
+        "const r=require('node:child_process').spawnSync(process.execPath,"
+        "['-e','process.exit(101)']); "
+        "if(r.status!==101)process.exit(1); "
+        f"console.log(JSON.stringify({{exit:{printed_exit}}}));"
+    )
+    _assert_wrapper_rejected(["uv", "run", "--no-sync", "node", "-e", source], printed_exit)
+
+
+def _assert_wrapper_rejected(arguments: list[str], printed_exit: int) -> None:
     result = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0
     assert json.loads(result.stdout) == {"exit": printed_exit}
@@ -51,7 +94,7 @@ def test_python_wrapper_masking_inner_exit_cannot_pass_gate(printed_exit: int) -
     )
     assert gate.status == "failed", gate.message
     assert run.wrapped is True
-    assert run.wrapper_reason == "python inline wrapper"
+    assert run.wrapper_reason in {"python inline wrapper", "node wrapper"}
     # The shell's real status remains intact; stdout cannot forge a native exit.
     assert run.exit_code == 0
     assert gate.details["criterion_command_gaps"]
@@ -82,10 +125,49 @@ def test_inline_python_commands_are_diagnostic_only(command: str) -> None:
         "python3 -Impytest -c pytest.ini",
         "python scripts/check.py -c config.json",
         "python -W '-c' scripts/check.py",
+        "python -IW error scripts/check.py -c config.json",
+        "python -IX dev -m pytest -c pytest.ini",
+        "python --check-hash-based-pycs always scripts/check.py -c config.json",
+        "python -IW '-c' scripts/check.py",
+        "python -IX '-c' -m pytest",
+        "python -IW-c scripts/check.py",
+        "python -IX-c -m pytest",
+        "uv run --no-sync pytest -k python -c pytest.ini",
+        "uv run --project . python -m pytest -c pytest.ini",
+        "uv run --project=. --with pytest python scripts/check.py -c config.json",
+        "uv run -- python scripts/check.py -c config.json",
+        "uv --directory . run --no-sync pytest -k python -c pytest.ini",
+        "python3.14t -m pytest -c pytest.ini",
+        "python3.14t scripts/check.py -c config.json",
+        "uv pip check",
+        "uv lock --check",
     ],
 )
 def test_python_modules_and_scripts_keep_direct_command_credit(command: str) -> None:
     assert classify_validation_command_equivalence(command).wrapped is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python --future-option module -c 'print(0)'",
+        "python -Z unknown -c 'print(0)'",
+        "python -W",
+        "python -m",
+        "python --",
+        "python",
+        "uv run --future-option unknown python -c 'print(0)'",
+        "uv run --project",
+        "uv tool run python -c 'print(0)'",
+        "uv tool --from example run node -e 'console.log(0)'",
+        "uv unknown-launcher python -c 'print(0)'",
+        "env -S 'python -c print(0)'",
+        "uv run --no-sync rtk env -S 'python -c print(0)'",
+        "bash --future-option script.sh",
+    ],
+)
+def test_ambiguous_interpreter_and_launcher_forms_get_no_credit(command: str) -> None:
+    assert classify_validation_command_equivalence(command).wrapped is True
 
 
 def test_direct_validation_exit_zero_still_earns_gate_credit() -> None:
