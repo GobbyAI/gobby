@@ -111,7 +111,8 @@ def spawning_session_provider(
         if not candidate:
             continue
         source = parent_session_provider(session_manager, candidate)
-        if concrete_provider(source) is not None:
+        # Pipeline sessions coordinate work; they do not identify a provider CLI.
+        if concrete_provider(source) not in (None, "pipeline"):
             return source
     return None
 
