@@ -253,7 +253,7 @@ pub struct WriteCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CommandFrame {
-    Spawn(SpawnCommand),
+    Spawn(Box<SpawnCommand>),
     Cancel(CancelCommand),
     Write(WriteCommand),
 }
@@ -395,7 +395,7 @@ pub struct StaleReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 enum WireMessage {
-    Command(CommandFrame),
+    Command(Box<CommandFrame>),
     Reply(ReplyFrame),
     Checkout(CheckoutBody),
     CheckoutResult(CheckoutResult),
@@ -405,7 +405,7 @@ enum WireMessage {
 
 fn decode(kind: &str, raw: &str) -> Result<WireMessage, serde_json::Error> {
     match kind {
-        "command" => Ok(WireMessage::Command(serde_json::from_str(raw)?)),
+        "command" => Ok(WireMessage::Command(Box::new(serde_json::from_str(raw)?))),
         "reply" => Ok(WireMessage::Reply(serde_json::from_str(raw)?)),
         "checkout" => Ok(WireMessage::Checkout(serde_json::from_str(raw)?)),
         "checkout_result" => Ok(WireMessage::CheckoutResult(serde_json::from_str(raw)?)),
@@ -417,5 +417,5 @@ fn decode(kind: &str, raw: &str) -> Result<WireMessage, serde_json::Error> {
 
 /// Parse `raw` as `kind` and encode it again with compact JSON.
 pub fn round_trip_json(kind: &str, raw: &str) -> Result<String, serde_json::Error> {
-    Ok(serde_json::to_string(&decode(kind, raw)?)?)
+    serde_json::to_string(&decode(kind, raw)?)
 }
