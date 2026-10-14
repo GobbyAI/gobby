@@ -108,7 +108,7 @@ fn list_edges_are_between_listed_communities_only() {
 }
 
 #[test]
-fn list_orders_communities_by_size_then_first_member() {
+fn list_orders_communities_by_size_then_community_id() {
     let rows = vec![
         community(1, "small", "small", &["lib/a.rs", "lib/b.rs"], &[]),
         community(
@@ -132,7 +132,7 @@ fn list_orders_communities_by_size_then_first_member() {
         .iter()
         .map(|community| community.id.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(order, ["community:10", "community:2", "community:1"]);
+    assert_eq!(order, ["community:2", "community:10", "community:1"]);
 }
 
 #[test]

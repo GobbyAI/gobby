@@ -31,20 +31,58 @@ fn payload_for(
     .expect("payload builds")
 }
 
-fn community(id: &str, label: &str, nodes: &[&str]) -> ViewCommunity {
+fn community(community_id: i32, label: &str, nodes: &[&str]) -> ViewCommunity {
     ViewCommunity {
-        id: id.to_string(),
+        id: NodeKey::community(community_id.to_string()).canonical(),
         label: label.to_string(),
         size: nodes.len(),
         cohesion: 1.0,
         label_source: "deterministic".to_string(),
         label_stale: false,
         nodes: nodes.iter().map(|node| (*node).to_string()).collect(),
-        first_member: nodes
-            .first()
-            .map(|node| (*node).to_string())
-            .unwrap_or_default(),
+        community_id,
     }
+}
+
+#[test]
+fn view_orders_size_ties_by_numeric_community_id() {
+    let communities = vec![
+        community(10, "Earlier member", &["file:a", "file:b"]),
+        community(2, "Later member", &["file:c", "file:d"]),
+        community(20, "Larger", &["file:x", "file:y", "file:z"]),
+    ];
+    let nodes = communities
+        .iter()
+        .flat_map(|community| {
+            community.nodes.iter().map(|id| ViewNodeInput {
+                key: NodeKey::file(id.strip_prefix("file:").expect("file fixture")),
+                name: id.clone(),
+                kind: "file".into(),
+                file: Some(id.clone()),
+                community: Some(community.id.clone()),
+            })
+        })
+        .collect();
+    let payload = build_view_payload(
+        "proj-1",
+        "/abs/project",
+        GraphViewKind::Mcg,
+        sample_seed(),
+        1,
+        false,
+        false,
+        None,
+        nodes,
+        Vec::new(),
+        communities,
+    )
+    .expect("payload");
+    let order = payload
+        .communities
+        .iter()
+        .map(|community| community.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["community:20", "community:2", "community:10"]);
 }
 
 #[test]
@@ -312,7 +350,7 @@ fn payload_rejects_unknown_community_member() {
         None,
         vec![node.clone()],
         Vec::new(),
-        vec![community("community:1", "Core", &["file:src/missing.py"])],
+        vec![community(1, "Core", &["file:src/missing.py"])],
     );
     assert!(
         unknown_member
@@ -335,7 +373,7 @@ fn payload_rejects_unknown_community_member() {
             ..node.clone()
         }],
         Vec::new(),
-        vec![community("community:1", "Core", &[])],
+        vec![community(1, "Core", &[])],
     );
     assert!(
         missing_membership
@@ -460,9 +498,9 @@ fn mermaid_groups_nodes_into_community_subgraphs() {
             rel: "IMPORTS".into(),
         }],
         vec![
-            community("community:1", "Core \"API\"", &["file:src/a.py"]),
-            community("community:2", "Data]Store", &["file:src/b.py"]),
-            community("community:3", "Empty", &[]),
+            community(1, "Core \"API\"", &["file:src/a.py"]),
+            community(2, "Data]Store", &["file:src/b.py"]),
+            community(3, "Empty", &[]),
         ],
     )
     .expect("payload");

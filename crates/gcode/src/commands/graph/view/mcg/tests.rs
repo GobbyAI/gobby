@@ -362,6 +362,59 @@ fn mcg_labels_nodes_from_stored_communities() {
 }
 
 #[test]
+fn mcg_orders_size_ties_by_community_id() {
+    let nodes = ["src/a.py", "src/c.py"]
+        .into_iter()
+        .map(|path| ViewNodeInput {
+            key: NodeKey::file(path),
+            name: path.into(),
+            kind: "file".into(),
+            file: Some(path.into()),
+            community: None,
+        })
+        .collect();
+    let stored = vec![
+        stored_community(10, "Earlier member", &["src/a.py", "src/b.py"], 2),
+        stored_community(2, "Later member", &["src/c.py", "src/d.py"], 2),
+    ];
+    let labeled = label_communities(nodes, &stored, &identity());
+    let payload = build_view_payload(
+        "proj",
+        "/abs",
+        GraphViewKind::Mcg,
+        crate::commands::graph::view::render::ViewSeed {
+            id: "src/a.py".into(),
+            name: "src/a.py".into(),
+            kind: "file".into(),
+            file: Some("src/a.py".into()),
+        },
+        1,
+        false,
+        false,
+        None,
+        labeled.nodes,
+        Vec::new(),
+        labeled.communities,
+    )
+    .expect("payload");
+    let order = payload
+        .communities
+        .iter()
+        .map(|community| community.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["community:2", "community:10"]);
+    let second = payload
+        .mermaid
+        .find("subgraph community_2[")
+        .expect("community 2 subgraph");
+    let tenth = payload
+        .mermaid
+        .find("subgraph community_10[")
+        .expect("community 10 subgraph");
+    assert!(second < tenth, "numeric community order in Mermaid");
+}
+
+#[test]
 fn mcg_without_stored_partition_hints_and_leaves_null() {
     let nodes = vec![
         ViewNodeInput {
