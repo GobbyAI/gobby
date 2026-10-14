@@ -336,9 +336,11 @@ Writer decisions:
 21. **The hub asks a node for its checkout's git state on demand (P4).**
     `checkout.status` runs the same `git for-each-ref` on the node that
     `get_status` runs locally. The hub caches each machine and project's
-    answer for 30 s, as the local status is cached. When the node is offline
-    or the command fails, the status answers 200 with null git fields, so an
-    offline node's card shows no branch and never a stale one. Rejected: a
+    answer for 30 s, as the local status is cached, and serves a cached
+    answer only while the node's channel is connected. When the node is
+    offline, the liveness read fails, or the command fails, the status
+    answers 200 with null git fields, so an offline node's card shows no
+    branch and never a stale one. Rejected: a
     git-state field in the node's report. The inbox's `take` empties each
     snapshot (1.4), so it needs a new store; the node would run git for every
     checkout every 30 s whether or not anyone looks; and an offline node
@@ -379,7 +381,10 @@ Writer decisions:
   - node-halves 3.1 blocks 1.2, 1.3, and 1.4, which build or check `v`
     against the `CONTRACT_VERSION` it sets to 2. node-halves 2.1 also
     blocks 1.2, because both declare a module in
-    `crates/gdaemon/src/nodes/mod.rs`.
+    `crates/gdaemon/src/nodes/mod.rs`. The same edge orders node-halves
+    1.5 (node hook ingress arm), which also edits
+    `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`, before 1.2,
+    because node-halves runs 1.5 before 1.6 and 1.6 before 2.1.
   - 1.2 blocks node-halves 2.7, because both change
     `crates/gdaemon/src/nodes/channel.rs` (1.2 `hub_channel`, 2.7
     `run_client`).
@@ -2535,7 +2540,7 @@ Targets:
 - `crates/gdaemon/src/nodes/agents/finish.rs`
 - `crates/gdaemon/tests/node_workspace_finish.rs`
 
-**Granularity:** one leaf with seven acceptance items. Merge and removal
+**Granularity:** one leaf with eight acceptance items. Merge and removal
 share one claim on a workspace's path and checkout (`finishing`) and one
 `busy` rule, and removal follows merge in every lifecycle. Splitting them
 would leave the claim with one user and a second leaf that must re-prove it.
@@ -2567,10 +2572,15 @@ would leave the claim with one user and a second leaf that must re-prove it.
   after its `v`, command, and payload checks.
 - Checks before any effect, each answering `invalid_payload` with
   `stage: "none"`:
-  - `path` canonicalizes to a directory name directly under
-    `<home>/worktrees/<project_id>/` for `worktree` or
-    `<home>/clones/<project_id>/` for `clone`. `workspace.rs` exposes the
-    `existing` mode's root check as `owned_workspace_path`, and both use it.
+  - `path` names a directory directly under `<home>/worktrees/<project_id>/`
+    for `worktree` or `<home>/clones/<project_id>/` for `clone`.
+    `workspace.rs` exposes the `existing` mode's root check as
+    `owned_workspace_path`, and both commands use it. A path whose
+    `symlink_metadata` exists must canonicalize to a directory directly
+    under the canonical root, so a symlink cannot escape it. A path that
+    does not exist passes only when its parent canonicalizes to that root
+    and its file name is one `Component::Normal`; that admits an
+    already-removed workspace.
   - `source_root` is absolute and equals
     `git -C <source_root> rev-parse --show-toplevel`.
   - `branch_name`, `target_branch`, and `merged_into` pass
@@ -2605,18 +2615,26 @@ would leave the claim with one user and a second leaf that must re-prove it.
      `stage: "partial"`.
   6. It checks out the recorded branch again in every case after step 4.
 - `finish::remove`:
-  1. A missing path answers `removed`; worktree mode also runs
-     `git worktree prune` and deletes a remaining branch.
-  2. Without `force`, `git -C <path> status --porcelain` output answers
-     `dirty`.
-  3. Without `force_delete_branch`, the branch head must be an ancestor of
-     `merged_into` in `source_root`, or with `merged_into` null, of another
-     local branch there (`git for-each-ref --contains`); else `unmerged`. A
-     clone's branch head that `source_root` does not hold is unmerged.
-  4. It commits a pending removal record for the path and branch, then
-     runs 2.3's `remove(record)`. Success deletes the record and answers
-     `removed`. A failure keeps the record for `retry_removals` and answers
-     `command_failed` with `stage: "partial"`.
+  1. Without `force`, an existing path with `git -C <path> status --porcelain`
+     output answers `dirty`.
+  2. Without `force_delete_branch`, a branch that still exists must have its
+     head be an ancestor of `merged_into` in `source_root`, or with
+     `merged_into` null, of another local branch there
+     (`git for-each-ref --contains`); else `unmerged`. A worktree's branch
+     lives in `source_root` whether or not its path exists. A clone's branch
+     lives in the clone, and a head that `source_root` does not hold is
+     unmerged. This runs for a missing path too, so a missing directory
+     never authorizes deleting an unmerged branch.
+  3. A missing path then removes what remains. Worktree mode runs
+     `git worktree prune` and deletes the branch if it exists; clone mode
+     has nothing left. Both answer `removed`. A failed prune or branch
+     deletion answers `command_failed` with `stage: "partial"`.
+  4. An existing path commits a pending removal record for the path and
+     branch, then runs 2.3's `remove(record)`. Success deletes the record and
+     answers `removed`. A failure keeps the record for `retry_removals` and
+     answers `command_failed` with `stage: "partial"`.
+  Steps 1 and 2 change nothing, so `dirty` and `unmerged` leave the
+  workspace and branch as they were.
 
 Verification planned:
 - `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'binary(node_workspace_finish) + binary(node_agents)'`.
@@ -2628,8 +2646,9 @@ Verification planned:
 - 4.2.3 - An already-merged branch answers `already_merged`, and staged entries or overlapping dirty paths answer `target_dirty` with those paths, each leaving the checkout's branch and files unchanged. test: `crates/gdaemon/tests/node_workspace_finish.rs::merge_refusals_change_nothing`.
 - 4.2.4 - A conflict answers `conflict` with the conflicted files, and the checkout ends clean on its original branch. test: `crates/gdaemon/tests/node_workspace_finish.rs::conflict_aborts_and_restores`.
 - 4.2.5 - A merge or removal answers `busy` while an accepted or live run or an unacknowledged launched record names the path, while a mode `none` run uses the checkout, or while another merge or removal holds either, and an `existing` spawn for a path being finished fails preparation. test: `crates/gdaemon/tests/node_workspace_finish.rs::busy_while_in_use`.
-- 4.2.6 - Removal answers `removed` for a clean merged worktree or clone and for a missing path, `dirty` and `unmerged` without the force flags, and `removed` with them; a failed removal keeps its record, answers `command_failed` with `stage: "partial"`, and the retry removes it. test: `crates/gdaemon/tests/node_workspace_finish.rs::remove_outcomes`.
+- 4.2.6 - Removal answers `removed` for a clean merged worktree or clone, `dirty` and `unmerged` without the force flags, and `removed` with them; a failed removal keeps its record, answers `command_failed` with `stage: "partial"`, and the retry removes it. test: `crates/gdaemon/tests/node_workspace_finish.rs::remove_outcomes`.
 - 4.2.7 - A path outside the project's node roots, another project's root, a relative or non-top-level `source_root`, and an invalid branch name each answer `invalid_payload` with `stage: "none"` and touch nothing. test: `crates/gdaemon/tests/node_workspace_finish.rs::paths_outside_node_roots_refused`.
+- 4.2.8 - Through `dispatch`, removal of a worktree whose directory is already gone answers `removed`, prunes, and deletes the branch when the branch is merged or absent; with an unmerged remaining branch and no `force_delete_branch` it answers `unmerged` and keeps the branch; a gone clone answers `removed`; a repeated removal answers `removed` again; and a missing path whose parent is outside the node roots, or whose name is not one component, answers `invalid_payload`. test: `crates/gdaemon/tests/node_workspace_finish.rs::remove_missing_path_through_dispatch`.
 
 ### 4.3 Hub remote workspace module and tool routing [category: code] (depends: 1.3, 1.4, 4.1)
 `kind: deliverable`
@@ -2929,11 +2948,14 @@ Targets:
   touching the path. `list_projects` takes the `machine_id` query parameter.
 - `get_status` takes `machine_id`. Another machine needs `project_id`
   (422 `project_id_required`) and its checkout row (404
-  `checkout_unresolved`). Git fields come from the cache key
-  `remote-status:<machine_id>:<project_id>`, else from one
-  `checkout.status` with a 15-second timeout, cached only on success. A
-  `NodeCommandError` answers 200 with `current_branch`, `ahead`, and
-  `behind` null and `branch_count` 0. `worktree_count` and `clone_count`
+  `checkout_unresolved`). Each call first reads
+  `node_command_client().connected_machine_ids()` (1.3). When the machine
+  is absent, or that read raises, it drops the cache key
+  `remote-status:<machine_id>:<project_id>` and answers null git fields
+  without a command. A connected machine's git fields come from that cache
+  key, else from one `checkout.status` with a 15-second timeout, cached
+  only on success. A `NodeCommandError` answers 200 with
+  `current_branch`, `ahead`, and `behind` null and `branch_count` 0. `worktree_count` and `clone_count`
   come from 4.3's `list_remote`, and `repo_path` is the node's root.
 
 Consumers unchanged:
@@ -2948,7 +2970,7 @@ Verification planned:
 
 - 4.7.1 - `/api/projects?machine_id=<node>` lists only projects with that node's checkout, each with the node's root, empty approval rules, and null validation detection, and reads no path. test: `tests/servers/test_machine_scoped_projects.py::test_projects_for_node_machine`.
 - 4.7.2 - `/api/source-control/status?machine_id=<node>&project_id=<p>` answers the node's git fields and that machine's worktree and clone counts, and a second call within 30 s sends no command. test: `tests/servers/test_machine_scoped_projects.py::test_remote_status_cached`.
-- 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
+- 4.7.3 - An offline node answers 200 with null git fields and is asked again on the next call; a node that disconnects after a cached success answers null git fields on the very next call without a command; and a failed connected-machines read also answers null git fields. test: `tests/servers/test_machine_scoped_projects.py::test_offline_node_shows_no_stale_state`.
 - 4.7.4 - Without `machine_id`, both routes answer exactly as before. test: `tests/servers/test_machine_scoped_projects.py::test_local_routes_unchanged`.
 
 ### 4.8 gclient projects pane follows the machine filter [category: code] (depends: 3.2, 4.4, 4.7)
@@ -3050,7 +3072,7 @@ Verification planned:
 **Goal**: a real hub and a real node, both isolated test instances, carry
 every command and report in this plan end to end (Decision 22).
 
-### 5.1 Live hub-to-node proof with isolated daemons and fake providers [category: test] (depends: 2.5, 2.6, 3.3, 4.4, 4.5, 4.7)
+### 5.1 Live hub-to-node proof with isolated daemons and fake providers [category: test] (depends: 1.2, 2.5, 2.6, 3.3, 4.2, 4.4, 4.5, 4.6, 4.7)
 `kind: deliverable`
 
 Targets:
