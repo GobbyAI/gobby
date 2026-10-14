@@ -260,3 +260,107 @@ pub async fn clear_input_handoff(
         .await?
         == 1)
 }
+
+/// Replaces the unresolved-write map of a row the caller read `FOR UPDATE`.
+pub(crate) async fn set_unresolved_writes(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    writes: &Value,
+) -> Result<(), RepositoryError> {
+    tx.execute(
+        "UPDATE terminals SET unresolved_writes=$1::text::jsonb, updated_at=now()
+         WHERE id=$2::text::uuid",
+        &[&serde_json::to_string(writes)?, &id.to_string()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Drops one unresolved write and nothing else. False when the row is gone.
+pub(crate) async fn clear_unresolved_write(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes=unresolved_writes - $1::text, updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Drops one unresolved write and lifts the quarantine only when it names the
+/// same action. False when the row is gone.
+pub(crate) async fn resolve_unresolved_write(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes=unresolved_writes - $1::text,
+             automatic_write_quarantined_at=CASE
+                WHEN automatic_write_quarantine_action_key=$1::text THEN NULL
+                ELSE automatic_write_quarantined_at END,
+             automatic_write_quarantine_action_key=NULLIF(automatic_write_quarantine_action_key, $1::text),
+             updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Sets both quarantine columns together. False when the row is gone.
+pub(crate) async fn set_write_quarantine(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    action_key: &str,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET automatic_write_quarantined_at=now(),
+             automatic_write_quarantine_action_key=$1::text, updated_at=now()
+             WHERE id=$2::text::uuid",
+            &[&action_key, &id.to_string()],
+        )
+        .await?
+        == 1)
+}
+
+/// Clears both quarantine columns when a quarantine is set; unresolved writes
+/// are untouched.
+pub(crate) async fn release_write_quarantine(
+    tx: &Transaction<'_>,
+    id: Uuid,
+) -> Result<(), RepositoryError> {
+    tx.execute(
+        "UPDATE terminals SET automatic_write_quarantined_at=NULL,
+         automatic_write_quarantine_action_key=NULL, updated_at=now()
+         WHERE id=$1::text::uuid AND automatic_write_quarantined_at IS NOT NULL",
+        &[&id.to_string()],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Terminal exit: every unresolved write and the quarantine pair go together.
+/// False when the row is gone.
+pub(crate) async fn clear_write_evidence(
+    tx: &Transaction<'_>,
+    id: Uuid,
+) -> Result<bool, RepositoryError> {
+    Ok(tx
+        .execute(
+            "UPDATE terminals SET unresolved_writes='{}'::jsonb,
+             automatic_write_quarantined_at=NULL, automatic_write_quarantine_action_key=NULL,
+             updated_at=now()
+             WHERE id=$1::text::uuid",
+            &[&id.to_string()],
+        )
+        .await?
+        == 1)
+}
