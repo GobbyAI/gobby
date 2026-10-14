@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -643,6 +643,12 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         preflights.append((launch, cwd, env))
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
+    ps_shim_path = str(tmp_path / "ps-shim")
+
+    def fake_ps_environment(directory: Path | None, env: Mapping[str, str]) -> dict[str, str]:
+        return {"PATH": f"{ps_shim_path}{os.pathsep}{env['PATH']}"}
+
+    monkeypatch.setattr(srt_runtime, "ps_shim_path_env", fake_ps_environment)
     original_which = shutil.which
     provider_lookups = 0
 
@@ -709,6 +715,8 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
     mux_dir = gobby_home / "runtime" / "srt-sock"
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
+    # This fixture has no cargo binary. Its PATH must still retain the ps shim.
+    assert launch.provider_env["PATH"] == f"{ps_shim_path}{os.pathsep}{shim_dir}"
     assert mux_dir.is_dir()
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
