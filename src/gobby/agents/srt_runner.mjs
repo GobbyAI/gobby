@@ -21,6 +21,7 @@ import {
 // This host process outlives daemon restarts. Route complete eventMessage
 // records by SRT's random session suffix, never by a provider PID.
 const runnerIdentity = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex')
+const monitorRegistrationTimeoutMs = 30000
 const execFileAsync = promisify(execFile)
 
 const backlogSuffix = '.srt-backlog.jsonl'
@@ -264,8 +265,8 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     fchmodSync(journal, 0o600)
     journalBytes = fstatSync(journal).size
   }
-  const diagnostic = (line, error) => {
-    const record = JSON.stringify({ unparsed: ++unparsed, error: error.message, record: line.slice(0, 8192) }) + '\n'
+  const diagnostic = (line, error, kind = 'malformed') => {
+    const record = JSON.stringify({ unparsed: ++unparsed, kind, error: error.message.slice(0, 1024), record: line.slice(0, 8192) }) + '\n'
     try {
       if (journalBytes + Buffer.byteLength(record) > 1024 * 1024) {
         closeSync(journal)
@@ -279,7 +280,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
       console.error(`gobby-srt monitor diagnostics failed: ${failure.message}`)
     }
     if (unparsed === 1 || unparsed % 1000 === 0) {
-      console.error(`gobby-srt monitor: ${unparsed} malformed records; ${error.message}`)
+      console.error(`gobby-srt monitor: ${unparsed} diagnostic records; ${error.message.slice(0, 1024)}`)
     }
   }
   const finishConsumer = async state => {
@@ -310,7 +311,10 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     clearTimeout(idleTimer)
     if (clients.size === 0 && !stopping) idleTimer = setTimeout(stop, 30000)
   }
-  const acknowledge = socket => socket.write(JSON.stringify({ ready: true, identity: runnerIdentity }) + '\n')
+  const acknowledge = socket => {
+    clearTimeout(clients.get(socket)?.registrationTimer)
+    socket.write(JSON.stringify({ ready: true, identity: runnerIdentity }) + '\n')
+  }
   const markReady = () => {
     if (streamReady) return
     streamReady = true
@@ -333,7 +337,12 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
     clearTimeout(idleTimer)
     const state = { suffix: null, registered: false, runKey: null, runnerPid: null, providerPid: null, providerIdentity: null, done: false, finished: false, backlog: null, blocked: false, pumping: false, queue: Promise.resolve() }
     clients.set(socket, state)
-    socket.setTimeout(5000, () => socket.destroy())
+    // Bound the complete handshake, including identity/backlog work and stream
+    // readiness. An idle socket timer incorrectly expired during healthy work.
+    state.registrationTimer = setTimeout(() => {
+      diagnostic(state.runKey ?? '', new Error('monitor registration deadline exceeded'), 'registration')
+      socket.destroy()
+    }, monitorRegistrationTimeoutMs)
     const lines = createInterface({ input: socket, crlfDelay: Infinity })
     lines.on('line', line => {
       state.queue = state.queue.then(async () => {
@@ -358,9 +367,11 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
           if (state.runKey !== null) {
             state.backlog = new Backlog(dirname(socketPath), { runKey: state.runKey, runnerPid: state.runnerPid, runnerStarted, brokerPid: process.pid, brokerStarted: processes.get(process.pid)?.started, suffix: state.suffix })
             await state.backlog.initialize()
-            if (state.finished || socket.destroyed) await state.backlog.finish(false)
+            if (state.finished || socket.destroyed) {
+              await state.backlog.finish(false)
+              throw new Error('monitor closed during subscription registration')
+            }
           }
-          socket.setTimeout(0)
           state.registered = true
           if (streamReady) acknowledge(socket)
         } else if (Number.isSafeInteger(request.ack) && state.backlog) {
@@ -379,11 +390,16 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
           state.done = true
         } else throw new Error('invalid monitor request')
       })
-      state.queue.catch(() => socket.destroy())
+      state.queue.catch(error => {
+        if (!socket.destroyed) diagnostic(state.runKey ?? '', error, 'registration')
+        socket.destroy()
+      })
     })
     socket.on('error', () => socket.destroy())
     socket.on('drain', () => { state.blocked = false; void pump(socket, state) })
     socket.on('close', () => {
+      clearTimeout(state.registrationTimer)
+      if (!state.registered && !stopping) diagnostic(state.runKey ?? '', new Error('monitor disconnected during registration'), 'registration')
       clients.delete(socket)
       lines.close()
       // This also stops a provider whose runner was killed or SIGSTOPped and
@@ -470,7 +486,7 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
   let rejectRegistration
   transport.ready = new Promise((resolve, reject) => {
     rejectReady = reject
-    const timer = setTimeout(() => fail(new Error('shared monitor readiness timed out')), 5000)
+    const timer = setTimeout(() => fail(new Error('shared monitor readiness timed out')), monitorRegistrationTimeoutMs)
     transport.once('ready', () => { clearTimeout(timer); resolve() })
     transport.once('failed', () => clearTimeout(timer))
   })
@@ -510,6 +526,7 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
     socket.write(JSON.stringify({ providerPid: pid }) + '\n')
   })
   transport.kill = () => {
+    if (stopped) return
     stopped = true
     lines.close()
     socket.end('{"done":true}\n')
@@ -519,7 +536,7 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
 
 async function readProcessTable() {
   const { stdout: table } = await execFileAsync('/bin/ps', ['-axo', 'pid=,ppid=,pgid=,lstart='], {
-    encoding: 'utf8', timeout: 2000, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+    encoding: 'utf8', timeout: monitorRegistrationTimeoutMs, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
   })
   const entries = new Map()
   for (const line of table.trim().split('\n')) {
@@ -795,7 +812,16 @@ async function main() {
       failure ??= error
     }
     try {
-      await SandboxManager.reset()
+      transport?.kill()
+      let timer
+      try {
+        await Promise.race([
+          SandboxManager.reset(),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('SRT cleanup timed out')), 5000)
+          }),
+        ])
+      } finally { clearTimeout(timer) }
     } catch (error) {
       failure ??= error
     }
@@ -817,8 +843,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else if (process.argv[2] === '--monitor') {
     await monitor(process.argv[3], process.argv[4] === undefined ? undefined : Number(process.argv[4]), process.argv[5])
   }
-  else process.exitCode = await main()
+  // Provider runners own their lifetime. Upstream proxy sockets/timers must not
+  // leave a childless runner alive after the CLI exits and cleanup completes.
+  else process.exit(await main())
 } catch (error) {
   console.error(`gobby-srt: ${error instanceof Error ? error.message : String(error)}`)
-  process.exitCode = 1
+  process.exit(1)
 }

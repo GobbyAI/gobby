@@ -19,6 +19,23 @@ from gobby.terminals.host_protocol import write_pidfile
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started", [300.0, 299.0])
+async def test_restart_preservation_checks_monitor_creation_identity(
+    monkeypatch: pytest.MonkeyPatch, started: float
+) -> None:
+    from gobby.agents import srt_monitor
+
+    processes = _install_fake_psutil(monkeypatch)
+    monkeypatch.setattr(srt_monitor, "live_monitor_identities", lambda: {WORKER_PID: started})
+    await runner_lifecycle_processes._reap_remaining_child_processes(
+        preserve_agents=True,
+        preserve_srt_monitor=True,
+    )
+    assert processes[WORKER_PID].terminated is (started != float(WORKER_PID))
+
+
 HOST_PID = 500
 SHELL_PID = 501
 WORKER_PID = 300

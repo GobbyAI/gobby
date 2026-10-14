@@ -34,8 +34,8 @@ from gobby.agents.sandbox_policy import (
     prepare_sandbox_run_paths,
     previous_run_write_paths,
     sandbox_cache_path,
-    srt_mux_tmpdir,
 )
+from gobby.agents.srt_socket_paths import srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.sync.jsonl_io import export_file_lock
 from gobby.utils.dependency_requirements import (
@@ -689,7 +689,10 @@ async def prepare_sandbox_launch(
             env,
             workspace=Path(workspace_path),
             short_tmp=(
-                config.backend == "srt" and allow_run_unix_sockets and sys.platform == "darwin"
+                config.backend == "srt"
+                and (
+                    sys.platform == "linux" or (allow_run_unix_sockets and sys.platform == "darwin")
+                )
             ),
             prewarm_pre_commit_store=prewarm_pre_commit_store,
         )
@@ -887,7 +890,9 @@ async def prepare_sandbox_launch(
         # provider_env={**run_environment, "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir())},
         provider_env={
             **run_environment,
-            "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir()),
+            # Linux binds bridge sockets before deny mounts. Keep their parent
+            # in this run's writable temp root, disjoint from broker read-denies.
+            "GOBBY_SRT_TMPDIR": str(run_paths.tmp if sys.platform == "linux" else srt_mux_tmpdir()),
         },
         provider_executable=provider_executable,
         node_path=str(installation.node),

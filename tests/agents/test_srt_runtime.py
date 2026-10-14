@@ -50,10 +50,14 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def isolated_shared_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    socket_root = tmp_path / "srt-sock"
+    socket_root.mkdir(mode=0o700)
+
     def monitor(**_kwargs: object) -> str:
-        return str(tmp_path / "monitor.sock")
+        return str(socket_root / "monitor.sock")
 
     monkeypatch.setattr("gobby.agents.srt_monitor.ensure_srt_monitor", monitor)
+    monkeypatch.setattr("gobby.agents.srt_runtime.srt_mux_tmpdir", lambda: socket_root)
 
 
 def test_macos_profile_grants_only_semaphore_limit_and_self_scheduling(tmp_path: Path) -> None:
@@ -716,7 +720,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert policy_path.parent == expected_parent / "assets"
     assert violation_path.parent == expected_parent / "logs"
     temp_path = Path(launch.provider_env[temp_env_name])
-    if allow_run_sockets and platform_name == "darwin":
+    if platform_name == "linux" or (allow_run_sockets and platform_name == "darwin"):
         assert temp_path.parent == tmp_path.resolve()
         assert (expected_parent / "tmp-path").read_text() == str(temp_path)
     else:
@@ -725,8 +729,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     # every provider gets it pointed at the same writable run temp directory.
     assert Path(launch.provider_env["TMPDIR"]) == temp_path
     assert "GOBBY_HOOK_SPOOL" not in launch.provider_env
-    mux_dir = gobby_home / "runtime" / "srt-sock"
-    assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
+    mux_dir = tmp_path / "srt-sock"
+    assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(
+        temp_path if platform_name == "linux" else mux_dir
+    )
     expected_path = f"{ps_shim_path}{os.pathsep}{shim_dir}"
     if cargo_present:
         cargo_bin = expected_parent / "assets" / "cargo-bin"
@@ -734,8 +740,9 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         assert Path(launch.provider_env["BASH_ENV"]).is_relative_to(expected_parent / "assets")
         assert Path(launch.provider_env["ZDOTDIR"]).is_relative_to(expected_parent / "assets")
     assert launch.provider_env["PATH"] == expected_path
-    assert mux_dir.is_dir()
-    assert mux_dir.stat().st_mode & 0o777 == 0o700
+    if platform_name == "darwin":
+        assert mux_dir.is_dir()
+        assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
     sandbox_cache = gobby_home / "cache" / "sandbox"
     for name in unsandboxed_cargo:
@@ -756,6 +763,17 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert preflight_cwd == str(workspace)
     assert preflight_env == {**spawn_env, **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    if platform_name == "linux":
+        # Pinned SRT binds its HTTP/SOCKS sockets before denyRead tmpfs masks.
+        # Neither a broker root nor any other read deny may mask their parent.
+        bridge_root = Path(launch.provider_env["GOBBY_SRT_TMPDIR"]).resolve()
+        for denied in policy["filesystem"]["denyRead"]:
+            assert not bridge_root.is_relative_to(Path(denied).resolve()), denied
+        from gobby.agents.srt_socket_paths import private_srt_socket_roots
+
+        for private_root in private_srt_socket_roots():
+            assert not bridge_root.is_relative_to(private_root.resolve())
+            assert not private_root.resolve().is_relative_to(bridge_root)
     if reviewer_auto_approve is not None:
         private = Path(launch.provider_env["CLAUDE_CONFIG_DIR"])
         seed = json.loads((private / ".claude.json").read_text(encoding="utf-8"))

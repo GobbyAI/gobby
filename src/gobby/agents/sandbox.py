@@ -357,7 +357,8 @@ async def compute_sandbox_paths(
         base=workspace,
     )
     domains = allowed_domains(config, provider, api_base)
-    assert_sensitive_path_contract(read_paths, write_paths)
+    unix_sockets = canonical_paths(config.allow_unix_sockets, base=workspace)
+    assert_sensitive_path_contract(read_paths, write_paths, unix_sockets)
     assert_credential_read_contract(
         read_paths,
         credential_denies,
@@ -377,7 +378,7 @@ async def compute_sandbox_paths(
             dict.fromkeys(domain.lower() for domain in config.denied_domains if domain)
         ),
         loopback_ports=list(dict.fromkeys((gobby_daemon_port, gobby_websocket_port))),
-        allow_unix_sockets=canonical_paths(config.allow_unix_sockets, base=workspace),
+        allow_unix_sockets=unix_sockets,
         credential_env_vars=(
             [item for item in credential_env_vars(provider, api_base) if item.name in policy_env]
             if provider

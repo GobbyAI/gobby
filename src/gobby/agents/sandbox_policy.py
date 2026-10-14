@@ -26,6 +26,7 @@ from gobby.agents.credential_inventory import denied_ambient_keys
 from gobby.agents.sandbox_credentials import credential_roots, gcode_runtime_root
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
+from gobby.agents.srt_socket_paths import private_srt_socket_roots
 from gobby.agents.zig_packages import (
     ZIG_PACKAGES,
     machine_zig_packages,
@@ -291,7 +292,12 @@ def sensitive_roots() -> list[str]:
     return deny_paths(
         [
             str(path)
-            for path in (*credential_roots(), gcode_runtime_root(), managed_execution_root())
+            for path in (
+                *credential_roots(),
+                gcode_runtime_root(),
+                managed_execution_root(),
+                *private_srt_socket_roots(),
+            )
         ]
     )
 
@@ -308,12 +314,16 @@ def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
     """Reject sensitive ancestors and every allowance inside the grant cache."""
     protected = [Path(path) for path in sensitive_roots()]
     grant_cache = {Path(path) for path in deny_paths([str(get_gobby_home() / "grants")])}
+    private_sockets = {
+        Path(path) for path in deny_paths(list(map(str, private_srt_socket_roots())))
+    }
     for allowed_text in (item for paths in allow_lists for item in paths):
         allowed = Path(policy_subtree_prefix(allowed_text)).resolve(strict=False)
         is_glob = any(char in allowed_text for char in "*?[{")
         for sensitive in protected:
             if sensitive.is_relative_to(allowed) or (
-                (is_glob or sensitive in grant_cache) and allowed.is_relative_to(sensitive)
+                (is_glob or sensitive in grant_cache or sensitive in private_sockets)
+                and allowed.is_relative_to(sensitive)
             ):
                 raise ValueError(f"sandbox allow path contains sensitive root: {allowed}")
 
@@ -337,6 +347,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".kube",
         home / ".config" / "gcloud",
         *credential_roots(),
+        *private_srt_socket_roots(),
     ]
     return deny_paths([str(path) for path in roots])
 
@@ -593,20 +604,6 @@ def pre_commit_store_spare_paths(managed_root: Path | None = None) -> tuple[Path
         root / PRE_COMMIT_STORE_SPARE_NAME,
         root / PRE_COMMIT_STORE_SPARE_TEMP_NAME,
     )
-
-
-def srt_mux_tmpdir() -> Path:
-    """Return the short shared directory for SRT runner-internal unix sockets.
-
-    sandbox-runtime allocates its mux/TLS sockets under ``os.tmpdir()``; the
-    per-run managed-execution TMPDIR is too deep for ``sun_path`` (104 bytes on
-    macOS), so the runner process gets this short root via GOBBY_SRT_TMPDIR
-    while the provider child keeps the policy-allowed per-run TMPDIR.
-    """
-    directory = get_gobby_home() / "runtime" / "srt-sock"
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(directory, 0o700)
-    return directory
 
 
 def _operator_pre_commit_store() -> Path:

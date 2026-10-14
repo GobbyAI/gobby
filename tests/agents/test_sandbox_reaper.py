@@ -23,9 +23,19 @@ from gobby.agents.sandbox_reaper import (
 pytestmark = pytest.mark.unit
 
 
-async def test_reap_retains_monitor_backlog_and_preserves_earlier_evidence(tmp_path: Path) -> None:
-    gobby_home = tmp_path / "gobby"
-    source = gobby_home / "runtime/srt-sock/monitor-run.srt-backlog.jsonl"
+@pytest.mark.parametrize("home_name", ["gobby", "long-home-" * 15])
+async def test_reap_retains_monitor_backlog_and_preserves_earlier_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home_name: str
+) -> None:
+    from gobby.agents import srt_socket_paths
+
+    gobby_home = tmp_path / home_name
+    monkeypatch.setattr(
+        srt_socket_paths,
+        "private_srt_socket_roots",
+        lambda home=None: ((home or gobby_home) / "runtime/srt-sock", tmp_path / "private"),
+    )
+    source = srt_socket_paths.srt_socket_directory(gobby_home) / "monitor-run.srt-backlog.jsonl"
     source.parent.mkdir(parents=True)
     evidence = '{"monitorBacklog":{"runKey":"monitor-run"}}\n{"id":9,"message":"deny"}\n'
     source.write_text(evidence)

@@ -13,6 +13,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO
 
+import psutil
 import pytest
 
 from gobby.agents import srt_monitor
@@ -141,7 +143,9 @@ class MonitorHarness:
 
 
 @pytest.fixture
-def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]:
+def monitor_harness(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[MonitorHarness]:
     node_name = shutil.which("node")
     if node_name is None:
         pytest.skip("Node required")
@@ -173,11 +177,28 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
         )
         fake_log.chmod(0o700)
         fake_ps = root / "ps.mjs"
-        fake_ps.write_text("#!/bin/sh\n/bin/cat " + shlex.quote(str(root)) + "/*.pid\n")
+        fake_ps.write_text(
+            "#!/bin/sh\n"
+            + f"if [ -f {shlex.quote(str(root / 'ps-delay'))} ]; then /bin/sleep $(/bin/cat {shlex.quote(str(root / 'ps-delay'))}); fi\n"
+            + "/bin/cat "
+            + shlex.quote(str(root))
+            + "/*.pid\n"
+        )
         fake_ps.chmod(0o700)
         dist = root / "node_modules/@anthropic-ai/sandbox-runtime/dist"
         dist.mkdir(parents=True)
-        (dist / "index.js").write_text(_RUNTIME)
+        runtime = _RUNTIME
+        if getattr(request, "param", None) == "lingering-reset":
+            runtime = runtime.replace(
+                "reset: async () => transport.kill()",
+                "reset: async () => { setInterval(() => {}, 1000) }",
+            )
+        elif getattr(request, "param", None) == "hung-reset":
+            runtime = runtime.replace(
+                "reset: async () => transport.kill()",
+                "reset: async () => new Promise(() => {})",
+            )
+        (dist / "index.js").write_text(runtime)
         (root / "package.json").write_text('{"type":"module"}')
         runner = root / "runner.mjs"
         runner.write_text(
@@ -188,6 +209,10 @@ def monitor_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[MonitorHarness]
             .replace("spawn('/usr/bin/log', [", f"spawn({json.dumps(str(fake_log))}, [")
             .replace("execFileAsync('/bin/ps',", f"execFileAsync({json.dumps(str(fake_ps))},")
             .replace("function sharedTransport(", "export function sharedTransport(")
+            .replace(
+                "const monitorRegistrationTimeoutMs = 30000",
+                f"const monitorRegistrationTimeoutMs = {request.param if isinstance(getattr(request, 'param', None), int) else 30000}",
+            )
             .replace(
                 "providerIdentity = await transport.providerStarted(child.pid)",
                 f"appendFileSync({json.dumps(str(root))} + '/' + child.pid + '.pid', child.pid+' '+process.pid+' 123 '+child.pid+'-start\\n');\n"
@@ -273,6 +298,154 @@ def test_one_stream_routes_complete_events_and_failure_closes_all(
         harness.finish()
         assert first_stream.readline() == b""
         assert second_stream.readline() == b""
+
+
+def test_isolated_restart_reaper_preserves_monitor_and_subscription(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    program = r"""
+import asyncio, hashlib, json, os, socket, subprocess, sys, tempfile
+from dataclasses import replace
+from pathlib import Path
+from gobby.agents import srt_monitor
+from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+root, node, runner = map(Path, sys.argv[1:])
+temporary = tempfile.TemporaryDirectory(prefix='sr-', dir=root.parent)
+directory = Path(temporary.name)
+srt_monitor.srt_mux_tmpdir = lambda: directory
+srt_monitor.get_gobby_home = lambda: root
+srt_monitor.SRT_RELEASE = replace(srt_monitor.SRT_RELEASE, runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest())
+path = srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ)
+broker = srt_monitor._children[-1]
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout(10)
+client.connect(path)
+(root / 'restart-observer.pid').write_text(f'{os.getpid()} {os.getppid()} 123 {os.getpid()}-start\n')
+client.sendall(json.dumps({'suffix':'_restart_SBX', 'runKey':'restart-run', 'runnerPid':os.getpid()}).encode()+b'\n')
+stream = client.makefile('rb')
+noise = subprocess.Popen([str(node), '-e', 'setInterval(() => {}, 1000)'])
+try:
+    assert json.loads(stream.readline())['ready']
+    before = (root / 'starts').read_text()
+    asyncio.run(_reap_remaining_child_processes(preserve_agents=True, preserve_srt_monitor=True))
+    noise.wait(timeout=5)
+    assert noise.poll() is not None
+    assert broker.poll() is None
+    assert srt_monitor.ensure_srt_monitor(node=node, runner=runner, env=os.environ) == path
+    assert (root / 'starts').read_text() == before
+    message = 'Sandbox: restart deny file-read-data /restart\nCMD64_x_END__restart_SBX'
+    with (root / 'events').open('a') as events:
+        events.write(json.dumps({'eventMessage':message})+'\n')
+    assert json.loads(stream.readline())['message'] == message
+    asyncio.run(_reap_remaining_child_processes(preserve_agents=True, preserve_srt_monitor=False))
+    broker.wait(timeout=5)
+    assert broker.poll() is not None
+    assert stream.readline() == b''
+    print('restart preserved monitor, stream and subscription; stop cleaned up')
+finally:
+    client.close()
+    stream.close()
+    for child in (noise, broker):
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+    temporary.cleanup()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(harness.root), str(harness.node), str(harness.runner)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "restart preserved monitor, stream and subscription; stop cleaned up" in result.stdout
+
+
+def test_registration_survives_slow_identity_work(monitor_harness: MonitorHarness) -> None:
+    harness = monitor_harness
+    (harness.root / "ps-delay").write_text("6")
+    provider = harness.launch("_slow_SBX")
+    try:
+        assert provider.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(provider.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=25), "slow registration never released provider"
+            assert provider.stdout.readline().strip() == "null"
+        (harness.root / "ps-delay").unlink()
+        message = "Sandbox: slow deny file-read-data /slow\nCMD64_x_END__slow_SBX"
+        harness.event(message)
+        with selectors.DefaultSelector() as selector:
+            selector.register(provider.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=10)
+            assert provider.stdout.readline().strip() == "recorded"
+        assert json.loads((harness.root / "_slow_SBX.jsonl").read_text())["line"] == message
+        harness.finish()
+        assert provider.wait(timeout=10) != 0
+    finally:
+        if provider.poll() is None:
+            provider.kill()
+        provider.wait(timeout=5)
+
+
+@pytest.mark.parametrize("monitor_harness", [250], indirect=True)
+def test_registration_deadline_fails_closed_before_provider_launch(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    (harness.root / "ps-delay").write_text("1")
+    runner = harness.launch("_deadline_SBX")
+    stdout, stderr = runner.communicate(timeout=5)
+    assert runner.returncode == 1, (stdout, stderr)
+    assert any(
+        error in stderr
+        for error in ("shared monitor readiness timed out", "shared violation monitor disconnected")
+    )
+    assert not (harness.root / "_deadline_SBX.pid").exists()
+    diagnostic = Path(harness.socket_path + ".jsonl")
+    _wait_path(diagnostic)
+    records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
+    assert any(record["kind"] == "registration" for record in records)
+
+
+def test_registration_failure_records_bounded_diagnostic(monitor_harness: MonitorHarness) -> None:
+    harness = monitor_harness
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(5)
+    with client:
+        client.connect(harness.socket_path)
+        client.sendall(b'{"suffix":"_invalid_SBX","runKey":"invalid-run","runnerPid":1}\n')
+        assert client.recv(1) == b""
+    diagnostic = Path(harness.socket_path + ".jsonl")
+    _wait_path(diagnostic)
+    record = json.loads(diagnostic.read_text().splitlines()[0])
+    assert record["kind"] == "registration"
+    assert record["record"] == "invalid-run"
+    assert record["error"] == "invalid runner PID"
+
+
+@pytest.mark.parametrize("monitor_harness", ["lingering-reset", "hung-reset"], indirect=True)
+def test_monitor_loss_exits_runner_after_cli_child_exits(
+    monitor_harness: MonitorHarness,
+) -> None:
+    harness = monitor_harness
+    runner = harness.launch("_exit_SBX")
+    try:
+        assert runner.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(runner.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=15)
+            assert runner.stdout.readline().strip() == "null"
+        harness.finish()
+        stdout, stderr = runner.communicate(timeout=15)
+        assert runner.returncode == 1, (stdout, stderr)
+        assert "shared violation monitor disconnected" in stderr
+        assert not psutil.pid_exists(runner.pid)
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+        runner.wait(timeout=5)
 
 
 def test_subscription_loss_terminates_provider_and_records_its_events(
