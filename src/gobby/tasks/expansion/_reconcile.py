@@ -8,7 +8,6 @@ from typing import Any
 from gobby.plans._task_refs import is_placeholder_task_ref
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.tasks.expansion._reset import (
-    _has_progressed_stage_state,
     _is_closed_obsolete_task,
     _task_exists,
 )
@@ -146,6 +145,19 @@ def adopt(
     task_id = plan.prior_by_section.get(section_id)
     if task_id is None:
         return None
+    # Stage rows before the task row. A stage start updates task_stage_states
+    # and the state-bucket trigger then locks the task, so this order matches it.
+    stage_rows = conn.execute(
+        """
+        SELECT state, entered_at, completed_at, work_attempt_count,
+               review_round_count, artifact_refs, notes
+          FROM task_stage_states
+         WHERE task_id = %s
+         ORDER BY position, stage_name
+           FOR UPDATE
+        """,
+        (task_id,),
+    ).fetchall()
     row = conn.execute(
         """
         SELECT closed_at, closed_reason, claimed_by_session_id
@@ -167,7 +179,7 @@ def adopt(
         claimed = SectionBinding(section_id=section_id, task_id=task_id, reason="claimed")
         plan.untouched.append(claimed)
         return AdoptedLeaf(task_id=task_id, action="untouched", reason="claimed")
-    if _has_progressed_stage_state(self, task_id):
+    if _stage_rows_progressed(stage_rows):
         active = SectionBinding(section_id=section_id, task_id=task_id, reason="in_progress")
         plan.untouched.append(active)
         return AdoptedLeaf(task_id=task_id, action="untouched", reason="in_progress")
@@ -262,6 +274,22 @@ def _placeholder_sections(spec: dict[str, Any]) -> set[str]:
         if isinstance(section_id, str) and is_placeholder_task_ref(task_ref):
             sections.add(section_id)
     return sections
+
+
+def _stage_rows_progressed(rows: list[Any]) -> bool:
+    """True when a locked stage row has left the untouched ready state."""
+    for stage in rows:
+        if (
+            stage["state"] != "ready"
+            or stage["entered_at"] is not None
+            or stage["completed_at"] is not None
+            or stage["work_attempt_count"]
+            or stage["review_round_count"]
+            or stage["artifact_refs"] is not None
+            or stage["notes"] is not None
+        ):
+            return True
+    return False
 
 
 def _section_id(task_item: dict[str, Any]) -> str | None:

@@ -861,9 +861,9 @@ preserved. A reuse that commits first is what a later claim or close observes.
   New and reused leaves may still depend on those leaves. Closed obsolete
   leaves are not matches; a later apply may create a new leaf for that section.
   A placeholder deferral is reused when the prior run's `deferral_task_map`
-  still names a live task, so a second holder is not created. A placeholder
-  whose section is no longer deferred is listed under `removed` and left in
-  place.
+  still names a live task, so a second holder is not created. A reused open
+  holder gains the amended spec's blocker edges. A placeholder whose section
+  is no longer deferred is listed under `removed` and left in place.
 
 ## Table-Row Decomposition
 

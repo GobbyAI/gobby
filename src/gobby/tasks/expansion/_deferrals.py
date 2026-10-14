@@ -74,6 +74,9 @@ def create_placeholder_deferral_tasks(
                 row["closed_at"] is not None and row["closed_reason"] == "obsolete"
             ):
                 created[section_id] = existing_id
+                if row["closed_at"] is None:
+                    for blocker in blockers:
+                        self._add_dependency(existing_id, blocker)
                 continue
         item_lines = "\n".join(
             f"- {item['item_id']}: {item.get('prose') or item['item_id']}"

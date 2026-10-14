@@ -168,9 +168,10 @@ def apply_run(
                 "Reset expansion output before applying a new run."
             )
 
-        # Lock adopted leaves and prior deferral holders before the parent row.
-        # A close locks the task and then its parent, so the parent lock must
-        # come second or the two transactions deadlock.
+        # Lock order: stage rows, leaves, holders, phase epics, root, ancestors.
+        # adopt locks stage rows before each leaf. Phase epics are locked in
+        # phase_list order before the root so a close that holds a phase can
+        # still take the root.
         adopted_by_item: dict[str, Any] = {}
         if reconciliation is not None:
             for task_item in tasks:
@@ -181,6 +182,13 @@ def apply_run(
                         "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
                         (holder_id,),
                     )
+                for phase in phase_list:
+                    phase_task_id = reusable_phase_id(self, existing_output, phase["id"])
+                    if phase_task_id is not None and phase_task_id != task.id:
+                        conn.execute(
+                            "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
+                            (phase_task_id,),
+                        )
 
         # A closed target takes no new children (#22570). An expansion applied to
         # a task whose previous children were obsoleted -- which auto-closed it on

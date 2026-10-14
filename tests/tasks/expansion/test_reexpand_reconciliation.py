@@ -726,9 +726,11 @@ def test_reexpand_reuses_placeholder_and_reports_a_dropped_holder(
     holder_id = holders["D1"]
     assert isinstance(holder_id, str)
 
-    again = _spec([_leaf("again-11", "1.1", "Gate amended", "Touches src/keep.py.")])
+    again = _spec([_leaf("1.1::single", "1.1", "Gate amended", "Touches src/keep.py.")])
     again["plan_id"] = "plan"
-    again["deferrals"] = first["deferrals"]
+    again_deferral = dict(first["deferrals"][0])
+    again_deferral["depends_on"] = ["1.1"]
+    again["deferrals"] = [again_deferral]
     reapplied = service.apply_run(
         _save_run(service, parent, sample_project, again).id, session_id=None
     )
@@ -742,6 +744,7 @@ def test_reexpand_reuses_placeholder_and_reports_a_dropped_holder(
         if "deferred-from:plan:D1" in (task.labels or [])
     ]
     assert len(labeled) == 1
+    assert _blocker_ids(service, holder_id) == {_task_id(reapplied, "1.1::single")}
 
     dropped = _spec([_leaf("later-11", "1.1", "Gate stays", "Touches src/keep.py.")])
     dropped["plan_id"] = "plan"
@@ -776,3 +779,271 @@ def test_reexpand_reused_leaf_uses_created_leaf_labels(
     assert "parallel:wave" in labels
     assert f"expansion-run:{reconciled.id}" in labels
     assert "covers:plan:1.1:1.1.1" in labels
+
+
+def _phase_leaf(stable_id: str, section_id: str, phase_id: str, title: str) -> dict[str, Any]:
+    row = _leaf(stable_id, section_id, title, "Touches src/keep.py.")
+    row["phase_id"] = phase_id
+    return row
+
+
+def test_reexpand_stage_start_blocks_until_apply_commits(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    postgres_database_url: str,
+) -> None:
+    """Apply holds the stage rows, so a second connection's start waits."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+    session = _session(temp_db, sample_project)
+    service.task_manager.initialize_task_manifest(
+        parent.id, stage_names=["development", "pr", "merge"]
+    )
+    first = _spec([_leaf("leaf-11", "1.1", "Original title", "Touches src/keep.py.")])
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    leaf_id = _task_id(applied, "leaf-11")
+    amended = _spec([_leaf("again-11", "1.1", "Rewritten title", "Touches src/keep.py.")])
+    amended_run = _save_run(service, parent, sample_project, amended)
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    apply_finished = Event()
+    start_finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            apply_finished.set()
+
+    def run_start() -> None:
+        try:
+            service.task_manager.stage_states.start_stage(
+                leaf_id, "development", by_session_id=session.id
+            )
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            start_finished.set()
+
+    apply_thread = Thread(target=run_apply, daemon=True)
+    start_thread = Thread(target=run_start, daemon=True)
+    schema = _schema_name(temp_db)
+    lock_key = advisory_lock_keys(TaskDependencyMutation())[0]
+    try:
+        with psycopg.connect(postgres_database_url) as holder:
+            holder.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            holder.execute("BEGIN")
+            try:
+                holder.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+                apply_thread.start()
+                _wait_for_lock(postgres_database_url, apply_finished, writer_db.application_name)
+                start_thread.start()
+                _wait_for_lock(postgres_database_url, start_finished, temp_db.application_name)
+                holder.execute("COMMIT")
+            except Exception:
+                holder.execute("ROLLBACK")
+                raise
+        assert apply_finished.wait(timeout=5)
+        assert start_finished.wait(timeout=5)
+        apply_thread.join(timeout=1)
+        start_thread.join(timeout=1)
+        if errors:
+            raise errors[0]
+        task = service.task_manager.get_task(leaf_id)
+        assert task.title == "Rewritten title"
+        stage = service.task_manager.stage_states.get(leaf_id, "development")
+        assert stage is not None
+        assert stage.state == "in_progress"
+    finally:
+        writer_db.close()
+
+
+def test_reexpand_stage_progress_committed_first_is_not_rewritten(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    postgres_database_url: str,
+) -> None:
+    """A stage start that commits before apply classifies the leaf as in progress."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+    service.task_manager.initialize_task_manifest(
+        parent.id, stage_names=["development", "pr", "merge"]
+    )
+    first = _spec([_leaf("leaf-11", "1.1", "Original title", "Touches src/keep.py.")])
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    leaf_id = _task_id(applied, "leaf-11")
+    amended = _spec([_leaf("again-11", "1.1", "Rewritten title", "Touches src/keep.py.")])
+    amended_run = _save_run(service, parent, sample_project, amended)
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    writer = Thread(target=run_apply, daemon=True)
+    schema = _schema_name(temp_db)
+    try:
+        with psycopg.connect(postgres_database_url) as holder:
+            holder.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            holder.execute("BEGIN")
+            try:
+                holder.execute(
+                    """
+                    SELECT stage_name
+                      FROM task_stage_states
+                     WHERE task_id = %s
+                     ORDER BY position, stage_name
+                       FOR UPDATE
+                    """,
+                    (leaf_id,),
+                )
+                writer.start()
+                _wait_for_lock(postgres_database_url, finished, writer_db.application_name)
+                holder.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET state = 'in_progress', entered_at = now(), updated_at = now()
+                     WHERE task_id = %s AND stage_name = 'development'
+                    """,
+                    (leaf_id,),
+                )
+                holder.execute("COMMIT")
+            except Exception:
+                holder.execute("ROLLBACK")
+                raise
+        assert finished.wait(timeout=5)
+        writer.join(timeout=1)
+        if errors:
+            raise errors[0]
+        task = service.task_manager.get_task(leaf_id)
+        assert task.title == "Original title"
+        report = _report(_service(writer_db).run_manager.get(amended_run.id))
+        assert report["untouched"] == [
+            {"section_id": "1.1", "task_id": leaf_id, "reason": "in_progress"}
+        ]
+    finally:
+        writer_db.close()
+
+
+def test_reexpand_close_of_removed_leaf_does_not_deadlock_on_root(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    postgres_database_url: str,
+) -> None:
+    """Apply locks phase epics before the root, so a close holding the phase can take it."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+
+    def spec_for(
+        phase_one: list[dict[str, Any]], phase_two: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "contract_plan": True,
+            "phases": [
+                {"id": "phase-1", "title": "Phase 1", "task_ids": [row["id"] for row in phase_one]},
+                {"id": "phase-2", "title": "Phase 2", "task_ids": [row["id"] for row in phase_two]},
+            ],
+            "tasks": [*phase_one, *phase_two],
+            "dependencies": [],
+        }
+
+    first = spec_for(
+        [
+            _phase_leaf("leaf-a", "1.1", "phase-1", "Kept"),
+            _phase_leaf("leaf-c", "1.2", "phase-1", "Removed"),
+        ],
+        [_phase_leaf("leaf-b", "2.1", "phase-2", "Other")],
+    )
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    kept_id = _task_id(applied, "leaf-a")
+    removed_id = _task_id(applied, "leaf-c")
+    service.task_manager.close_task_with_commit(kept_id, COMMIT, reason="completed", force=True)
+    assert applied.checkpoints is not None
+    phase_map = applied.checkpoints["phase_parent_map"]
+    assert isinstance(phase_map, dict)
+    phase_id = phase_map["phase-1"]
+    assert isinstance(phase_id, str)
+    amended = spec_for(
+        [
+            _phase_leaf("again-a", "1.1", "phase-1", "Kept"),
+            _phase_leaf("new-n", "1.3", "phase-1", "Added"),
+        ],
+        [_phase_leaf("again-b", "2.1", "phase-2", "Other")],
+    )
+    amended_run = _save_run(service, parent, sample_project, amended)
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    writer = Thread(target=run_apply, daemon=True)
+    schema = _schema_name(temp_db)
+    try:
+        with psycopg.connect(postgres_database_url) as holder:
+            holder.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            holder.execute("BEGIN")
+            try:
+                holder.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (removed_id,))
+                holder.execute("SELECT id FROM tasks WHERE id = %s FOR UPDATE", (phase_id,))
+                writer.start()
+                _wait_for_lock(postgres_database_url, finished, writer_db.application_name)
+                holder.execute("SET lock_timeout = '2s'")
+                locked_root = holder.execute(
+                    "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
+                    (parent.id,),
+                ).fetchone()
+                assert locked_root is not None
+                holder.execute(
+                    """
+                    UPDATE tasks
+                       SET closed_at = now(),
+                           closed_reason = 'completed',
+                           closed_commit_sha = %s,
+                           updated_at = now()
+                     WHERE id = %s
+                    """,
+                    (COMMIT, removed_id),
+                )
+                holder.execute("COMMIT")
+            except Exception:
+                holder.execute("ROLLBACK")
+                raise
+        assert finished.wait(timeout=5)
+        writer.join(timeout=1)
+        if errors:
+            raise errors[0]
+        removed = service.task_manager.get_task(removed_id)
+        assert removed.closed_at is not None
+        reconciled = _service(writer_db).run_manager.get(amended_run.id)
+        added = service.task_manager.get_task(_task_id(reconciled, "new-n"))
+        assert added.parent_task_id == phase_id
+    finally:
+        writer_db.close()
