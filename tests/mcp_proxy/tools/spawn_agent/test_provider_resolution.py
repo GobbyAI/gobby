@@ -354,7 +354,7 @@ def test_spawning_session_provider_falls_back_to_parent_without_caller() -> None
     assert inherited == "claude"
 
 
-@pytest.mark.parametrize("caller_source", [None, "", "inherit"])
+@pytest.mark.parametrize("caller_source", [None, "", "inherit", "pipeline"])
 def test_spawning_session_provider_falls_back_when_caller_source_is_unresolved(
     caller_source: str | None,
 ) -> None:
