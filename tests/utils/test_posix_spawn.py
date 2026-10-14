@@ -83,6 +83,10 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
+    "agents/srt_monitor.py::_start_monitor": (
+        "private readiness pass_fds and own session to survive daemon restarts; "
+        "once per immutable runner identity, not per execution or recovery"
+    ),
     "runner_windows_restart.py::spawn_restart_helper": (
         "Windows-only legacy restart handoff; Windows subprocess creation does not fork"
     ),

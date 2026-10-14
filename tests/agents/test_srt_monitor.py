@@ -247,6 +247,9 @@ def test_one_stream_routes_complete_events_and_failure_closes_all(
     monitor_harness: MonitorHarness,
 ) -> None:
     harness = monitor_harness
+    broker = srt_monitor._children[-1]
+    assert os.getsid(broker.pid) == broker.pid
+    assert os.getsid(broker.pid) != os.getsid(0)
 
     def reuse(_index: int) -> str:
         return srt_monitor.ensure_srt_monitor(

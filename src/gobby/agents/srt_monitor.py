@@ -12,10 +12,12 @@ import subprocess
 import threading
 from collections.abc import Mapping
 from pathlib import Path
+from typing import BinaryIO
 
 from gobby.agents.sandbox_policy import srt_mux_tmpdir
 from gobby.paths import get_gobby_home
 from gobby.utils.dependency_requirements import SRT_RELEASE
+from gobby.utils.spawn import run
 
 _lock = threading.Lock()
 _children: list[subprocess.Popen[bytes]] = []
@@ -30,6 +32,31 @@ def _connect(path: Path) -> None:
             record = json.loads(stream.readline(4096))
         if record != {"ready": True, "identity": SRT_RELEASE.runner_sha256}:
             raise RuntimeError("Shared SRT monitor identity mismatch; coordinate monitor cutover")
+
+
+def _start_monitor(
+    *, node: Path, runner: Path, path: Path, ready_fd: int, env: Mapping[str, str], log: BinaryIO
+) -> subprocess.Popen[bytes]:
+    # One broker per runner identity needs a private readiness descriptor and
+    # its own session to survive daemon restarts. spawn.popen rejects pass_fds
+    # and start_new_session; keep this rare fork exception separate from recovery.
+    return subprocess.Popen(
+        [
+            str(node),
+            str(runner),
+            "--monitor",
+            str(path),
+            str(ready_fd),
+            str(get_gobby_home() / "logs" / "sandbox-violations"),
+        ],
+        # No per-run credentials, grants, provider configuration or Node preloads.
+        env={"PATH": env.get("PATH", os.defpath)},
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=log,
+        pass_fds=(ready_fd,),
+        start_new_session=True,
+    )
 
 
 def ensure_srt_monitor(
@@ -61,7 +88,7 @@ def ensure_srt_monitor(
                 )
                 with os.fdopen(descriptor, "ab") as log:
                     try:
-                        result = subprocess.run(
+                        result = run(
                             [
                                 str(node),
                                 str(runner),
@@ -110,23 +137,13 @@ def ensure_srt_monitor(
         parent, child_ready = socket.socketpair()
         with os.fdopen(descriptor, "ab") as log, parent, child_ready:
             parent.settimeout(30)
-            child = subprocess.Popen(
-                [
-                    str(node),
-                    str(runner),
-                    "--monitor",
-                    str(path),
-                    str(child_ready.fileno()),
-                    str(get_gobby_home() / "logs" / "sandbox-violations"),
-                ],
-                # The long-lived broker needs no per-run credentials, grants,
-                # provider configuration, or Node preload options.
-                env={"PATH": env.get("PATH", os.defpath)},
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=log,
-                pass_fds=(child_ready.fileno(),),
-                start_new_session=True,
+            child = _start_monitor(
+                node=node,
+                runner=runner,
+                path=path,
+                ready_fd=child_ready.fileno(),
+                env=env,
+                log=log,
             )
             child_ready.close()
             _children[:] = [process for process in _children if process.poll() is None]
