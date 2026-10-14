@@ -546,6 +546,46 @@ class TestCheckDaemonHttpHealth:
             call_kwargs = mock_client.get.call_args
             assert call_kwargs.kwargs["timeout"] == 5.0
 
+    @pytest.mark.asyncio
+    async def test_busy_daemon_that_accepted_the_connection_is_up(self) -> None:
+        """A slow /api/health must not report a busy daemon down (#23080)."""
+        release = asyncio.Event()
+        requested = asyncio.Event()
+
+        async def hold_request(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await reader.readuntil(b"\r\n\r\n")
+            requested.set()
+            await release.wait()
+            writer.close()
+
+        server = await asyncio.start_server(hold_request, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            healthy = await check_daemon_http_health(
+                port, timeout=0.2, base_url=f"http://127.0.0.1:{port}"
+            )
+        finally:
+            release.set()
+            server.close()
+            await server.wait_closed()
+
+        assert requested.is_set()
+        assert healthy is True
+
+    @pytest.mark.asyncio
+    async def test_refused_connection_is_down(self) -> None:
+        """Nothing listening on the port still reports the daemon down."""
+        server = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        server.close()
+        await server.wait_closed()
+
+        healthy = await check_daemon_http_health(
+            port, timeout=0.2, base_url=f"http://127.0.0.1:{port}"
+        )
+
+        assert healthy is False
+
 
 class TestCreateStdioMcpServer:
     """Tests for create_stdio_mcp_server function."""

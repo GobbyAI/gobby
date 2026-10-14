@@ -172,7 +172,8 @@ def test_take_control_sizing_answers_while_the_default_executor_is_held() -> Non
 
     runtime.resize.side_effect = resize
     sizer = _Sizer(terminal, runtime)
-    decision = SizingDecision(owner_viewer="gclient", rows=terminal.rows + 1, cols=terminal.cols)
+    # make_memory_terminal stores 24x80; a different size forces the resize.
+    decision = SizingDecision(owner_viewer="gclient", rows=25, cols=80)
 
     _run_while_default_executor_held(sizer._apply_terminal_sizing(terminal.id, decision))
 

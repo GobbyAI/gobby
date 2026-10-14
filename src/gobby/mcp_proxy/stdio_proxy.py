@@ -210,8 +210,8 @@ class DaemonProxy:
                 ):
                     return _daemon_unavailable_result(
                         self.port,
-                        "health check did not respond within "
-                        f"{DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
+                        "health check could not connect within "
+                        f"{DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s or got an unhealthy answer",
                     )
                 self._last_health_ok_at = time.monotonic()
 

@@ -31,12 +31,20 @@ async def check_daemon_http_health(
     *,
     base_url: str | None = None,
 ) -> bool:
-    """Check if daemon is healthy via HTTP."""
+    """Check whether the daemon is up via HTTP.
+
+    A daemon that accepted the connection but has not answered within
+    ``timeout`` is up and busy: under fleet load ``/api/health`` takes seconds
+    while tool calls still succeed, so only a refused or unanswered connect or
+    a non-200 answer reports it down (#23080).
+    """
     url = (base_url.rstrip("/") if base_url else f"http://localhost:{port}") + "/api/health"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, timeout=timeout)
             return resp.status_code == 200
+    except httpx.ReadTimeout:
+        return True
     except Exception:
         return False
 
