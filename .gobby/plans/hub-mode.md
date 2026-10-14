@@ -2574,13 +2574,14 @@ would leave the claim with one user and a second leaf that must re-prove it.
   `stage: "none"`:
   - `path` names a directory directly under `<home>/worktrees/<project_id>/`
     for `worktree` or `<home>/clones/<project_id>/` for `clone`.
-    `workspace.rs` exposes the `existing` mode's root check as
-    `owned_workspace_path`, and both commands use it. A path whose
-    `symlink_metadata` exists must canonicalize to a directory directly
-    under the canonical root, so a symlink cannot escape it. A path that
-    does not exist passes only when its parent canonicalizes to that root
-    and its file name is one `Component::Normal`; that admits an
-    already-removed workspace.
+    `workspace.rs` exposes the `existing` mode's root check, unchanged, as
+    `owned_workspace_path`. A path whose `symlink_metadata` exists must pass
+    it: it canonicalizes to a directory directly under the canonical root,
+    so a symlink cannot escape it. For a path that does not exist,
+    `finish.rs` adds its own check: the parent must canonicalize to that
+    root and the file name must be one `Component::Normal`. That admits an
+    already-removed workspace for both commands, and `existing` mode still
+    requires the path.
   - `source_root` is absolute and equals
     `git -C <source_root> rev-parse --show-toplevel`.
   - `branch_name`, `target_branch`, and `merged_into` pass
