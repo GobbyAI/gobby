@@ -8,6 +8,8 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills import create_skills_registry
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 
@@ -15,6 +17,12 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
+
+
+def test_task_registry_omits_retired_path_tools(temp_db: HubDatabase) -> None:
+    registry = create_lifecycle_registry(RegistryContext(LocalTaskManager(temp_db)))
+    names = {tool["name"] for tool in registry.list_tools()}
+    assert names.isdisjoint({"release_task_paths", "inspect_task_path_ownership"})
 
 
 TASK_READ_ONLY_TOOLS = {
@@ -32,7 +40,6 @@ TASK_READ_ONLY_TOOLS = {
     "list_stages_registry",
     "get_task_type_defaults",
     "get_task_diff",
-    "inspect_task_path_ownership",
 }
 
 TASK_OPS_READ_ONLY_TOOLS = {

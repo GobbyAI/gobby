@@ -19,7 +19,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_labels import (
     register_add_label,
     register_remove_label,
 )
-from gobby.mcp_proxy.tools.tasks._lifecycle_paths import register_release_task_paths
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     register_de_escalate_task,
     register_escalate_task,
@@ -54,7 +53,6 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     register_add_label(registry, ctx)
     register_remove_label(registry, ctx)
     register_claim_task(registry, ctx)
-    register_release_task_paths(registry, ctx)
     register_escalate_task(registry, ctx)
     register_de_escalate_task(registry, ctx)
 

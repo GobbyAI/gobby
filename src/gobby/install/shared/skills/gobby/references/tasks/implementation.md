@@ -2,8 +2,8 @@
 
 Load before editing task-owned files, handling found work, or preparing validation.
 Read `get_task(brief=false)` and applicable required instruction references first.
-Discover `inspect_task_path_ownership` and `release_task_paths` on `gobby-tasks`
-when attribution or shared-checkout ownership is unclear.
+Dirty paths you did not change are not yours. Ask their owner to commit with
+`gobby-agents.send_message`.
 
 Keep one deliverable's implementation substeps in the CLI's native tracker when it
 offers one, otherwise in your working plan.
@@ -51,10 +51,6 @@ Run final validation after every final edit and formatting change. Follow an
 ongoing command to definitive exit. Which commands earn close credit is in
 [closing](closing.md). A later edit makes prior evidence stale; committing
 does not.
-
-If a close reports stale foreign attribution, the owning session can call
-`release_task_paths` for committed or abandoned paths. It refuses uncommitted
-content; do not release another session's ownership yourself.
 
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [TDD Enforcement](../../../../../../../../docs/guides/tdd-enforcement.md).

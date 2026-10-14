@@ -465,38 +465,6 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
-      "tool": "inspect_task_path_ownership",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py",
-        "symbol": "inspect_task_path_ownership"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
-      "tool": "release_task_paths",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/implementation.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py",
-        "symbol": "release_task_paths"
-      },
-      "verification": [
-        "registered-inventory",
-        "source-contract",
-        "focused-task-tests"
-      ],
-      "audience": "agent; role and ownership checks apply"
-    },
-    {
-      "surface": "mcp",
-      "server": "gobby-tasks",
       "tool": "close_task",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {

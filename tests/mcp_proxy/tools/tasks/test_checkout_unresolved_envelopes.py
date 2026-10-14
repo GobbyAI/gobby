@@ -3,26 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
-from gobby.mcp_proxy.tools.tasks._lifecycle_paths import _lifecycle_checkout_root
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
-    install_isolated_checkout_project,
     patch_local_machine_id,
 )
 
@@ -153,50 +148,3 @@ async def test_submit_for_review_returns_checkout_unresolved(no_checkout: _NoChe
         )
 
     _assert_checkout_unresolved(result)
-
-
-@pytest.mark.asyncio
-async def test_inspect_task_path_ownership_returns_checkout_unresolved(
-    no_checkout: _NoCheckout,
-) -> None:
-    registry = create_task_registry(no_checkout.task_manager)
-
-    with session_context_for_test(no_checkout.session_id):
-        result = await registry.call("inspect_task_path_ownership", {})
-
-    _assert_checkout_unresolved(result)
-
-
-def test_lifecycle_checkout_root_loads_the_session_once(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    isolated = install_isolated_checkout_project(
-        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
-    )
-    session = SessionManager(temp_db).register(
-        external_id="checkout-root-session",
-        machine_id=isolated.machine_id,
-        source="codex",
-        project_id=isolated.project.id,
-    )
-    ctx = RegistryContext(task_manager=LocalTaskManager(temp_db))
-    lookups: list[str] = []
-    real_get = ctx.session_manager.get
-
-    def counting_get(session_id: str) -> Session | None:
-        lookups.append(session_id)
-        return real_get(session_id)
-
-    monkeypatch.setattr(ctx.session_manager, "get", counting_get)
-
-    root = _lifecycle_checkout_root(
-        ctx,
-        session_id=session.id,
-        project_id=isolated.project.id,
-        overlay_path=None,
-    )
-
-    assert root == isolated.root_path
-    assert lookups == [session.id]

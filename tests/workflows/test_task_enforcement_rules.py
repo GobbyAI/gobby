@@ -29,12 +29,21 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.enforcement.blocking import TASK_MUTATION_TOOLS_BY_SERVER
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
+
+
+def test_retired_path_tools_absent_from_enforcement_lists() -> None:
+    retired = {"release_task_paths", "inspect_task_path_ownership"}
+    assert retired.isdisjoint(TASK_MUTATION_TOOLS_BY_SERVER["gobby-tasks"])
+    assert retired.isdisjoint(INTERACTIVE_TASK_MUTATIONS)
+    assert retired.isdisjoint(READ_ONLY_TASK_TOOLS)
+
 
 # Session id columns are native uuid in PostgreSQL; synthetic ids like
 # SESSION_ID would fail with `invalid input syntax for type uuid`.
@@ -58,7 +67,6 @@ INTERACTIVE_TASK_MUTATIONS = (
     "link_commit",
     "link_task_to_session",
     "record_close_receipt",
-    "release_task_paths",
     "remove_dependency",
     "remove_label",
     "reopen_task",
@@ -85,7 +93,6 @@ READ_ONLY_TASK_TOOLS = (
     "get_task_sessions",
     "get_task_stages",
     "get_task_type_defaults",
-    "inspect_task_path_ownership",
     "list_blocked_tasks",
     "list_ready_tasks",
     "list_stages_registry",
