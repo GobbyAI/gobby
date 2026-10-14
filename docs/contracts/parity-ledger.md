@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1097. Unclassified: 1030.
+Public surfaces and evidence gates: 1097. Unclassified: 883.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -272,54 +272,54 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `CLI gobby status` | **unclassified** |  |
 | `CLI gobby stop` | **unclassified** |  |
 | `CLI gobby sync` | **unclassified** |  |
-| `CLI gobby tasks` | **unclassified** |  |
-| `CLI gobby tasks advance` | **unclassified** |  |
-| `CLI gobby tasks backup` | **unclassified** |  |
-| `CLI gobby tasks blocked` | **unclassified** |  |
-| `CLI gobby tasks clean` | **unclassified** |  |
-| `CLI gobby tasks close` | **unclassified** |  |
-| `CLI gobby tasks commit` | **unclassified** |  |
-| `CLI gobby tasks commit auto` | **unclassified** |  |
-| `CLI gobby tasks commit link` | **unclassified** |  |
-| `CLI gobby tasks commit list` | **unclassified** |  |
-| `CLI gobby tasks commit unlink` | **unclassified** |  |
-| `CLI gobby tasks compact` | **unclassified** |  |
-| `CLI gobby tasks compact analyze` | **unclassified** |  |
-| `CLI gobby tasks compact apply` | **unclassified** |  |
-| `CLI gobby tasks compact stats` | **unclassified** |  |
-| `CLI gobby tasks create` | **unclassified** |  |
-| `CLI gobby tasks de-escalate` | **unclassified** |  |
-| `CLI gobby tasks delete` | **unclassified** |  |
-| `CLI gobby tasks dep` | **unclassified** |  |
-| `CLI gobby tasks dep add` | **unclassified** |  |
-| `CLI gobby tasks dep cycles` | **unclassified** |  |
-| `CLI gobby tasks dep remove` | **unclassified** |  |
-| `CLI gobby tasks dep tree` | **unclassified** |  |
-| `CLI gobby tasks diff` | **unclassified** |  |
-| `CLI gobby tasks doctor` | **unclassified** |  |
-| `CLI gobby tasks expand` | **unclassified** |  |
-| `CLI gobby tasks expand apply` | **unclassified** |  |
-| `CLI gobby tasks expand compile` | **unclassified** |  |
-| `CLI gobby tasks expand reset` | **unclassified** |  |
-| `CLI gobby tasks expand resume` | **unclassified** |  |
-| `CLI gobby tasks expand status` | **unclassified** |  |
-| `CLI gobby tasks expand validate-plan` | **unclassified** |  |
-| `CLI gobby tasks label` | **unclassified** |  |
-| `CLI gobby tasks label add` | **unclassified** |  |
-| `CLI gobby tasks label remove` | **unclassified** |  |
-| `CLI gobby tasks list` | **unclassified** |  |
-| `CLI gobby tasks ready` | **unclassified** |  |
-| `CLI gobby tasks reindex` | **unclassified** |  |
-| `CLI gobby tasks reopen` | **unclassified** |  |
-| `CLI gobby tasks restore` | **unclassified** |  |
-| `CLI gobby tasks review` | **unclassified** |  |
-| `CLI gobby tasks search` | **unclassified** |  |
-| `CLI gobby tasks show` | **unclassified** |  |
-| `CLI gobby tasks stages` | **unclassified** |  |
-| `CLI gobby tasks stats` | **unclassified** |  |
-| `CLI gobby tasks suggest` | **unclassified** |  |
-| `CLI gobby tasks update` | **unclassified** |  |
-| `CLI gobby tasks validation-history` | **unclassified** |  |
+| `CLI gobby tasks` | proxied | Blocked on #21560 Tasks family: port `gobby tasks` from Python callback `src/gobby/cli/tasks/main.py:41` to Rust task services and CLI parity. |
+| `CLI gobby tasks advance` | proxied | Blocked on #21560 Tasks family: port `gobby tasks advance` from Python callback `src/gobby/cli/tasks/stages.py:65` to Rust task services and CLI parity. |
+| `CLI gobby tasks backup` | proxied | Blocked on #21560 Tasks family: port `gobby tasks backup` from Python callback `src/gobby/cli/tasks/main.py:72` to Rust task services and CLI parity. |
+| `CLI gobby tasks blocked` | proxied | Blocked on #21560 Tasks family: port `gobby tasks blocked` from Python callback `src/gobby/cli/tasks/crud.py:156` to Rust task services and CLI parity. |
+| `CLI gobby tasks clean` | proxied | Blocked on #21560 Tasks family: port `gobby tasks clean` from Python callback `src/gobby/cli/tasks/main.py:241` to Rust task services and CLI parity. |
+| `CLI gobby tasks close` | proxied | Blocked on #21560 Tasks family: port `gobby tasks close` from Python callback `src/gobby/cli/tasks/crud.py:284` to Rust task services and CLI parity. |
+| `CLI gobby tasks commit` | proxied | Blocked on #21560 Tasks family: port `gobby tasks commit` from Python callback `src/gobby/cli/tasks/commits.py:15` to Rust task services and CLI parity. |
+| `CLI gobby tasks commit auto` | proxied | Blocked on #21560 Tasks family: port `gobby tasks commit auto` from Python callback `src/gobby/cli/tasks/commits.py:112` to Rust task services and CLI parity. |
+| `CLI gobby tasks commit link` | proxied | Blocked on #21560 Tasks family: port `gobby tasks commit link` from Python callback `src/gobby/cli/tasks/commits.py:30` to Rust task services and CLI parity. |
+| `CLI gobby tasks commit list` | proxied | Blocked on #21560 Tasks family: port `gobby tasks commit list` from Python callback `src/gobby/cli/tasks/commits.py:90` to Rust task services and CLI parity. |
+| `CLI gobby tasks commit unlink` | proxied | Blocked on #21560 Tasks family: port `gobby tasks commit unlink` from Python callback `src/gobby/cli/tasks/commits.py:59` to Rust task services and CLI parity. |
+| `CLI gobby tasks compact` | proxied | Blocked on #21560 Tasks family: port `gobby tasks compact` from Python callback `src/gobby/cli/tasks/main.py:122` to Rust task services and CLI parity. |
+| `CLI gobby tasks compact analyze` | proxied | Blocked on #21560 Tasks family: port `gobby tasks compact analyze` from Python callback `src/gobby/cli/tasks/main.py:128` to Rust task services and CLI parity. |
+| `CLI gobby tasks compact apply` | proxied | Blocked on #21560 Tasks family: port `gobby tasks compact apply` from Python callback `src/gobby/cli/tasks/main.py:147` to Rust task services and CLI parity. |
+| `CLI gobby tasks compact stats` | proxied | Blocked on #21560 Tasks family: port `gobby tasks compact stats` from Python callback `src/gobby/cli/tasks/main.py:175` to Rust task services and CLI parity. |
+| `CLI gobby tasks create` | proxied | Blocked on #21560 Tasks family: port `gobby tasks create` from Python callback `src/gobby/cli/tasks/crud.py:173` to Rust task services and CLI parity. |
+| `CLI gobby tasks de-escalate` | proxied | Blocked on #21560 Tasks family: port `gobby tasks de-escalate` from Python callback `src/gobby/cli/tasks/crud.py:354` to Rust task services and CLI parity. |
+| `CLI gobby tasks delete` | proxied | Blocked on #21560 Tasks family: port `gobby tasks delete` from Python callback `src/gobby/cli/tasks/crud.py:332` to Rust task services and CLI parity. |
+| `CLI gobby tasks dep` | proxied | Blocked on #21560 Tasks family: port `gobby tasks dep` from Python callback `src/gobby/cli/tasks/deps.py:13` to Rust task services and CLI parity. |
+| `CLI gobby tasks dep add` | proxied | Blocked on #21560 Tasks family: port `gobby tasks dep add` from Python callback `src/gobby/cli/tasks/deps.py:22` to Rust task services and CLI parity. |
+| `CLI gobby tasks dep cycles` | proxied | Blocked on #21560 Tasks family: port `gobby tasks dep cycles` from Python callback `src/gobby/cli/tasks/deps.py:122` to Rust task services and CLI parity. |
+| `CLI gobby tasks dep remove` | proxied | Blocked on #21560 Tasks family: port `gobby tasks dep remove` from Python callback `src/gobby/cli/tasks/deps.py:59` to Rust task services and CLI parity. |
+| `CLI gobby tasks dep tree` | proxied | Blocked on #21560 Tasks family: port `gobby tasks dep tree` from Python callback `src/gobby/cli/tasks/deps.py:83` to Rust task services and CLI parity. |
+| `CLI gobby tasks diff` | proxied | Blocked on #21560 Tasks family: port `gobby tasks diff` from Python callback `src/gobby/cli/tasks/commits.py:151` to Rust task services and CLI parity. |
+| `CLI gobby tasks doctor` | proxied | Blocked on #21560 Tasks family: port `gobby tasks doctor` from Python callback `src/gobby/cli/tasks/main.py:198` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand` from Python callback `src/gobby/cli/tasks/expand.py:64` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand apply` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand apply` from Python callback `src/gobby/cli/tasks/expand.py:145` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand compile` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand compile` from Python callback `src/gobby/cli/tasks/expand.py:95` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand reset` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand reset` from Python callback `src/gobby/cli/tasks/expand.py:166` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand resume` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand resume` from Python callback `src/gobby/cli/tasks/expand.py:220` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand status` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand status` from Python callback `src/gobby/cli/tasks/expand.py:199` to Rust task services and CLI parity. |
+| `CLI gobby tasks expand validate-plan` | proxied | Blocked on #21560 Tasks family: port `gobby tasks expand validate-plan` from Python callback `src/gobby/cli/tasks/expand.py:70` to Rust task services and CLI parity. |
+| `CLI gobby tasks label` | proxied | Blocked on #21560 Tasks family: port `gobby tasks label` from Python callback `src/gobby/cli/tasks/labels.py:10` to Rust task services and CLI parity. |
+| `CLI gobby tasks label add` | proxied | Blocked on #21560 Tasks family: port `gobby tasks label add` from Python callback `src/gobby/cli/tasks/labels.py:16` to Rust task services and CLI parity. |
+| `CLI gobby tasks label remove` | proxied | Blocked on #21560 Tasks family: port `gobby tasks label remove` from Python callback `src/gobby/cli/tasks/labels.py:41` to Rust task services and CLI parity. |
+| `CLI gobby tasks list` | proxied | Blocked on #21560 Tasks family: port `gobby tasks list` from Python callback `src/gobby/cli/tasks/crud.py:64` to Rust task services and CLI parity. |
+| `CLI gobby tasks ready` | proxied | Blocked on #21560 Tasks family: port `gobby tasks ready` from Python callback `src/gobby/cli/tasks/crud.py:129` to Rust task services and CLI parity. |
+| `CLI gobby tasks reindex` | proxied | Blocked on #21560 Tasks family: port `gobby tasks reindex` from Python callback `src/gobby/cli/tasks/search.py:142` to Rust task services and CLI parity. |
+| `CLI gobby tasks reopen` | proxied | Blocked on #21560 Tasks family: port `gobby tasks reopen` from Python callback `src/gobby/cli/tasks/crud.py:318` to Rust task services and CLI parity. |
+| `CLI gobby tasks restore` | proxied | Blocked on #21560 Tasks family: port `gobby tasks restore` from Python callback `src/gobby/cli/tasks/main.py:97` to Rust task services and CLI parity. |
+| `CLI gobby tasks review` | proxied | Blocked on #21560 Tasks family: port `gobby tasks review` from Python callback `src/gobby/cli/tasks/review.py:18` to Rust task services and CLI parity. |
+| `CLI gobby tasks search` | proxied | Blocked on #21560 Tasks family: port `gobby tasks search` from Python callback `src/gobby/cli/tasks/search.py:13` to Rust task services and CLI parity. |
+| `CLI gobby tasks show` | proxied | Blocked on #21560 Tasks family: port `gobby tasks show` from Python callback `src/gobby/cli/tasks/crud.py:213` to Rust task services and CLI parity. |
+| `CLI gobby tasks stages` | proxied | Blocked on #21560 Tasks family: port `gobby tasks stages` from Python callback `src/gobby/cli/tasks/stages.py:48` to Rust task services and CLI parity. |
+| `CLI gobby tasks stats` | proxied | Blocked on #21560 Tasks family: port `gobby tasks stats` from Python callback `src/gobby/cli/tasks/crud.py:165` to Rust task services and CLI parity. |
+| `CLI gobby tasks suggest` | proxied | Blocked on #21560 Tasks family: port `gobby tasks suggest` from Python callback `src/gobby/cli/tasks/ai.py:10` to Rust task services and CLI parity. |
+| `CLI gobby tasks update` | proxied | Blocked on #21560 Tasks family: port `gobby tasks update` from Python callback `src/gobby/cli/tasks/crud.py:223` to Rust task services and CLI parity. |
+| `CLI gobby tasks validation-history` | proxied | Blocked on #21560 Tasks family: port `gobby tasks validation-history` from Python callback `src/gobby/cli/tasks/crud.py:387` to Rust task services and CLI parity. |
 | `CLI gobby test-quality` | **unclassified** |  |
 | `CLI gobby test-quality audit` | **unclassified** |  |
 | `CLI gobby test-types` | **unclassified** |  |
@@ -384,9 +384,9 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `HTTP DELETE /api/source-control/clones/{clone_id}` | **unclassified** |  |
 | `HTTP DELETE /api/source-control/worktrees/{worktree_id}` | **unclassified** |  |
 | `HTTP DELETE /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::delete_stage via gdaemon front-door fallback; blocked on a native Rust guarded stage deletion route. Owner: #21568 Remaining route families. |
-| `HTTP DELETE /api/tasks/{task_id}` | **unclassified** |  |
-| `HTTP DELETE /api/tasks/{task_id}/comments/{comment_id}` | **unclassified** |  |
-| `HTTP DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}` | **unclassified** |  |
+| `HTTP DELETE /api/tasks/{task_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}; Python handler `src/gobby/servers/routes/tasks.py:491`; Rust front-door dispatch currently proxies this family. |
+| `HTTP DELETE /api/tasks/{task_id}/comments/{comment_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}/comments/{comment_id}; Python handler `src/gobby/servers/routes/tasks_comment_routes.py:122`; Rust front-door dispatch currently proxies this family. |
+| `HTTP DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}` | proxied | Blocked on #21560 Tasks family: implement native DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}; Python handler `src/gobby/servers/routes/tasks_dependency_routes.py:174`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/variables/{ref}` | **unclassified** |  |
 | `HTTP GET /api/admin/config` | **unclassified** |  |
 | `HTTP GET /api/admin/cron/protected-runs` | **unclassified** |  |
@@ -516,12 +516,12 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `HTTP GET /api/source-control/worktrees` | **unclassified** |  |
 | `HTTP GET /api/source-control/worktrees/stats` | **unclassified** |  |
 | `HTTP GET /api/stages/registry` | proxied | Python src/gobby/servers/routes/stages.py::list_stages_registry via gdaemon front-door fallback; blocked on native Rust stage listing and response serialization. Owner: #21568 Remaining route families. |
-| `HTTP GET /api/task-types/{task_type}/default-stages` | **unclassified** |  |
-| `HTTP GET /api/tasks` | proxied |  |
-| `HTTP GET /api/tasks/{task_id}` | **unclassified** |  |
-| `HTTP GET /api/tasks/{task_id}/comments` | **unclassified** |  |
-| `HTTP GET /api/tasks/{task_id}/dependencies` | **unclassified** |  |
-| `HTTP GET /api/tasks/{task_id}/stages` | **unclassified** |  |
+| `HTTP GET /api/task-types/{task_type}/default-stages` | proxied | Blocked on #21560 Tasks family: implement native GET /api/task-types/{task_type}/default-stages; Python handler `src/gobby/servers/routes/stages.py:114`; Rust front-door dispatch currently proxies this family. |
+| `HTTP GET /api/tasks` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks; Python handler `src/gobby/servers/routes/tasks.py:294`; Rust front-door dispatch currently proxies this family. |
+| `HTTP GET /api/tasks/{task_id}` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}; Python handler `src/gobby/servers/routes/tasks.py:421`; Rust front-door dispatch currently proxies this family. |
+| `HTTP GET /api/tasks/{task_id}/comments` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/comments; Python handler `src/gobby/servers/routes/tasks_comment_routes.py:40`; Rust front-door dispatch currently proxies this family. |
+| `HTTP GET /api/tasks/{task_id}/dependencies` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/dependencies; Python handler `src/gobby/servers/routes/tasks_dependency_routes.py:138`; Rust front-door dispatch currently proxies this family. |
+| `HTTP GET /api/tasks/{task_id}/stages` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/stages; Python handler `src/gobby/servers/routes/tasks_stage_routes.py:135`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/terminals` | **unclassified** |  |
 | `HTTP GET /api/terminals/{terminal_id}` | **unclassified** |  |
 | `HTTP GET /api/traces` | **unclassified** |  |
@@ -545,8 +545,8 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `HTTP PATCH /api/cron/jobs/{job_id}` | **unclassified** |  |
 | `HTTP PATCH /api/mcp/servers/{name}` | **unclassified** |  |
 | `HTTP PATCH /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::update_project via gdaemon front-door fallback; blocked on native Rust project partial updates and checkout-scoped approval/validation config writes. Owner: #21568 Remaining route families. |
-| `HTTP PATCH /api/tasks/{task_id}` | **unclassified** |  |
-| `HTTP PATCH /api/tasks/{task_id}/stages/{stage_name}` | **unclassified** |  |
+| `HTTP PATCH /api/tasks/{task_id}` | proxied | Blocked on #21560 Tasks family: implement native PATCH /api/tasks/{task_id}; Python handler `src/gobby/servers/routes/tasks.py:438`; Rust front-door dispatch currently proxies this family. |
+| `HTTP PATCH /api/tasks/{task_id}/stages/{stage_name}` | proxied | Blocked on #21560 Tasks family: implement native PATCH /api/tasks/{task_id}/stages/{stage_name}; Python handler `src/gobby/servers/routes/tasks_stage_routes.py:152`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/admin/lease/handoff` | **unclassified** |  |
 | `HTTP POST /api/admin/restart` | **unclassified** |  |
 | `HTTP POST /api/admin/shutdown` | **unclassified** |  |
@@ -665,15 +665,15 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `HTTP POST /api/source-control/worktrees/cleanup` | **unclassified** |  |
 | `HTTP POST /api/source-control/worktrees/{worktree_id}/sync` | **unclassified** |  |
 | `HTTP POST /api/stages/registry/{name}/restore` | proxied | Python src/gobby/servers/routes/stages.py::restore_stage via gdaemon front-door fallback; blocked on a native Rust stage restoration route. Owner: #21568 Remaining route families. |
-| `HTTP POST /api/tasks` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/claim` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/close` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/comments` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/de-escalate` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/dependencies` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/escalate` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/release-claim` | **unclassified** |  |
-| `HTTP POST /api/tasks/{task_id}/reopen` | **unclassified** |  |
+| `HTTP POST /api/tasks` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks; Python handler `src/gobby/servers/routes/tasks.py:392`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/claim` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/claim; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:121`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/close` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/close; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:200`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/comments` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/comments; Python handler `src/gobby/servers/routes/tasks_comment_routes.py:73`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/de-escalate` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/de-escalate; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:264`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/dependencies` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/dependencies; Python handler `src/gobby/servers/routes/tasks_dependency_routes.py:160`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/escalate` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/escalate; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:181`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/release-claim` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/release-claim; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:164`; Rust front-door dispatch currently proxies this family. |
+| `HTTP POST /api/tasks/{task_id}/reopen` | proxied | Blocked on #21560 Tasks family: implement native POST /api/tasks/{task_id}/reopen; Python handler `src/gobby/servers/routes/tasks_lifecycle_routes.py:244`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/variables` | **unclassified** |  |
 | `HTTP POST /api/variables/{ref}/restore-from-template` | **unclassified** |  |
 | `HTTP POST /api/voice/transcribe` | **unclassified** |  |
@@ -697,7 +697,7 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `HTTP PUT /api/skills/{skill_id}` | **unclassified** |  |
 | `HTTP PUT /api/skills/{skill_id}/files/{file_path:path}` | **unclassified** |  |
 | `HTTP PUT /api/stages/registry/{name}` | proxied | Python src/gobby/servers/routes/stages.py::update_stage via gdaemon front-door fallback; blocked on native Rust stage configuration validation and partial updates. Owner: #21568 Remaining route families. |
-| `HTTP PUT /api/task-types/{task_type}/default-stages` | **unclassified** |  |
+| `HTTP PUT /api/task-types/{task_type}/default-stages` | proxied | Blocked on #21560 Tasks family: implement native PUT /api/task-types/{task_type}/default-stages; Python handler `src/gobby/servers/routes/stages.py:131`; Rust front-door dispatch currently proxies this family. |
 | `HTTP PUT /api/variables/{ref}` | **unclassified** |  |
 | `HTTP PUT /api/variables/{ref}/toggle` | **unclassified** |  |
 | `MCP HTTP gobby:add_mcp_server` | **unclassified** |  |
@@ -910,86 +910,86 @@ Public surfaces and evidence gates: 1097. Unclassified: 1030.
 | `MCP gobby-skills:search_hub` | **unclassified** |  |
 | `MCP gobby-skills:search_skills` | **unclassified** |  |
 | `MCP gobby-skills:update_skill` | **unclassified** |  |
-| `MCP gobby-tasks-ops:add_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:append_description_section` | **unclassified** |  |
-| `MCP gobby-tasks-ops:approve_review` | **unclassified** |  |
-| `MCP gobby-tasks-ops:backfill_plan_review_lessons` | **unclassified** |  |
-| `MCP gobby-tasks-ops:cancel_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:check_expansion_qa_result` | **unclassified** |  |
-| `MCP gobby-tasks-ops:clear_isolation_pair` | **unclassified** |  |
-| `MCP gobby-tasks-ops:complete_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:delete_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:fail_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:find_file_overlaps` | **unclassified** |  |
-| `MCP gobby-tasks-ops:get_affected_files` | **unclassified** |  |
-| `MCP gobby-tasks-ops:get_artifacts` | **unclassified** |  |
-| `MCP gobby-tasks-ops:get_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:get_latest_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:initialize_task_manifest` | **unclassified** |  |
-| `MCP gobby-tasks-ops:land_commit` | **unclassified** |  |
-| `MCP gobby-tasks-ops:record_merge_result` | **unclassified** |  |
-| `MCP gobby-tasks-ops:record_plan_enhancement` | **unclassified** |  |
-| `MCP gobby-tasks-ops:record_pr_verdict` | **unclassified** |  |
-| `MCP gobby-tasks-ops:reindex_tasks` | **unclassified** |  |
-| `MCP gobby-tasks-ops:reject_review` | **unclassified** |  |
-| `MCP gobby-tasks-ops:remove_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:reset_expansion_output` | **unclassified** |  |
-| `MCP gobby-tasks-ops:restore_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:resume_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:run_expansion_qa_coverage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:save_expansion_qa_result` | **unclassified** |  |
-| `MCP gobby-tasks-ops:set_affected_files` | **unclassified** |  |
-| `MCP gobby-tasks-ops:set_artifact` | **unclassified** |  |
-| `MCP gobby-tasks-ops:set_artifacts_atomic` | **unclassified** |  |
-| `MCP gobby-tasks-ops:set_landing_freeze` | **unclassified** |  |
-| `MCP gobby-tasks-ops:set_task_type_defaults` | **unclassified** |  |
-| `MCP gobby-tasks-ops:start_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:start_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:submit_for_review` | **unclassified** |  |
-| `MCP gobby-tasks-ops:update_stage` | **unclassified** |  |
-| `MCP gobby-tasks-ops:validate_expansion_run` | **unclassified** |  |
-| `MCP gobby-tasks-ops:validate_plan_file` | **unclassified** |  |
-| `MCP gobby-tasks-ops:wire_affected_files_from_run` | **unclassified** |  |
-| `MCP gobby-tasks:add_dependency` | **unclassified** |  |
-| `MCP gobby-tasks:add_label` | **unclassified** |  |
-| `MCP gobby-tasks:auto_link_commits` | **unclassified** |  |
-| `MCP gobby-tasks:backup_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:check_dependency_cycles` | **unclassified** |  |
-| `MCP gobby-tasks:claim_task` | **unclassified** |  |
-| `MCP gobby-tasks:close_task` | **unclassified** |  |
-| `MCP gobby-tasks:create_task` | **unclassified** |  |
-| `MCP gobby-tasks:de_escalate_task` | **unclassified** |  |
-| `MCP gobby-tasks:delegate_task` | **unclassified** |  |
-| `MCP gobby-tasks:delete_task` | **unclassified** |  |
-| `MCP gobby-tasks:escalate_task` | **unclassified** |  |
-| `MCP gobby-tasks:get_dependency_tree` | **unclassified** |  |
-| `MCP gobby-tasks:get_session_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:get_task` | proxied |  |
-| `MCP gobby-tasks:get_task_diff` | **unclassified** |  |
-| `MCP gobby-tasks:get_task_sessions` | **unclassified** |  |
-| `MCP gobby-tasks:get_task_stages` | **unclassified** |  |
-| `MCP gobby-tasks:get_task_type_defaults` | **unclassified** |  |
-| `MCP gobby-tasks:inspect_task_path_ownership` | **unclassified** |  |
-| `MCP gobby-tasks:link_commit` | **unclassified** |  |
-| `MCP gobby-tasks:link_task_to_session` | **unclassified** |  |
-| `MCP gobby-tasks:list_blocked_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:list_ready_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:list_stages_registry` | **unclassified** |  |
-| `MCP gobby-tasks:list_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:record_close_receipt` | **unclassified** |  |
-| `MCP gobby-tasks:release_task_paths` | **unclassified** |  |
-| `MCP gobby-tasks:remove_dependency` | **unclassified** |  |
-| `MCP gobby-tasks:remove_label` | **unclassified** |  |
-| `MCP gobby-tasks:reopen_task` | **unclassified** |  |
-| `MCP gobby-tasks:repair_closed_candidate` | **unclassified** |  |
-| `MCP gobby-tasks:restore_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:search_tasks` | **unclassified** |  |
-| `MCP gobby-tasks:submit_close_review` | **unclassified** |  |
-| `MCP gobby-tasks:suggest_next_task` | **unclassified** |  |
-| `MCP gobby-tasks:transfer_task_authority` | **unclassified** |  |
-| `MCP gobby-tasks:unlink_commit` | **unclassified** |  |
-| `MCP gobby-tasks:update_observed_files` | **unclassified** |  |
-| `MCP gobby-tasks:update_task` | **unclassified** |  |
+| `MCP gobby-tasks-ops:add_stage` | proxied | Blocked on #21560 Tasks family: port `add_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:370`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:append_description_section` | proxied | Blocked on #21560 Tasks family: port `append_description_section` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:240`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:approve_review` | proxied | Blocked on #21560 Tasks family: port `approve_review` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_review.py:364`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:backfill_plan_review_lessons` | proxied | Blocked on #21560 Tasks family: port `backfill_plan_review_lessons` from Python handler `src/gobby/mcp_proxy/tools/tasks/_plan_review_backfill.py:20`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:cancel_expansion_run` | proxied | Blocked on #21560 Tasks family: port `cancel_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:611`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:check_expansion_qa_result` | proxied | Blocked on #21560 Tasks family: port `check_expansion_qa_result` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:814`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:clear_isolation_pair` | proxied | Blocked on #21560 Tasks family: port `clear_isolation_pair` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:205`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:complete_stage` | proxied | Blocked on #21560 Tasks family: port `complete_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:270`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:delete_stage` | proxied | Blocked on #21560 Tasks family: port `delete_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py:94`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:fail_stage` | proxied | Blocked on #21560 Tasks family: port `fail_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:316`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:find_file_overlaps` | proxied | Blocked on #21560 Tasks family: port `find_file_overlaps` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:283`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:get_affected_files` | proxied | Blocked on #21560 Tasks family: port `get_affected_files` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:250`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:get_artifacts` | proxied | Blocked on #21560 Tasks family: port `get_artifacts` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:298`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:get_expansion_run` | proxied | Blocked on #21560 Tasks family: port `get_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:484`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:get_latest_expansion_run` | proxied | Blocked on #21560 Tasks family: port `get_latest_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:505`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:initialize_task_manifest` | proxied | Blocked on #21560 Tasks family: port `initialize_task_manifest` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:214`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:land_commit` | proxied | Blocked on #21560 Tasks family: port `land_commit` from Python handler `src/gobby/mcp_proxy/tools/tasks/_landing.py:88`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:record_merge_result` | proxied | Blocked on #21560 Tasks family: port `record_merge_result` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:505`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:record_plan_enhancement` | proxied | Blocked on #21560 Tasks family: port `record_plan_enhancement` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_review.py:697`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:record_pr_verdict` | proxied | Blocked on #21560 Tasks family: port `record_pr_verdict` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:430`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:reindex_tasks` | proxied | Blocked on #21560 Tasks family: port `reindex_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_search.py:200`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:reject_review` | proxied | Blocked on #21560 Tasks family: port `reject_review` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_review.py:559`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:remove_stage` | proxied | Blocked on #21560 Tasks family: port `remove_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:405`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:reset_expansion_output` | proxied | Blocked on #21560 Tasks family: port `reset_expansion_output` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:428`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:restore_stage` | proxied | Blocked on #21560 Tasks family: port `restore_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py:74`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:resume_expansion_run` | proxied | Blocked on #21560 Tasks family: port `resume_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:546`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:run_expansion_qa_coverage` | proxied | Blocked on #21560 Tasks family: port `run_expansion_qa_coverage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:707`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:save_expansion_qa_result` | proxied | Blocked on #21560 Tasks family: port `save_expansion_qa_result` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:683`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:set_affected_files` | proxied | Blocked on #21560 Tasks family: port `set_affected_files` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:186`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:set_artifact` | proxied | Blocked on #21560 Tasks family: port `set_artifact` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:120`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:set_artifacts_atomic` | proxied | Blocked on #21560 Tasks family: port `set_artifacts_atomic` from Python handler `src/gobby/mcp_proxy/tools/tasks/_artifacts.py:166`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:set_landing_freeze` | proxied | Blocked on #21560 Tasks family: port `set_landing_freeze` from Python handler `src/gobby/mcp_proxy/tools/tasks/_landing.py:31`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:set_task_type_defaults` | proxied | Blocked on #21560 Tasks family: port `set_task_type_defaults` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py:114`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:start_expansion_run` | proxied | Blocked on #21560 Tasks family: port `start_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:297`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:start_stage` | proxied | Blocked on #21560 Tasks family: port `start_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_ops.py:246`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:submit_for_review` | proxied | Blocked on #21560 Tasks family: port `submit_for_review` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_review.py:220`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:update_stage` | proxied | Blocked on #21560 Tasks family: port `update_stage` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_registry_ops.py:47`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:validate_expansion_run` | proxied | Blocked on #21560 Tasks family: port `validate_expansion_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:648`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:validate_plan_file` | proxied | Blocked on #21560 Tasks family: port `validate_plan_file` from Python handler `src/gobby/mcp_proxy/tools/tasks/_expansion_registry.py:849`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks-ops:wire_affected_files_from_run` | proxied | Blocked on #21560 Tasks family: port `wire_affected_files_from_run` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:331`; #21570 MCP front door flip must re-front `gobby-tasks-ops` onto Rust. |
+| `MCP gobby-tasks:add_dependency` | proxied | Blocked on #21560 Tasks family: port `add_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:61`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:add_label` | proxied | Blocked on #21560 Tasks family: port `add_label` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py:19`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:auto_link_commits` | proxied | Blocked on #21560 Tasks family: port `auto_link_commits` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:373`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:backup_tasks` | proxied | Blocked on #21560 Tasks family: port `backup_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_backup.py:17`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:check_dependency_cycles` | proxied | Blocked on #21560 Tasks family: port `check_dependency_cycles` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:196`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:claim_task` | proxied | Blocked on #21560 Tasks family: port `claim_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py:173`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:close_task` | proxied | Blocked on #21560 Tasks family: port `close_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py:27`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:create_task` | proxied | Blocked on #21560 Tasks family: port `create_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_crud.py:88`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:de_escalate_task` | proxied | Blocked on #21560 Tasks family: port `de_escalate_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:250`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:delegate_task` | proxied | Blocked on #21560 Tasks family: port `delegate_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:36`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:delete_task` | proxied | Blocked on #21560 Tasks family: port `delete_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_delete.py:19`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:escalate_task` | proxied | Blocked on #21560 Tasks family: port `escalate_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:144`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_dependency_tree` | proxied | Blocked on #21560 Tasks family: port `get_dependency_tree` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:156`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_session_tasks` | proxied | Blocked on #21560 Tasks family: port `get_session_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:244`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_task` | proxied | Blocked on #21560 Tasks family: port `get_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_crud.py:477`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_task_diff` | proxied | Blocked on #21560 Tasks family: port `get_task_diff` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:462`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_task_sessions` | proxied | Blocked on #21560 Tasks family: port `get_task_sessions` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:289`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_task_stages` | proxied | Blocked on #21560 Tasks family: port `get_task_stages` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:89`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:get_task_type_defaults` | proxied | Blocked on #21560 Tasks family: port `get_task_type_defaults` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:152`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:inspect_task_path_ownership` | proxied | Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:165`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers. |
+| `MCP gobby-tasks:link_commit` | proxied | Blocked on #21560 Tasks family: port `link_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:135`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:link_task_to_session` | proxied | Blocked on #21560 Tasks family: port `link_task_to_session` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:125`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:list_blocked_tasks` | proxied | Blocked on #21560 Tasks family: port `list_blocked_tasks` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:499`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:list_ready_tasks` | proxied | Blocked on #21560 Tasks family: port `list_ready_tasks` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:433`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:list_stages_registry` | proxied | Blocked on #21560 Tasks family: port `list_stages_registry` from Python handler `src/gobby/mcp_proxy/tools/tasks/_stage_read.py:124`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:list_tasks` | proxied | Blocked on #21560 Tasks family: port `list_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_listing.py:137`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:record_close_receipt` | proxied | Blocked on #21560 Tasks family: port `record_close_receipt` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:212`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:release_task_paths` | proxied | Pending retirement under #23562 Retire task path tools; still registered in Python at `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py:233`. Until retirement lands, #21560 Tasks family and #21570 MCP front door flip remain blockers. |
+| `MCP gobby-tasks:remove_dependency` | proxied | Blocked on #21560 Tasks family: port `remove_dependency` from Python handler `src/gobby/mcp_proxy/tools/task_dependencies.py:116`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:remove_label` | proxied | Blocked on #21560 Tasks family: port `remove_label` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_labels.py:64`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:reopen_task` | proxied | Blocked on #21560 Tasks family: port `reopen_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:repair_closed_candidate` | proxied | Blocked on #21560 Tasks family: port `repair_closed_candidate` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_candidate_repair.py:17`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:restore_tasks` | proxied | Blocked on #21560 Tasks family: port `restore_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_backup.py:45`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:search_tasks` | proxied | Blocked on #21560 Tasks family: port `search_tasks` from Python handler `src/gobby/mcp_proxy/tools/tasks/_search.py:29`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:submit_close_review` | proxied | Blocked on #21560 Tasks family: port `submit_close_review` from Python handler `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py:96`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:suggest_next_task` | proxied | Blocked on #21560 Tasks family: port `suggest_next_task` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:587`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:transfer_task_authority` | proxied | Blocked on #21560 Tasks family: port `transfer_task_authority` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:81`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:unlink_commit` | proxied | Blocked on #21560 Tasks family: port `unlink_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:311`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:update_observed_files` | proxied | Blocked on #21560 Tasks family: port `update_observed_files` from Python handler `src/gobby/mcp_proxy/tools/tasks/_affected_files.py:47`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
+| `MCP gobby-tasks:update_task` | proxied | Blocked on #21560 Tasks family: port `update_task` from Python handler `src/gobby/mcp_proxy/tools/tasks/_crud.py:533`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-voice:add_vocab` | **unclassified** |  |
 | `MCP gobby-voice:clear_vocab` | **unclassified** |  |
 | `MCP gobby-voice:list_vocab` | **unclassified** |  |
