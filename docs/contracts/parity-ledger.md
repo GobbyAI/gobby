@@ -25,24 +25,24 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1095. Unclassified: 655.
+Public surfaces and evidence gates: 1095. Unclassified: 508.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
-| `CLI gobby agents` | **unclassified** |  |
-| `CLI gobby agents check` | **unclassified** |  |
-| `CLI gobby agents cleanup` | **unclassified** |  |
-| `CLI gobby agents kill` | **unclassified** |  |
-| `CLI gobby agents list` | **unclassified** |  |
-| `CLI gobby agents runs` | **unclassified** |  |
-| `CLI gobby agents runs list` | **unclassified** |  |
-| `CLI gobby agents runs show` | **unclassified** |  |
-| `CLI gobby agents show` | **unclassified** |  |
-| `CLI gobby agents spawn` | **unclassified** |  |
-| `CLI gobby agents stats` | **unclassified** |  |
-| `CLI gobby agents status` | **unclassified** |  |
-| `CLI gobby agents steps` | **unclassified** |  |
-| `CLI gobby agents stop` | **unclassified** |  |
+| `CLI gobby agents` | proxied | Python `src/gobby/cli/agents.py::agents`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents check` | proxied | Python `src/gobby/cli/agents_steps.py::check_agent`; Rust blocker: implement native installed agent-step inspection and definition validation commands. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents cleanup` | proxied | Python `src/gobby/cli/agents.py::cleanup_agents`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents kill` | proxied | Python `src/gobby/cli/agents.py::kill_agent`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents list` | proxied | Python `src/gobby/cli/agents.py::list_agent_definitions`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents runs` | proxied | Python `src/gobby/cli/agents.py::agent_runs`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents runs list` | proxied | Python `src/gobby/cli/agents.py::list_agent_runs`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents runs show` | proxied | Python `src/gobby/cli/agents.py::show_agent_run`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents show` | proxied | Python `src/gobby/cli/agents.py::show_agent_definition`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents spawn` | proxied | Python `src/gobby/cli/agents.py::spawn_agent_cmd`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents stats` | proxied | Python `src/gobby/cli/agents.py::agent_stats`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents status` | proxied | Python `src/gobby/cli/agents.py::agent_status`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents steps` | proxied | Python `src/gobby/cli/agents_steps.py::list_agent_steps`; Rust blocker: implement native installed agent-step inspection and definition validation commands. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `CLI gobby agents stop` | proxied | Python `src/gobby/cli/agents.py::stop_agent`; Rust blocker: implement native agent definition/run operator commands and backing services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `CLI gobby auth` | **unclassified** |  |
 | `CLI gobby auth credentials` | **unclassified** |  |
 | `CLI gobby auth key` | **unclassified** |  |
@@ -93,13 +93,13 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `CLI gobby files` | **unclassified** |  |
 | `CLI gobby files migrate` | **unclassified** |  |
 | `CLI gobby health` | **unclassified** |  |
-| `CLI gobby hooks` | **unclassified** |  |
-| `CLI gobby hooks disable` | **unclassified** |  |
-| `CLI gobby hooks enable` | **unclassified** |  |
-| `CLI gobby hooks list` | **unclassified** |  |
-| `CLI gobby hooks run` | **unclassified** |  |
-| `CLI gobby hooks status` | **unclassified** |  |
-| `CLI gobby hooks test` | **unclassified** |  |
+| `CLI gobby hooks` | proxied | Python `src/gobby/cli/extensions.py::hooks`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks disable` | proxied | Python `src/gobby/cli/extensions.py::hooks_disable`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks enable` | proxied | Python `src/gobby/cli/extensions.py::hooks_enable`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks list` | proxied | Python `src/gobby/cli/extensions.py::hooks_list`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks run` | proxied | Python `src/gobby/cli/extensions.py::hooks_run`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks status` | proxied | Python `src/gobby/cli/extensions.py::hooks_status`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
+| `CLI gobby hooks test` | proxied | Python `src/gobby/cli/extensions.py::hooks_test`; Rust blocker: implement native hook administration/configuration/verification commands; ghook event transport does not implement these verbs. Owner: #21569 Hook ingress. |
 | `CLI gobby hub-backup` | **unclassified** |  |
 | `CLI gobby hub-backup restore` | **unclassified** |  |
 | `CLI gobby init` | **unclassified** |  |
@@ -155,15 +155,15 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `CLI gobby observations` | **unclassified** |  |
 | `CLI gobby observations list` | **unclassified** |  |
 | `CLI gobby pack` | **unclassified** |  |
-| `CLI gobby panes` | **unclassified** |  |
-| `CLI gobby panes close` | **unclassified** |  |
-| `CLI gobby panes move` | **unclassified** |  |
-| `CLI gobby panes read` | **unclassified** |  |
-| `CLI gobby panes rename` | **unclassified** |  |
-| `CLI gobby panes send` | **unclassified** |  |
-| `CLI gobby panes split` | **unclassified** |  |
-| `CLI gobby panes swap` | **unclassified** |  |
-| `CLI gobby panes wait` | **unclassified** |  |
+| `CLI gobby panes` | proxied | Python `src/gobby/cli/workspaces.py::panes`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes close` | proxied | Python `src/gobby/cli/workspaces.py::close_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes move` | proxied | Python `src/gobby/cli/workspaces.py::move_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes read` | proxied | Python `src/gobby/cli/workspaces.py::read_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes rename` | proxied | Python `src/gobby/cli/workspaces.py::rename_workspace_item`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes send` | proxied | Python `src/gobby/cli/workspaces.py::send_pane_input`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes split` | proxied | Python `src/gobby/cli/workspaces.py::split_pane`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes swap` | proxied | Python `src/gobby/cli/workspaces.py::swap_panes`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `CLI gobby panes wait` | proxied | Python `src/gobby/cli/workspaces.py::wait_for_pane_output`; Rust blocker: implement native pane commands and Python workspace MCP orchestration; gclient transport alone does not replace the backend. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `CLI gobby pipelines` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines` from Python callback `src/gobby/cli/pipelines.py:271` to Rust services and CLI parity. |
 | `CLI gobby pipelines approve` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines approve` from Python callback `src/gobby/cli/pipelines_runs.py:113` to Rust services and CLI parity. |
 | `CLI gobby pipelines check` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby pipelines check` from Python callback `src/gobby/cli/pipelines_catalog.py:208` to Rust services and CLI parity. |
@@ -230,17 +230,17 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `CLI gobby service install` | **unclassified** |  |
 | `CLI gobby service status` | **unclassified** |  |
 | `CLI gobby service uninstall` | **unclassified** |  |
-| `CLI gobby sessions` | **unclassified** |  |
-| `CLI gobby sessions backfill-context-windows` | **unclassified** |  |
-| `CLI gobby sessions delete` | **unclassified** |  |
-| `CLI gobby sessions list` | **unclassified** |  |
-| `CLI gobby sessions messages` | **unclassified** |  |
-| `CLI gobby sessions renumber` | **unclassified** |  |
-| `CLI gobby sessions restore` | **unclassified** |  |
-| `CLI gobby sessions show` | **unclassified** |  |
-| `CLI gobby sessions stats` | **unclassified** |  |
-| `CLI gobby sessions summarize` | **unclassified** |  |
-| `CLI gobby sessions terminate-terminal` | **unclassified** |  |
+| `CLI gobby sessions` | proxied | Python `src/gobby/cli/sessions.py::sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions backfill-context-windows` | proxied | Python `src/gobby/cli/sessions.py::backfill_context_windows`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions delete` | proxied | Python `src/gobby/cli/sessions.py::delete_session`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions list` | proxied | Python `src/gobby/cli/sessions.py::list_sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions messages` | proxied | Python `src/gobby/cli/sessions.py::show_messages`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions renumber` | proxied | Python `src/gobby/cli/sessions.py::renumber_sessions`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions restore` | proxied | Python `src/gobby/cli/sessions.py::restore_transcript`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions show` | proxied | Python `src/gobby/cli/sessions.py::show_session`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions stats` | proxied | Python `src/gobby/cli/sessions.py::session_stats`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions summarize` | proxied | Python `src/gobby/cli/sessions.py::summarize_session`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21562 Sessions and transcripts. |
+| `CLI gobby sessions terminate-terminal` | proxied | Python `src/gobby/cli/sessions.py::terminate_terminal`; Rust blocker: implement native session operator commands and storage/transcript services. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `CLI gobby skills` | proxied | Python src/gobby/cli/skills.py::skills; Rust CLI group/subcommand dispatch parity for gobby skills remains under #21568 Remaining route families (Skills). |
 | `CLI gobby skills disable` | proxied | Python src/gobby/cli/skills.py::disable; Rust CLI command callback parity for gobby skills disable remains under #21568 Remaining route families (Skills). |
 | `CLI gobby skills doc` | proxied | Python src/gobby/cli/skills.py::doc; Rust CLI command callback parity for gobby skills doc remains under #21568 Remaining route families (Skills). |
@@ -366,7 +366,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `Gate native terminal default flip #21357` | **unclassified** |  |
 | `HTTP * /mcp` | **unclassified** |  |
 | `HTTP DELETE /api/admin/test/unregister-agent/{run_id}` | **unclassified** |  |
-| `HTTP DELETE /api/agents/definitions/{definition_id}` | **unclassified** |  |
+| `HTTP DELETE /api/agents/definitions/{definition_id}` | proxied | Python `src/gobby/servers/routes/agents.py::delete_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP DELETE /api/auth/keys/{key_id}` | **unclassified** |  |
 | `HTTP DELETE /api/chat/attachments/{attachment_id}` | **unclassified** |  |
 | `HTTP DELETE /api/chat/{conversation_id}/messages` | **unclassified** |  |
@@ -379,7 +379,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP DELETE /api/pipelines/definitions/{definition_id}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/pipelines/definitions/{definition_id}; Python handler `src/gobby/servers/routes/pipeline_definitions.py:373`; Rust front-door dispatch currently proxies this family. |
 | `HTTP DELETE /api/projects/{project_id}` | proxied | Python src/gobby/servers/routes/projects.py::delete_project via gdaemon front-door fallback; blocked on a native Rust project deletion route and guards. Owner: #21568 Remaining route families. |
 | `HTTP DELETE /api/rules/{name}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native DELETE /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:396`; Rust front-door dispatch currently proxies this family. |
-| `HTTP DELETE /api/sessions/{session_id}/stop` | **unclassified** |  |
+| `HTTP DELETE /api/sessions/{session_id}/stop` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::clear_stop_signal`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP DELETE /api/skills/{skill_id}` | proxied | Python src/gobby/servers/routes/skills.py::delete_skill; Rust HTTP handler parity for DELETE /api/skills/{skill_id} remains under #21568 Remaining route families (Skills). |
 | `HTTP DELETE /api/source-control/clones/{clone_id}` | **unclassified** |  |
 | `HTTP DELETE /api/source-control/worktrees/{worktree_id}` | **unclassified** |  |
@@ -396,15 +396,15 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP GET /api/admin/status` | **unclassified** |  |
 | `HTTP GET /api/admin/tokens/timeseries` | **unclassified** |  |
 | `HTTP GET /api/admin/usage` | **unclassified** |  |
-| `HTTP GET /api/agents/definitions` | **unclassified** |  |
-| `HTTP GET /api/agents/definitions/{name}` | **unclassified** |  |
-| `HTTP GET /api/agents/definitions/{name}/export` | **unclassified** |  |
-| `HTTP GET /api/agents/launch-defaults` | **unclassified** |  |
-| `HTTP GET /api/agents/running` | **unclassified** |  |
-| `HTTP GET /api/agents/runs` | **unclassified** |  |
-| `HTTP GET /api/agents/runs/{run_id}` | **unclassified** |  |
-| `HTTP GET /api/agents/runs/{run_id}/name` | **unclassified** |  |
-| `HTTP GET /api/attention/roster` | **unclassified** |  |
+| `HTTP GET /api/agents/definitions` | proxied | Python `src/gobby/servers/routes/agents.py::list_definitions`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/definitions/{name}` | proxied | Python `src/gobby/servers/routes/agents.py::get_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/definitions/{name}/export` | proxied | Python `src/gobby/servers/routes/agents.py::export_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/launch-defaults` | proxied | Python `src/gobby/servers/routes/agent_spawn.py::get_launch_defaults`; Rust blocker: implement native agent launch/defaults/prompt-preview HTTP handlers and admission services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/running` | proxied | Python `src/gobby/servers/routes/agents.py::list_running_agents`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/runs` | proxied | Python `src/gobby/servers/routes/agents.py::list_agent_runs`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/runs/{run_id}` | proxied | Python `src/gobby/servers/routes/agents.py::get_agent_run_detail`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/agents/runs/{run_id}/name` | proxied | Python `src/gobby/servers/routes/agents.py::get_agent_run_name`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP GET /api/attention/roster` | proxied | Python `src/gobby/servers/routes/attention.py::roster`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP GET /api/auth/keys` | **unclassified** |  |
 | `HTTP GET /api/auth/status` | **unclassified** |  |
 | `HTTP GET /api/chat/attachments/limits` | **unclassified** |  |
@@ -489,16 +489,16 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP GET /api/rules/tags` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules/tags; Python handler `src/gobby/servers/routes/rules.py:143`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/rules/{name}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/rules/{name}; Python handler `src/gobby/servers/routes/rules.py:279`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/runtime/config` | **unclassified** |  |
-| `HTTP GET /api/sessions` | **unclassified** |  |
-| `HTTP GET /api/sessions/usage` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/changes` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/changes/diff` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/messages` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/stop` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/token-events` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/transcript` | **unclassified** |  |
-| `HTTP GET /api/sessions/{session_id}/transcript/status` | **unclassified** |  |
+| `HTTP GET /api/sessions` | proxied | Python `src/gobby/servers/routes/sessions/core.py::list_sessions`; Rust blocker: implement native session registration/list/usage and web-chat creation HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/usage` | proxied | Python `src/gobby/servers/routes/sessions/core.py::get_usage_breakdown`; Rust blocker: implement native session registration/list/usage and web-chat creation HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::sessions_get`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/changes` | proxied | Python `src/gobby/servers/routes/sessions/changes.py::session_changes`; Rust blocker: implement native task-attributed change collection and Git diff HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/changes/diff` | proxied | Python `src/gobby/servers/routes/sessions/changes.py::session_change_diff`; Rust blocker: implement native task-attributed change collection and Git diff HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/messages` | proxied | Python `src/gobby/servers/routes/sessions/messages.py::sessions_get_messages`; Rust blocker: implement native session messages/transcript streaming, status and archive restore HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/stop` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::get_stop_signal`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/token-events` | proxied | Python `src/gobby/servers/routes/sessions/core.py::get_session_token_events`; Rust blocker: implement native session registration/list/usage and web-chat creation HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/transcript` | proxied | Python `src/gobby/servers/routes/sessions/messages.py::get_transcript`; Rust blocker: implement native session messages/transcript streaming, status and archive restore HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP GET /api/sessions/{session_id}/transcript/status` | proxied | Python `src/gobby/servers/routes/sessions/messages.py::transcript_status`; Rust blocker: implement native session messages/transcript streaming, status and archive restore HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP GET /api/skills` | proxied | Python src/gobby/servers/routes/skills.py::list_skills; Rust HTTP handler parity for GET /api/skills remains under #21568 Remaining route families (Skills). |
 | `HTTP GET /api/skills/hubs` | proxied | Python src/gobby/servers/routes/skills.py::list_hubs; Rust HTTP handler parity for GET /api/skills/hubs remains under #21568 Remaining route families (Skills). |
 | `HTTP GET /api/skills/hubs/search` | proxied | Python src/gobby/servers/routes/skills.py::search_hubs; Rust HTTP handler parity for GET /api/skills/hubs/search remains under #21568 Remaining route families (Skills). |
@@ -522,8 +522,8 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP GET /api/tasks/{task_id}/comments` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/comments; Python handler `src/gobby/servers/routes/tasks_comment_routes.py:40`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/tasks/{task_id}/dependencies` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/dependencies; Python handler `src/gobby/servers/routes/tasks_dependency_routes.py:138`; Rust front-door dispatch currently proxies this family. |
 | `HTTP GET /api/tasks/{task_id}/stages` | proxied | Blocked on #21560 Tasks family: implement native GET /api/tasks/{task_id}/stages; Python handler `src/gobby/servers/routes/tasks_stage_routes.py:135`; Rust front-door dispatch currently proxies this family. |
-| `HTTP GET /api/terminals` | **unclassified** |  |
-| `HTTP GET /api/terminals/{terminal_id}` | **unclassified** |  |
+| `HTTP GET /api/terminals` | proxied | Python `src/gobby/servers/routes/terminals.py::list_terminals`; Rust blocker: implement native terminal registry paging, attach/lease projection and detail HTTP handlers; TerminalFamily.router in crates/gdaemon/src/front_door/routes.rs is empty. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
+| `HTTP GET /api/terminals/{terminal_id}` | proxied | Python `src/gobby/servers/routes/terminals.py::get_terminal`; Rust blocker: implement native terminal registry paging, attach/lease projection and detail HTTP handlers; TerminalFamily.router in crates/gdaemon/src/front_door/routes.rs is empty. Owner: #21565 Daemon-side gterm adoption and terminal WS. |
 | `HTTP GET /api/traces` | **unclassified** |  |
 | `HTTP GET /api/traces/{trace_id}` | **unclassified** |  |
 | `HTTP GET /api/variables` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native GET /api/variables; Python handler `src/gobby/servers/routes/variable_definitions.py:87`; Rust front-door dispatch currently proxies this family. |
@@ -538,9 +538,9 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP HEAD /docs/oauth2-redirect` | **unclassified** |  |
 | `HTTP HEAD /openapi.json` | **unclassified** |  |
 | `HTTP HEAD /redoc` | **unclassified** |  |
-| `HTTP PATCH /api/agents/definitions/{definition_id}/rule-selectors` | **unclassified** |  |
-| `HTTP PATCH /api/agents/definitions/{definition_id}/rules` | **unclassified** |  |
-| `HTTP PATCH /api/agents/definitions/{definition_id}/variables` | **unclassified** |  |
+| `HTTP PATCH /api/agents/definitions/{definition_id}/rule-selectors` | proxied | Python `src/gobby/servers/routes/agents.py::patch_rule_selectors`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP PATCH /api/agents/definitions/{definition_id}/rules` | proxied | Python `src/gobby/servers/routes/agents.py::patch_rules`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP PATCH /api/agents/definitions/{definition_id}/variables` | proxied | Python `src/gobby/servers/routes/agents.py::patch_variables`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP PATCH /api/config/values` | **unclassified** |  |
 | `HTTP PATCH /api/cron/jobs/{job_id}` | **unclassified** |  |
 | `HTTP PATCH /api/mcp/servers/{name}` | **unclassified** |  |
@@ -554,17 +554,17 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP POST /api/admin/test/register-project` | **unclassified** |  |
 | `HTTP POST /api/admin/test/set-session-usage` | **unclassified** |  |
 | `HTTP POST /api/admin/workflows/reload` | **unclassified** |  |
-| `HTTP POST /api/agents/cleanup` | **unclassified** |  |
-| `HTTP POST /api/agents/definitions` | **unclassified** |  |
-| `HTTP POST /api/agents/definitions/import/{name}` | **unclassified** |  |
-| `HTTP POST /api/agents/definitions/{definition_id}/restore` | **unclassified** |  |
-| `HTTP POST /api/agents/runs/{run_id}/cancel` | **unclassified** |  |
-| `HTTP POST /api/agents/spawn` | **unclassified** |  |
-| `HTTP POST /api/agents/spawn/batch` | **unclassified** |  |
-| `HTTP POST /api/agents/spawn/prompt-preview` | **unclassified** |  |
-| `HTTP POST /api/attention/{entry_id}/metadata` | **unclassified** |  |
-| `HTTP POST /api/attention/{entry_id}/respond` | **unclassified** |  |
-| `HTTP POST /api/attention/{entry_id}/seen` | **unclassified** |  |
+| `HTTP POST /api/agents/cleanup` | proxied | Python `src/gobby/servers/routes/agents.py::cleanup_agent_runs`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/definitions` | proxied | Python `src/gobby/servers/routes/agents.py::create_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/definitions/import/{name}` | proxied | Python `src/gobby/servers/routes/agents.py::import_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/definitions/{definition_id}/restore` | proxied | Python `src/gobby/servers/routes/agents.py::restore_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/runs/{run_id}/cancel` | proxied | Python `src/gobby/servers/routes/agents.py::cancel_agent_run`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/spawn` | proxied | Python `src/gobby/servers/routes/agent_spawn.py::spawn_agent`; Rust blocker: implement native agent launch/defaults/prompt-preview HTTP handlers and admission services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/spawn/batch` | proxied | Python `src/gobby/servers/routes/agent_spawn.py::spawn_batch`; Rust blocker: implement native agent launch/defaults/prompt-preview HTTP handlers and admission services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/agents/spawn/prompt-preview` | proxied | Python `src/gobby/servers/routes/agent_spawn.py::preview_spawn_prompt`; Rust blocker: implement native agent launch/defaults/prompt-preview HTTP handlers and admission services. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/attention/{entry_id}/metadata` | proxied | Python `src/gobby/servers/routes/attention.py::set_metadata`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/attention/{entry_id}/respond` | proxied | Python `src/gobby/servers/routes/attention.py::respond`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
+| `HTTP POST /api/attention/{entry_id}/seen` | proxied | Python `src/gobby/servers/routes/attention.py::mark_seen`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP POST /api/auth/keys` | **unclassified** |  |
 | `HTTP POST /api/auth/keys/bootstrap` | **unclassified** |  |
 | `HTTP POST /api/auth/login` | **unclassified** |  |
@@ -633,24 +633,24 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP POST /api/rules` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/rules; Python handler `src/gobby/servers/routes/rules.py:208`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/runtime/handshake` | **unclassified** |  |
 | `HTTP POST /api/runtime/handshake/challenge` | **unclassified** |  |
-| `HTTP POST /api/sessions/bulk-move` | **unclassified** |  |
-| `HTTP POST /api/sessions/find_by_terminal_context` | **unclassified** |  |
-| `HTTP POST /api/sessions/find_current` | **unclassified** |  |
-| `HTTP POST /api/sessions/register` | **unclassified** |  |
-| `HTTP POST /api/sessions/statusline` | **unclassified** |  |
-| `HTTP POST /api/sessions/update_status` | **unclassified** |  |
-| `HTTP POST /api/sessions/update_summary` | **unclassified** |  |
-| `HTTP POST /api/sessions/web-chat` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/acp/close` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/acp/delete` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/expire` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/generate-summary` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/release-composer` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/rename` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/restore-transcript` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/stop` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/variables/get` | **unclassified** |  |
-| `HTTP POST /api/sessions/{session_id}/variables/set` | **unclassified** |  |
+| `HTTP POST /api/sessions/bulk-move` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::bulk_move_sessions`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/find_by_terminal_context` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::find_session_by_terminal_context`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/find_current` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::find_current_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/register` | proxied | Python `src/gobby/servers/routes/sessions/core.py::register_session`; Rust blocker: implement native session registration/list/usage and web-chat creation HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/statusline` | dropped by decision #19319 | #19319 Stop ingesting Claude usage from statusline (closed); commit 64a5b4144d removes usage ingestion. `src/gobby/servers/routes/sessions/lifecycle.py::retired_statusline_route` intentionally returns 404; transcript JSONL is authoritative. |
+| `HTTP POST /api/sessions/update_status` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::update_session_status`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/update_summary` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::update_session_summary`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/web-chat` | proxied | Python `src/gobby/servers/routes/sessions/core.py::create_web_chat_session`; Rust blocker: implement native session registration/list/usage and web-chat creation HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/acp/close` | proxied | Python `src/gobby/servers/routes/sessions/acp.py::close_acp_session`; Rust blocker: implement native ACP session close/delete HTTP lifecycle handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/acp/delete` | proxied | Python `src/gobby/servers/routes/sessions/acp.py::delete_acp_session`; Rust blocker: implement native ACP session close/delete HTTP lifecycle handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/expire` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::expire_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/generate-summary` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::generate_session_summary`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/release-composer` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::release_session_composer`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/rename` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::rename_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/restore-transcript` | proxied | Python `src/gobby/servers/routes/sessions/messages.py::restore_transcript_endpoint`; Rust blocker: implement native session messages/transcript streaming, status and archive restore HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/stop` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::stop_session`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/variables/get` | proxied | Python `src/gobby/servers/routes/sessions/variables.py::get_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/variables/set` | proxied | Python `src/gobby/servers/routes/sessions/variables.py::set_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/skills` | proxied | Python src/gobby/servers/routes/skills.py::create_skill; Rust HTTP handler parity for POST /api/skills remains under #21568 Remaining route families (Skills). |
 | `HTTP POST /api/skills/hubs/install` | proxied | Python src/gobby/servers/routes/skills.py::install_from_hub; Rust HTTP handler parity for POST /api/skills/hubs/install remains under #21568 Remaining route families (Skills). |
 | `HTTP POST /api/skills/import` | proxied | Python src/gobby/servers/routes/skills.py::import_skill; Rust HTTP handler parity for POST /api/skills/import remains under #21568 Remaining route families (Skills). |
@@ -680,7 +680,7 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `HTTP POST /api/webhooks/test` | **unclassified** |  |
 | `HTTP POST /memory/dream` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream; Rust HTTP handler parity for POST /memory/dream remains under #21563 Memory and search. |
 | `HTTP POST /memory/dream/{run_id}/revert` | proxied | Python src/gobby/servers/routes/memory_dream.py::memory_dream_revert; Rust HTTP handler parity for POST /memory/dream/{run_id}/revert remains under #21563 Memory and search. |
-| `HTTP PUT /api/agents/definitions/{definition_id}` | **unclassified** |  |
+| `HTTP PUT /api/agents/definitions/{definition_id}` | proxied | Python `src/gobby/servers/routes/agents.py::update_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP PUT /api/comms/channels/{channel_id}` | **unclassified** |  |
 | `HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate` | **unclassified** |  |
 | `HTTP PUT /api/config/prompts/{path:path}` | **unclassified** |  |
@@ -713,33 +713,33 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `MCP HTTP gobby:search_tools` | **unclassified** |  |
 | `MCP HTTP gobby:set_variable` | **unclassified** |  |
 | `MCP HTTP gobby:status` | **unclassified** |  |
-| `MCP gobby-agents:apply_agent_definition` | **unclassified** |  |
-| `MCP gobby-agents:apply_persona` | **unclassified** |  |
-| `MCP gobby-agents:can_spawn_agent` | **unclassified** |  |
-| `MCP gobby-agents:cancel_coordination_wait` | **unclassified** |  |
-| `MCP gobby-agents:cancel_stale_helpers` | **unclassified** |  |
-| `MCP gobby-agents:check_runbook_seats` | **unclassified** |  |
-| `MCP gobby-agents:checkpoint_agent_worktree` | **unclassified** |  |
-| `MCP gobby-agents:dispatch_batch` | **unclassified** |  |
-| `MCP gobby-agents:end_agent_run` | **unclassified** |  |
-| `MCP gobby-agents:evaluate_spawn` | **unclassified** |  |
-| `MCP gobby-agents:get_agent_capture` | **unclassified** |  |
-| `MCP gobby-agents:get_agent_live_output` | **unclassified** |  |
-| `MCP gobby-agents:get_agent_result` | **unclassified** |  |
-| `MCP gobby-agents:get_inter_session_message` | **unclassified** |  |
-| `MCP gobby-agents:get_inter_session_messages` | **unclassified** |  |
-| `MCP gobby-agents:get_running_agent` | **unclassified** |  |
-| `MCP gobby-agents:kill_agent` | **unclassified** |  |
-| `MCP gobby-agents:list_agent_runs` | **unclassified** |  |
-| `MCP gobby-agents:list_running_agents` | **unclassified** |  |
-| `MCP gobby-agents:running_agent_stats` | **unclassified** |  |
-| `MCP gobby-agents:send_message` | **unclassified** |  |
-| `MCP gobby-agents:spawn_agent` | **unclassified** |  |
-| `MCP gobby-agents:stop_agent` | **unclassified** |  |
-| `MCP gobby-agents:unregister_agent` | **unclassified** |  |
-| `MCP gobby-agents:wait_for_agent` | **unclassified** |  |
-| `MCP gobby-agents:wait_for_coordination` | **unclassified** |  |
-| `MCP gobby-agents:wait_for_output` | **unclassified** |  |
+| `MCP gobby-agents:apply_agent_definition` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_agent_definition`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:apply_persona` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_persona`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:can_spawn_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::can_spawn_agent`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:cancel_coordination_wait` | proxied | Python `src/gobby/mcp_proxy/tools/coordination.py::cancel_coordination_wait`; Rust blocker: implement native durable coordination subscriptions, cancellation and completion delivery. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:cancel_stale_helpers` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::cancel_stale_helpers`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:check_runbook_seats` | proxied | Python `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::check_runbook_seats_tool`; Rust blocker: implement native live runbook seat/catalogue guard MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:checkpoint_agent_worktree` | proxied | Python `src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py::checkpoint_agent_worktree`; Rust blocker: implement native task-owned agent worktree checkpoint MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:dispatch_batch` | proxied | Python `src/gobby/mcp_proxy/tools/spawn_agent/_dispatch_batch.py::dispatch_batch`; Rust blocker: implement native batch dependency/conflict admission and launch MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:end_agent_run` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::end_agent_run`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:evaluate_spawn` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::evaluate_spawn_tool`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_agent_capture` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::get_agent_capture`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_agent_live_output` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::get_agent_live_output`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_agent_result` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::get_agent_result`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_inter_session_message` | proxied | Python `src/gobby/mcp_proxy/tools/agent_messaging.py::get_inter_session_message`; Rust blocker: implement native durable inter-session message storage, targeting and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_inter_session_messages` | proxied | Python `src/gobby/mcp_proxy/tools/agent_messaging.py::get_inter_session_messages`; Rust blocker: implement native durable inter-session message storage, targeting and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:get_running_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::get_running_agent`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:kill_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::kill_agent`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:list_agent_runs` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::list_agent_runs`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:list_running_agents` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::list_running_agents`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:running_agent_stats` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::running_agent_stats`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:send_message` | proxied | Python `src/gobby/mcp_proxy/tools/agent_messaging.py::send_message`; Rust blocker: implement native durable inter-session message storage, targeting and wake dispatch MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:spawn_agent` | proxied | Python `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::spawn_agent`; Rust blocker: implement native agent launch admission, provider configuration and worktree/session lifecycle MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:stop_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::stop_agent`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:unregister_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::unregister_agent`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:wait_for_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::wait_for_agent`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:wait_for_coordination` | proxied | Python `src/gobby/mcp_proxy/tools/coordination.py::wait_for_coordination`; Rust blocker: implement native durable coordination subscriptions, cancellation and completion delivery. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:wait_for_output` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::wait_for_output`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-clones:claim_clone` | **unclassified** |  |
 | `MCP gobby-clones:cleanup_stale_clones` | **unclassified** |  |
 | `MCP gobby-clones:create_clone` | **unclassified** |  |
@@ -873,29 +873,29 @@ Public surfaces and evidence gates: 1095. Unclassified: 655.
 | `MCP gobby-review-learning:recall_review_lessons_for_files` | **unclassified** |  |
 | `MCP gobby-review-learning:record_review_lesson` | **unclassified** |  |
 | `MCP gobby-review-learning:retire_review_lesson` | **unclassified** |  |
-| `MCP gobby-sessions:capture_baseline_dirty_files` | **unclassified** |  |
-| `MCP gobby-sessions:capture_output` | **unclassified** |  |
-| `MCP gobby-sessions:feedback` | **unclassified** |  |
-| `MCP gobby-sessions:get_current_session` | **unclassified** |  |
-| `MCP gobby-sessions:get_handoff` | **unclassified** |  |
-| `MCP gobby-sessions:get_session` | **unclassified** |  |
-| `MCP gobby-sessions:get_session_commits` | **unclassified** |  |
-| `MCP gobby-sessions:get_session_messages` | **unclassified** |  |
-| `MCP gobby-sessions:get_transcript_status` | **unclassified** |  |
-| `MCP gobby-sessions:get_usage_breakdown` | **unclassified** |  |
-| `MCP gobby-sessions:hold_session_claims` | **unclassified** |  |
-| `MCP gobby-sessions:list_sessions` | **unclassified** |  |
-| `MCP gobby-sessions:mark_loop_complete` | **unclassified** |  |
-| `MCP gobby-sessions:register_session` | **unclassified** |  |
-| `MCP gobby-sessions:release_composer` | **unclassified** |  |
-| `MCP gobby-sessions:release_session_claims_hold` | **unclassified** |  |
-| `MCP gobby-sessions:restore_session_transcript` | **unclassified** |  |
-| `MCP gobby-sessions:search_session_messages` | **unclassified** |  |
-| `MCP gobby-sessions:send_keys` | **unclassified** |  |
-| `MCP gobby-sessions:session_stats` | **unclassified** |  |
-| `MCP gobby-sessions:set_handoff` | **unclassified** |  |
-| `MCP gobby-sessions:set_title` | **unclassified** |  |
-| `MCP gobby-sessions:terminate_terminal` | **unclassified** |  |
+| `MCP gobby-sessions:capture_baseline_dirty_files` | dropped by decision #23563 | #23563 Retire capture_baseline_dirty_files and baseline_dirty_files explicitly deletes this tool and registration; removal is in flight. Still registered at this snapshot by `src/gobby/mcp_proxy/tools/sessions/_actions.py::capture_baseline_dirty_files_tool`; no Rust port is planned. |
+| `MCP gobby-sessions:capture_output` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::capture_output`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:feedback` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::feedback`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_current_session` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::get_current_session`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_handoff` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::get_handoff`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_session` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::get_session`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_session_commits` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_commits.py::get_session_commits`; Rust blocker: implement native session commit queries and loop-completion MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_session_messages` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_messages.py::get_session_messages`; Rust blocker: implement native message query/search and transcript-reader MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_transcript_status` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_transcripts.py::get_transcript_status`; Rust blocker: implement native transcript archive restore/status MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:get_usage_breakdown` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::get_usage_breakdown`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:hold_session_claims` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_claim_hold.py::hold_session_claims`; Rust blocker: implement native operator-directed claim hold/release MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:list_sessions` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::list_sessions`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:mark_loop_complete` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_commits.py::mark_loop_complete`; Rust blocker: implement native session commit queries and loop-completion MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:register_session` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_registration.py::register_session`; Rust blocker: implement native hookless session registration and context reconciliation MCP handler. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:release_composer` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal_release.py::release_composer_tool`; Rust blocker: implement native session composer ownership/release MCP handler. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:release_session_claims_hold` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_claim_hold.py::release_session_claims_hold`; Rust blocker: implement native operator-directed claim hold/release MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:restore_session_transcript` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_transcripts.py::restore_session_transcript`; Rust blocker: implement native transcript archive restore/status MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:search_session_messages` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_messages.py::search_session_messages`; Rust blocker: implement native message query/search and transcript-reader MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:send_keys` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py::send_keys`; Rust blocker: implement native terminal input routing, guarded submission and delivery verification MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:session_stats` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::session_stats`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:set_handoff` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::set_handoff`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:set_title` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::set_title`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:terminate_terminal` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal_termination.py::terminate_terminal`; Rust blocker: implement native session terminal ownership resolution and termination orchestration MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
 | `MCP gobby-skills:get_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill; Rust MCP tool handler parity for gobby-skills:get_skill remains under #21568 Remaining route families (Skills). |
 | `MCP gobby-skills:get_skill_file` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_file_tool; Rust MCP tool handler parity for gobby-skills:get_skill_file remains under #21568 Remaining route families (Skills). |
 | `MCP gobby-skills:get_skill_files` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_files_tool; Rust MCP tool handler parity for gobby-skills:get_skill_files remains under #21568 Remaining route families (Skills). |
