@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +79,12 @@ async def create_worktree(
         base_branch, base_commit_sha = await select_worktree_base(git_manager, base_branch)
     except WorktreeBaseError as exc:
         return WorktreeCreationResult(success=False, error=str(exc), error_code=exc.code)
+    except subprocess.TimeoutExpired as exc:
+        return WorktreeCreationResult(
+            success=False,
+            error=f"Timed out selecting worktree base: {exc}",
+            error_code="base_selection_timeout",
+        )
     except RuntimeError as exc:
         return WorktreeCreationResult(
             success=False, error=str(exc), error_code="base_branch_refs_unavailable"
