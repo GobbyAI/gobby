@@ -186,6 +186,40 @@ async def test_non_text_input_allows_following_wake(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("effect", ["control", "cursor", "edit"])
+async def test_native_input_effect_controls_following_wake(
+    seat: Seat, composer_ledger: ComposerLedger, effect: str
+) -> None:
+    from gobby.terminals.host_events import decode_host_event
+
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_host_event(
+        decode_host_event(
+            {
+                "event": "input_activity",
+                "terminal_id": TERMINAL_ID,
+                "host_terminal_id": "ht-1",
+                "attachment_id": "att-1",
+                "kind": "input",
+                "bytes": 3,
+                "interrupt": None,
+                "submit": False,
+                "effect": effect,
+                "epoch": HOST_EPOCH,
+                "seq": 1,
+            }
+        )
+    )
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is (effect != "edit")
+    if effect == "edit":
+        assert result["decline_reason"] == "composer_occupied"
+        seat.pane_sender.assert_not_awaited()
+    else:
+        seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "payload"),
     [("input", "typed"), ("input", "\x1b[200~paste\x1b[201~"), ("paste", "paste")],

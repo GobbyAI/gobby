@@ -87,6 +87,7 @@ def test_control_goldens_match_rust_emitter() -> None:
         "bytes": 1,
         "interrupt": None,
         "submit": False,
+        "effect": "edit",
         "epoch": "epoch-1",
         "seq": 43,
     }
@@ -117,6 +118,12 @@ def test_control_goldens_match_rust_emitter() -> None:
     assert decode_host_event(older_host) == (
         InputActivityEvent("t", "ht-1", "att-1", "input", 1, None, "epoch-1", 43, submit=None)
     )
+    for effect in ("control", "cursor", "edit"):
+        decoded = decode_host_event(input_activity | {"effect": effect})
+        assert isinstance(decoded, InputActivityEvent)
+        assert decoded.effect == effect
+    with pytest.raises(ValueError, match="effect"):
+        decode_host_event(input_activity | {"effect": "unknown"})
 
 
 def test_control_client_matches_golden_corpus() -> None:
