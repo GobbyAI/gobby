@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.install.version_probe import probe_native_bin_version
+from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_name
 
 RELEASE_CRATES = {
@@ -96,7 +97,7 @@ def workspace_source_identity(root: Path, name: str) -> str:
     digest = hashlib.sha256()
     files: set[Path] = set()
     try:
-        visible = subprocess.run(
+        visible = spawn.run(
             [
                 "git",
                 "ls-files",
