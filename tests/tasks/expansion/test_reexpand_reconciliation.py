@@ -795,7 +795,7 @@ def test_reexpand_stage_start_blocks_until_apply_commits(
     sample_project: dict[str, Any],
     postgres_database_url: str,
 ) -> None:
-    """Apply holds the stage rows, so a second connection's start waits."""
+    """A stage start waits on the task row through the state-bucket trigger."""
     assert isinstance(temp_db, PostgresHubDatabase)
     service = _service(temp_db)
     parent = _parent(service, sample_project)
@@ -907,13 +907,7 @@ def test_reexpand_stage_progress_committed_first_is_not_rewritten(
             holder.execute("BEGIN")
             try:
                 holder.execute(
-                    """
-                    SELECT stage_name
-                      FROM task_stage_states
-                     WHERE task_id = %s
-                     ORDER BY position, stage_name
-                       FOR UPDATE
-                    """,
+                    "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
                     (leaf_id,),
                 )
                 writer.start()
@@ -1053,7 +1047,7 @@ def test_reexpand_close_of_removed_leaf_does_not_deadlock_on_root(
 
 
 class _AdoptBarrier:
-    """Pause apply around the absent-stage reads. Real SQL results pass through."""
+    """Pause apply before the adopt task lock or the fresh stage read."""
 
     def __init__(self, mode: str) -> None:
         self.mode = mode
@@ -1062,36 +1056,18 @@ class _AdoptBarrier:
         self._tripped = False
 
     def before_execute(self, query: object) -> None:
-        if self._tripped or self.mode != "before_fresh_read":
+        if self._tripped:
             return
-        if _is_fresh_stage_read(query):
-            self._tripped = True
-            self.paused.set()
-            if not self.release.wait(timeout=5):
-                raise TimeoutError("fresh stage read stayed paused")
-
-    def wrap_cursor(self, query: object, cursor: Any) -> Any:
-        if self._tripped or self.mode != "before_task_lock" or not _is_stage_lock(query):
-            return cursor
-        return _EmptyStageCursor(cursor, self)
-
-
-class _EmptyStageCursor:
-    def __init__(self, cursor: Any, barrier: _AdoptBarrier) -> None:
-        self._cursor = cursor
-        self._barrier = barrier
-
-    def fetchall(self) -> Any:
-        rows = self._cursor.fetchall()
-        if not rows and not self._barrier._tripped:
-            self._barrier._tripped = True
-            self._barrier.paused.set()
-            if not self._barrier.release.wait(timeout=5):
-                raise TimeoutError("empty stage lock stayed paused")
-        return rows
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._cursor, name)
+        if self.mode == "before_fresh_read" and _is_fresh_stage_read(query):
+            message = "fresh stage read stayed paused"
+        elif self.mode == "before_task_lock" and _is_adopt_task_lock(query):
+            message = "adopt task lock stayed paused"
+        else:
+            return
+        self._tripped = True
+        self.paused.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError(message)
 
 
 class _BarrierTxn:
@@ -1101,15 +1077,20 @@ class _BarrierTxn:
 
     def execute(self, sql: str, params: Any = ()) -> Any:
         self._barrier.before_execute(sql)
-        return self._barrier.wrap_cursor(sql, self._txn.execute(sql, params))
+        return self._txn.execute(sql, params)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._txn, name)
 
 
-def _is_stage_lock(query: object) -> bool:
+def _is_adopt_task_lock(query: object) -> bool:
     text = str(query).lower()
-    return "task_stage_states" in text and "for update" in text
+    return (
+        "closed_at" in text
+        and "claimed_by_session_id" in text
+        and "from tasks" in text
+        and "for update" in text
+    )
 
 
 def _is_fresh_stage_read(query: object) -> bool:
@@ -1313,3 +1294,112 @@ def test_reexpand_revalidation_accepts_read_committed(postgres_database_url: str
             row = conn.execute("SHOW transaction_isolation").fetchone()
             assert row is not None
             assert str(row[0]).strip().lower() == "read committed"
+
+
+def test_reexpand_terminal_delivery_done_while_holding_task_does_not_deadlock(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    postgres_database_url: str,
+) -> None:
+    """A terminal-delivery update while holding the task row lets apply finish."""
+    assert isinstance(temp_db, PostgresHubDatabase)
+    service = _service(temp_db)
+    parent = _parent(service, sample_project)
+    service.task_manager.initialize_task_manifest(
+        parent.id, stage_names=["development", "pr", "merge"]
+    )
+    first = _spec([_leaf("leaf-11", "1.1", "Original title", "Touches src/keep.py.")])
+    applied = service.apply_run(
+        _save_run(service, parent, sample_project, first).id, session_id=None
+    )
+    leaf_id = _task_id(applied, "leaf-11")
+    amended = _spec([_leaf("again-11", "1.1", "Rewritten title", "Touches src/keep.py.")])
+    amended_run = _save_run(service, parent, sample_project, amended)
+    schema = _schema_name(temp_db)
+    with psycopg.connect(postgres_database_url) as setup:
+        setup.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+        setup.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'done', completed_at = now(), updated_at = now()
+             WHERE task_id = %s AND stage_name IN ('development', 'pr')
+            """,
+            (leaf_id,),
+        )
+        setup.execute(
+            """
+            UPDATE task_stage_states
+               SET state = 'in_progress', entered_at = now(), updated_at = now()
+             WHERE task_id = %s AND stage_name = 'merge'
+            """,
+            (leaf_id,),
+        )
+        rows = setup.execute(
+            """
+            SELECT stage_name, state
+              FROM task_stage_states
+             WHERE task_id = %s
+            """,
+            (leaf_id,),
+        ).fetchall()
+        setup.execute("COMMIT")
+    states = {str(row[0]): str(row[1]) for row in rows}
+    assert states == {"development": "done", "pr": "done", "merge": "in_progress"}
+
+    writer_db = PostgresHubDatabase(temp_db.conninfo)
+    writer_db.open()
+    finished = Event()
+    errors: list[BaseException] = []
+
+    def run_apply() -> None:
+        try:
+            _service(writer_db).apply_run(amended_run.id, session_id=None)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    writer = Thread(target=run_apply, daemon=True)
+    try:
+        with psycopg.connect(postgres_database_url) as holder:
+            holder.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            holder.execute("BEGIN")
+            try:
+                holder.execute(
+                    "SELECT id FROM tasks WHERE id = %s FOR UPDATE",
+                    (leaf_id,),
+                )
+                writer.start()
+                _wait_for_lock(postgres_database_url, finished, writer_db.application_name)
+                updated = holder.execute(
+                    """
+                    UPDATE task_stage_states
+                       SET state = 'done', completed_at = now(), updated_at = now()
+                     WHERE task_id = %s
+                       AND stage_name = 'merge'
+                       AND state = 'in_progress'
+                    """,
+                    (leaf_id,),
+                )
+                assert updated.rowcount == 1
+                holder.execute("COMMIT")
+            except Exception:
+                holder.execute("ROLLBACK")
+                raise
+        assert finished.wait(timeout=5)
+        writer.join(timeout=1)
+        if errors:
+            raise errors[0]
+        task = service.task_manager.get_task(leaf_id)
+        assert task.id == leaf_id
+        assert task.title == "Original title"
+        merge = service.task_manager.stage_states.get(leaf_id, "merge")
+        assert merge is not None
+        assert merge.state == "done"
+        report = _report(_service(writer_db).run_manager.get(amended_run.id))
+        assert report["untouched"] == [
+            {"section_id": "1.1", "task_id": leaf_id, "reason": "in_progress"}
+        ]
+        assert "1.1" not in _ids_for(report, "reused")
+    finally:
+        writer_db.close()

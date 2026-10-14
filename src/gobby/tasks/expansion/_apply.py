@@ -168,10 +168,9 @@ def apply_run(
                 "Reset expansion output before applying a new run."
             )
 
-        # Lock order: stage rows, leaves, holders, phase epics, root, ancestors.
-        # adopt locks stage rows before each leaf. Phase epics are locked in
-        # phase_list order before the root so a close that holds a phase can
-        # still take the root.
+        # Lock order: leaves, holders, phase epics, root, ancestors.
+        # Phase epics are locked in phase_list order before the root so a
+        # close that holds a phase can still take the root.
         adopted_by_item: dict[str, Any] = {}
         if reconciliation is not None:
             for task_item in tasks:

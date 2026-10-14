@@ -161,21 +161,8 @@ def adopt(
     if task_id is None:
         return None
     # Read Committed is what makes the post-lock stage read a fresh snapshot.
-    # A transaction-wide snapshot would keep the empty pre-lock view.
+    # A transaction-wide snapshot would predate the task lock.
     _require_read_committed(conn)
-    # Stage rows before the task row. A stage start updates task_stage_states
-    # and the state-bucket trigger then locks the task, so this order matches it.
-    conn.execute(
-        """
-        SELECT state, entered_at, completed_at, work_attempt_count,
-               review_round_count, artifact_refs, notes
-          FROM task_stage_states
-         WHERE task_id = %s
-         ORDER BY position, stage_name
-           FOR UPDATE
-        """,
-        (task_id,),
-    ).fetchall()
     row = conn.execute(
         """
         SELECT closed_at, closed_reason, claimed_by_session_id
