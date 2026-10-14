@@ -60,18 +60,23 @@ def test_isolated_test_database_reaps_only_dead_pid_databases(postgres_database_
 
 
 @pytest.mark.integration
-def test_reaper_leaves_a_non_loopback_hub_alone(postgres_database_url: str) -> None:
-    # A remote hub's clients do not share this machine's PID space.
+def test_reaper_leaves_a_non_loopback_hub_alone(
+    postgres_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A remote hub's clients do not share this machine's PID space. The database
+    # carries this live PID so concurrent runs keep it, and the patched liveness
+    # check calls it dead here, so only the loopback guard can keep it.
+    monkeypatch.setattr("tests.fixtures.postgres._process_alive", lambda pid: False)
     maintenance_url = make_conninfo(postgres_database_url, dbname="postgres")
-    dead = f"gobby_test_{_dead_pid()}_{uuid.uuid4().hex[:12]}"
+    orphan = f"gobby_test_{os.getpid()}_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(maintenance_url, autocommit=True) as connection:
-        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dead)))
+        connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(orphan)))
         try:
             _reap_dead_process_databases(
                 connection, "postgresql://u:p@db.example.com:5432/gobby_test"
             )
-            assert dead in _database_names(maintenance_url)
+            assert orphan in _database_names(maintenance_url)
         finally:
             connection.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(dead))
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(orphan))
             )
