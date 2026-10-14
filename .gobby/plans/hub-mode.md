@@ -3271,6 +3271,23 @@ Verification planned:
   (1.4.7, node-halves adversary finding NH-12, requested by gobby#16767).
   Constraints lists the cross-plan edges with node-halves. The M1 manifest
   is re-derived from this narrative.
+- 2026-10-14: Repaired for Plan Adversary gobby#16491's HM-F22 to HM-F25 on
+  09cd20cba2, after 4.3's tool routing moved into `setup_internal_registries`
+  with an ownership check that reads the hub database directly.
+  - HM-F22: 4.2 admits an already-removed workspace whose parent is the
+    node root and whose name is one component, and `owned_workspace_path`
+    stays strict for paths that exist.
+  - HM-F23: removal checks branch ancestry before deleting any remaining
+    branch, whether or not the path exists (4.2.8).
+  - HM-F24: 4.7 serves a cached remote status only while the node is
+    connected (Decision 21, 4.7.3).
+  - HM-F25: 5.1 depends on 1.2, 4.2, and 4.6, the live handlers it
+    exercises.
+- 2026-10-14: Consensus on the D1-D4 plan and the HM-F22 to HM-F25 repair.
+  Plan Adversary gobby#16491 verified 038094060c (SHA-256 db283ae3a8) and
+  Plan Writer gobby#16490 agrees that HM-F19 to HM-F25 are resolved. No
+  unresolved decision or blocking finding remains, and standard validation
+  is warning-free.
 
 ## V2: Verification
 `kind: verification`
